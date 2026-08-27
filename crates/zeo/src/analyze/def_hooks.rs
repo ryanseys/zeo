@@ -48,7 +48,13 @@ pub fn resolve(
     main_statements: &mut Vec<NodeId>,
     feature_units: &mut [(Vec<String>, String, Vec<NodeId>)],
 ) {
-    for hook in global_hooks(compiler) {
+    // A unit's body runs when its `require` runs, not at boot, so a hook it
+    // installs has not seen anything the main program defined first.
+    let unit_files: crate::compiler::FSet<String> = feature_units
+        .iter()
+        .map(|(_, absolute, _)| format!("{absolute}.rb"))
+        .collect();
+    for hook in global_hooks(compiler, &unit_files) {
         compiler.global_def_hooks.insert(hook.to_string());
     }
     let global: Vec<&'static str> = HOOKS
@@ -100,7 +106,7 @@ pub fn resolve(
         })
         .collect();
     for (class, defs, target) in taken {
-        let sends = surviving(compiler, class, &defs, &global, &future, &prelude);
+        let sends = surviving(compiler, class, &defs, &global, &future, &prelude, &unit_files);
         if sends.is_empty() {
             continue;
         }
@@ -204,12 +210,13 @@ fn surviving(
     global: &[&'static str],
     future: &Future,
     prelude: &std::collections::HashSet<NodeId>,
+    unit_files: &crate::compiler::FSet<String>,
 ) -> Vec<Send> {
     defs.iter()
         .filter(|d| !prelude.contains(&d.node))
         .filter_map(|d| {
             let hook = d.event.hook(d.singleton);
-            fires(compiler, class, d, hook, global).then(|| Send {
+            fires(compiler, class, d, hook, global, unit_files).then(|| Send {
                 at: d.at,
                 hook,
                 name: d.name.clone(),
@@ -226,6 +233,7 @@ fn fires(
     def: &SiteDef,
     hook: &str,
     global: &[&'static str],
+    unit_files: &crate::compiler::FSet<String>,
 ) -> bool {
     if global.contains(&hook) {
         return true;
@@ -261,7 +269,12 @@ fn fires(
     match (installed, defined) {
         (Some(i), Some(d)) if i.file == d.file && hoisted(&i) != hoisted(&d) => hoisted(&i),
         (Some(i), Some(d)) if i.file == d.file => i.start <= d.start,
-        _ => true,
+        // A hook in a FEATURE UNIT is installed by a runtime `require`, so it
+        // never saw a definition in another file: the unit body may not have
+        // run yet, and zeo's own emission agrees -- a unit's reopen of a
+        // builtin forwards to the native row until then. Same file still
+        // compares by position, so a unit's own later defs still announce.
+        _ => !defined_in_a_unit(compiler, scope, unit_files),
     }
 }
 
@@ -290,7 +303,20 @@ fn splice(compiler: &mut Compiler, stmts: &mut Vec<NodeId>, class: ClassId, send
 /// definition applies to EVERY class, and cannot be found by the per-class
 /// scan: the reopen registers an ordinary instance method whose owner is the
 /// very class the no-op default lives on.
-fn global_hooks(compiler: &Compiler) -> Vec<&'static str> {
+///
+/// A definition in a FEATURE UNIT does not count. A unit body runs when its
+/// `require` runs, so a hook it installs never saw what the main program
+/// defined before that -- and zeo's own emission agrees, since a unit's reopen
+/// of a builtin is guarded and forwards to the native row until the unit runs.
+/// Counting one made every `def` in the program announce to a hook that was
+/// not there: rake's `--debugger` option carries a method-body
+/// `require "debug/session"`, whose `class ::Module; undef method_added; def
+/// method_added mid; end` is exactly this shape, and `require "rake"` died in
+/// `fileutils`'s module body with `undefined method 'method_added'`.
+fn global_hooks(
+    compiler: &Compiler,
+    unit_files: &crate::compiler::FSet<String>,
+) -> Vec<&'static str> {
     HOOKS
         .into_iter()
         .filter(|hook| {
@@ -299,11 +325,26 @@ fn global_hooks(compiler: &Compiler) -> Vec<&'static str> {
             } else {
                 &[crate::compiler::MODULE_CLASS, crate::compiler::CLASS_CLASS]
             };
-            owners
-                .iter()
-                .any(|&o| compiler.method_in_chain(o, hook).is_some())
+            owners.iter().any(|&o| {
+                compiler
+                    .method_in_chain(o, hook)
+                    .is_some_and(|(_, scope)| !defined_in_a_unit(compiler, scope, unit_files))
+            })
         })
         .collect()
+}
+
+/// Whether `scope`'s body was written in a file that compiles to a feature
+/// unit -- so it is installed by a runtime `require`, not at boot.
+fn defined_in_a_unit(
+    compiler: &Compiler,
+    scope: crate::compiler::ScopeId,
+    unit_files: &crate::compiler::FSet<String>,
+) -> bool {
+    compiler.scope(scope).def_node.is_some_and(|n| {
+        crate::analyze::source::source_location(compiler, n)
+            .is_some_and(|(file, _)| unit_files.contains(file))
+    })
 }
 
 /// Whether the hook body `hook` was already installed at position `at`.
