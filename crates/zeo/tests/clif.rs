@@ -464,17 +464,8 @@ fn bodies_named(source: &str, label: &str) -> usize {
 }
 
 /// A `def` inside `module Kernel` reaches every class in the program, and
-/// its body is emitted ONCE.
-///
-/// `tests/a_kernel_reopen_is_one_body_for_every_carrier.rb` asserts the
-/// BEHAVIOUR, and behaviour is identical whether the body is shared or
-/// copied -- which is why the copies came back unnoticed. This counts them.
-///
-/// What brought them back: `collect_classes` walked the builtins by
-/// ClassId, and ClassId says nothing about ancestry -- `Kernel` is 25 while
-/// `Integer` is 1 -- so every carrier below the owner asked an empty
-/// `shared_bodies` and took its own copy. On a program that only requires
-/// uri, `Kernel#URI` cost 22 of them.
+/// its body is emitted ONCE. Only a count can hold this: a copied body and
+/// a shared one behave identically, so the golden beside it cannot.
 #[test]
 fn a_kernel_reopen_emits_one_body_for_every_carrier() {
     let src = "module Kernel\n  def tagged(x) = \"#{x}\"\nend\n\
@@ -490,9 +481,8 @@ fn a_kernel_reopen_emits_one_body_for_every_carrier() {
     );
 }
 
-/// The same rule for an ordinary module, which is the general case the
-/// ancestors-first walk fixes -- `Kernel` is only its most expensive
-/// instance. A module included into several builtins is one body.
+/// The same rule for an ordinary module: included into several builtins,
+/// it is one body. `Kernel` is only this rule's most expensive instance.
 #[test]
 fn an_included_module_emits_one_body_for_every_carrier() {
     let src = "module Tag\n  def tagged(x) = \"#{x}\"\nend\n\

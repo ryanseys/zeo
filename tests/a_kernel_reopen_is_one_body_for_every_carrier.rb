@@ -7,12 +7,6 @@
 # took a private copy. `Kernel#URI` cost 85 of them on a program that only
 # requires uri.
 #
-# THIS FILE CANNOT SEE THE COUNT. A copied body and a shared one print the
-# same answer, which is how the copies came back after that fix (the walk
-# reached the carriers before their owner) and stayed unnoticed at 22.
-# `clif::a_kernel_reopen_emits_one_body_for_every_carrier` counts them; this
-# golden holds the behaviour that sharing must not change.
-#
 # The carriers here are deliberately of every kind: a user class, an
 # immediate, a builtin with a payload, and an exception.
 
