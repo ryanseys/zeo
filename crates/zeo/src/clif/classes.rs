@@ -248,13 +248,13 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
     // definition here is inherited by every class in the program. `ancestors`
     // starts with the class itself, so this is exactly those three.
     let universal_spine: Vec<ClassId> = compiler.class(crate::compiler::OBJECT_CLASS).ancestors.clone();
-    // A module definition's one emitted trampoline, keyed by the SCOPE that
-    // defined it -- never by name, which two modules can share. Filled as
-    // each module's own value-channel row is declared, and read by the
-    // includers below. A module declared AFTER its includer simply misses
-    // and the includer keeps its own copy, the same way the spine lookup
+    // A definition's one emitted trampoline, keyed by the SCOPE that
+    // defined it -- never by name, which two owners can share. Filled as
+    // each owner's own row is declared, and read by the carriers that
+    // inherit it. An owner declared AFTER its carrier simply misses and
+    // the carrier keeps its own copy, the same way the spine lookup
     // behaves.
-    let mut module_bodies: std::collections::HashMap<u32, cranelift_module::FuncId> =
+    let mut shared_bodies: std::collections::HashMap<u32, cranelift_module::FuncId> =
         std::collections::HashMap::new();
     // Builtin-source alias rows, every class including the toplevel (the
     // boxed-overlay target case is refused
@@ -822,7 +822,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 }
                 // This is the body an includer reuses when its own copy
                 // would be identical -- see the sharing note below.
-                module_bodies.insert(sid.0, tramp);
+                shared_bodies.insert(sid.0, tramp);
                 module_methods.push(ModMethodSpec {
                     box_id: class.box_id,
                     // A module's VALUE-channel row takes whatever receiver
@@ -939,12 +939,18 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             // frame label is the module's under both engines, and constant
             // lookup is lexical from the module, so neither depends on the
             // carrier.
+            // A SUPERCLASS is the same argument as a module. Its own body is
+            // emitted against its own slots, and the ivar-prefix property
+            // `analyze::mro` maintains means a subclass agrees about every
+            // slot the parent declared -- but a body that names no ivar
+            // settles it without needing that. What used to differ was the
+            // frame label, and that named the wrong class (see
+            // `an_inherited_frame_names_the_defining_class`); with it fixed
+            // the copies differ only in per-site cache offsets.
             let shared_tramp = if universal_spine.contains(&scope.defining_class) {
                 em.methods.get(&mname).map(|d| d.tramp)
-            } else if compiler.class(scope.defining_class).is_module
-                && !scope_names_an_ivar(compiler, entry.def)
-            {
-                module_bodies.get(&entry.def.0).copied()
+            } else if !scope_names_an_ivar(compiler, entry.def) {
+                shared_bodies.get(&entry.def.0).copied()
             } else {
                 None
             };
@@ -999,6 +1005,12 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     &params::value_fn_sig(em),
                 )
                 .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
+            // The class's OWN body is what its subclasses reuse instead of
+            // taking a copy. Only an own write registers: a materialized
+            // copy is the thing being removed, not a candidate to share.
+            if class.own_methods.contains(&entry.def) && accessor.is_none() {
+                shared_bodies.insert(entry.def.0, tramp);
+            }
             let body_fn = if accessor.is_none() {
                 let sig = params::body_sig(em, layout.n_slots, has_blk);
                 Some(
