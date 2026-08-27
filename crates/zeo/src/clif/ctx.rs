@@ -97,6 +97,9 @@ pub(crate) struct Fx<'e, 'f> {
     /// sequences then fall back to their capi calls (a mid-function fetch
     /// would not dominate its other users).
     pub frame_hot: Option<ir::Value>,
+    /// The gates word's global value, declared at most once per function.
+    /// See [`Fx::gates_base`].
+    pub gates_gv: Option<ir::GlobalValue>,
     pub prev_line: Option<u32>,
     /// The stamped statement's FILE, tracked beside `prev_line` for line
     /// coverage: a statement that begins a spliced file is what marks the
@@ -260,6 +263,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             loops: Vec::new(),
             branch_cond: None,
             frame_hot: None,
+            gates_gv: None,
             prev_line: None,
             prev_file: None,
             self_ptr: None,
@@ -484,6 +488,30 @@ impl<'e, 'f> Fx<'e, 'f> {
     pub fn end_stmt(&mut self, mark: usize) {
         let tail = self.temp_taken.split_off(mark);
         self.temp_free.extend(tail);
+    }
+
+    /// The gates word's address. Three sites test gate bits -- the frame
+    /// sequences and the two dispatch fast paths -- and each declared the
+    /// data in the function again, so one body carried three global values
+    /// for one symbol and materialized its address three times.
+    ///
+    /// Only the DECLARATION is shared. Each site still emits its own
+    /// `symbol_value` (so the value dominates its own use) and its own
+    /// load: the gates word is a live latch, and a body that reads it once
+    /// could pair an inline push with a traced pop.
+    pub fn gates_base(&mut self) -> ir::Value {
+        use cranelift_codegen::ir::InstBuilder;
+        use cranelift_module::Module;
+        let gv = match self.gates_gv {
+            Some(gv) => gv,
+            None => {
+                let gv = self.em.module.declare_data_in_func(self.em.gates_id, self.b.func);
+                self.gates_gv = Some(gv);
+                gv
+            }
+        };
+        let ptr = self.em.ptr;
+        self.b.ins().symbol_value(ptr, gv)
     }
 
     /// This scope's box as the `u32` every runtime entry takes.

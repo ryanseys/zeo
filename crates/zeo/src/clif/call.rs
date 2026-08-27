@@ -867,8 +867,7 @@ pub(crate) fn typed_direct_send(
     fx.b.ins().brif(is_obj, gates_chk, &[], slow, &[]);
 
     fx.b.switch_to_block(gates_chk);
-    let ggv = fx.em.module.declare_data_in_func(fx.em.gates_id, fx.b.func);
-    let gbase = fx.b.ins().symbol_value(fx.em.ptr, ggv);
+    let gbase = fx.gates_base();
     let gates = fx.b.ins().load(types::I16, fl, gbase, 0);
     fx.b.ins().brif(gates, slow, &[], class_chk, &[]);
 
@@ -996,8 +995,7 @@ pub(crate) fn indexed_send(
     fx.b.ins().brif(is_int, gates_chk, &[], slow, &[]);
 
     fx.b.switch_to_block(gates_chk);
-    let ggv = fx.em.module.declare_data_in_func(fx.em.gates_id, fx.b.func);
-    let gbase = fx.b.ins().symbol_value(fx.em.ptr, ggv);
+    let gbase = fx.gates_base();
     let gates = fx.b.ins().load(types::I16, fl, gbase, 0);
     fx.b.ins().brif(gates, gate_ask, &[], fast, &[]);
 

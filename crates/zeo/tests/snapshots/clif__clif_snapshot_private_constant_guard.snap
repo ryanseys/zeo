@@ -9,9 +9,6 @@ function u0:1(i64, i64) -> i32 ccall {
     gv1 = symbol colocated userextname1
     gv2 = symbol userextname4
     gv3 = symbol userextname7
-    gv4 = symbol userextname4
-    gv5 = symbol userextname4
-    gv6 = symbol userextname4
     sig0 = () -> i32 ccall
     sig1 = () -> i64 ccall
     sig2 = (i64, i64, i64, i64, i32, i32) -> i32 ccall
@@ -107,7 +104,7 @@ block13:
 
 block7:
     v32 = iconst.i32 2
-    v33 = symbol_value.i64 gv4
+    v33 = symbol_value.i64 gv2
     v34 = load.i16 notrap aligned v33
     v35 = iconst.i16 512
     v36 = band v34, v35  ; v35 = 512
@@ -141,7 +138,7 @@ block16:
     v48 = iconst.i32 2
     call fn6(v43, v45, v46, v41, v2, v47, v48)  ; v43 = 405, v46 = 1, v47 = 2, v48 = 2
     v49 = iconst.i32 3
-    v50 = symbol_value.i64 gv5
+    v50 = symbol_value.i64 gv2
     v51 = load.i16 notrap aligned v50
     v52 = iconst.i16 512
     v53 = band v51, v52  ; v52 = 512
@@ -182,7 +179,7 @@ block1:
     jump block22(v64)  ; v64 = 1
 
 block22(v62: i32):
-    v65 = symbol_value.i64 gv6
+    v65 = symbol_value.i64 gv2
     v66 = load.i16 notrap aligned v65
     v67 = iconst.i16 512
     v68 = band v66, v67  ; v67 = 512
@@ -242,13 +239,8 @@ function u0:0(i64) -> i32 ccall {
     gv1 = symbol colocated userextname1
     gv2 = symbol userextname3
     gv3 = symbol userextname6
-    gv4 = symbol userextname3
-    gv5 = symbol userextname3
-    gv6 = symbol userextname3
-    gv7 = symbol colocated userextname20
-    gv8 = symbol userextname3
-    gv9 = symbol colocated userextname20
-    gv10 = symbol userextname3
+    gv4 = symbol colocated userextname20
+    gv5 = symbol colocated userextname20
     sig0 = () -> i64 ccall
     sig1 = (i64, i64, i64, i64, i32, i32) -> i32 ccall
     sig2 = (i64, i64, i64, i64, i32, i32) ccall
@@ -413,7 +405,7 @@ block12:
     v54 = iconst.i64 24
     v55 = udiv v53, v54  ; v54 = 24
     v56 = iconst.i32 1
-    v57 = symbol_value.i64 gv4
+    v57 = symbol_value.i64 gv2
     v58 = load.i16 notrap aligned v57
     v59 = iconst.i16 512
     v60 = band v58, v59  ; v59 = 512
@@ -485,7 +477,7 @@ block21:
     v89 = iconst.i64 24
     v90 = udiv v88, v89  ; v89 = 24
     v91 = iconst.i32 5
-    v92 = symbol_value.i64 gv5
+    v92 = symbol_value.i64 gv2
     v93 = load.i16 notrap aligned v92
     v94 = iconst.i16 512
     v95 = band v93, v94  ; v94 = 512
@@ -515,7 +507,7 @@ block28:
     v102 = iconst.i64 24
     v103 = udiv v101, v102  ; v102 = 24
     v104 = iconst.i32 6
-    v105 = symbol_value.i64 gv6
+    v105 = symbol_value.i64 gv2
     v106 = load.i16 notrap aligned v105
     v107 = iconst.i16 512
     v108 = band v106, v107  ; v107 = 512
@@ -604,7 +596,7 @@ block39:
     v152 = iconst.i64 1
     v153 = iconst.i64 0
     v154 = stack_addr.i64 ss5
-    v155 = symbol_value.i64 gv7
+    v155 = symbol_value.i64 gv4
     v156 = call fn16(v155, v151, v28, v150, v149, v152, v153, v154)  ; v151 = 0, v152 = 1, v153 = 0
     brif v156, block27, block40
 
@@ -710,7 +702,7 @@ block57:
     v196 = iconst.i64 24
     v197 = udiv v195, v196  ; v196 = 24
     v198 = iconst.i32 8
-    v199 = symbol_value.i64 gv8
+    v199 = symbol_value.i64 gv2
     v200 = load.i16 notrap aligned v199
     v201 = iconst.i16 512
     v202 = band v200, v201  ; v201 = 512
@@ -738,7 +730,7 @@ block61:
     v210 = iconst.i64 0
     v211 = iconst.i64 0
     v212 = stack_addr.i64 ss9
-    v213 = symbol_value.i64 gv9
+    v213 = symbol_value.i64 gv5
     v214 = iconst.i64 56
     v215 = iadd v213, v214  ; v214 = 56
     v216 = call fn16(v215, v209, v206, v208, v207, v210, v211, v212)  ; v209 = 0, v207 = 0, v210 = 0, v211 = 0
@@ -837,7 +829,7 @@ block72:
     jump block73
 
 block73:
-    v251 = symbol_value.i64 gv10
+    v251 = symbol_value.i64 gv2
     v252 = load.i16 notrap aligned v251
     v253 = iconst.i16 512
     v254 = band v252, v253  ; v253 = 512

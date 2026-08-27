@@ -22,7 +22,6 @@
 use super::ctx::Fx;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};
-use cranelift_module::Module;
 use zeo_abi::abi as a;
 
 /// The thread's `FrameHot` header address, fetched at most once per
@@ -59,8 +58,7 @@ fn outlined() -> bool {
 
 /// `gates & GATE_FRAMES_INDIRECT`, as a branchable value.
 fn indirect_bit(fx: &mut Fx) -> ir::Value {
-    let gv = fx.em.module.declare_data_in_func(fx.em.gates_id, fx.b.func);
-    let base = fx.b.ins().symbol_value(fx.em.ptr, gv);
+    let base = fx.gates_base();
     let g =
         fx.b.ins()
             .load(types::I16, MemFlagsData::trusted(), base, 0);
