@@ -26,6 +26,20 @@ pub(crate) enum DebugFlag {
     /// green BEFORE the first fold lands; a wrong static type is a
     /// miscompile, and this flag is what the on-vs-off diff toggles.
     NoTypedCalls,
+    /// `no-package-sweep`: refuse the package-wide unit demand a computed
+    /// `require` falls back on. Speculative compilation is the largest
+    /// single input to a binary's size -- one `require ENV["X"]` compiles
+    /// its whole package -- and this is the only way to price it: compile
+    /// once with and once without, and diff `--dump=units`. The program it
+    /// produces may raise `LoadError` where the swept one would not, so it
+    /// measures rather than ships.
+    NoPackageSweep,
+    /// `outline-frames`: emit the CALL form of every frame push, pop and
+    /// pool mark instead of the inline one. The inline protocol is the
+    /// largest per-method cost in an emitted body -- a `def m; 1; end`
+    /// whose work is two instructions -- and this prices it: compile once
+    /// with and once without, and diff the binary and the bench.
+    OutlineFrames,
 }
 
 const NAMES: &[(&str, DebugFlag)] = &[
@@ -36,6 +50,8 @@ const NAMES: &[(&str, DebugFlag)] = &[
     ),
     ("verify-class-index", DebugFlag::VerifyClassIndex),
     ("no-typed-calls", DebugFlag::NoTypedCalls),
+    ("no-package-sweep", DebugFlag::NoPackageSweep),
+    ("outline-frames", DebugFlag::OutlineFrames),
 ];
 
 /// Whether `flag` was named in `ZEO_DEBUG`.

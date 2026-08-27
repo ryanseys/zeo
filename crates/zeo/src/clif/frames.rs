@@ -34,6 +34,9 @@ pub(crate) fn fetch_frame_hot(fx: &mut Fx) -> ir::Value {
     if let Some(v) = fx.frame_hot {
         return v;
     }
+    if outlined() {
+        return fx.call_status("zeo_rt_frame_hot", &[]);
+    }
     let v = fx.call_status("zeo_rt_frame_hot", &[]);
     fx.frame_hot = Some(v);
     v
@@ -42,6 +45,16 @@ pub(crate) fn fetch_frame_hot(fx: &mut Fx) -> ir::Value {
 /// The already-fetched header, if the prologue fetched one.
 fn hot_of(fx: &Fx) -> Option<ir::Value> {
     fx.frame_hot
+}
+
+/// `outline-frames`: emit the capi call form of every frame sequence
+/// instead of the inline one, so the inline protocol can be PRICED.
+///
+/// Refusing to cache the header in the prologue is most of the switch --
+/// every other site asks through [`hot_of`] and already falls back to its
+/// call without one -- so only the prologue needs a second test.
+fn outlined() -> bool {
+    crate::debug_flags::debug(crate::debug_flags::DebugFlag::OutlineFrames)
 }
 
 /// `gates & GATE_FRAMES_INDIRECT`, as a branchable value.
@@ -109,6 +122,11 @@ fn push_stores(fx: &mut Fx, hot: ir::Value, args: &[ir::Value; 6]) {
 /// inline and takes the inline checkpoint. Also fetches the header for
 /// the function's later pops and line stamps.
 pub(crate) fn emit_frame_enter(fx: &mut Fx, args: &[ir::Value; 6]) {
+    if outlined() {
+        let status = fx.call_status("zeo_rt_frame_enter", args);
+        fx.fallible(status);
+        return;
+    }
     let hot = fetch_frame_hot(fx);
     let ind = indirect_bit(fx);
     let slow = fx.b.create_block();

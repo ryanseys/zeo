@@ -994,6 +994,9 @@ impl Hir {
         let package = self.lowering_package.clone();
         let dir = self.lowering_dir.clone().unwrap_or_default();
         tracing::debug!(?package, ?dir, file = ?self.lowering_file, "demand_feature_units");
+        if crate::debug_flags::debug(crate::debug_flags::DebugFlag::NoPackageSweep) {
+            return;
+        }
         self.loader.unit_demand.insert((package, dir));
     }
 
