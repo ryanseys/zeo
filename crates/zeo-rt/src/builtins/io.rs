@@ -139,9 +139,12 @@ pub struct RIo {
     /// descriptor positioned exactly where Ruby thinks it is.
     rbuf: parking_lot::Mutex<ReadBuf>,
     /// A socket reports `TCPSocket`/`TCPServer` (not `IO`) for `#class`, while
-    /// still using a `Pipe`-shaped fd for read/write. `None` for ordinary
-    /// files, pipes, and std streams (their class comes from the backend).
-    class_override: Option<ClassId>,
+    /// still using a `Pipe`-shaped fd for read/write, and a handle built by a
+    /// SUBCLASS receiver (`Class.new(File).open`) reports that subclass. `0`
+    /// for ordinary files, pipes, and std streams, whose class comes from the
+    /// backend. Atomic because the receiver's class is known one step after
+    /// the handle is built, once it is already behind an `Arc`.
+    class_override: std::sync::atomic::AtomicU32,
     /// The child this IO is connected to, for an `IO.popen` handle (0 = none).
     /// `#pid` answers it, and `#close` reaps the child and sets `$?`.
     child_pid: std::sync::atomic::AtomicI64,
@@ -212,8 +215,9 @@ impl RubyObject for RIo {
     // A File instance carries FILE_CLASS so its own MRO (`File < IO`) finds
     // File's rows before IO's; the std streams are plain IOs.
     fn class_id(&self) -> ClassId {
-        if let Some(c) = self.class_override {
-            return c;
+        match self.class_override.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => {}
+            c => return ClassId(c),
         }
         match &*self.backend.lock() {
             IoBackend::File(_) => zeo_abi::FILE_CLASS,
@@ -325,7 +329,7 @@ impl RIo {
             frozen: std::sync::atomic::AtomicBool::new(false),
             unget: parking_lot::Mutex::new(Vec::new()),
             rbuf: parking_lot::Mutex::new(ReadBuf::default()),
-            class_override: None,
+            class_override: std::sync::atomic::AtomicU32::new(0),
             child_pid: std::sync::atomic::AtomicI64::new(0),
             encodings: parking_lot::Mutex::new((None, None)),
             timeout: parking_lot::Mutex::new(RubyValue::Nil),
@@ -367,7 +371,8 @@ fn reset_handle_state(io: &RIo) {
 /// Shared by `TCPSocket.new` and `TCPServer#accept` (see `builtins::socket`).
 pub(crate) fn socket_value(f: std::fs::File, class_id: ClassId) -> RubyValue {
     let mut io = RIo::new(IoBackend::Pipe(Some(f)), None);
-    io.class_override = Some(class_id);
+    io.class_override
+        .store(class_id.0, std::sync::atomic::Ordering::Relaxed);
     // A socket is unbuffered in CRuby, so it reports `sync` true.
     io.sync = std::sync::atomic::AtomicBool::new(true);
     RubyValue::Object(Arc::new(io))
@@ -423,6 +428,209 @@ pub(crate) fn file_value_mode(
 /// Wrap one end of an `IO.pipe` (from an owned fd) as a Ruby `IO` value.
 pub(crate) fn pipe_value(f: std::fs::File) -> RubyValue {
     RubyValue::Object(Arc::new(RIo::new(IoBackend::Pipe(Some(f)), None)))
+}
+
+/// Everything `IO.new`'s MODE argument and options Hash say about the handle
+/// it is about to wrap.
+///
+/// Read BEFORE the descriptor is adopted, so an access mode that names nothing
+/// or an encoding name that does not exist raises without leaving an fd owned
+/// by a half-built handle.
+struct OpenOpts {
+    /// A `b` in the mode, or `binmode: true`.
+    binary: bool,
+    /// Whether anything NAMED an encoding -- what decides whether `b` gets to
+    /// claim the external slot for ASCII-8BIT.
+    named_enc: bool,
+    ext: crate::encoding::EncodingId,
+    int: Option<crate::encoding::EncodingId>,
+    /// `path:`, which names the handle for `#path` without opening one.
+    path: Option<String>,
+    autoclose: bool,
+    /// The `(read, write)` access the mode asks for, when one was named at
+    /// all. `None` means "whatever the descriptor already is", which is what
+    /// makes a bare `IO.new(fd)` legal on any open fd.
+    access: Option<(bool, bool)>,
+}
+
+/// Read [`OpenOpts`] out of `IO.new`'s two optional arguments. The options are
+/// the LAST Hash of the two, since `IO.new(fd, **opts)` puts them where the
+/// mode would otherwise sit.
+fn open_opts(mode: Option<&RubyValue>, opts: Option<&RubyValue>) -> Result<OpenOpts, Signal> {
+    use crate::builtins::file;
+    // `**opts` has already peeled the keyword Hash, so the mode slot holds
+    // only a real mode.
+    let trailing = opts;
+    // An Integer mode is an `O_*` bitmask and names no encoding; anything else
+    // must convert to a String, which is where `IO.new(fd, Object.new)` gets
+    // its TypeError -- and a BRACED Hash too, since the keyword peel above has
+    // already taken any Hash the caller actually meant as options.
+    let mode_str = match mode {
+        Some(RubyValue::Str(s)) => Some(s.lock().to_utf8_lossy().into_owned()),
+        Some(RubyValue::Int(_)) => None,
+        None | Some(RubyValue::Nil) => file::kwarg_str(trailing, "mode"),
+        Some(v) => match crate::builtins::convert::to_str(v)? {
+            RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
+            _ => None,
+        },
+    };
+    // Nothing is opened here, but the access mode is still checked: CRuby
+    // refuses `IO.new(fd, "zz")` at the call rather than on the first read.
+    if let Some(m) = mode_str.as_deref() {
+        file::open_options(m)?;
+    }
+    let mode_enc = mode_str.as_deref().and_then(|m| file::split_mode(m).1);
+    let (ext, int) = file::read_encodings_with(trailing, mode_enc)?;
+    Ok(OpenOpts {
+        binary: mode_str
+            .as_deref()
+            .is_some_and(|m| file::split_mode(m).0.contains('b'))
+            || file::kwarg(trailing, "binmode").is_some_and(|v| v.truthy()),
+        named_enc: mode_enc.is_some()
+            || ["encoding", "external_encoding", "internal_encoding"]
+                .iter()
+                .any(|k| file::kwarg(trailing, k).is_some()),
+        ext,
+        int,
+        path: file::kwarg_str(trailing, "path"),
+        autoclose: file::kwarg(trailing, "autoclose").is_none_or(|v| v.truthy()),
+        access: match mode {
+            Some(RubyValue::Int(flags)) => Some(match *flags & libc::O_ACCMODE as i64 {
+                x if x == libc::O_WRONLY as i64 => (false, true),
+                x if x == libc::O_RDWR as i64 => (true, true),
+                _ => (true, false),
+            }),
+            _ => mode_str.as_deref().map(|m| {
+                let base = file::split_mode(m).0;
+                let plus = base.contains('+');
+                match base.chars().next() {
+                    Some('w') | Some('a') => (plus, true),
+                    _ => (true, plus),
+                }
+            }),
+        },
+    })
+}
+
+/// CRuby refuses a mode the descriptor cannot serve (`IO.new(read_only_fd,
+/// "w")` is `Errno::EINVAL`, not a write that fails later): the read/write
+/// bits the mode asks for must be a subset of the ones `open(2)` gave the fd.
+/// A handle given no mode of its own inherits the descriptor's, so it is
+/// always legal.
+fn check_fd_access(fd: i64, o: &OpenOpts) -> Result<(), Signal> {
+    let Some((want_r, want_w)) = o.access else {
+        return Ok(());
+    };
+    let flags = unsafe { libc::fcntl(fd as libc::c_int, libc::F_GETFL) };
+    if flags < 0 {
+        return Ok(());
+    }
+    let acc = flags & libc::O_ACCMODE;
+    let has_r = acc == libc::O_RDONLY || acc == libc::O_RDWR;
+    let has_w = acc == libc::O_WRONLY || acc == libc::O_RDWR;
+    match (want_r && !has_r) || (want_w && !has_w) {
+        true => Err(crate::dispatch::raise_error(
+            "Errno::EINVAL",
+            "Invalid argument".to_string(),
+        )),
+        false => Ok(()),
+    }
+}
+
+/// `klass.new`'s body for the whole open family: the RECEIVER decides what the
+/// first argument means, because CRuby reaches `rb_file_initialize` for a File
+/// and `rb_io_initialize` for an IO. Their parameter lists differ, so the arity
+/// range does too -- one method reporting `1..3` to File and `1..2` to IO.
+fn new_handle(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    opts: Option<&RubyValue>,
+) -> Result<RubyValue, Signal> {
+    // `ancestors_of_value`, not the frozen chain: a class born at run time
+    // (`Class.new(File)`) has no compile-time entry at all, and asking the
+    // frozen registry answers "not a File" for one.
+    let file_side = matches!(recv, RubyValue::Class(c)
+        if crate::dispatch::ancestors_of_value(*c).contains(&zeo_abi::FILE_CLASS));
+    let max = match file_side {
+        true => 3,
+        false => 2,
+    };
+    crate::builtins::check_arity(args.len(), 1, Some(max))?;
+    let io = match file_side {
+        true => crate::builtins::file::open_path(&args[0], args.get(1), args.get(2), opts)?,
+        false => io_from_fd(&args[0], args.get(1), opts)?,
+    };
+    tag_receiver_class(&io, recv);
+    Ok(io)
+}
+
+/// Give a freshly built handle the RECEIVER's class, so `Class.new(File).open`
+/// answers an instance of itself and `File.for_fd` answers a File over a
+/// descriptor the backend would otherwise call a plain IO. A receiver that
+/// already matches what the backend implies is left alone.
+fn tag_receiver_class(io: &RubyValue, recv: &RubyValue) {
+    let RubyValue::Class(cid) = recv else { return };
+    if let RubyValue::Object(o) = io
+        && let Some(h) = o.as_any().downcast_ref::<RIo>()
+        && h.class_id() != *cid
+    {
+        h.class_override
+            .store(cid.0, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// `IO.new`'s half of the shared open row -- CRuby's `rb_io_initialize`, which
+/// an IO receiver reaches where a File receiver reaches `rb_file_initialize`.
+///
+/// The descriptor is ADOPTED (closing the handle closes it) unless
+/// `autoclose: false` says otherwise.
+fn io_from_fd(
+    fd: &RubyValue,
+    mode: Option<&RubyValue>,
+    opts: Option<&RubyValue>,
+) -> Result<RubyValue, Signal> {
+    use std::os::fd::FromRawFd;
+    let fd = crate::builtins::convert::to_index(fd)?;
+    // An fd that names no open descriptor is CRuby's `Errno::EBADF`, raised
+    // here rather than left to fail on the first read.
+    if unsafe { libc::fcntl(fd as libc::c_int, libc::F_GETFD) } < 0 {
+        return Err(crate::dispatch::raise_error(
+            "Errno::EBADF",
+            "Bad file descriptor".to_string(),
+        ));
+    }
+    // Both arguments are read BEFORE the fd is adopted: a bad access mode or a
+    // bad encoding name must raise without a handle owning the descriptor.
+    let o = open_opts(mode, opts)?;
+    check_fd_access(fd, &o)?;
+    // SAFETY: the fd was just confirmed open, and the caller vouches it is
+    // theirs to adopt.
+    let f = unsafe { std::fs::File::from_raw_fd(fd as libc::c_int) };
+    let io = RubyValue::Object(Arc::new(RIo::new(IoBackend::Pipe(Some(f)), o.path.clone())));
+    apply_open_opts(&io, &o)?;
+    Ok(io)
+}
+
+/// Put [`OpenOpts`] onto a handle that has just adopted its descriptor.
+fn apply_open_opts(io: &RubyValue, o: &OpenOpts) -> Result<(), Signal> {
+    if o.binary {
+        crate::dispatch::send_value(io, crate::Symbol::intern("binmode"), &[], None)?;
+    }
+    // `b` claims the external slot only when nothing NAMED an encoding: CRuby
+    // answers UTF-8 for `"rb:UTF-8"` and still reports `#binmode?`.
+    let binary_only = o.binary && !o.named_enc;
+    if binary_only || o.named_enc || o.ext != crate::encoding::default_external() || o.int.is_some()
+    {
+        let ext = match binary_only {
+            true => crate::encoding::ASCII_8BIT,
+            false => o.ext,
+        };
+        set_handle_encodings(io, Some(ext), o.int);
+    }
+    if !o.autoclose {
+        set_autoclose(io, &RubyValue::Bool(false));
+    }
+    Ok(())
 }
 
 /// Mark a freshly created raw descriptor close-on-exec, as CRuby marks every
@@ -2757,7 +2965,7 @@ ruby_class! {
                     RubyValue::Str(crate::collections::string_new(m))
                 });
                 let mode = mode.or(inherited.as_ref());
-                let f = crate::builtins::file::open_options_for(mode, None)?
+                let f = crate::builtins::file::open_options_for(mode, None, None)?
                     .open(&path)
                     .map_err(|e| crate::builtins::file::raise_errno(&e, "reopen", &path))?;
                 io.dup2_from(f.as_raw_fd(), Some(path))?;
@@ -2975,7 +3183,7 @@ ruby_class! {
     def self."sysopen" cfunc (_recv, path, mode?, perm?, &_blk) {
         use std::os::fd::IntoRawFd;
         let path = crate::builtins::file::path_arg(path, "sysopen")?;
-        let opts = crate::builtins::file::open_options_for(mode, perm)?;
+        let opts = crate::builtins::file::open_options_for(mode, perm, None)?;
         // Gvl-released for the reason `File.open` releases it: open(2) blocks
         // on a FIFO with no peer.
         let f = crate::gvl::without_gvl(|| opts.open(&path))
@@ -3055,35 +3263,58 @@ ruby_class! {
         ))
     }
 
-    // `IO.new(fd)` / `IO.open(fd)` -- wrap an existing descriptor. `IO.for_fd` is
-    // the same. The fd is adopted (closing the IO closes it) unless
-    // `autoclose: false` says otherwise.
-    def self."new" | "open" | "for_fd" cfunc (_recv, fd, mode?, &block) {
-        use std::os::fd::FromRawFd;
-        let fd = convert::to_index(fd)?;
-        // An fd that names no open descriptor is CRuby's `Errno::EBADF`, raised
-        // here rather than left to fail on the first read.
-        if unsafe { libc::fcntl(fd as libc::c_int, libc::F_GETFD) } < 0 {
-            return Err(crate::dispatch::raise_error(
-                "Errno::EBADF",
-                "Bad file descriptor".to_string(),
+    // `IO.new` -- and, through the singleton class File inherits, `File.new`.
+    //
+    // CRuby defines this trio on IO ALONE (`io.c`'s `Init_IO`; the
+    // `rb_define_singleton_method(rb_cFile, "open", ...)` beside it sits inside
+    // an `#if 0` that exists only to make RDoc document `File::open`). The
+    // RECEIVER then decides what the first argument means, because
+    // `rb_io_s_new` calls `klass.new`, which reaches `rb_file_initialize` for a
+    // File and `rb_io_initialize` for an IO. That one indirection is why
+    // `File.method(:new).owner` answers `#<Class:IO>`, why the same method
+    // reports `1..3` to File and `1..2` to IO, and why `Class.new(File).new`
+    // answers an instance of the subclass.
+    //
+    // A block here is a mistake -- `new` never yields -- so CRuby warns and
+    // hands back the handle anyway.
+    def self."new" cfunc allocs (recv, *args, **opts!, &block) {
+        if block.is_some() {
+            // The RECEIVER's own name, not its class's -- CRuby's
+            // `rb_obj_as_string(klass)`.
+            let name = recv.to_display_string();
+            crate::builtins::warning::rb_warn(&format!(
+                "{name}::new() does not take block; use {name}::open() instead"
             ));
         }
-        // SAFETY: the fd was just confirmed open, and the caller vouches it is
-        // theirs to adopt.
-        let io = pipe_value(unsafe { std::fs::File::from_raw_fd(fd as libc::c_int) });
-        if let Some(RubyValue::Hash(opts)) = mode {
-            let key = RubyValue::Symbol(crate::Symbol::intern("autoclose"));
-            if !crate::collections::hash_get(opts, &key).truthy() {
-                set_autoclose(&io, &RubyValue::Bool(false));
-            }
-        }
+        new_handle(recv, args, opts)
+    }
+
+    // `IO.open` / `File.open` -- `new`, plus the block form: the handle is
+    // yielded and CLOSED afterwards no matter how the block leaves (return,
+    // raise, break), answering the block's value. Without a block the caller
+    // gets the open handle to close.
+    def self."open" cfunc allocs (recv, *args, **opts!, &block) {
+        let io = new_handle(recv, args, opts)?;
         let Some(RubyValue::Proc(p)) = block else {
             return Ok(io);
         };
+        // The close must happen on EVERY exit path, which is what makes this
+        // the idiom it is -- run the block, stash its outcome, close, and only
+        // then propagate.
         let out = p.call(std::slice::from_ref(&io));
-        let _ = close_io(&io);
+        let _ = crate::dispatch::send_value(&io, crate::Symbol::intern("close"), &[], None);
         out
+    }
+
+    // `IO.for_fd` is `IO.new`'s DESCRIPTOR form on any receiver: CRuby's
+    // `rb_io_s_for_fd` allocates the receiver and then calls `rb_io_initialize`
+    // by name rather than dispatching, so `File.for_fd(fd)` reads a descriptor
+    // where `File.new(fd)` would still be asking File what its argument means.
+    def self."for_fd" cfunc allocs (recv, *args, **opts!, &_block) {
+        crate::builtins::check_arity(args.len(), 1, Some(2))?;
+        let io = io_from_fd(&args[0], args.get(1), opts)?;
+        tag_receiver_class(&io, recv);
+        Ok(io)
     }
 
     // Re-init rebinds this handle to `fd` (+ an optional mode string and
@@ -3092,7 +3323,7 @@ ruby_class! {
     // starts over. The previous descriptor is RELEASED, not closed -- re-init
     // closes nothing -- and the File-vs-pipe shape is kept so `#class` stays
     // what it was.
-    private def "initialize" cfunc (recv, fd, _mode?, _opts?, &_block) {
+    private def "initialize" cfunc (recv, fd, mode?, **opts!, &_block) {
         use std::os::fd::FromRawFd;
         let Some(io) = as_rio(recv) else {
             return Err(crate::builtins::type_error!("not an IO"));
@@ -3104,6 +3335,10 @@ ruby_class! {
                 "Bad file descriptor".to_string(),
             ));
         }
+        // Same two arguments `IO.new` takes, read before the swap for the same
+        // reason -- a refusal must leave the handle on its old descriptor.
+        let o = open_opts(mode, opts)?;
+        check_fd_access(fd, &o)?;
         // SAFETY: the fd was just confirmed open, and re-init adopts it.
         let f = unsafe { std::fs::File::from_raw_fd(fd as libc::c_int) };
         {
@@ -3117,15 +3352,10 @@ ruby_class! {
             };
         }
         reset_handle_state(io);
-        // The opts Hash rides in the LAST slot, whichever of the two optional
-        // positions it landed in.
-        if let Some(RubyValue::Hash(opts)) = __args.last() {
-            let key = RubyValue::Symbol(crate::Symbol::intern("autoclose"));
-            let v = crate::collections::hash_get(opts, &key);
-            if !v.is_nil() && !v.truthy() {
-                set_autoclose(recv, &RubyValue::Bool(false));
-            }
+        if let Some(p) = &o.path {
+            *io.path.lock() = Some(p.clone());
         }
+        apply_open_opts(recv, &o)?;
         Ok(recv.clone())
     }
 

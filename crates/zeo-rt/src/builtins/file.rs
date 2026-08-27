@@ -171,7 +171,7 @@ fn read_encodings(
 /// raises. Both asymmetries are CRuby's; neither is derivable from the other
 /// side.
 #[allow(clippy::type_complexity)]
-fn read_encodings_with(
+pub(crate) fn read_encodings_with(
     trailing: Option<&RubyValue>,
     mode_enc: Option<&str>,
 ) -> Result<
@@ -195,19 +195,7 @@ fn read_encodings_with(
         if named_in_hash {
             return Err(arg_error!("encoding specified twice"));
         }
-        let (e, i) = mode_encoding_names(spec);
-        match crate::encoding::find(e) {
-            Some(id) => ext = id,
-            None => crate::builtins::warning::rb_warn(&format!("Unsupported encoding {e} ignored")),
-        }
-        if let Some(i) = i {
-            match crate::encoding::find(i) {
-                Some(id) => int = Some(id),
-                None => crate::builtins::warning::rb_warn(&format!(
-                    "Unsupported encoding {i} ignored"
-                )),
-            }
-        }
+        apply_encoding_spec(spec, &mut ext, &mut int);
         return Ok((ext, int));
     }
     let Some(RubyValue::Hash(h)) = trailing else {
@@ -216,24 +204,19 @@ fn read_encodings_with(
     let get = |name: &str| {
         crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern(name)))
     };
-    let resolve = |name: &str| {
-        crate::encoding::find(name).ok_or_else(|| arg_error!("unknown encoding name - {name}"))
-    };
     if let RubyValue::Str(m) = get("mode")
         && split_mode(&m.lock().to_utf8_lossy()).0.contains('b')
     {
         ext = crate::encoding::ASCII_8BIT;
     }
     match get("encoding") {
+        // A STRING `encoding:` is a spec, read by the same parser a mode
+        // tail is -- so an unknown name warns and falls back. Anything else is
+        // an Encoding argument, and an unknown one raises. CRuby's own split:
+        // `rb_check_string_type` picks `parse_mode_enc`, else `rb_to_encoding`.
         RubyValue::Str(s) => {
-            let name = s.lock().to_utf8_lossy().into_owned();
-            match name.split_once(':') {
-                Some((e, i)) => {
-                    ext = resolve(e)?;
-                    int = Some(resolve(i)?);
-                }
-                None => ext = resolve(&name)?,
-            }
+            let spec = s.lock().to_utf8_lossy().into_owned();
+            apply_encoding_spec(&spec, &mut ext, &mut int);
         }
         v if !v.is_nil() => ext = crate::builtins::encoding::arg_encoding(&v)?,
         _ => {}
@@ -244,9 +227,42 @@ fn read_encodings_with(
     }
     let internal = get("internal_encoding");
     if !internal.is_nil() {
-        int = Some(crate::builtins::encoding::arg_encoding(&internal)?);
+        // `-` asks for NO transcoding rather than naming an encoding, and the
+        // test comes before any lookup: `Encoding.find("-")` raises.
+        int = match &internal {
+            RubyValue::Str(s) if s.lock().to_utf8_lossy() == "-" => None,
+            v => Some(crate::builtins::encoding::arg_encoding(v)?),
+        };
     }
     Ok((ext, int))
+}
+
+/// Apply an encoding SPEC -- `"ext"`, `"ext:int"`, `"BOM|ext"` -- the way
+/// CRuby's `parse_mode_enc` does.
+///
+/// Two rules live only on this path. A name it does not know WARNS and leaves
+/// the slot at its default, where `external_encoding:` raises instead. And an
+/// internal encoding spelled `-` asks for NO transcoding: there is no encoding
+/// by that name, so looking it up would warn about a spelling that is correct.
+fn apply_encoding_spec(
+    spec: &str,
+    ext: &mut crate::encoding::EncodingId,
+    int: &mut Option<crate::encoding::EncodingId>,
+) {
+    let (e, i) = mode_encoding_names(spec);
+    match crate::encoding::find(e) {
+        Some(id) => *ext = id,
+        None => crate::builtins::warning::rb_warn(&format!("Unsupported encoding {e} ignored")),
+    }
+    match i {
+        None | Some("-") => {}
+        Some(i) => match crate::encoding::find(i) {
+            Some(id) => *int = Some(id),
+            None => {
+                crate::builtins::warning::rb_warn(&format!("Unsupported encoding {i} ignored"))
+            }
+        },
+    }
 }
 
 /// Builds a read string: bytes tagged with `external`, transcoded to
@@ -273,7 +289,7 @@ fn build_read_string(
 /// An option keyword's raw value from a trailing Hash, `None` when absent --
 /// the distinction `kwarg_truthy` collapses, and which a keyword defaulting to
 /// true (`autoclose:`) needs.
-fn kwarg(trailing: Option<&RubyValue>, name: &str) -> Option<RubyValue> {
+pub(crate) fn kwarg(trailing: Option<&RubyValue>, name: &str) -> Option<RubyValue> {
     let RubyValue::Hash(h) = trailing? else {
         return None;
     };
@@ -318,7 +334,7 @@ fn file_from_fd(fd: i64, opts: Option<&RubyValue>) -> Result<RubyValue, Signal> 
 
 /// The String value of an option keyword in a trailing Hash (`mode: "w"`),
 /// or `None` when absent / not a String.
-fn kwarg_str(trailing: Option<&RubyValue>, name: &str) -> Option<String> {
+pub(crate) fn kwarg_str(trailing: Option<&RubyValue>, name: &str) -> Option<String> {
     let RubyValue::Hash(h) = trailing? else {
         return None;
     };
@@ -800,23 +816,6 @@ fn mode_has(path: &str, mask: libc::mode_t) -> bool {
     meta(path).is_some_and(|m| (m.mode() & mask as u32) == mask as u32)
 }
 
-/// Coerce a `File.utime` time argument (an Integer/Float of epoch seconds, or a
-/// Time) to whole epoch seconds.
-/// Whether an open MODE argument asks for binary mode -- a `b` in the mode
-/// string, positional or under the `mode:` key. An Integer `O_*` bitmask has
-/// no binary bit on Unix, and neither has an absent mode.
-fn mode_has_binary(mode: Option<&RubyValue>) -> bool {
-    let spec = match mode {
-        Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
-        Some(v @ RubyValue::Hash(_)) => match kwarg_str(Some(v), "mode") {
-            Some(s) => s,
-            None => return false,
-        },
-        _ => return false,
-    };
-    split_mode(&spec).0.contains('b')
-}
-
 /// The `(external, internal)` names a mode string's `:extenc[:intenc]` tail
 /// carries, with the `bom|` request stripped off the external name.
 ///
@@ -979,7 +978,7 @@ pub(crate) fn split_mode(mode: &str) -> (&str, Option<&str>) {
 
 /// A `File.open` mode string (`"r"`, `"w"`, `"a"`, `"r+"`, ... with an
 /// optional `b`/`t` suffix, and an optional `:extenc[:intenc]` tail).
-fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
+pub(crate) fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
     let base: String = split_mode(mode)
         .0
         .chars()
@@ -1004,22 +1003,24 @@ fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
 
 /// The open flags a `File.open`/`IO.sysopen` MODE argument names, in each of
 /// the four shapes ruby takes it in -- a mode string, an `O_*` bitmask, a
-/// `mode:` keyword in a trailing Hash, or absent (`"r"`) -- plus the PERM bits
-/// a newly created file is given.
+/// `mode:` keyword in `opts`, or absent (`"r"`) -- plus the PERM bits a newly
+/// created file is given.
 ///
 /// Shared so the two entry points cannot drift: `IO.sysopen` used to open
-/// read-only whatever it was asked for, and both dropped `perm`, so
+/// read-only whatever it was opened for, and both dropped `perm`, so
 /// `File.open(path, "w", 0o600)` left a 0644 file behind.
+///
+/// A Hash in the POSITIONAL `mode` slot is not options -- keywords have
+/// already been peeled -- so it converts to a String and raises, which is
+/// where `File.open(path, {mode: "w"})`'s TypeError comes from.
 pub(crate) fn open_options_for(
     mode: Option<&RubyValue>,
     perm: Option<&RubyValue>,
+    opts: Option<&RubyValue>,
 ) -> Result<std::fs::OpenOptions, Signal> {
     let mut o = match mode {
-        None | Some(RubyValue::Nil) => open_options("r")?,
+        None | Some(RubyValue::Nil) => open_options(kwarg_str(opts, "mode").as_deref().unwrap_or("r"))?,
         Some(RubyValue::Int(flags)) => open_options_int(*flags),
-        Some(RubyValue::Hash(_)) => {
-            open_options(kwarg_str(mode, "mode").as_deref().unwrap_or("r"))?
-        }
         Some(v) => open_options(&path_arg(v, "open")?)?,
     };
     // Only an Integer is a permission: the third argument is also where an
@@ -1076,62 +1077,52 @@ mod file_constants {
     }
 }
 
-ruby_class! {
-    File = zeo_abi::FILE_CLASS < zeo_abi::IO_CLASS;
-
-
-    // `File.open(path, mode = "r")` -- with a block, yields the file and
-    // CLOSES it afterwards no matter how the block leaves (return, raise,
-    // break), answering the block's value; without one, answers the open
-    // file for the caller to close.
-    // Every reachable zeo File is open (there is no `File.allocate` blank),
-    // and CRuby refuses to re-run initialize on one.
-    private def "initialize" cfunc (_recv, *_args, &_block) {
-        Err(crate::builtins::runtime_error!("reinitializing File"))
+/// `File.open`'s half of the shared `IO.open` row -- CRuby's
+/// `rb_file_initialize`, which a File RECEIVER reaches where an IO receiver
+/// reaches `rb_io_initialize`. Answers the open handle; the block form is the
+/// caller's business.
+///
+/// An Integer `path` is a descriptor, exactly as it is for `IO.new`, and the
+/// options Hash still applies to it.
+pub(crate) fn open_path(
+    path: &RubyValue,
+    mode: Option<&RubyValue>,
+    perm: Option<&RubyValue>,
+    opts: Option<&RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let trailing = opts;
+    if let RubyValue::Int(fd) = path {
+        return file_from_fd(*fd, trailing);
     }
-
-    def self."open" | "new" cfunc allocs (_recv, path, mode?, perm?, &block) {
-        let trailing = perm.or(mode);
-        if let RubyValue::Int(fd) = path {
-            let io = file_from_fd(*fd, trailing)?;
-            let Some(RubyValue::Proc(p)) = block else {
-                return Ok(io);
-            };
-            let out = p.call(std::slice::from_ref(&io));
-            let _ = crate::dispatch::send_value(&io, crate::Symbol::intern("close"), &[], None);
-            return out;
-        }
-        let path = path_arg(path, "open")?;
-        let opts = open_options_for(mode, perm)?;
+    let path = path_arg(path, "open")?;
+    {
+        let flags = open_options_for(mode, perm, opts)?;
         // Gvl-released: open(2) itself can block (a FIFO with no peer).
-        let f = crate::gvl::without_gvl(|| opts.open(&path))
+        let f = crate::gvl::without_gvl(|| flags.open(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
-        let io = crate::builtins::io::file_value_mode(
-            f,
-            Some(path),
-            mode.and_then(|m| match m {
-                crate::RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
-                _ => None,
-            }),
-        );
+        // A `mode:` keyword says everything a positional mode string does.
+        let mode_str = match mode {
+            Some(RubyValue::Str(s)) => Some(s.lock().to_utf8_lossy().into_owned()),
+            _ => kwarg_str(opts, "mode"),
+        };
+        let io = crate::builtins::io::file_value_mode(f, Some(path), mode_str.clone());
         // A `b` in the mode string IS binmode, which `#binmode?` reports and
         // `#set_encoding_by_bom` requires.
-        if mode_has_binary(mode) {
+        let binmode = mode_str
+            .as_deref()
+            .is_some_and(|m| split_mode(m).0.contains('b'));
+        if binmode {
             crate::dispatch::send_value(&io, crate::Symbol::intern("binmode"), &[], None)?;
         }
         // ...and it decides how a read TAGS its bytes, along with any explicit
         // `encoding:`. Recorded on the handle only when it differs from the
         // default, so an ordinary text open leaves the slot unset and
         // `set_encoding_by_bom` can still claim it.
-        let mode_str = match mode {
-            Some(RubyValue::Str(s)) => Some(s.lock().to_utf8_lossy().into_owned()),
-            _ => None,
-        };
         let mode_enc = mode_str.as_deref().and_then(|m| split_mode(m).1);
         let (ext, int) = read_encodings_with(trailing, mode_enc)?;
         // `b` forces ASCII-8BIT only when nothing NAMED an encoding: CRuby
         // answers `UTF-8` for `"rb:UTF-8"` and still reports `#binmode?`.
-        let binary = mode_has_binary(mode) && mode_enc.is_none();
+        let binary = binmode && mode_enc.is_none();
         // A NAMED encoding is recorded even when it matches the default: the
         // `binmode` send above has already claimed the slot for ASCII-8BIT,
         // and `"rb:UTF-8"` reports `#binmode?` true with a UTF-8 external.
@@ -1143,16 +1134,19 @@ ruby_class! {
             };
             crate::builtins::io::set_handle_encodings(&io, Some(ext), int);
         }
-        let Some(RubyValue::Proc(p)) = block else {
-            return Ok(io);
-        };
-        // The close must happen on EVERY exit path, which is what makes this
-        // the idiom it is -- hence running the block, stashing its outcome,
-        // closing, and only then propagating.
-        let out = p.call(std::slice::from_ref(&io));
-        let _ = crate::dispatch::send_value(&io, crate::Symbol::intern("close"), &[], None);
-        out
+        Ok(io)
     }
+}
+
+ruby_class! {
+    File = zeo_abi::FILE_CLASS < zeo_abi::IO_CLASS;
+
+    // Every reachable zeo File is open (there is no `File.allocate` blank),
+    // and CRuby refuses to re-run initialize on one.
+    private def "initialize" cfunc (_recv, *_args, &_block) {
+        Err(crate::builtins::runtime_error!("reinitializing File"))
+    }
+
     // The text-read path: bytes are tagged with the EXTERNAL encoding
     // (default `Encoding.default_external`, UTF-8) WITHOUT validation --
     // CRuby's own rule. `encoding:`/`external_encoding:`/`internal_encoding:`
