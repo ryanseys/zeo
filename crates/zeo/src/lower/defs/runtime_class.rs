@@ -1027,11 +1027,19 @@ pub(crate) fn transform_conditional_class_body(hir: &mut Hir, body: &[NodeId]) -
             Some((cond, then_body, else_body)) => {
                 let then_body = transform_conditional_class_body(hir, &then_body);
                 let else_body = transform_conditional_class_body(hir, &else_body);
-                hir.push(HirNode::If {
+                let rebuilt = hir.push(HirNode::If {
                     cond,
                     then_body,
                     else_body,
-                })
+                });
+                // The rewrite mints a NEW node, so a hoisted-guard mark on the
+                // old one would be lost -- and losing it leaves the condition
+                // inside the class-body function, reading locals that live
+                // outside it.
+                if hir.has_flag(id, crate::hir::NodeFlag::HOISTED_CLASS_GUARD) {
+                    hir.set_flag(rebuilt, crate::hir::NodeFlag::HOISTED_CLASS_GUARD);
+                }
+                rebuilt
             }
             // A directive with no spelling stays put rather than failing the
             // compile: unlike the runtime-class path, the class here is real and

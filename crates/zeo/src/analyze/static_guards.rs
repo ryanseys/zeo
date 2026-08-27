@@ -268,11 +268,15 @@ pub(super) fn try_conditional_reopen(
             } else {
                 (Vec::new(), body)
             };
-            body = vec![compiler.hir.push(HirNode::If {
+            let wrapped = compiler.hir.push(HirNode::If {
                 cond,
                 then_body,
                 else_body,
-            })];
+            });
+            compiler
+                .hir
+                .set_flag(wrapped, crate::hir::NodeFlag::HOISTED_CLASS_GUARD);
+            body = vec![wrapped];
         }
         body
     };

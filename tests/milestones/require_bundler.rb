@@ -1,13 +1,7 @@
-# MILESTONE (pending on STDERR only): `require "bundler"` standalone, with
-# nothing requiring rubygems first.
+# MILESTONE: `require "bundler"` standalone, with nothing requiring rubygems
+# first.
 #
-# Every line of STDOUT below already matches ruby. What is left is 24 warning
-# lines zeo prints and ruby does not -- `bundler/rubygems_ext.rb:56` guards a
-# block of constant definitions with `unless respond_to?(:generic)`, and that
-# guard reads FALSE under zeo where ruby reads true, so 12 `Gem::Platform`
-# constants are defined a second time. Tracked as Track C2.
-#
-# Two independent defects had to go before the stdout matched, and both were
+# Three independent defects had to go before this matched, and all three were
 # silent.
 #
 # `bundler.rb:3`'s unguarded `require_relative "bundler/rubygems_ext"` used to
@@ -27,6 +21,15 @@
 # `git_proxy.rb` for a body site, was never revealed, and raised on every read
 # -- while `const_get(:Git)` answered the runtime one. A constant write is
 # keyed by its cref path now, and queried by ruby's own lexical search.
+#
+# Last, 24 warning lines on stderr that ruby does not print.
+# `bundler/rubygems_ext.rb:54`'s `class Platform` body is ONE statement, an
+# `unless respond_to?(:generic)` over twelve constant writes -- the same shape
+# analyze synthesizes when it pushes a `class X ... end if cond` guard into a
+# body, so codegen lifted the condition back out of the class-body function.
+# Lifted, it ran with `self` bound to `Gem`, answered false, and redefined all
+# twelve. A synthesized guard carries a flag now; a guard the source wrote
+# stays where it was written.
 #
 # Shapes, never versions -- see `tests/milestones.rs`.
 

@@ -77,6 +77,13 @@ impl NodeFlag {
     /// That is the whole point of the directive: a method written before ruby
     /// 3 separated them can still forward either kind unchanged.
     pub const RUBY2_KEYWORDS: NodeFlag = NodeFlag(1 << 9);
+    /// An `If` that `try_conditional_reopen` SYNTHESIZED around a whole class
+    /// body when it pushed a `class X ... end if cond` guard inside. The
+    /// condition was written OUTSIDE the body, so `clif::collect::split_guard`
+    /// has to lift it back out of the class-body function -- its locals and its
+    /// `self` are the enclosing scope's. A guard the source wrote inside the
+    /// body carries no flag and stays put, where `self` is the class.
+    pub const HOISTED_CLASS_GUARD: NodeFlag = NodeFlag(1 << 10);
 }
 
 /// A local the COMPILER introduced -- an evaluate-once receiver/index

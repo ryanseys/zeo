@@ -465,12 +465,19 @@ pub(super) fn collect_reopen_flags(em: &mut Emitter, analyzed: &Analyzed) {
     }
 }
 
-/// A class body whose ONE statement is an `If` is a `class ... end if cond`
-/// (or `unless`): analyze wraps the whole body in the guard, but the
-/// condition's locals live in the ENCLOSING scope. CLIF lifts the body
-/// to its own function, so the condition has to
+/// A class body whose ONE statement is a SYNTHESIZED `If` is a
+/// `class ... end if cond` (or `unless`): analyze wraps the whole body in the
+/// guard, but the condition's locals live in the ENCLOSING scope. CLIF lifts
+/// the body to its own function, so the condition has to
 /// come back out -- which is also where ruby runs it (the oracle's backtrace
 /// for a raise in one reads `<main>`, never `<class:X>`).
+///
+/// [`NodeFlag::HOISTED_CLASS_GUARD`] is what says the guard was synthesized.
+/// A guard the SOURCE wrote inside the body -- `class Platform; unless
+/// respond_to?(:generic); ...` in bundler's rubygems_ext -- looks identical in
+/// shape and must stay put: lifting it evaluates it before the class-body
+/// frame, where `self` is the enclosing module, so the probe asks about the
+/// wrong object and answers false.
 ///
 /// One branch of such an `If` is always empty: `if` fills the then branch,
 /// `unless` the else. Anything else is an ordinary `if` the body wrote, and
@@ -481,6 +488,12 @@ fn split_guard(
 ) -> (Option<(crate::hir::NodeId, bool)>, Vec<crate::hir::NodeId>) {
     let keep = || (None, stmts.to_vec());
     let [only] = stmts else { return keep() };
+    if !compiler
+        .hir
+        .has_flag(*only, crate::hir::NodeFlag::HOISTED_CLASS_GUARD)
+    {
+        return keep();
+    }
     let crate::hir::HirNode::If {
         cond,
         then_body,
