@@ -11,8 +11,8 @@ and a full commit `rev` (the reproducible pin; `bundler` also carries a
 `subdir`). Their versions live in each gem's own gemspec, their licenses in
 each gem's own tree. Currently: `abbrev`, `benchmark`, `bundler`, `csv`,
 `drb`, `erb`, `fileutils`, `find`, `ipaddr`, `logger`, `net-ftp`, `net-http`,
-`net-protocol`, `net-smtp`, `observer`, `open3`, `racc`, `resolv`, `rubygems`,
-`tempfile`, `time`, `tmpdir`, `un`, `uri`.
+`net-protocol`, `net-smtp`, `observer`, `open3`, `racc`, `reline`, `resolv`,
+`rubygems`, `tempfile`, `time`, `tmpdir`, `un`, `uri`.
 
 **Faithful vendored copies** of the default/bundled gems shipping with the
 oracle Ruby at the time of vendoring (4.0.5; the oracle now pins 4.0.6 in
@@ -41,7 +41,6 @@ license: they are Zeo's own code, under the repository's MIT OR Apache-2.0.
 | pp | 0.6.4 | upstream ruby/pp |
 | prettyprint | 0.2.0 | ruby 4.0.5 default gem |
 | prime | 0.1.4 | ruby 4.0.6 bundled gem |
-| reline | 0.6.3 | ruby 4.0.6 default gem |
 | shellwords | 0.2.2 | ruby 4.0.5 stdlib |
 | singleton | 0.3.0 | ruby 4.0.5 stdlib |
 | timeout | 0.6.1 | upstream ruby/timeout |
@@ -87,21 +86,24 @@ constants with a `const_set` loop). The `Importer` DSL files
 (`import`/`struct`/`types`/`pack`/`value`/`cparser`) are not vendored --
 `Importer` builds methods with `module_eval` on computed strings.
 
-`rspec-support/` carries one marked deviation, tagged `zeo:` in-file:
-`ruby_features.rb` PROBES for `ripper` (`begin; require "ripper"; rescue
-LoadError`) instead of inferring it from `RUBY_ENGINE`. Upstream opts out only
-for rbx, jruby and truffleruby, so every other implementation is assumed to
-have ripper -- and `Source#ast` then does a bare `require "ripper"` with no
-rescue. zeo embeds prism rather than CRuby's parse.y and declines that
-require, so every FAILING example died in the formatter instead of printing
-its failure. rspec already carries a ripper-less branch under that same
-predicate (`NoSnippetExtractor`, the path a JRuby user gets); the deviation
-only makes the question answerable.
+## What is NOT here
 
-`reline/` carries one marked deviation, tagged `zeo:` in-file: `io.rb`
-requires `reline/io/ansi` at the top rather than inside `decide_io_gate`,
-since a whole-program AOT compile does not load a library that only a method
-body requires, and that gate is what every non-dumb terminal goes through.
+Only libraries the reference Ruby itself ships. A `require` then reaches the
+same code under both engines, and a golden that fails is a zeo bug.
+
+Anything else -- `rspec` and its dependencies, `ffi`, `concurrent-ruby` --
+would make zeo answer a require Ruby refuses, which is a divergence dressed as
+a feature. Those live in a real gem store instead:
+`tools/zeo-dev gemstore` writes `vendor/gemstore` with a plain `gem install
+--install-dir`, and the goldens that need them read it. Both engines do, so
+those goldens stay differentials rather than recordings.
+
+`rspec-support/` used to carry a marked deviation here, probing for `ripper`
+rather than inferring it from `RUBY_ENGINE`; the store's unpatched copy runs
+correctly, so the deviation is gone with the vendored tree. `reline/` used to
+carry one too, hoisting `require "reline/io/ansi"` out of a method body; the
+loader reaches a method-body require on its own now, and reline 0.7.0 is
+vendored verbatim.
 
 `prism/` is vendored from the prism 1.9.0 gem bundled with ruby 4.0.6 -- the
 whole Ruby half, which is where the node classes, the visitors and the

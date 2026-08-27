@@ -41,11 +41,19 @@ module ZeoDev
       # sit in a subdirectory. Kept in step with `crates/zeo/tests/*.rs`.
       SUITES = [
         { prefix: "example", root: "tests", glob: "*.rb" },
+        { prefix: "divergence", root: "tests/divergences", glob: "*.rb", records: :zeo },
+        { prefix: "macos_only", root: "tests/macos", glob: "*.rb" },
+        { prefix: "jit_only", root: "tests/jit", glob: "*.rb" },
         { prefix: "gap", root: "tests/gaps", glob: "*.rb" },
         { prefix: "spinel", root: "tests/spinel", glob: "*.rb" },
-        { prefix: "milestone", root: "tests/milestones", glob: "{,pending/}*.rb" },
+        { prefix: "milestone", root: "tests/milestones", glob: "{,pending/}*.rb",
+          zeo_reads_store: true },
         { prefix: "gemtest", root: "tests/gemtests", glob: "*/*.rb" },
       ].freeze
+
+      # The gems ruby does not ship, which the oracle is given so it has
+      # something to be compared against. `tools/zeo-dev gemstore` builds it.
+      GEM_STORE = File.join("vendor", "gemstore")
 
       def self.summary = "re-record golden .expected files from the ruby oracle"
 
@@ -60,8 +68,8 @@ module ZeoDev
           tools/zeo-dev bless spinel::yield_
           tools/zeo-dev bless gap::
 
-        A `.divergence` golden records ZEO's output instead of the oracle's,
-        and needs a built `target/release/zeo` (or `ZEO_BIN`).
+        A `tests/divergences/` golden records ZEO's output instead of the
+        oracle's, and needs a built `target/release/zeo` (or `ZEO_BIN`).
       TEXT
 
       # Filters that would defeat the point.
@@ -92,7 +100,7 @@ module ZeoDev
         # work is subprocess-bound and shares nothing. Recording the whole
         # examples suite serially is ~52s of ruby startup; at core width it
         # is a few seconds.
-        Jobs.new.each_parallel(cases) { |rb| record(rb) }
+        Jobs.new.each_parallel(cases.to_a) { |rb, suite| record(rb, suite) }
         report(before, changed_goldens, filter)
       end
 
@@ -100,12 +108,16 @@ module ZeoDev
 
       # Every golden whose `<suite>::<relative path>` name contains `filter`.
       def select_cases(filter)
-        SUITES.flat_map { |s|
+        seen = {}
+        SUITES.each do |s|
           root = File.join(ROOT, s[:root])
-          Dir.glob(s[:glob], base: root).sort.filter_map do |rel|
-            "#{s[:prefix]}::#{rel}".include?(filter) ? File.join(root, rel) : nil
+          Dir.glob(s[:glob], base: root).sort.each do |rel|
+            next unless "#{s[:prefix]}::#{rel}".include?(filter)
+
+            seen[File.join(root, rel)] ||= s
           end
-        }.uniq
+        end
+        seen
       end
 
       # Goldens run with the tests directory as cwd (`golden::tests_run_cwd`),
@@ -122,14 +134,14 @@ module ZeoDev
       # rewrote that golden.
       def rel_path(rb) = rb.delete_prefix("#{run_cwd}/")
 
-      def record(rb)
+      def record(rb, suite)
         source = File.read(rb)
         argv = sidecar(rb, ".args")&.split || []
         stdin = sidecar_bytes(rb, ".stdin")
-        out, err = if File.exist?("#{rb}.divergence")
-                     run_zeo(rb, source, argv, stdin)
+        out, err = if suite[:records] == :zeo
+                     run_zeo(rb, source, argv, stdin, suite)
                    else
-                     run_oracle(rb, source, argv, stdin)
+                     run_oracle(rb, source, argv, stdin, suite)
                    end
         File.binwrite("#{rb}.expected", out)
         err_path = "#{rb}.err.expected"
@@ -153,29 +165,39 @@ module ZeoDev
       end
 
       # The oracle invocation the harness uses, flag for flag: no
-      # error_highlight or did_you_mean (zeo implements neither), and the
-      # experimental-namespace flags a `Ruby::Box` example needs -- naming the
-      # class is not enough, because CRuby's disabled-mode surface is a
-      # smaller one.
-      def run_oracle(rb, source, argv, stdin)
+      # error_highlight or did_you_mean (zeo implements neither), the empty
+      # gem store and `-I` roots that make the oracle hermetic
+      # (`Ruby.oracle_env`), and the experimental-namespace flags a
+      # `Ruby::Box` example needs -- naming the class is not enough, because
+      # CRuby's disabled-mode surface is a smaller one.
+      def run_oracle(rb, source, argv, stdin, suite)
         cmd = Ruby.oracle_argv
         cmd << "-W:no-experimental" if source.include?("Ruby::Box")
-        env = source.include?("Ruby::Box.new") ? { "RUBY_BOX" => "1" } : {}
+        env = Ruby.oracle_env
+        env["RUBY_BOX"] = "1" if source.include?("Ruby::Box.new")
         capture(env, [*cmd, rb, *argv], stdin, rb)
       end
 
-      # A `.divergence` golden records zeo's own answer on purpose. Recording
-      # the oracle's would replace the golden with the very output the file
-      # exists to differ from.
+      # Every `lib/` in `vendor/gemstore`, for the one suite whose ZEO side
+      # needs those gems too -- rspec. The oracle reads the store through
+      # `Ruby.oracle_env` like every other gem it can see. Reading the
+      # directory keeps the pinned versions out of here.
+      def gem_store_libs
+        Dir.glob(File.join(ROOT, GEM_STORE, "gems", "*", "lib")).sort
+      end
+
+      # A `tests/divergences/` golden records zeo's own answer on purpose.
+      # Recording the oracle's would replace the golden with the very output
+      # the program exists to differ from.
       #
       # The run-time dials the harness gives zeo have to be given here too,
       # or the recording is of a program that refused to start: without
       # `RUBY_BOX` the box goldens record "Ruby Box is disabled" as their
       # stderr, which then asserts that forever.
-      def run_zeo(rb, source, argv, stdin)
+      def run_zeo(rb, source, argv, stdin, suite)
         bin = Ruby.zeo
         unless File.executable?(bin)
-          raise Error, "bless: #{rb} is a `.divergence` golden and records zeo, but " \
+          raise Error, "bless: #{rb} is a decided divergence and records zeo, but " \
                        "#{bin} is not built -- `cargo build --release -p zeo` first"
         end
 
@@ -183,6 +205,7 @@ module ZeoDev
         env["RUBY_BOX"] = "1" if source.include?("Ruby::Box.new")
         env["ZEO_GC"] = "1" if File.exist?("#{rb}.gc")
         env["ZEO_RT_LEAKCHECK"] = "1" if File.exist?("#{rb}.leakcheck")
+        argv = [*gem_store_libs.flat_map { |d| ["-I", d] }, *argv] if suite[:zeo_reads_store]
         capture(env, [bin, rb, *argv], stdin, rb)
       end
 

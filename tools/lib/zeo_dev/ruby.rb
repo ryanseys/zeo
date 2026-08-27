@@ -29,6 +29,28 @@ module ZeoDev
 
     def oracle_argv(*args) = [oracle, *ORACLE_FLAGS, *args]
 
+    # `gem env gemdir` for the PINNED ruby, not whatever is on PATH.
+    def gemdir
+      @gemdir ||= begin
+        bin = `mise which gem 2>/dev/null`.strip
+        bin = "gem" if bin.empty?
+        out = `#{bin} env gemdir 2>/dev/null`.strip
+        out.empty? ? nil : out
+      end
+    end
+
+    # The two generated stores, and nothing else -- see `zeo-dev gemstore`.
+    # Whatever anybody has `gem install`ed on this machine is invisible to a
+    # golden, which it was not: reline 0.7.0 and webrick 1.9.2 sat in this
+    # machine's store and two goldens recorded them as if ruby shipped them.
+    def oracle_env
+      require "zeo_dev/commands/gemstore"
+      mirror = File.join(ROOT, Commands::Gemstore::ORACLE)
+      installed = File.join(ROOT, Commands::Gemstore::INSTALLED)
+      { "GEM_HOME" => mirror,
+        "GEM_PATH" => [mirror, installed].join(File::PATH_SEPARATOR) }
+    end
+
     # The zeo binary a command should drive. `ZEO_BIN` overrides; otherwise
     # the release build, which is what every ledger was recorded against.
     def zeo(profile: "release")

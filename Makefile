@@ -31,10 +31,18 @@ NEXTEST ?= $(CARGO) nextest run
 ZEO_DEV ?= tools/zeo-dev
 
 .PHONY: all test check check-batch gate bench pgo install linux clean ci-typed \
-        ci-jit ci-aot ci-memcheck ci-doc ci-natlibs ci-anchor ci-milestones
+        ci-jit ci-aot ci-memcheck ci-doc ci-natlibs ci-anchor ci-milestones gemstore
 
-all:
+all: gemstore
 	$(CARGO) build --workspace
+
+# The gems ruby does not ship, in a real `gem install --install-dir` store:
+# `ffi`, which zeo implements and ruby has no copy of, and `rspec` for the
+# milestone that runs a real suite. Both engines read it, so those goldens
+# compare against a PINNED gem instead of whatever the machine has installed.
+# Idempotent and offline once built; the first build needs the network.
+gemstore:
+	@$(ZEO_DEV) gemstore
 
 test: all
 	$(NEXTEST) --workspace
