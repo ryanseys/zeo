@@ -190,3 +190,43 @@ gem "error_highlight",
   github: "ruby/error_highlight",
   tag: "v0.7.2",
   rev: "d945ffd2aa4e6c36665195b6a5db8a73ac5339af"
+gem "rake",
+  github: "ruby/rake",
+  tag: "v13.4.2",
+  rev: "503b8ec593c51289c09cc2a69a34af99d6198c6a"
+gem "open-uri",
+  github: "ruby/open-uri",
+  tag: "v0.5.0",
+  rev: "8f5a4ef6f91692cc1833d2b59fd4d2609526eb34"
+gem "rexml",
+  github: "ruby/rexml",
+  tag: "v3.4.4",
+  rev: "4f32ea33bc3f71cced67487659beef58edcf6d56"
+gem "debug",
+  github: "ruby/debug",
+  tag: "v1.11.1",
+  rev: "bad4d38f8330219b62f2b253d59146f5a71fd39a"
+gem "matrix",
+  github: "ruby/matrix",
+  tag: "v0.4.3",
+  rev: "de06454b6c80e83b98890d433b64422ce9bd49a9"
+gem "mutex_m",
+  github: "ruby/mutex_m",
+  tag: "v0.3.0",
+  rev: "9fc3ee4f241fef210d2da125f4944d82219d8d4b"
+gem "pstore",
+  github: "ruby/pstore",
+  tag: "v0.2.1",
+  rev: "4d71b36b82237a8c11a68c146eae5191544dd304"
+gem "getoptlong",
+  github: "ruby/getoptlong",
+  tag: "v0.2.1",
+  rev: "f49629dfaa17b2dbb8c776ff9bf52ef8a050c19a"
+gem "net-imap",
+  github: "ruby/net-imap",
+  tag: "v0.6.6",
+  rev: "7cc1dd0a11a4f5faeb5c92676f78e348a0104a87"
+gem "net-pop",
+  github: "ruby/net-pop",
+  tag: "v0.1.2",
+  rev: "0ed5794e8eaa8f4a4f1f402936ee56ca8ef89e0d"

@@ -32,6 +32,12 @@
       "rev": "0873ab362d996f12796c3c3e8998b5be657a9b12"
     },
     {
+      "name": "debug",
+      "github": "ruby/debug",
+      "tag": "v1.11.1",
+      "rev": "bad4d38f8330219b62f2b253d59146f5a71fd39a"
+    },
+    {
       "name": "did_you_mean",
       "github": "ruby/did_you_mean",
       "tag": "v2.0.0",
@@ -74,6 +80,12 @@
       "rev": "192237e766c191fbba4578fafbad94f4c9d3d3a4"
     },
     {
+      "name": "getoptlong",
+      "github": "ruby/getoptlong",
+      "tag": "v0.2.1",
+      "rev": "f49629dfaa17b2dbb8c776ff9bf52ef8a050c19a"
+    },
+    {
       "name": "ipaddr",
       "github": "ruby/ipaddr",
       "tag": "v1.2.9",
@@ -86,10 +98,22 @@
       "rev": "f474d07d9890a03e6e40430c4e2ee933c6193d7e"
     },
     {
+      "name": "matrix",
+      "github": "ruby/matrix",
+      "tag": "v0.4.3",
+      "rev": "de06454b6c80e83b98890d433b64422ce9bd49a9"
+    },
+    {
       "name": "minitest-global_expectations",
       "github": "jeremyevans/minitest-global_expectations",
       "tag": "1.0.2",
       "rev": "4c88bdf4875761236866218be5254abd4baf8456"
+    },
+    {
+      "name": "mutex_m",
+      "github": "ruby/mutex_m",
+      "tag": "v0.3.0",
+      "rev": "9fc3ee4f241fef210d2da125f4944d82219d8d4b"
     },
     {
       "name": "net-ftp",
@@ -102,6 +126,18 @@
       "github": "ruby/net-http",
       "tag": "v0.9.1",
       "rev": "8cee86e939f69bd0906864e7eb740bb471a205bd"
+    },
+    {
+      "name": "net-imap",
+      "github": "ruby/net-imap",
+      "tag": "v0.6.6",
+      "rev": "7cc1dd0a11a4f5faeb5c92676f78e348a0104a87"
+    },
+    {
+      "name": "net-pop",
+      "github": "ruby/net-pop",
+      "tag": "v0.1.2",
+      "rev": "0ed5794e8eaa8f4a4f1f402936ee56ca8ef89e0d"
     },
     {
       "name": "net-protocol",
@@ -122,6 +158,12 @@
       "rev": "6c978e6196b33405aced08ca3c3a5600f5b271e5"
     },
     {
+      "name": "open-uri",
+      "github": "ruby/open-uri",
+      "tag": "v0.5.0",
+      "rev": "8f5a4ef6f91692cc1833d2b59fd4d2609526eb34"
+    },
+    {
       "name": "open3",
       "github": "ruby/open3",
       "tag": "v0.2.1",
@@ -134,16 +176,34 @@
       "rev": "26edf65c9932de6062606766878cf57a453af300"
     },
     {
+      "name": "pstore",
+      "github": "ruby/pstore",
+      "tag": "v0.2.1",
+      "rev": "4d71b36b82237a8c11a68c146eae5191544dd304"
+    },
+    {
       "name": "racc",
       "github": "ruby/racc",
       "tag": "v1.8.1",
       "rev": "5229883dca5b451c8bfd322272ccd2ca6d526695"
     },
     {
+      "name": "rake",
+      "github": "ruby/rake",
+      "tag": "v13.4.2",
+      "rev": "503b8ec593c51289c09cc2a69a34af99d6198c6a"
+    },
+    {
       "name": "resolv",
       "github": "ruby/resolv",
       "tag": "v0.7.1",
       "rev": "8fc05c1cb6cd36e4a8d0391aeb8cacdcb2368b4c"
+    },
+    {
+      "name": "rexml",
+      "github": "ruby/rexml",
+      "tag": "v3.4.4",
+      "rev": "4f32ea33bc3f71cced67487659beef58edcf6d56"
     },
     {
       "name": "rspec",

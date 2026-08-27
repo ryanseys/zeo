@@ -1,0 +1,8 @@
+macro attr_accessor alpha
+42
+[:alpha]
+macro attr_accessor beta
+42
+[:beta]
+[]
+Integer
