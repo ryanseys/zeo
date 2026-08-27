@@ -113,15 +113,6 @@ name = "spinel"
 path = "tests/spinel.rs"
 harness = false
 
-# The insta PILOT (overhaul decision 2): ~10 goldens duplicated under
-# tests/insta-pilot/ with co-located .snap storage, for the format
-# comparison. Disposable: deleting it is `rm -r tests/insta-pilot` plus
-# this block.
-[[test]]
-name = "insta_pilot"
-path = "tests/insta_pilot.rs"
-harness = false
-
 # The runtime performance bank: every `bench/bm_*.rb` compiled with the
 # release `zeo` and timed end-to-end, under criterion (saved baselines,
 # `critcmp` comparisons). `harness = false` hands main() to criterion.
