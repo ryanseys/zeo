@@ -330,7 +330,64 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
     // BOOTSTRAP (exception) reopen's ride the OBJECT channel as deltas
     // over the native set `with_core` installed. Bodies take a
     // `RubyValue` self, so ivars are name-keyed (`dyn_ivars`).
+    //
+    // A USER module's own bodies are declared here, before any builtin can
+    // carry one. The two carrier walks want opposite orders -- a user class
+    // reuses `Kernel`'s body (declared below) and a builtin reuses an
+    // included user module's (declared in the walk after it) -- so no
+    // single order satisfies both. Declaring is what breaks the cycle:
+    // `declare_function` is keyed by SYMBOL and idempotent, so the module's
+    // own walk asks for the same name and gets the same id back.
+    //
+    // Every skip here is the conservative direction. Skipping something the
+    // module later declares only costs the sharing; declaring something it
+    // never defines would not link, and cannot happen -- the module walk
+    // reaches its declaration under exactly the two scope tests repeated
+    // below, and its remaining exits are refusals that end the compile.
     for (idx, class) in compiler.classes.iter().enumerate() {
+        if idx == 0 || class.is_builtin || class.is_bootstrap || !class.is_module {
+            continue;
+        }
+        if class.feature_gate.is_some() {
+            continue;
+        }
+        let sym = super::names::boxed_owner(
+            &compiler.fq_name(crate::compiler::ClassId(idx as u32)),
+            class.box_id,
+        );
+        for &sid in &class.own_methods {
+            let scope = compiler.scope(sid);
+            if scope.native_default || scope.runtime_conditional {
+                continue;
+            }
+            if super::emit::check_params(&scope.params).is_err() {
+                continue;
+            }
+            let tramp = em
+                .module
+                .declare_function(
+                    &names::trampoline_symbol(&sym, &scope.name),
+                    Linkage::Local,
+                    &params::value_fn_sig(em),
+                )
+                .map_err(|e| {
+                    CodegenError::internal(format!("declaring {sym}#{}: {e}", scope.name))
+                })?;
+            shared_bodies.insert(sid.0, tramp);
+        }
+    }
+
+    // ANCESTORS FIRST, not ClassId order. `shared_bodies` is filled by the
+    // owner and read by its carriers, so an owner walked after them shares
+    // nothing -- and ClassId says nothing about ancestry: `Kernel` is 25
+    // while `Integer` is 1. Ancestor COUNT is a topological order of the
+    // ancestry itself: an ancestor's own chain is a proper subset of its
+    // descendant's, so it is always strictly shorter. Ties keep ClassId
+    // order, which is what the rows below have always been written in.
+    let mut ancestors_first: Vec<usize> = (0..compiler.classes.len()).collect();
+    ancestors_first.sort_by_key(|&i| (compiler.classes[i].ancestors.len(), i));
+    for idx in ancestors_first {
+        let class = &compiler.classes[idx];
         // `Object` joins for its CLASS methods only: `class Object; def
         // self.method_added; end` is an ordinary class-method row, while its
         // instance methods are the top-level `def`s `collect_methods`

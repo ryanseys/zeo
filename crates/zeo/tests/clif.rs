@@ -453,3 +453,56 @@ fn capi_table_snapshot() {
     }
     insta::assert_snapshot!(rendered);
 }
+
+/// How many bodies the emitter wrote for `owner#name`. Every emitted
+/// function carries a `;; <frame label>` comment, and a shared body is
+/// written once and named by every carrier, so counting the comment counts
+/// the copies.
+fn bodies_named(source: &str, label: &str) -> usize {
+    let needle = format!(";; {label}\n");
+    clif_of(source).matches(&needle).count()
+}
+
+/// A `def` inside `module Kernel` reaches every class in the program, and
+/// its body is emitted ONCE.
+///
+/// `tests/a_kernel_reopen_is_one_body_for_every_carrier.rb` asserts the
+/// BEHAVIOUR, and behaviour is identical whether the body is shared or
+/// copied -- which is why the copies came back unnoticed. This counts them.
+///
+/// What brought them back: `collect_classes` walked the builtins by
+/// ClassId, and ClassId says nothing about ancestry -- `Kernel` is 25 while
+/// `Integer` is 1 -- so every carrier below the owner asked an empty
+/// `shared_bodies` and took its own copy. On a program that only requires
+/// uri, `Kernel#URI` cost 22 of them.
+#[test]
+fn a_kernel_reopen_emits_one_body_for_every_carrier() {
+    let src = "module Kernel\n  def tagged(x) = \"#{x}\"\nend\n\
+               class Widget; end\n\
+               p [Widget.new.tagged(1), 5.tagged(2), \"s\".tagged(3), [1].tagged(4), \
+               :s.tagged(5), nil.tagged(6), 1.5.tagged(7), (1..2).tagged(8)]\n";
+    // The toplevel-`def` channel writes `Object#tagged` as well; the rule
+    // under test is that no CARRIER takes a private copy of Kernel's.
+    assert_eq!(
+        bodies_named(src, "Kernel#tagged"),
+        1,
+        "a Kernel reopen must be emitted once, not once per carrier"
+    );
+}
+
+/// The same rule for an ordinary module, which is the general case the
+/// ancestors-first walk fixes -- `Kernel` is only its most expensive
+/// instance. A module included into several builtins is one body.
+#[test]
+fn an_included_module_emits_one_body_for_every_carrier() {
+    let src = "module Tag\n  def tagged(x) = \"#{x}\"\nend\n\
+               class Integer; include Tag; end\n\
+               class String; include Tag; end\n\
+               class Array; include Tag; end\n\
+               p [5.tagged(1), \"s\".tagged(2), [1].tagged(3)]\n";
+    assert_eq!(
+        bodies_named(src, "Tag#tagged"),
+        1,
+        "an included module's body must be emitted once, not once per carrier"
+    );
+}
