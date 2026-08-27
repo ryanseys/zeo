@@ -909,10 +909,13 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             // native-backed instance and a boxed class each keep their own
             // row, and a definition on an ordinary module is untouched --
             // that one has real per-class ivar slots.
+            // A NATIVE-BACKED carrier is fine here, which is worth stating:
+            // its own bodies read name-keyed ivars, and so does an
+            // `Object`-owned body, so the two agree. Excluding it left every
+            // `Gem::` exception class taking private copies of `Kernel#pp`.
             let inherited_universal = !class.own_methods.contains(&entry.def)
                 && universal_spine.contains(&scope.defining_class)
                 && accessor.is_none()
-                && !native_backed
                 && class.box_id == 0;
             if inherited_universal
                 && let Some(shared) = em.methods.get(&mname).map(|d| d.tramp)

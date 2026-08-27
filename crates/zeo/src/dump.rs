@@ -252,7 +252,6 @@ pub fn methods(a: &Analyzed, top: usize) -> String {
             if !info.own_methods.contains(&entry.def)
                 && universal.contains(&scope.defining_class)
                 && info.box_id == 0
-                && !compiler.is_native_backed(cid)
             {
                 shared += 1;
                 continue;
