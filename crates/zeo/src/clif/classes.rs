@@ -248,6 +248,14 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
     // definition here is inherited by every class in the program. `ancestors`
     // starts with the class itself, so this is exactly those three.
     let universal_spine: Vec<ClassId> = compiler.class(crate::compiler::OBJECT_CLASS).ancestors.clone();
+    // A module definition's one emitted trampoline, keyed by the SCOPE that
+    // defined it -- never by name, which two modules can share. Filled as
+    // each module's own value-channel row is declared, and read by the
+    // includers below. A module declared AFTER its includer simply misses
+    // and the includer keeps its own copy, the same way the spine lookup
+    // behaves.
+    let mut module_bodies: std::collections::HashMap<u32, cranelift_module::FuncId> =
+        std::collections::HashMap::new();
     // Builtin-source alias rows, every class including the toplevel (the
     // boxed-overlay target case is refused
     // with its class). A require-gated builtin whose feature never fired
@@ -812,6 +820,9 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     }),
                     crate::hir::Visibility::Public => {}
                 }
+                // This is the body an includer reuses when its own copy
+                // would be identical -- see the sharing note below.
+                module_bodies.insert(sid.0, tramp);
                 module_methods.push(ModMethodSpec {
                     box_id: class.box_id,
                     // A module's VALUE-channel row takes whatever receiver
@@ -905,20 +916,40 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             // disagree about, and a top-level `def` resolves constants
             // against `Object` however it was reached.
             //
-            // Narrow on purpose. An own definition, an accessor, a
-            // native-backed instance and a boxed class each keep their own
-            // row, and a definition on an ordinary module is untouched --
-            // that one has real per-class ivar slots.
+            // Narrow on purpose. An own definition, an accessor and a boxed
+            // class each keep their own row.
             // A NATIVE-BACKED carrier is fine here, which is worth stating:
             // its own bodies read name-keyed ivars, and so does an
             // `Object`-owned body, so the two agree. Excluding it left every
             // `Gem::` exception class taking private copies of `Kernel#pp`.
-            let inherited_universal = !class.own_methods.contains(&entry.def)
-                && universal_spine.contains(&scope.defining_class)
+            let shareable = !class.own_methods.contains(&entry.def)
                 && accessor.is_none()
                 && class.box_id == 0;
-            if inherited_universal
-                && let Some(shared) = em.methods.get(&mname).map(|d| d.tramp)
+            // A definition on an ORDINARY MODULE is the same argument one
+            // step out. The module's own value-channel row is already
+            // emitted name-keyed -- the includer's object-channel copy
+            // exists ONLY to keep the slot-indexed ivar fast path -- so a
+            // body that names no ivar has nothing left to disagree about
+            // and can name the module's one body.
+            //
+            // `include M` in three classes emitted FOUR identical bodies
+            // before this: one per carrier plus the module's. The copies
+            // differed only in per-site inline-cache offsets, and sharing
+            // them shares one cache site, which is correct and better. The
+            // frame label is the module's under both engines, and constant
+            // lookup is lexical from the module, so neither depends on the
+            // carrier.
+            let shared_tramp = if universal_spine.contains(&scope.defining_class) {
+                em.methods.get(&mname).map(|d| d.tramp)
+            } else if compiler.class(scope.defining_class).is_module
+                && !scope_names_an_ivar(compiler, entry.def)
+            {
+                module_bodies.get(&entry.def.0).copied()
+            } else {
+                None
+            };
+            if shareable
+                && let Some(shared) = shared_tramp
             {
                 // The visibility row is the class's, not the shared body's,
                 // and it is pushed further down the ordinary path -- so it
@@ -1491,4 +1522,30 @@ fn emit_singleton_super_targets(
         });
     }
     Ok(())
+}
+
+/// Whether `sid`'s body names an instance variable anywhere -- the one
+/// thing that makes a module definition's emitted body carrier-specific.
+///
+/// A module's own row reads ivars by NAME; an includer's copy reads them by
+/// SLOT, and two includers can lay their slots out differently. A body that
+/// names none cannot tell the two apart, so it needs only one copy.
+///
+/// `analyze::collect_ivars` is the same walk `mro` uses to build a class's
+/// ivar list, so the two agree by construction. It stops at a nested
+/// `class`/`def`, which is right here too: a nested scope is emitted under
+/// its own owner and answers this question for itself.
+pub(crate) fn scope_names_an_ivar(
+    compiler: &crate::compiler::Compiler,
+    sid: crate::compiler::ScopeId,
+) -> bool {
+    let scope = compiler.scope(sid);
+    let mut names = Vec::new();
+    for &n in &scope.body {
+        crate::analyze::collect_ivars(&compiler.hir, n, &mut names);
+    }
+    for id in scope.params.default_ids() {
+        crate::analyze::collect_ivars(&compiler.hir, id, &mut names);
+    }
+    !names.is_empty()
 }

@@ -266,10 +266,14 @@ pub fn methods(a: &Analyzed, top: usize) -> String {
             // costs no code either (`clif::classes`). Mirrors that guard;
             // `accessor_shape` is the one arm it cannot ask about here, and an
             // accessor on Object is a shape no bundled gem writes.
-            if !info.own_methods.contains(&entry.def)
-                && universal.contains(&scope.defining_class)
-                && info.box_id == 0
-            {
+            // ... and a definition on an ordinary MODULE names the module's
+            // own value-channel body when it touches no ivar, which is the
+            // only thing that could make two includers' copies differ.
+            let owner = compiler.class(scope.defining_class);
+            let shares = universal.contains(&scope.defining_class)
+                || (owner.is_module
+                    && !crate::clif::classes::scope_names_an_ivar(compiler, entry.def));
+            if !info.own_methods.contains(&entry.def) && shares && info.box_id == 0 {
                 shared += 1;
                 continue;
             }
@@ -325,8 +329,8 @@ pub fn methods(a: &Analyzed, top: usize) -> String {
         }
     ));
     out.push_str(&format!(
-        "{shared} row(s) inherit a definition on {} -- every class's tail -- and \
-         SHARE the one body emitted for it\n",
+        "{shared} row(s) inherit a definition on {} -- every class's tail -- or on a \
+         module, naming no ivar, and SHARE the one body emitted for it\n",
         universal
             .iter()
             .map(|&c| compiler.fq_name(c))
