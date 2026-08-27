@@ -506,7 +506,20 @@ pub(super) fn define_method_body(
     fx.b.ins().jump(ret_ok, &[]);
 
     let has_frame = file.is_some();
-    let epilogue = |fx: &mut Fx, status: i64| {
+    // ONE epilogue, entered by jump, rather than a copy per exit. The
+    // sequence below -- the local releases, the frame pop, the svar/home
+    // pops -- is identical at every exit and does not depend on the status,
+    // which rides in as the block parameter. Emitting it per exit made it
+    // most of a small method's code: the frame pop alone is a gate branch,
+    // a bounds test and a pool-watermark divide.
+    let epi = fx.b.create_block();
+    let epi_status = fx.b.append_block_param(epi, types::I32);
+    let goto_epi = |fx: &mut Fx, status: i64| {
+        let code = fx.b.ins().iconst(types::I32, status);
+        fx.b.ins().jump(epi, &[code.into()]);
+    };
+    let epilogue = |fx: &mut Fx| {
+        fx.b.switch_to_block(epi);
         release_locals(fx);
         if let Some(blk) = blk_ptr {
             // The body owns the moved-in block; a null slot releases as a
@@ -534,11 +547,10 @@ pub(super) fn define_method_body(
         if publishes_eval_home {
             fx.call("zeo_rt_eval_home_pop", &[]);
         }
-        let code = fx.b.ins().iconst(types::I32, status);
-        fx.b.ins().return_(&[code]);
+        fx.b.ins().return_(&[epi_status]);
     };
     fx.b.switch_to_block(ret_ok);
-    epilogue(&mut fx, 0);
+    goto_epi(&mut fx, 0);
     let land = fx.land;
     fx.b.switch_to_block(land);
     if needs_return_catch {
@@ -561,10 +573,11 @@ pub(super) fn define_method_body(
         fx.call("zeo_rt_signal_take", &[out_ptr]);
         fx.b.ins().jump(ret_ok, &[]);
         fx.b.switch_to_block(normal);
-        epilogue(&mut fx, 1);
+        goto_epi(&mut fx, 1);
     } else {
-        epilogue(&mut fx, 1);
+        goto_epi(&mut fx, 1);
     }
+    epilogue(&mut fx);
 
     fx.drain_slot_inits();
     verify::check(&fx, &label)?;
@@ -743,23 +756,28 @@ pub(super) fn define_toplevel(
     fx.drain_temps = false;
 
     // Normal exit: release the locals, pop the frame (drains the pool),
-    // hand back Nil.
-    let epilogue = |fx: &mut Fx, status: i64| {
-        release_locals(fx);
-        if frame.is_some() {
-            super::frames::emit_frame_pop(fx);
-        }
+    // hand back Nil. ONE epilogue for both exits -- see `define_body`.
+    let epi = fx.b.create_block();
+    let epi_status = fx.b.append_block_param(epi, types::I32);
+    let goto_epi = |fx: &mut Fx, status: i64| {
         let code = fx.b.ins().iconst(types::I32, status);
-        fx.b.ins().return_(&[code]);
+        fx.b.ins().jump(epi, &[code.into()]);
     };
     let z = fx.b.ins().iconst(types::I64, 0);
     for off in [0, 8, 16] {
         fx.b.ins().store(MemFlagsData::trusted(), z, out_ptr, off);
     }
-    epilogue(&mut fx, 0);
+    goto_epi(&mut fx, 0);
     let land = fx.land;
     fx.b.switch_to_block(land);
-    epilogue(&mut fx, 1);
+    goto_epi(&mut fx, 1);
+
+    fx.b.switch_to_block(epi);
+    release_locals(&mut fx);
+    if frame.is_some() {
+        super::frames::emit_frame_pop(&mut fx);
+    }
+    fx.b.ins().return_(&[epi_status]);
 
     fx.drain_slot_inits();
     verify::check(&fx, &sym)?;

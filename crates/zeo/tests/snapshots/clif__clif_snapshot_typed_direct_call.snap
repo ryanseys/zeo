@@ -1,6 +1,5 @@
 ---
 source: crates/zeo/tests/clif.rs
-assertion_line: 53
 expression: "clif_of(\"class N\\n  def initialize(v)\\n    @v = v\\n  end\\n  def step(a) = @v + a\\nend\\ndef via(u) = u.step(1)\\nn = N.new(1)\\nputs n.step(2)\\nputs via(n)\\n\",)"
 ---
 ;; Object#via
@@ -15,7 +14,6 @@ function u0:1(i64, i64, i64) -> i32 ccall {
     gv4 = symbol userextname5
     gv5 = symbol colocated userextname11
     gv6 = symbol userextname5
-    gv7 = symbol userextname5
     sig0 = () -> i32 ccall
     sig1 = (i64) ccall
     sig2 = () -> i64 ccall
@@ -40,11 +38,11 @@ function u0:1(i64, i64, i64) -> i32 ccall {
     fn10 = colocated u0:15 sig10
 
 block0(v0: i64, v1: i64, v2: i64):
-    v112 = iconst.i64 0
-    v113 = stack_addr.i64 ss0
-    store notrap aligned v112, v113  ; v112 = 0
-    store notrap aligned v112, v113+8  ; v112 = 0
-    store notrap aligned v112, v113+16  ; v112 = 0
+    v90 = iconst.i64 0
+    v91 = stack_addr.i64 ss0
+    store notrap aligned v90, v91  ; v90 = 0
+    store notrap aligned v90, v91+8  ; v90 = 0
+    store notrap aligned v90, v91+16  ; v90 = 0
     v3 = symbol_value.i64 gv0
     v4 = symbol_value.i64 gv1
     v5 = call fn0()
@@ -183,114 +181,66 @@ block20:
     jump block2
 
 block2:
-    v64 = stack_addr.i64 ss0
-    v65 = load.i8 notrap aligned v64
-    v66 = iconst.i8 16
-    v67 = icmp uge v65, v66  ; v66 = 16
-    brif v67, block21, block22
-
-block21:
-    call fn8(v64)
-    jump block22
-
-block22:
-    v68 = symbol_value.i64 gv6
-    v69 = load.i16 notrap aligned v68
-    v70 = iconst.i16 512
-    v71 = band v69, v70  ; v70 = 512
-    brif v71, block23, block24
-
-block23 cold:
-    call fn9()
-    jump block25
-
-block24:
-    v72 = load.i64 notrap aligned v20
-    v73 = load.i64 notrap aligned v20+8
-    v74 = icmp eq v72, v73
-    brif v74, block25, block26
-
-block26:
-    v75 = iconst.i64 -48
-    v76 = iadd.i64 v72, v75  ; v75 = -48
-    store notrap aligned v76, v20
-    v77 = load.i32 notrap aligned v76+40
-    v78 = iconst.i32 -1
-    v79 = icmp eq v77, v78  ; v78 = -1
-    brif v79, block25, block27
-
-block27:
-    v80 = load.i64 notrap aligned v20+24
-    v81 = load.i64 notrap aligned v20+32
-    v82 = isub v80, v81
-    v83 = iconst.i64 24
-    v84 = udiv v82, v83  ; v83 = 24
-    v85 = uextend.i64 v77
-    v86 = icmp ugt v84, v85
-    brif v86, block28, block25
-
-block28 cold:
-    call fn10(v85)
-    jump block25
-
-block25:
-    v87 = iconst.i32 0
-    return v87  ; v87 = 0
+    v65 = iconst.i32 0
+    jump block21(v65)  ; v65 = 0
 
 block1:
-    v88 = stack_addr.i64 ss0
-    v89 = load.i8 notrap aligned v88
-    v90 = iconst.i8 16
-    v91 = icmp uge v89, v90  ; v90 = 16
-    brif v91, block29, block30
+    v66 = iconst.i32 1
+    jump block21(v66)  ; v66 = 1
 
-block29:
-    call fn8(v88)
-    jump block30
+block21(v64: i32):
+    v67 = stack_addr.i64 ss0
+    v68 = load.i8 notrap aligned v67
+    v69 = iconst.i8 16
+    v70 = icmp uge v68, v69  ; v69 = 16
+    brif v70, block22, block23
 
-block30:
-    v92 = symbol_value.i64 gv7
-    v93 = load.i16 notrap aligned v92
-    v94 = iconst.i16 512
-    v95 = band v93, v94  ; v94 = 512
-    brif v95, block31, block32
+block22:
+    call fn8(v67)
+    jump block23
 
-block31 cold:
+block23:
+    v71 = symbol_value.i64 gv6
+    v72 = load.i16 notrap aligned v71
+    v73 = iconst.i16 512
+    v74 = band v72, v73  ; v73 = 512
+    brif v74, block24, block25
+
+block24 cold:
     call fn9()
-    jump block33
+    jump block26
 
-block32:
-    v96 = load.i64 notrap aligned v20
-    v97 = load.i64 notrap aligned v20+8
-    v98 = icmp eq v96, v97
-    brif v98, block33, block34
+block25:
+    v75 = load.i64 notrap aligned v20
+    v76 = load.i64 notrap aligned v20+8
+    v77 = icmp eq v75, v76
+    brif v77, block26, block27
 
-block34:
-    v99 = iconst.i64 -48
-    v100 = iadd.i64 v96, v99  ; v99 = -48
-    store notrap aligned v100, v20
-    v101 = load.i32 notrap aligned v100+40
-    v102 = iconst.i32 -1
-    v103 = icmp eq v101, v102  ; v102 = -1
-    brif v103, block33, block35
+block27:
+    v78 = iconst.i64 -48
+    v79 = iadd.i64 v75, v78  ; v78 = -48
+    store notrap aligned v79, v20
+    v80 = load.i32 notrap aligned v79+40
+    v81 = iconst.i32 -1
+    v82 = icmp eq v80, v81  ; v81 = -1
+    brif v82, block26, block28
 
-block35:
-    v104 = load.i64 notrap aligned v20+24
-    v105 = load.i64 notrap aligned v20+32
-    v106 = isub v104, v105
-    v107 = iconst.i64 24
-    v108 = udiv v106, v107  ; v107 = 24
-    v109 = uextend.i64 v101
-    v110 = icmp ugt v108, v109
-    brif v110, block36, block33
+block28:
+    v83 = load.i64 notrap aligned v20+24
+    v84 = load.i64 notrap aligned v20+32
+    v85 = isub v83, v84
+    v86 = iconst.i64 24
+    v87 = udiv v85, v86  ; v86 = 24
+    v88 = uextend.i64 v80
+    v89 = icmp ugt v87, v88
+    brif v89, block29, block26
 
-block36 cold:
-    call fn10(v109)
-    jump block33
+block29 cold:
+    call fn10(v88)
+    jump block26
 
-block33:
-    v111 = iconst.i32 1
-    return v111  ; v111 = 1
+block26:
+    return v64
 }
 
 ;; N#step
@@ -305,7 +255,6 @@ function u0:2(i64, i64, i64) -> i32 ccall {
     gv4 = symbol userextname5
     gv5 = symbol colocated userextname14
     gv6 = symbol userextname5
-    gv7 = symbol userextname5
     sig0 = () -> i32 ccall
     sig1 = (i64) ccall
     sig2 = () -> i64 ccall
@@ -336,11 +285,11 @@ function u0:2(i64, i64, i64) -> i32 ccall {
     fn13 = colocated u0:15 sig13
 
 block0(v0: i64, v1: i64, v2: i64):
-    v149 = iconst.i64 0
-    v150 = stack_addr.i64 ss0
-    store notrap aligned v149, v150  ; v149 = 0
-    store notrap aligned v149, v150+8  ; v149 = 0
-    store notrap aligned v149, v150+16  ; v149 = 0
+    v127 = iconst.i64 0
+    v128 = stack_addr.i64 ss0
+    store notrap aligned v127, v128  ; v127 = 0
+    store notrap aligned v127, v128+8  ; v127 = 0
+    store notrap aligned v127, v128+16  ; v127 = 0
     v3 = symbol_value.i64 gv0
     v4 = symbol_value.i64 gv1
     v5 = call fn0()
@@ -566,114 +515,66 @@ block25:
     jump block2
 
 block2:
-    v101 = stack_addr.i64 ss0
-    v102 = load.i8 notrap aligned v101
-    v103 = iconst.i8 16
-    v104 = icmp uge v102, v103  ; v103 = 16
-    brif v104, block35, block36
-
-block35:
-    call fn11(v101)
-    jump block36
-
-block36:
-    v105 = symbol_value.i64 gv6
-    v106 = load.i16 notrap aligned v105
-    v107 = iconst.i16 512
-    v108 = band v106, v107  ; v107 = 512
-    brif v108, block37, block38
-
-block37 cold:
-    call fn12()
-    jump block39
-
-block38:
-    v109 = load.i64 notrap aligned v20
-    v110 = load.i64 notrap aligned v20+8
-    v111 = icmp eq v109, v110
-    brif v111, block39, block40
-
-block40:
-    v112 = iconst.i64 -48
-    v113 = iadd.i64 v109, v112  ; v112 = -48
-    store notrap aligned v113, v20
-    v114 = load.i32 notrap aligned v113+40
-    v115 = iconst.i32 -1
-    v116 = icmp eq v114, v115  ; v115 = -1
-    brif v116, block39, block41
-
-block41:
-    v117 = load.i64 notrap aligned v20+24
-    v118 = load.i64 notrap aligned v20+32
-    v119 = isub v117, v118
-    v120 = iconst.i64 24
-    v121 = udiv v119, v120  ; v120 = 24
-    v122 = uextend.i64 v114
-    v123 = icmp ugt v121, v122
-    brif v123, block42, block39
-
-block42 cold:
-    call fn13(v122)
-    jump block39
-
-block39:
-    v124 = iconst.i32 0
-    return v124  ; v124 = 0
+    v102 = iconst.i32 0
+    jump block35(v102)  ; v102 = 0
 
 block1:
-    v125 = stack_addr.i64 ss0
-    v126 = load.i8 notrap aligned v125
-    v127 = iconst.i8 16
-    v128 = icmp uge v126, v127  ; v127 = 16
-    brif v128, block43, block44
+    v103 = iconst.i32 1
+    jump block35(v103)  ; v103 = 1
 
-block43:
-    call fn11(v125)
-    jump block44
+block35(v101: i32):
+    v104 = stack_addr.i64 ss0
+    v105 = load.i8 notrap aligned v104
+    v106 = iconst.i8 16
+    v107 = icmp uge v105, v106  ; v106 = 16
+    brif v107, block36, block37
 
-block44:
-    v129 = symbol_value.i64 gv7
-    v130 = load.i16 notrap aligned v129
-    v131 = iconst.i16 512
-    v132 = band v130, v131  ; v131 = 512
-    brif v132, block45, block46
+block36:
+    call fn11(v104)
+    jump block37
 
-block45 cold:
+block37:
+    v108 = symbol_value.i64 gv6
+    v109 = load.i16 notrap aligned v108
+    v110 = iconst.i16 512
+    v111 = band v109, v110  ; v110 = 512
+    brif v111, block38, block39
+
+block38 cold:
     call fn12()
-    jump block47
+    jump block40
 
-block46:
-    v133 = load.i64 notrap aligned v20
-    v134 = load.i64 notrap aligned v20+8
-    v135 = icmp eq v133, v134
-    brif v135, block47, block48
+block39:
+    v112 = load.i64 notrap aligned v20
+    v113 = load.i64 notrap aligned v20+8
+    v114 = icmp eq v112, v113
+    brif v114, block40, block41
 
-block48:
-    v136 = iconst.i64 -48
-    v137 = iadd.i64 v133, v136  ; v136 = -48
-    store notrap aligned v137, v20
-    v138 = load.i32 notrap aligned v137+40
-    v139 = iconst.i32 -1
-    v140 = icmp eq v138, v139  ; v139 = -1
-    brif v140, block47, block49
+block41:
+    v115 = iconst.i64 -48
+    v116 = iadd.i64 v112, v115  ; v115 = -48
+    store notrap aligned v116, v20
+    v117 = load.i32 notrap aligned v116+40
+    v118 = iconst.i32 -1
+    v119 = icmp eq v117, v118  ; v118 = -1
+    brif v119, block40, block42
 
-block49:
-    v141 = load.i64 notrap aligned v20+24
-    v142 = load.i64 notrap aligned v20+32
-    v143 = isub v141, v142
-    v144 = iconst.i64 24
-    v145 = udiv v143, v144  ; v144 = 24
-    v146 = uextend.i64 v138
-    v147 = icmp ugt v145, v146
-    brif v147, block50, block47
+block42:
+    v120 = load.i64 notrap aligned v20+24
+    v121 = load.i64 notrap aligned v20+32
+    v122 = isub v120, v121
+    v123 = iconst.i64 24
+    v124 = udiv v122, v123  ; v123 = 24
+    v125 = uextend.i64 v117
+    v126 = icmp ugt v124, v125
+    brif v126, block43, block40
 
-block50 cold:
-    call fn13(v146)
-    jump block47
+block43 cold:
+    call fn13(v125)
+    jump block40
 
-block47:
-    v148 = iconst.i32 1
-    return v148  ; v148 = 1
+block40:
+    return v101
 }
 
 ;; trampoline
@@ -884,7 +785,6 @@ function u0:0(i64) -> i32 ccall {
     gv9 = symbol colocated userextname20
     gv10 = symbol userextname3
     gv11 = symbol userextname3
-    gv12 = symbol userextname3
     sig0 = () -> i64 ccall
     sig1 = (i64, i64, i64, i64, i32, i32) -> i32 ccall
     sig2 = (i64, i64, i64, i64, i32, i32) ccall
@@ -925,11 +825,11 @@ function u0:0(i64) -> i32 ccall {
     fn18 = colocated u0:14 sig18
 
 block0(v0: i64):
-    v257 = iconst.i64 0
-    v258 = stack_addr.i64 ss0
-    store notrap aligned v257, v258  ; v257 = 0
-    store notrap aligned v257, v258+8  ; v257 = 0
-    store notrap aligned v257, v258+16  ; v257 = 0
+    v235 = iconst.i64 0
+    v236 = stack_addr.i64 ss0
+    store notrap aligned v235, v236  ; v235 = 0
+    store notrap aligned v235, v236+8  ; v235 = 0
+    store notrap aligned v235, v236+16  ; v235 = 0
     v1 = symbol_value.i64 gv0
     v2 = symbol_value.i64 gv1
     v3 = iconst.i64 2
@@ -1339,118 +1239,70 @@ block52 cold:
     jump block53
 
 block53:
-    v208 = iconst.i64 0
-    store notrap aligned v208, v0  ; v208 = 0
-    store notrap aligned v208, v0+8  ; v208 = 0
-    store notrap aligned v208, v0+16  ; v208 = 0
-    v209 = stack_addr.i64 ss0
-    v210 = load.i8 notrap aligned v209
-    v211 = iconst.i8 16
-    v212 = icmp uge v210, v211  ; v211 = 16
-    brif v212, block54, block55
-
-block54:
-    call fn12(v209)
-    jump block55
-
-block55:
-    v213 = symbol_value.i64 gv11
-    v214 = load.i16 notrap aligned v213
-    v215 = iconst.i16 512
-    v216 = band v214, v215  ; v215 = 512
-    brif v216, block56, block57
-
-block56 cold:
-    call fn18()
-    jump block58
-
-block57:
-    v217 = load.i64 notrap aligned v8
-    v218 = load.i64 notrap aligned v8+8
-    v219 = icmp eq v217, v218
-    brif v219, block58, block59
-
-block59:
-    v220 = iconst.i64 -48
-    v221 = iadd.i64 v217, v220  ; v220 = -48
-    store notrap aligned v221, v8
-    v222 = load.i32 notrap aligned v221+40
-    v223 = iconst.i32 -1
-    v224 = icmp eq v222, v223  ; v223 = -1
-    brif v224, block58, block60
-
-block60:
-    v225 = load.i64 notrap aligned v8+24
-    v226 = load.i64 notrap aligned v8+32
-    v227 = isub v225, v226
-    v228 = iconst.i64 24
-    v229 = udiv v227, v228  ; v228 = 24
-    v230 = uextend.i64 v222
-    v231 = icmp ugt v229, v230
-    brif v231, block61, block58
-
-block61 cold:
-    call fn10(v230)
-    jump block58
-
-block58:
-    v232 = iconst.i32 0
-    return v232  ; v232 = 0
+    v209 = iconst.i64 0
+    store notrap aligned v209, v0  ; v209 = 0
+    store notrap aligned v209, v0+8  ; v209 = 0
+    store notrap aligned v209, v0+16  ; v209 = 0
+    v210 = iconst.i32 0
+    jump block54(v210)  ; v210 = 0
 
 block1:
-    v233 = stack_addr.i64 ss0
-    v234 = load.i8 notrap aligned v233
-    v235 = iconst.i8 16
-    v236 = icmp uge v234, v235  ; v235 = 16
-    brif v236, block62, block63
+    v211 = iconst.i32 1
+    jump block54(v211)  ; v211 = 1
 
-block62:
-    call fn12(v233)
-    jump block63
+block54(v208: i32):
+    v212 = stack_addr.i64 ss0
+    v213 = load.i8 notrap aligned v212
+    v214 = iconst.i8 16
+    v215 = icmp uge v213, v214  ; v214 = 16
+    brif v215, block55, block56
 
-block63:
-    v237 = symbol_value.i64 gv12
-    v238 = load.i16 notrap aligned v237
-    v239 = iconst.i16 512
-    v240 = band v238, v239  ; v239 = 512
-    brif v240, block64, block65
+block55:
+    call fn12(v212)
+    jump block56
 
-block64 cold:
+block56:
+    v216 = symbol_value.i64 gv11
+    v217 = load.i16 notrap aligned v216
+    v218 = iconst.i16 512
+    v219 = band v217, v218  ; v218 = 512
+    brif v219, block57, block58
+
+block57 cold:
     call fn18()
-    jump block66
+    jump block59
 
-block65:
-    v241 = load.i64 notrap aligned v8
-    v242 = load.i64 notrap aligned v8+8
-    v243 = icmp eq v241, v242
-    brif v243, block66, block67
+block58:
+    v220 = load.i64 notrap aligned v8
+    v221 = load.i64 notrap aligned v8+8
+    v222 = icmp eq v220, v221
+    brif v222, block59, block60
 
-block67:
-    v244 = iconst.i64 -48
-    v245 = iadd.i64 v241, v244  ; v244 = -48
-    store notrap aligned v245, v8
-    v246 = load.i32 notrap aligned v245+40
-    v247 = iconst.i32 -1
-    v248 = icmp eq v246, v247  ; v247 = -1
-    brif v248, block66, block68
+block60:
+    v223 = iconst.i64 -48
+    v224 = iadd.i64 v220, v223  ; v223 = -48
+    store notrap aligned v224, v8
+    v225 = load.i32 notrap aligned v224+40
+    v226 = iconst.i32 -1
+    v227 = icmp eq v225, v226  ; v226 = -1
+    brif v227, block59, block61
 
-block68:
-    v249 = load.i64 notrap aligned v8+24
-    v250 = load.i64 notrap aligned v8+32
-    v251 = isub v249, v250
-    v252 = iconst.i64 24
-    v253 = udiv v251, v252  ; v252 = 24
-    v254 = uextend.i64 v246
-    v255 = icmp ugt v253, v254
-    brif v255, block69, block66
+block61:
+    v228 = load.i64 notrap aligned v8+24
+    v229 = load.i64 notrap aligned v8+32
+    v230 = isub v228, v229
+    v231 = iconst.i64 24
+    v232 = udiv v230, v231  ; v231 = 24
+    v233 = uextend.i64 v225
+    v234 = icmp ugt v232, v233
+    brif v234, block62, block59
 
-block69 cold:
-    call fn10(v254)
-    jump block66
+block62 cold:
+    call fn10(v233)
+    jump block59
 
-block66:
-    v256 = iconst.i32 1
-    return v256  ; v256 = 1
+block59:
+    return v208
 }
 
 ;; zeo_unit_init
