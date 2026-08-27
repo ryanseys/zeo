@@ -1414,6 +1414,28 @@ impl Loader {
             "require_relative" => target.with_extension("").to_string_lossy().into_owned(),
             _ => feature.to_string(),
         };
+        // A unit is compiled in, so it is DISCLOSED like any other satisfied
+        // require. Only the splice and deferred paths recorded before, and a
+        // load-faithful package takes neither: `require "rubygems"` compiled
+        // the whole tree and `--gem-report` did not name it, while the
+        // sub-files it reaches through method-body requires were all listed.
+        // A report that omits the gem it most obviously compiled is a wrong
+        // claim to the user, which is the one thing that record exists not to
+        // be.
+        if name == "require" {
+            let by = match &package {
+                Some(_) => crate::gem_report::SatisfiedBy::BundledGem {
+                    path: display_path(&target),
+                },
+                None => crate::gem_report::SatisfiedBy::StdlibRoot {
+                    path: display_path(&target),
+                },
+            };
+            self.record_gem(crate::gem_report::GemRecord {
+                name: feature.to_string(),
+                by,
+            });
+        }
         hir.loader.single_unit_demand.insert((
             package.or_else(|| hir.lowering_package.clone()),
             target,
