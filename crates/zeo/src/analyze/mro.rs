@@ -582,10 +582,9 @@ fn resolve_module_functions(compiler: &mut Compiler, class_id: ClassId) -> Resul
 /// One walk per definition. The order matters as much as the contents: a
 /// class's slot list is the concatenation of its ancestors' lists furthest-first
 /// with duplicates dropped, and dropping the LATER duplicate is what keeps
-/// `ivars(C) == ivars(parent(C)) ++ C's own new names` -- the property
-/// `analyze::share` leans on so one body can index a slot by a constant across
-/// a whole hierarchy. Collecting per class in the same order the old nested
-/// walk did, then concatenating, reproduces that sequence exactly.
+/// `ivars(C) == ivars(parent(C)) ++ C's own new names`. Collecting per class in
+/// the same order the old nested walk did, then concatenating, reproduces that
+/// sequence exactly.
 fn own_ivars(compiler: &Compiler) -> Vec<Vec<String>> {
     compiler
         .classes
@@ -742,12 +741,16 @@ fn materialize_methods(
     // verbatim: `ivars(C) == ivars(parent(C)) ++ C's own new names`. Since a
     // parent's `ancestors` is a suffix of its child's (MRO keeps the relative
     // order of everything it inherits), reversing is all the property needs.
-    // `analyze::share` depends on it -- one body shared by a base and 151
-    // descendants indexes a slot by a compile-time constant, which is only the
-    // same constant everywhere if the base's names sit at the same indices on
-    // every descendant. Slot ORDER is otherwise unobservable: `instance_
-    // variables` and `inspect` report FIRST-ASSIGNMENT order, which
-    // `IvarCell`'s per-slot stamp carries independently of the layout.
+    //
+    // Nothing consumes that prefix property today. It was the precondition for
+    // the rustc backend's body-sharing pass -- one body serving a base and its
+    // descendants can index a slot by a compile-time constant only if the
+    // base's names sit at the same indices on every one of them -- and that
+    // pass went with the backend. Keeping the layout is what would let a
+    // Cranelift-side pass be written without re-deriving it. Slot ORDER is
+    // otherwise unobservable: `instance_variables` and `inspect` report
+    // FIRST-ASSIGNMENT order, which `IvarCell`'s per-slot stamp carries
+    // independently of the layout.
     let mut ivars: Vec<String> = Vec::new();
     for anc_ix in (0..compiler.class(class_id).ancestors.len()).rev() {
         let anc_id = compiler.class(class_id).ancestors[anc_ix];

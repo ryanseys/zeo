@@ -202,6 +202,123 @@ pub fn unrevealable_classes(a: &Analyzed) -> Vec<String> {
         .collect()
 }
 
+/// `--dump=methods`: what materialization costs this program.
+///
+/// Inheriting a method is an ENTRY, not a copy: one `Scope` holds the body and
+/// every class that inherits or includes it gets a `MethodEntry` naming that
+/// same `ScopeId` (`analyze::mro::entry_for`). The backend is what multiplies
+/// them -- `clif::classes` declares a body and a trampoline per entry, with
+/// the owner baked into the symbol -- so one `def` becomes one emitted body
+/// per class.
+///
+/// That is the monomorphization trade, and it is the largest single term in a
+/// compiled program's size. Nothing reported it, so every figure about it so
+/// far has been a division rather than a count.
+///
+/// A group is the classes sharing one `MethodEntry::def`, which is exactly
+/// what the deleted rustc-era `analyze::share` bucketed. The closing tally is
+/// the point; the rows above it name the widest `def`s, which is where any
+/// sharing work would have to start.
+pub fn methods(a: &Analyzed, top: usize) -> String {
+    let compiler = &a.compiler;
+    let mut by_def: std::collections::HashMap<u32, Vec<crate::compiler::ClassId>> =
+        std::collections::HashMap::new();
+    let (mut entries, mut carried) = (0usize, 0usize);
+    for (i, info) in compiler.classes.iter().enumerate() {
+        let cid = crate::compiler::ClassId(i_u32(i));
+        // Only an ORDINARY class emits a body per entry. `Object`'s own
+        // instance methods are emitted once by `clif::collect::collect_methods`
+        // however many classes carry them, and a builtin or bootstrap class
+        // emits only its DELTAS (`clif::classes`) -- a top-level `def` reaching
+        // every exception through Object is deliberately nobody's delta. So
+        // those entries are real dispatch rows that cost no code, and counting
+        // them as copies is what turns this report into a wrong number.
+        let emits = !(info.is_builtin || info.is_bootstrap || i == 0);
+        for entry in info.methods.iter().chain(&info.class_methods) {
+            if !emits {
+                carried += 1;
+                continue;
+            }
+            entries += 1;
+            by_def.entry(entry.def.0).or_default().push(cid);
+        }
+    }
+
+    let mut widest: Vec<(usize, u32, &Vec<crate::compiler::ClassId>)> = by_def
+        .iter()
+        .map(|(&def, owners)| (owners.len(), def, owners))
+        .filter(|(n, _, _)| *n > 1)
+        .collect();
+    // By width, then by `def`, so two definitions carried the same number of
+    // times report in a stable order rather than the map's.
+    widest.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
+
+    let mut out = String::new();
+    for &(n, def, owners) in widest.iter().take(top) {
+        let scope = compiler.scope(crate::compiler::ScopeId(def));
+        let where_ = scope
+            .def_node
+            .and_then(|node| crate::analyze::source::source_location(compiler, node))
+            .map_or_else(|| "?".to_string(), |(f, l)| format!("{f}:{l}"));
+        out.push_str(&format!(
+            "{n:>5} classes  {}#{}  {where_}\n",
+            compiler.fq_name(scope.defining_class),
+            scope.name,
+        ));
+        let sample: Vec<String> = owners.iter().take(4).map(|&c| compiler.fq_name(c)).collect();
+        out.push_str(&format!(
+            "         {}{}\n",
+            sample.join(", "),
+            match owners.len() > sample.len() {
+                true => format!(", +{} more", owners.len() - sample.len()),
+                false => String::new(),
+            }
+        ));
+    }
+    let extra: usize = widest.iter().map(|&(n, _, _)| n - 1).sum();
+    // How much of that width comes from the UNIVERSAL ancestors -- `Object`
+    // and whatever sits above it, which is every class's tail. A gem writing
+    // `module Kernel; def pp; end` reaches all 1,600 user classes, and each
+    // one takes a copy; a builtin is already exempted from this in
+    // `analyze::mro` because the Object dispatch channel finds them anyway.
+    // Broken out because it is one rule away from being the same exemption,
+    // and because it is most of the number above.
+    // `ancestors` already starts with the class itself, so Object is in here
+    // once, followed by Kernel and BasicObject.
+    let universal: &[crate::compiler::ClassId] =
+        &compiler.class(crate::compiler::OBJECT_CLASS).ancestors;
+    let from_universal: usize = widest
+        .iter()
+        .filter(|&&(_, def, _)| {
+            universal.contains(&compiler.scope(crate::compiler::ScopeId(def)).defining_class)
+        })
+        .map(|&(n, _, _)| n - 1)
+        .sum();
+    out.push_str(&format!(
+        "{entries} emitted bod(ies) over {} definition(s); {carried} more entr(ies) \
+         are carried by Object or a builtin and emit nothing\n",
+        by_def.len()
+    ));
+    out.push_str(&format!(
+        "{} definition(s) reach more than one class, costing {extra} extra bod(ies) \
+         -- {:.0}% of what is emitted\n",
+        widest.len(),
+        match entries {
+            0 => 0.0,
+            n => extra as f64 / n as f64 * 100.0,
+        }
+    ));
+    out.push_str(&format!(
+        "{from_universal} of those come from a definition on {} -- every class's tail\n",
+        universal
+            .iter()
+            .map(|&c| compiler.fq_name(c))
+            .collect::<Vec<_>>()
+            .join("/")
+    ));
+    out
+}
+
 fn i_u32(i: usize) -> u32 {
     i as u32
 }

@@ -101,6 +101,10 @@ enum FrontEndDump {
     /// bundler defines 1,600 classes, so unfiltered is rarely what is
     /// wanted.
     Classes(Option<String>),
+    /// `--dump=methods` bare shows the 20 widest definitions, or
+    /// `--dump=methods=100` that many. The tally at the end is the part that
+    /// matters; the rows are there to say WHERE the width comes from.
+    Methods(usize),
 }
 
 /// Where `--emit-clif` sends the emitted IR. The path is ATTACHED-only
@@ -213,7 +217,10 @@ options:
                         (`-c` is the short spelling); `units` prints the
                         compiled-in load path -- every file that became a
                         feature unit, with the spellings a require can use
-                        for it. `insns` and `parsetree` are REFUSED rather
+                        for it; `classes[=<filter>]` says which class bodies
+                        ever run; `methods[=<rows>]` counts what inheritance
+                        costs, since one `def` is emitted once per class that
+                        carries it. `insns` and `parsetree` are REFUSED rather
                         than warned about: zeo emits no bytecode, and the
                         prism tree has no printer on the Rust side
   -c                    --dump=syntax, ruby's short spelling
@@ -422,6 +429,15 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                             (!filter.is_empty()).then(|| filter.to_string()),
                         ));
                     }
+                    Some(("methods", count)) => {
+                        let top = match count.is_empty() {
+                            true => 20,
+                            false => count.parse().map_err(|_| {
+                                format!("--dump=methods={count} wants a row count, e.g. 100")
+                            })?,
+                        };
+                        dump_front_end = Some(FrontEndDump::Methods(top));
+                    }
                     Some(("insns", _)) => {
                         return Err("--dump=insns has no answer here: zeo compiles ahead of \
                                     time and emits no bytecode (--dump=clif shows the IR it \
@@ -437,7 +453,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                     Some((other, _)) => {
                         return Err(format!(
                             "--dump={other} is not a dump zeo knows \
-                             (clif, syntax, units, classes; insns and parsetree are refused)"
+                             (clif, syntax, units, classes, methods; insns and parsetree are refused)"
                         ));
                     }
                     None => return Err("--dump needs a kind, e.g. --dump=clif".to_string()),
@@ -884,6 +900,7 @@ fn run() -> Result<(), MainError> {
             match kind {
                 FrontEndDump::Units => zeo::dump::units(&analyzed),
                 FrontEndDump::Classes(filter) => zeo::dump::classes(&analyzed, filter.as_deref()),
+                FrontEndDump::Methods(top) => zeo::dump::methods(&analyzed, *top),
             }
         );
         return Ok(());
