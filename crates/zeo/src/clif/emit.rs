@@ -327,6 +327,13 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         super::params::define_trampoline(em, &spec, idx)?;
     }
     for m in &obj_methods {
+        // A SHARED row reuses the body and trampoline `collect_methods`
+        // already emitted on `Object` for the whole program. Its registration
+        // row is real; there is nothing here to compile, and defining that
+        // trampoline a second time is an error rather than a duplicate.
+        if m.shared {
+            continue;
+        }
         let idx = em.next_fn_index();
         match (m.accessor, m.body_fn) {
             (Some((slot, kind, attr_generated)), None) => {

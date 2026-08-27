@@ -65,6 +65,12 @@ pub(crate) struct ObjMethodSpec {
     /// its `REG_SUPER_TARGET_VALUE` row registers, but no `ObjRow` -- the
     /// object channel carries the module's materialized copy.
     pub super_target_only: bool,
+    /// This row REUSES a body and trampoline that another row already emits:
+    /// a definition on Object/Kernel/BasicObject, which `collect::
+    /// collect_methods` emits once under `Object#name` for the whole program.
+    /// The registration row is real; the emission is somebody else's, so
+    /// `emit` must not compile a second copy or define the trampoline twice.
+    pub shared: bool,
 }
 
 /// One class method (`def self.x`) to compile -- a `CmRow` on the
@@ -238,6 +244,10 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
     let mut redefs: Vec<RedefSpec> = Vec::new();
     let mut set_ancestors: Vec<(u32, Vec<u32>)> = Vec::new();
     let mut register_builtin: Vec<(u32, String, bool, Vec<u32>)> = Vec::new();
+    // Object, Kernel, BasicObject -- the tail every ancestry ends with, so a
+    // definition here is inherited by every class in the program. `ancestors`
+    // starts with the class itself, so this is exactly those three.
+    let universal_spine: Vec<ClassId> = compiler.class(crate::compiler::OBJECT_CLASS).ancestors.clone();
     // Builtin-source alias rows, every class including the toplevel (the
     // boxed-overlay target case is refused
     // with its class). A require-gated builtin whose feature never fired
@@ -455,6 +465,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     hir_params: p.clone(),
                     has_blk,
                     ruby2_keywords: scope.ruby2_keywords,
+                    shared: false,
                 });
             } else {
                 // A value-channel row on the builtin's own id.
@@ -879,6 +890,73 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 }
             };
             let has_blk = scope.needs_block_param();
+            // A definition on the UNIVERSAL spine is already emitted once by
+            // `collect::collect_methods`, under its `Object#name` symbol, and
+            // every class in the program inherits it. Emitting a copy per
+            // class is what a dozen gems reopening `Kernel` or writing a
+            // top-level `def` turn into 22,393 bodies on a program that
+            // requires rubygems (`--dump=methods`). The row names the one
+            // body instead.
+            //
+            // Safe because these bodies carry nothing per-class, which is
+            // measured rather than assumed (see the golden beside this):
+            // `clif::ivars::ivar_slot_of` answers NAME-KEYED for an `Object`
+            // owner, so there is no slot constant for two carriers to
+            // disagree about, and a top-level `def` resolves constants
+            // against `Object` however it was reached.
+            //
+            // Narrow on purpose. An own definition, an accessor, a
+            // native-backed instance and a boxed class each keep their own
+            // row, and a definition on an ordinary module is untouched --
+            // that one has real per-class ivar slots.
+            let inherited_universal = !class.own_methods.contains(&entry.def)
+                && universal_spine.contains(&scope.defining_class)
+                && accessor.is_none()
+                && !native_backed
+                && class.box_id == 0;
+            if inherited_universal
+                && let Some(shared) = em.methods.get(&mname).map(|d| d.tramp)
+            {
+                // The visibility row is the class's, not the shared body's,
+                // and it is pushed further down the ordinary path -- so it
+                // has to be pushed here too. A top-level `def` is PRIVATE in
+                // ruby, and skipping this made `respond_to?(:read_const)`
+                // answer true where ruby answers false.
+                match scope.visibility {
+                    crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
+                        class: idx as u32,
+                        name: mname.clone(),
+                        verb: 0,
+                    }),
+                    crate::hir::Visibility::Protected => vis.push(statics::VisRowSpec {
+                        class: idx as u32,
+                        name: mname.clone(),
+                        verb: 1,
+                    }),
+                    crate::hir::Visibility::Public => {}
+                }
+                methods.push(ObjMethodSpec {
+                    is_own: false,
+                    super_target_only: false,
+                    dyn_ivars: false,
+                    alias_of: scope.alias_of.clone(),
+                    defining_class: scope.defining_class,
+                    lexical_home: scope.lexical_home,
+                    owner: ClassId(idx as u32),
+                    owner_name: name.clone(),
+                    name: mname,
+                    body: scope.body.clone(),
+                    node: scope.def_node,
+                    tramp: shared,
+                    accessor: None,
+                    body_fn: None,
+                    hir_params: p.clone(),
+                    has_blk,
+                    ruby2_keywords: scope.ruby2_keywords,
+                    shared: true,
+                });
+                continue;
+            }
             let tramp = em
                 .module
                 .declare_function(
@@ -974,6 +1052,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 hir_params: p.clone(),
                 has_blk,
                 ruby2_keywords: scope.ruby2_keywords,
+                shared: false,
             });
         }
         // An own method a `prepend` SHADOWED never won its name in the
@@ -1068,6 +1147,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     hir_params: p.clone(),
                     has_blk,
                     ruby2_keywords: scope.ruby2_keywords,
+                    shared: false,
                 });
             }
         }

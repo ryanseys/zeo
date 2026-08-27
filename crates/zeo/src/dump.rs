@@ -223,7 +223,11 @@ pub fn methods(a: &Analyzed, top: usize) -> String {
     let compiler = &a.compiler;
     let mut by_def: std::collections::HashMap<u32, Vec<crate::compiler::ClassId>> =
         std::collections::HashMap::new();
-    let (mut entries, mut carried) = (0usize, 0usize);
+    // `ancestors` already starts with the class itself, so this is Object,
+    // Kernel and BasicObject -- the tail every ancestry ends with.
+    let universal: &[crate::compiler::ClassId] =
+        &compiler.class(crate::compiler::OBJECT_CLASS).ancestors;
+    let (mut entries, mut carried, mut shared) = (0usize, 0usize, 0usize);
     for (i, info) in compiler.classes.iter().enumerate() {
         let cid = crate::compiler::ClassId(i_u32(i));
         // Only an ORDINARY class emits a body per entry. `Object`'s own
@@ -237,6 +241,20 @@ pub fn methods(a: &Analyzed, top: usize) -> String {
         for entry in info.methods.iter().chain(&info.class_methods) {
             if !emits {
                 carried += 1;
+                continue;
+            }
+            // ... and an INHERITED definition from the universal spine now
+            // reuses the one body `collect_methods` emits on Object, so it
+            // costs no code either (`clif::classes`). Mirrors that guard;
+            // `accessor_shape` is the one arm it cannot ask about here, and an
+            // accessor on Object is a shape no bundled gem writes.
+            let scope = compiler.scope(entry.def);
+            if !info.own_methods.contains(&entry.def)
+                && universal.contains(&scope.defining_class)
+                && info.box_id == 0
+                && !compiler.is_native_backed(cid)
+            {
+                shared += 1;
                 continue;
             }
             entries += 1;
@@ -276,24 +294,6 @@ pub fn methods(a: &Analyzed, top: usize) -> String {
         ));
     }
     let extra: usize = widest.iter().map(|&(n, _, _)| n - 1).sum();
-    // How much of that width comes from the UNIVERSAL ancestors -- `Object`
-    // and whatever sits above it, which is every class's tail. A gem writing
-    // `module Kernel; def pp; end` reaches all 1,600 user classes, and each
-    // one takes a copy; a builtin is already exempted from this in
-    // `analyze::mro` because the Object dispatch channel finds them anyway.
-    // Broken out because it is one rule away from being the same exemption,
-    // and because it is most of the number above.
-    // `ancestors` already starts with the class itself, so Object is in here
-    // once, followed by Kernel and BasicObject.
-    let universal: &[crate::compiler::ClassId] =
-        &compiler.class(crate::compiler::OBJECT_CLASS).ancestors;
-    let from_universal: usize = widest
-        .iter()
-        .filter(|&&(_, def, _)| {
-            universal.contains(&compiler.scope(crate::compiler::ScopeId(def)).defining_class)
-        })
-        .map(|&(n, _, _)| n - 1)
-        .sum();
     out.push_str(&format!(
         "{entries} emitted bod(ies) over {} definition(s); {carried} more entr(ies) \
          are carried by Object or a builtin and emit nothing\n",
@@ -309,7 +309,8 @@ pub fn methods(a: &Analyzed, top: usize) -> String {
         }
     ));
     out.push_str(&format!(
-        "{from_universal} of those come from a definition on {} -- every class's tail\n",
+        "{shared} row(s) inherit a definition on {} -- every class's tail -- and \
+         SHARE the one body emitted for it\n",
         universal
             .iter()
             .map(|&c| compiler.fq_name(c))

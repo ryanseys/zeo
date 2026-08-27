@@ -1,5 +1,6 @@
 ---
 source: crates/zeo/tests/clif.rs
+assertion_line: 53
 expression: "clif_of(\"class N\\n  def initialize(v)\\n    @v = v\\n  end\\n  def step(a) = @v + a\\nend\\ndef via(u) = u.step(1)\\nn = N.new(1)\\nputs n.step(2)\\nputs via(n)\\n\",)"
 ---
 ;; Object#via
@@ -26,17 +27,17 @@ function u0:1(i64, i64, i64) -> i32 ccall {
     sig8 = (i64) ccall
     sig9 = () ccall
     sig10 = (i64) ccall
-    fn0 = colocated u0:7 sig0
-    fn1 = colocated u0:8 sig1
-    fn2 = colocated u0:9 sig2
-    fn3 = colocated u0:10 sig3
-    fn4 = colocated u0:11 sig4
-    fn5 = colocated u0:12 sig5
-    fn6 = colocated u0:13 sig6
-    fn7 = colocated u0:14 sig7
-    fn8 = colocated u0:15 sig8
-    fn9 = colocated u0:16 sig9
-    fn10 = colocated u0:17 sig10
+    fn0 = colocated u0:5 sig0
+    fn1 = colocated u0:6 sig1
+    fn2 = colocated u0:7 sig2
+    fn3 = colocated u0:8 sig3
+    fn4 = colocated u0:9 sig4
+    fn5 = colocated u0:10 sig5
+    fn6 = colocated u0:11 sig6
+    fn7 = colocated u0:12 sig7
+    fn8 = colocated u0:13 sig8
+    fn9 = colocated u0:14 sig9
+    fn10 = colocated u0:15 sig10
 
 block0(v0: i64, v1: i64, v2: i64):
     v112 = iconst.i64 0
@@ -319,20 +320,20 @@ function u0:2(i64, i64, i64) -> i32 ccall {
     sig11 = (i64) ccall
     sig12 = () ccall
     sig13 = (i64) ccall
-    fn0 = colocated u0:7 sig0
-    fn1 = colocated u0:8 sig1
-    fn2 = colocated u0:9 sig2
-    fn3 = colocated u0:10 sig3
-    fn4 = colocated u0:11 sig4
-    fn5 = colocated u0:12 sig5
-    fn6 = colocated u0:13 sig6
-    fn7 = colocated u0:18 sig7
-    fn8 = colocated u0:19 sig8
-    fn9 = colocated u0:20 sig9
-    fn10 = colocated u0:14 sig10
-    fn11 = colocated u0:15 sig11
-    fn12 = colocated u0:16 sig12
-    fn13 = colocated u0:17 sig13
+    fn0 = colocated u0:5 sig0
+    fn1 = colocated u0:6 sig1
+    fn2 = colocated u0:7 sig2
+    fn3 = colocated u0:8 sig3
+    fn4 = colocated u0:9 sig4
+    fn5 = colocated u0:10 sig5
+    fn6 = colocated u0:11 sig6
+    fn7 = colocated u0:16 sig7
+    fn8 = colocated u0:17 sig8
+    fn9 = colocated u0:18 sig9
+    fn10 = colocated u0:12 sig10
+    fn11 = colocated u0:13 sig11
+    fn12 = colocated u0:14 sig12
+    fn13 = colocated u0:15 sig13
 
 block0(v0: i64, v1: i64, v2: i64):
     v149 = iconst.i64 0
@@ -675,300 +676,8 @@ block47:
     return v148  ; v148 = 1
 }
 
-;; N#via
-function u0:3(i64, i64, i64) -> i32 ccall {
-    ss0 = explicit_slot 24, align = 8
-    ss1 = explicit_slot 24, align = 8
-    ss2 = explicit_slot 24, align = 8
-    gv0 = symbol colocated userextname0
-    gv1 = symbol colocated userextname1
-    gv2 = symbol userextname5
-    gv3 = symbol userextname8
-    gv4 = symbol userextname5
-    gv5 = symbol colocated userextname11
-    gv6 = symbol userextname5
-    gv7 = symbol userextname5
-    sig0 = () -> i32 ccall
-    sig1 = (i64) ccall
-    sig2 = () -> i64 ccall
-    sig3 = (i64, i64, i64, i64, i32, i32) -> i32 ccall
-    sig4 = (i64, i64, i64, i64, i32, i32) ccall
-    sig5 = () -> i32 ccall
-    sig6 = (i32) ccall
-    sig7 = (i64, i32, i64, i32, i64, i64, i64, i64) -> i32 ccall
-    sig8 = (i64) ccall
-    sig9 = () ccall
-    sig10 = (i64) ccall
-    fn0 = colocated u0:7 sig0
-    fn1 = colocated u0:8 sig1
-    fn2 = colocated u0:9 sig2
-    fn3 = colocated u0:10 sig3
-    fn4 = colocated u0:11 sig4
-    fn5 = colocated u0:12 sig5
-    fn6 = colocated u0:13 sig6
-    fn7 = colocated u0:14 sig7
-    fn8 = colocated u0:15 sig8
-    fn9 = colocated u0:16 sig9
-    fn10 = colocated u0:17 sig10
-
-block0(v0: i64, v1: i64, v2: i64):
-    v114 = iconst.i64 0
-    v115 = stack_addr.i64 ss0
-    store notrap aligned v114, v115  ; v114 = 0
-    store notrap aligned v114, v115+8  ; v114 = 0
-    store notrap aligned v114, v115+16  ; v114 = 0
-    v3 = symbol_value.i64 gv0
-    v4 = symbol_value.i64 gv1
-    v5 = call fn0()
-    brif v5, block3, block4
-
-block3:
-    v6 = iconst.i32 1
-    return v6  ; v6 = 1
-
-block4:
-    v7 = stack_addr.i64 ss0
-    v8 = load.i8 notrap aligned v1
-    v9 = iconst.i8 16
-    v10 = icmp uge v8, v9  ; v9 = 16
-    brif v10, block5, block6
-
-block5:
-    call fn1(v1)
-    jump block6
-
-block6:
-    v11 = load.i64 notrap aligned v1
-    store notrap aligned v11, v7
-    v12 = load.i64 notrap aligned v1+8
-    store notrap aligned v12, v7+8
-    v13 = load.i64 notrap aligned v1+16
-    store notrap aligned v13, v7+16
-    v14 = iconst.i64 2
-    v15 = iconst.i64 18
-    v16 = iadd.i64 v3, v15  ; v15 = 18
-    v17 = iconst.i64 5
-    v18 = iconst.i32 7
-    v19 = iconst.i32 7
-    v20 = call fn2()
-    v21 = symbol_value.i64 gv2
-    v22 = load.i16 notrap aligned v21
-    v23 = iconst.i16 512
-    v24 = band v22, v23  ; v23 = 512
-    brif v24, block7, block8
-
-block7 cold:
-    v25 = call fn3(v3, v14, v16, v17, v18, v19)  ; v14 = 2, v17 = 5, v18 = 7, v19 = 7
-    brif v25, block1, block10
-
-block10:
-    jump block9
-
-block8:
-    v26 = load.i64 notrap aligned v20
-    v27 = load.i64 notrap aligned v20+16
-    v28 = icmp eq v26, v27
-    brif v28, block11, block12
-
-block11 cold:
-    call fn4(v3, v14, v16, v17, v18, v19)  ; v14 = 2, v17 = 5, v18 = 7, v19 = 7
-    jump block13
-
-block12:
-    store.i64 notrap aligned v3, v26
-    store.i64 notrap aligned v14, v26+8  ; v14 = 2
-    store.i64 notrap aligned v16, v26+16
-    store.i64 notrap aligned v17, v26+24  ; v17 = 5
-    store.i32 notrap aligned v18, v26+32  ; v18 = 7
-    store.i32 notrap aligned v19, v26+36  ; v19 = 7
-    v29 = load.i64 notrap aligned v20+24
-    v30 = load.i64 notrap aligned v20+32
-    v31 = isub v29, v30
-    v32 = iconst.i64 24
-    v33 = udiv v31, v32  ; v32 = 24
-    v34 = ireduce.i32 v33
-    store notrap aligned v34, v26+40
-    v35 = iconst.i64 48
-    v36 = iadd.i64 v26, v35  ; v35 = 48
-    store notrap aligned v36, v20
-    jump block13
-
-block13:
-    v37 = symbol_value.i64 gv3
-    v38 = load.i32 notrap aligned v37
-    brif v38, block14, block15
-
-block14 cold:
-    v39 = call fn5()
-    brif v39, block1, block15
-
-block15:
-    jump block9
-
-block9:
-    v40 = iconst.i32 7
-    v41 = symbol_value.i64 gv4
-    v42 = load.i16 notrap aligned v41
-    v43 = iconst.i16 512
-    v44 = band v42, v43  ; v43 = 512
-    brif v44, block16, block17
-
-block16 cold:
-    call fn6(v40)  ; v40 = 7
-    jump block18
-
-block17:
-    v45 = load.i64 notrap aligned v20
-    v46 = load.i64 notrap aligned v20+8
-    v47 = icmp eq v45, v46
-    brif v47, block18, block19
-
-block19:
-    store.i32 notrap aligned v40, v45-16  ; v40 = 7
-    jump block18
-
-block18:
-    v48 = stack_addr.i64 ss0
-    v49 = iconst.i64 1
-    v50 = stack_addr.i64 ss1
-    v51 = iconst.i8 2
-    store notrap aligned v51, v50  ; v51 = 2
-    store notrap aligned v49, v50+8  ; v49 = 1
-    v52 = stack_addr.i64 ss1
-    v53 = load.i32 notrap aligned v4
-    v54 = iconst.i32 0
-    v55 = iconst.i64 1
-    v56 = iconst.i64 0
-    v57 = stack_addr.i64 ss2
-    v58 = symbol_value.i64 gv5
-    v59 = iconst.i64 112
-    v60 = iadd v58, v59  ; v59 = 112
-    v61 = call fn7(v60, v54, v48, v53, v52, v55, v56, v57)  ; v54 = 0, v55 = 1, v56 = 0
-    brif v61, block1, block20
-
-block20:
-    v62 = stack_addr.i64 ss2
-    v63 = load.i64 notrap aligned v62
-    store notrap aligned v63, v2
-    v64 = load.i64 notrap aligned v62+8
-    store notrap aligned v64, v2+8
-    v65 = load.i64 notrap aligned v62+16
-    store notrap aligned v65, v2+16
-    jump block2
-
-block2:
-    v66 = stack_addr.i64 ss0
-    v67 = load.i8 notrap aligned v66
-    v68 = iconst.i8 16
-    v69 = icmp uge v67, v68  ; v68 = 16
-    brif v69, block21, block22
-
-block21:
-    call fn8(v66)
-    jump block22
-
-block22:
-    v70 = symbol_value.i64 gv6
-    v71 = load.i16 notrap aligned v70
-    v72 = iconst.i16 512
-    v73 = band v71, v72  ; v72 = 512
-    brif v73, block23, block24
-
-block23 cold:
-    call fn9()
-    jump block25
-
-block24:
-    v74 = load.i64 notrap aligned v20
-    v75 = load.i64 notrap aligned v20+8
-    v76 = icmp eq v74, v75
-    brif v76, block25, block26
-
-block26:
-    v77 = iconst.i64 -48
-    v78 = iadd.i64 v74, v77  ; v77 = -48
-    store notrap aligned v78, v20
-    v79 = load.i32 notrap aligned v78+40
-    v80 = iconst.i32 -1
-    v81 = icmp eq v79, v80  ; v80 = -1
-    brif v81, block25, block27
-
-block27:
-    v82 = load.i64 notrap aligned v20+24
-    v83 = load.i64 notrap aligned v20+32
-    v84 = isub v82, v83
-    v85 = iconst.i64 24
-    v86 = udiv v84, v85  ; v85 = 24
-    v87 = uextend.i64 v79
-    v88 = icmp ugt v86, v87
-    brif v88, block28, block25
-
-block28 cold:
-    call fn10(v87)
-    jump block25
-
-block25:
-    v89 = iconst.i32 0
-    return v89  ; v89 = 0
-
-block1:
-    v90 = stack_addr.i64 ss0
-    v91 = load.i8 notrap aligned v90
-    v92 = iconst.i8 16
-    v93 = icmp uge v91, v92  ; v92 = 16
-    brif v93, block29, block30
-
-block29:
-    call fn8(v90)
-    jump block30
-
-block30:
-    v94 = symbol_value.i64 gv7
-    v95 = load.i16 notrap aligned v94
-    v96 = iconst.i16 512
-    v97 = band v95, v96  ; v96 = 512
-    brif v97, block31, block32
-
-block31 cold:
-    call fn9()
-    jump block33
-
-block32:
-    v98 = load.i64 notrap aligned v20
-    v99 = load.i64 notrap aligned v20+8
-    v100 = icmp eq v98, v99
-    brif v100, block33, block34
-
-block34:
-    v101 = iconst.i64 -48
-    v102 = iadd.i64 v98, v101  ; v101 = -48
-    store notrap aligned v102, v20
-    v103 = load.i32 notrap aligned v102+40
-    v104 = iconst.i32 -1
-    v105 = icmp eq v103, v104  ; v104 = -1
-    brif v105, block33, block35
-
-block35:
-    v106 = load.i64 notrap aligned v20+24
-    v107 = load.i64 notrap aligned v20+32
-    v108 = isub v106, v107
-    v109 = iconst.i64 24
-    v110 = udiv v108, v109  ; v109 = 24
-    v111 = uextend.i64 v103
-    v112 = icmp ugt v110, v111
-    brif v112, block36, block33
-
-block36 cold:
-    call fn10(v111)
-    jump block33
-
-block33:
-    v113 = iconst.i32 1
-    return v113  ; v113 = 1
-}
-
 ;; trampoline
-function u1:4(i64, i64, i64, i64, i64) -> i32 ccall {
+function u1:3(i64, i64, i64, i64, i64) -> i32 ccall {
     gv0 = symbol colocated userextname5
     sig0 = (i64, i64, i64) -> i32 ccall
     sig1 = (i64) ccall
@@ -976,10 +685,10 @@ function u1:4(i64, i64, i64, i64, i64) -> i32 ccall {
     sig3 = (i64, i64, i64, i64, i32, i32) ccall
     sig4 = () ccall
     fn0 = colocated u0:0 sig0
-    fn1 = u0:15 sig1
-    fn2 = u0:21 sig2
-    fn3 = u0:11 sig3
-    fn4 = u0:16 sig4
+    fn1 = u0:13 sig1
+    fn2 = u0:19 sig2
+    fn3 = u0:9 sig3
+    fn4 = u0:14 sig4
 
 block0(v0: i64, v1: i64, v2: i64, v3: i64, v4: i64):
     v5 = iconst.i64 0
@@ -1015,7 +724,7 @@ block3:
 }
 
 ;; trampoline
-function u1:5(i64, i64, i64, i64, i64) -> i32 ccall {
+function u1:4(i64, i64, i64, i64, i64) -> i32 ccall {
     gv0 = symbol colocated userextname2
     sig0 = (i64, i64, i64, i64, i32, i32) ccall
     sig1 = () ccall
@@ -1025,14 +734,14 @@ function u1:5(i64, i64, i64, i64, i64) -> i32 ccall {
     sig5 = (i64) -> i32 ccall
     sig6 = (i64, i64, i64) -> i32 ccall
     sig7 = (i64) ccall
-    fn0 = u0:11 sig0
-    fn1 = u0:16 sig1
-    fn2 = u0:15 sig2
-    fn3 = u0:21 sig3
-    fn4 = u0:18 sig4
-    fn5 = u0:22 sig5
-    fn6 = u0:23 sig6
-    fn7 = u0:8 sig7
+    fn0 = u0:9 sig0
+    fn1 = u0:14 sig1
+    fn2 = u0:13 sig2
+    fn3 = u0:19 sig3
+    fn4 = u0:16 sig4
+    fn5 = u0:20 sig5
+    fn6 = u0:21 sig6
+    fn7 = u0:6 sig7
 
 block0(v0: i64, v1: i64, v2: i64, v3: i64, v4: i64):
     v5 = iconst.i64 0
@@ -1051,8 +760,8 @@ block2:
 block4:
     v9 = symbol_value.i64 gv0
     v10 = iconst.i64 2
-    v11 = iconst.i64 23
-    v12 = iadd v9, v11  ; v11 = 23
+    v11 = iconst.i64 18
+    v12 = iadd v9, v11  ; v11 = 18
     v13 = iconst.i64 12
     v14 = iconst.i32 2
     v15 = iconst.i32 4
@@ -1066,8 +775,8 @@ block3:
     v18 = iconst.i64 0
     v19 = symbol_value.i64 gv0
     v20 = iconst.i64 2
-    v21 = iconst.i64 23
-    v22 = iadd v19, v21  ; v21 = 23
+    v21 = iconst.i64 18
+    v22 = iadd v19, v21  ; v21 = 18
     v23 = iconst.i64 12
     v24 = iconst.i32 2
     v25 = iconst.i32 4
@@ -1103,7 +812,7 @@ block8:
 }
 
 ;; trampoline
-function u1:6(i64, i64, i64, i64, i64) -> i32 ccall {
+function u1:5(i64, i64, i64, i64, i64) -> i32 ccall {
     gv0 = symbol colocated userextname5
     sig0 = (i64, i64, i64) -> i32 ccall
     sig1 = (i64) ccall
@@ -1111,10 +820,10 @@ function u1:6(i64, i64, i64, i64, i64) -> i32 ccall {
     sig3 = (i64, i64, i64, i64, i32, i32) ccall
     sig4 = () ccall
     fn0 = colocated u0:4 sig0
-    fn1 = u0:15 sig1
-    fn2 = u0:21 sig2
-    fn3 = u0:11 sig3
-    fn4 = u0:16 sig4
+    fn1 = u0:13 sig1
+    fn2 = u0:19 sig2
+    fn3 = u0:9 sig3
+    fn4 = u0:14 sig4
 
 block0(v0: i64, v1: i64, v2: i64, v3: i64, v4: i64):
     v5 = iconst.i64 0
@@ -1139,53 +848,6 @@ block4:
     v14 = iconst.i32 5
     v15 = iconst.i32 5
     call fn3(v9, v10, v12, v13, v14, v15)  ; v10 = 2, v13 = 6, v14 = 5, v15 = 5
-    v16 = iconst.i64 1
-    v17 = call fn2(v2, v16, v16)  ; v16 = 1, v16 = 1
-    call fn4()
-    return v17
-
-block3:
-    v18 = call fn0(v0, v1, v4)
-    return v18
-}
-
-;; trampoline
-function u1:7(i64, i64, i64, i64, i64) -> i32 ccall {
-    gv0 = symbol colocated userextname5
-    sig0 = (i64, i64, i64) -> i32 ccall
-    sig1 = (i64) ccall
-    sig2 = (i64, i64, i64) -> i32 ccall
-    sig3 = (i64, i64, i64, i64, i32, i32) ccall
-    sig4 = () ccall
-    fn0 = colocated u0:6 sig0
-    fn1 = u0:15 sig1
-    fn2 = u0:21 sig2
-    fn3 = u0:11 sig3
-    fn4 = u0:16 sig4
-
-block0(v0: i64, v1: i64, v2: i64, v3: i64, v4: i64):
-    v5 = iconst.i64 0
-    v6 = icmp ne v3, v5  ; v5 = 0
-    brif v6, block2, block1
-
-block2:
-    call fn1(v3)
-    jump block1
-
-block1:
-    v7 = iconst.i64 1
-    v8 = icmp.i64 eq v2, v7  ; v7 = 1
-    brif v8, block3, block4
-
-block4:
-    v9 = symbol_value.i64 gv0
-    v10 = iconst.i64 2
-    v11 = iconst.i64 18
-    v12 = iadd v9, v11  ; v11 = 18
-    v13 = iconst.i64 5
-    v14 = iconst.i32 7
-    v15 = iconst.i32 7
-    call fn3(v9, v10, v12, v13, v14, v15)  ; v10 = 2, v13 = 5, v14 = 7, v15 = 7
     v16 = iconst.i64 1
     v17 = call fn2(v2, v16, v16)  ; v16 = 1, v16 = 1
     call fn4()
@@ -1242,25 +904,25 @@ function u0:0(i64) -> i32 ccall {
     sig16 = (i64, i64, i64) -> i32 ccall
     sig17 = (i64, i64, i64) -> i32 ccall
     sig18 = () ccall
-    fn0 = colocated u0:9 sig0
-    fn1 = colocated u0:10 sig1
-    fn2 = colocated u0:11 sig2
-    fn3 = colocated u0:12 sig3
-    fn4 = colocated u0:25 sig4
-    fn5 = colocated u0:19 sig5
-    fn6 = colocated u0:26 sig6
-    fn7 = colocated u0:27 sig7
-    fn8 = colocated u0:13 sig8
-    fn9 = colocated u0:28 sig9
-    fn10 = colocated u0:17 sig10
-    fn11 = colocated u0:29 sig11
-    fn12 = colocated u0:15 sig12
-    fn13 = colocated u0:30 sig13
+    fn0 = colocated u0:7 sig0
+    fn1 = colocated u0:8 sig1
+    fn2 = colocated u0:9 sig2
+    fn3 = colocated u0:10 sig3
+    fn4 = colocated u0:23 sig4
+    fn5 = colocated u0:17 sig5
+    fn6 = colocated u0:24 sig6
+    fn7 = colocated u0:25 sig7
+    fn8 = colocated u0:11 sig8
+    fn9 = colocated u0:26 sig9
+    fn10 = colocated u0:15 sig10
+    fn11 = colocated u0:27 sig11
+    fn12 = colocated u0:13 sig12
+    fn13 = colocated u0:28 sig13
     fn14 = colocated u0:4 sig14
-    fn15 = colocated u0:14 sig15
-    fn16 = colocated u0:31 sig16
+    fn15 = colocated u0:12 sig15
+    fn16 = colocated u0:29 sig16
     fn17 = colocated u0:0 sig17
-    fn18 = colocated u0:16 sig18
+    fn18 = colocated u0:14 sig18
 
 block0(v0: i64):
     v257 = iconst.i64 0
@@ -1271,8 +933,8 @@ block0(v0: i64):
     v1 = symbol_value.i64 gv0
     v2 = symbol_value.i64 gv1
     v3 = iconst.i64 2
-    v4 = iconst.i64 35
-    v5 = iadd v1, v4  ; v4 = 35
+    v4 = iconst.i64 30
+    v5 = iadd v1, v4  ; v4 = 30
     v6 = iconst.i64 6
     v7 = iconst.i32 0
     v8 = call fn0()
@@ -1337,8 +999,8 @@ block4:
     v29 = stack_addr.i64 ss2
     v30 = iconst.i64 0
     v31 = stack_addr.i64 ss3
-    v32 = iconst.i64 35
-    v33 = iadd.i64 v1, v32  ; v32 = 35
+    v32 = iconst.i64 30
+    v33 = iadd.i64 v1, v32  ; v32 = 30
     v34 = iconst.i64 6
     v35 = iconst.i32 0
     v36 = iconst.i32 0
@@ -1356,11 +1018,11 @@ block11:
     jump block12
 
 block12:
-    v43 = iconst.i64 41
-    v44 = iadd.i64 v1, v43  ; v43 = 41
+    v43 = iconst.i64 36
+    v44 = iadd.i64 v1, v43  ; v43 = 36
     v45 = iconst.i64 16
-    v46 = iconst.i64 35
-    v47 = iadd.i64 v1, v46  ; v46 = 35
+    v46 = iconst.i64 30
+    v47 = iadd.i64 v1, v46  ; v46 = 30
     v48 = iconst.i64 6
     v49 = iconst.i32 0
     v50 = iconst.i32 0
@@ -1393,8 +1055,8 @@ block16:
 
 block15:
     v64 = iconst.i32 0
-    v65 = iconst.i64 57
-    v66 = iadd.i64 v1, v65  ; v65 = 57
+    v65 = iconst.i64 52
+    v66 = iadd.i64 v1, v65  ; v65 = 52
     v67 = iconst.i64 1
     v68 = iconst.i64 2
     v69 = iconst.i32 1
@@ -1550,8 +1212,8 @@ block35:
     v144 = iconst.i64 0
     v145 = stack_addr.i64 ss9
     v146 = symbol_value.i64 gv9
-    v147 = iconst.i64 168
-    v148 = iadd v146, v147  ; v147 = 168
+    v147 = iconst.i64 112
+    v148 = iadd v146, v147  ; v147 = 112
     v149 = call fn15(v148, v142, v126, v141, v130, v143, v144, v145)  ; v142 = 0, v143 = 1, v144 = 0
     brif v149, block1, block38
 
@@ -1807,12 +1469,12 @@ function u0:2() ccall {
     sig3 = (i64, i64) ccall
     sig4 = (i64, i64) ccall
     sig5 = (i64, i64) ccall
-    fn0 = u0:33 sig0
-    fn1 = u0:34 sig1
-    fn2 = u0:35 sig2
-    fn3 = u0:36 sig3
-    fn4 = u0:37 sig4
-    fn5 = u0:38 sig5
+    fn0 = u0:31 sig0
+    fn1 = u0:32 sig1
+    fn2 = u0:33 sig2
+    fn3 = u0:34 sig3
+    fn4 = u0:35 sig4
+    fn5 = u0:36 sig5
 
 block0:
     v0 = symbol_value.i64 gv0
@@ -1821,8 +1483,8 @@ block0:
     call fn0(v0, v1, v2)  ; v1 = 2
     v3 = symbol_value.i64 gv3
     v4 = symbol_value.i64 gv1
-    v5 = iconst.i64 4
-    call fn1(v3, v4, v5)  ; v5 = 4
+    v5 = iconst.i64 3
+    call fn1(v3, v4, v5)  ; v5 = 3
     v6 = symbol_value.i64 gv6
     v7 = iconst.i64 1
     call fn4(v6, v7)  ; v7 = 1
@@ -1833,7 +1495,7 @@ block0:
 function u0:1(i32, i64) -> i32 ccall {
     gv0 = symbol colocated userextname1
     sig0 = (i32, i64, i64) -> i32 ccall
-    fn0 = u0:40 sig0
+    fn0 = u0:38 sig0
 
 block0(v0: i32, v1: i64):
     v2 = symbol_value.i64 gv0
