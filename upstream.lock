@@ -20,12 +20,6 @@
       "subdir": "bundler"
     },
     {
-      "name": "concurrent-ruby",
-      "github": "ruby-concurrency/concurrent-ruby",
-      "tag": "v1.3.8",
-      "rev": "0b88d5ff75f69b3740c8f0868e76f833cb2fd45d"
-    },
-    {
       "name": "csv",
       "github": "ruby/csv",
       "tag": "v3.3.6",
@@ -42,12 +36,6 @@
       "github": "ruby/did_you_mean",
       "tag": "v2.0.0",
       "rev": "1cce337962d51ee90bb7ff51a51a803fc2384e0e"
-    },
-    {
-      "name": "diff-lcs",
-      "github": "halostatue/diff-lcs",
-      "tag": "v1.6.2",
-      "rev": "aca4bd72c80231e0646071ad533c65820a4ecc93"
     },
     {
       "name": "drb",
@@ -102,12 +90,6 @@
       "github": "ruby/matrix",
       "tag": "v0.4.3",
       "rev": "de06454b6c80e83b98890d433b64422ce9bd49a9"
-    },
-    {
-      "name": "minitest-global_expectations",
-      "github": "jeremyevans/minitest-global_expectations",
-      "tag": "1.0.2",
-      "rev": "4c88bdf4875761236866218be5254abd4baf8456"
     },
     {
       "name": "mutex_m",
@@ -194,6 +176,12 @@
       "rev": "503b8ec593c51289c09cc2a69a34af99d6198c6a"
     },
     {
+      "name": "reline",
+      "github": "ruby/reline",
+      "tag": "v0.7.0",
+      "rev": "841ab2f88fc1d190873f19f151e3fb88772d30e7"
+    },
+    {
       "name": "resolv",
       "github": "ruby/resolv",
       "tag": "v0.7.1",
@@ -204,41 +192,6 @@
       "github": "ruby/rexml",
       "tag": "v3.4.4",
       "rev": "4f32ea33bc3f71cced67487659beef58edcf6d56"
-    },
-    {
-      "name": "rspec",
-      "github": "rspec/rspec",
-      "tag": "rspec-v3.13.2",
-      "rev": "ce5fe4f6521eb957f02e088a1c4c4f778a5c825e",
-      "subdir": "rspec"
-    },
-    {
-      "name": "rspec-core",
-      "github": "rspec/rspec",
-      "tag": "rspec-core-v3.13.6",
-      "rev": "4d8e9c3699dbc821b4603c3c01b6e81c85e3784c",
-      "subdir": "rspec-core"
-    },
-    {
-      "name": "rspec-expectations",
-      "github": "rspec/rspec",
-      "tag": "rspec-expectations-v3.13.5",
-      "rev": "cafd53dd142b97503b27555ebdb90cd15e0a2e7e",
-      "subdir": "rspec-expectations"
-    },
-    {
-      "name": "rspec-mocks",
-      "github": "rspec/rspec",
-      "tag": "rspec-mocks-v3.13.8",
-      "rev": "712e3ca92458b1bbd28931604fac2bb15d304cd2",
-      "subdir": "rspec-mocks"
-    },
-    {
-      "name": "rspec-support",
-      "github": "rspec/rspec",
-      "tag": "rspec-support-v3.13.7",
-      "rev": "47ebfe17b2c99ad2acd643d109eb6424dc4eda9d",
-      "subdir": "rspec-support"
     },
     {
       "name": "rubygems",

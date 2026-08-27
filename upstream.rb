@@ -34,10 +34,6 @@ gem "bundler",
   tag: "v4.0.18",
   rev: "7e934435ff880a9a6f78b9ca5fea396a275bd5c4",
   subdir: "bundler"
-gem "concurrent-ruby",
-  github: "ruby-concurrency/concurrent-ruby",
-  tag: "v1.3.8",
-  rev: "0b88d5ff75f69b3740c8f0868e76f833cb2fd45d"
 gem "csv",
   github: "ruby/csv",
   tag: "v3.3.6",
@@ -46,10 +42,6 @@ gem "did_you_mean",
   github: "ruby/did_you_mean",
   tag: "v2.0.0",
   rev: "1cce337962d51ee90bb7ff51a51a803fc2384e0e"
-gem "diff-lcs",
-  github: "halostatue/diff-lcs",
-  tag: "v1.6.2",
-  rev: "aca4bd72c80231e0646071ad533c65820a4ecc93"
 gem "drb",
   github: "ruby/drb",
   tag: "v2.2.3",
@@ -74,10 +66,6 @@ gem "logger",
   github: "ruby/logger",
   tag: "v1.7.0",
   rev: "f474d07d9890a03e6e40430c4e2ee933c6193d7e"
-gem "minitest-global_expectations",
-  github: "jeremyevans/minitest-global_expectations",
-  tag: "1.0.2",
-  rev: "4c88bdf4875761236866218be5254abd4baf8456"
 gem "net-ftp",
   github: "ruby/net-ftp",
   tag: "v0.3.9",
@@ -114,31 +102,6 @@ gem "resolv",
   github: "ruby/resolv",
   tag: "v0.7.1",
   rev: "8fc05c1cb6cd36e4a8d0391aeb8cacdcb2368b4c"
-gem "rspec",
-  github: "rspec/rspec",
-  tag: "rspec-v3.13.2",
-  rev: "ce5fe4f6521eb957f02e088a1c4c4f778a5c825e",
-  subdir: "rspec"
-gem "rspec-core",
-  github: "rspec/rspec",
-  tag: "rspec-core-v3.13.6",
-  rev: "4d8e9c3699dbc821b4603c3c01b6e81c85e3784c",
-  subdir: "rspec-core"
-gem "rspec-expectations",
-  github: "rspec/rspec",
-  tag: "rspec-expectations-v3.13.5",
-  rev: "cafd53dd142b97503b27555ebdb90cd15e0a2e7e",
-  subdir: "rspec-expectations"
-gem "rspec-mocks",
-  github: "rspec/rspec",
-  tag: "rspec-mocks-v3.13.8",
-  rev: "712e3ca92458b1bbd28931604fac2bb15d304cd2",
-  subdir: "rspec-mocks"
-gem "rspec-support",
-  github: "rspec/rspec",
-  tag: "rspec-support-v3.13.7",
-  rev: "47ebfe17b2c99ad2acd643d109eb6424dc4eda9d",
-  subdir: "rspec-support"
 gem "rubygems",
   github: "rubygems/rubygems",
   tag: "v4.0.18",
@@ -230,3 +193,7 @@ gem "net-pop",
   github: "ruby/net-pop",
   tag: "v0.1.2",
   rev: "0ed5794e8eaa8f4a4f1f402936ee56ca8ef89e0d"
+gem "reline",
+  github: "ruby/reline",
+  tag: "v0.7.0",
+  rev: "841ab2f88fc1d190873f19f151e3fb88772d30e7"
