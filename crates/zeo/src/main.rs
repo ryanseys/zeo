@@ -129,6 +129,40 @@ enum Source {
 /// this is the whole of it -- the same two lines irb's own binstub writes.
 const IRB_DRIVER: &str = "require \"irb\"\nIRB.start\n";
 
+/// `zeo gem ...` -- the vendored RubyGems, compiled and run.
+///
+/// This is `gem`'s own binstub, not a reimplementation: `Gem::GemRunner`
+/// parses the arguments, resolves against rubygems.org, downloads, verifies
+/// the checksums and installs. What zeo supplies is the ability to run it
+/// without a ruby.
+const GEM_DRIVER: &str = "require \"rubygems\"\nrequire \"rubygems/gem_runner\"\n\
+                          Gem::GemRunner.new.run(ARGV)\n";
+
+/// `zeo bundle ...` -- the vendored Bundler, likewise. Its binstub's own
+/// shape, `--help` reformatting included, because `bundle install --help` is
+/// how people read it.
+const BUNDLE_DRIVER: &str = "require \"bundler\"\nrequire \"bundler/friendly_errors\"\n\
+     Bundler.with_friendly_errors do\n\
+     \x20 require \"bundler/cli\"\n\
+     \x20 help = ARGV.any? { |a| a == \"--help\" || a == \"-h\" }\n\
+     \x20 args = help ? Bundler::CLI.reformatted_help_args(ARGV) : ARGV\n\
+     \x20 Bundler::CLI.start(args, debug: true)\n\
+     end\n";
+
+/// The driver for a `zeo <name> ...` subcommand, if `name` is one.
+///
+/// `gem` and `bundle` are the two, and the rule is deliberately not "unless a
+/// file by that name exists": that would make the same command line mean
+/// different things in different directories. A script really called `gem`
+/// still runs as `zeo ./gem`.
+fn subcommand_driver(name: Option<&str>) -> Option<&'static str> {
+    match name? {
+        "gem" => Some(GEM_DRIVER),
+        "bundle" | "bundler" => Some(BUNDLE_DRIVER),
+        _ => None,
+    }
+}
+
 /// Whether zeo was invoked from an interactive terminal, which is what makes
 /// a bare `zeo` a shell rather than an error. Both ends are asked: a piped
 /// stdin has a program to read, and a redirected stdout has nothing to draw a
@@ -206,6 +240,15 @@ modes:
                         with -o, write the binary instead of running it
   (no arguments)        open an irb shell, when there is a terminal to talk
                         to; piping or redirecting zeo is unaffected
+
+subcommands:
+  gem <args...>         run rubygems -- the real one, compiled from the
+                        vendored library, so `zeo gem install rack` needs no
+                        ruby on the machine
+  bundle <args...>      run bundler, likewise
+                        A script really named `gem` or `bundle` still runs as
+                        `zeo ./gem`; the subcommand never depends on what is
+                        in the current directory.
 
 options:
   -o <output>           where to write the compiled binary
@@ -301,6 +344,17 @@ fn parse_args() -> Result<Parsed, String> {
 }
 
 fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
+    // A subcommand becomes `-e <driver> -- <its own arguments>`, and the `--`
+    // is what keeps them its own: without it a `zeo gem --version` would read
+    // as zeo's `--version` rather than rubygems'.
+    let argv = match subcommand_driver(argv.first().map(String::as_str)) {
+        Some(driver) => std::iter::once("-e".to_string())
+            .chain(std::iter::once(driver.to_string()))
+            .chain(std::iter::once("--".to_string()))
+            .chain(argv.into_iter().skip(1))
+            .collect(),
+        None => argv,
+    };
     let mut input = None;
     let mut eval: Option<String> = None;
     let mut output = None;
@@ -1053,6 +1107,45 @@ mod tests {
             Err(e) => e,
             Ok(_) => panic!("expected an error for {args:?}"),
         }
+    }
+
+    /// `zeo gem` / `zeo bundle` run the vendored library, and every argument
+    /// after the verb belongs to IT.
+    ///
+    /// The `--` the rewrite inserts is what makes that true. Without it a
+    /// `zeo gem --version` would print zeo's version instead of rubygems',
+    /// and `zeo bundle --help` would print zeo's help -- both of which are
+    /// wrong in the quiet way, answering a plausible thing to the wrong
+    /// question.
+    #[test]
+    fn a_subcommand_runs_the_vendored_library_and_keeps_its_own_flags() {
+        let gem = ok(&["gem", "install", "--no-document", "rack"]);
+        match &gem.source {
+            Source::Eval(code) => assert!(code.contains("Gem::GemRunner")),
+            _ => panic!("expected an eval source"),
+        }
+        assert_eq!(gem.program_args, ["install", "--no-document", "rack"]);
+
+        // A flag that zeo also has still reaches rubygems.
+        assert_eq!(ok(&["gem", "--version"]).program_args, ["--version"]);
+        assert_eq!(ok(&["bundle", "--help"]).program_args, ["--help"]);
+        assert_eq!(ok(&["gem"]).program_args, [] as [String; 0]);
+
+        match &ok(&["bundle", "install"]).source {
+            Source::Eval(code) => assert!(code.contains("Bundler::CLI.start")),
+            _ => panic!("expected an eval source"),
+        }
+        // `bundler` is the same verb, which is what the binstub is called on
+        // some installs.
+        assert!(matches!(ok(&["bundler", "-v"]).source, Source::Eval(_)));
+
+        // The verb is only a verb in FIRST position. A file really called
+        // `gem` is reachable, and a file whose name merely contains it is
+        // untouched.
+        assert!(matches!(ok(&["./gem"]).source, Source::File(_)));
+        assert!(matches!(ok(&["gemfile.rb"]).source, Source::File(_)));
+        assert!(matches!(ok(&["-e", "1", "gem"]).source, Source::Eval(_)));
+        assert_eq!(ok(&["-e", "1", "gem"]).program_args, ["gem"]);
     }
 
     #[test]
