@@ -40,6 +40,7 @@ mod eval;
 mod exceptions;
 mod ffi;
 mod gc_weak;
+mod gem_install;
 mod gems_all;
 mod gems_require;
 mod gems_vendored;
