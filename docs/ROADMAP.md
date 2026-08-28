@@ -207,10 +207,10 @@ constant, `__method__` naming a class method wrongly, a rescue splat, and
 four byte-lossy IO reads. A symptom read off a backtrace is a place, not a
 cause, and this section spent months naming places.
 
-`tests/bench/rubygems.rb` and `tests/bench/bundler.rb` still ENTER at their
-own sub-files, and their headers still carry the retired diagnosis. Switching
-them to the umbrella require is the remaining chore -- it is a bench-bank
-change, so it wants a re-bank rather than a quiet edit.
+`tests/bench/rubygems.rb` and `tests/bench/bundler.rb` enter at the umbrella
+now, and the compile ladder they sit on was rebanked with them. It had been
+measuring a fraction of a gem graph: 128,277 CLIF lines for rubygems where
+the umbrella is 17,409,637, and 33,977 for bundler where it is 17,474,112.
 
 ## Performance
 
@@ -245,6 +245,14 @@ measurement rather than from a guess, ranked by the gap they close.
   once, and a whole-host shift of ~65% once. Attribute across commits by
   benching the parent in a worktree with the same tool (criterion saved
   baselines + `critcmp`).
+- **An instrument nobody runs stops working silently, and a stale record
+  reads exactly like a quiet one.** `bench/results.tsv` sat 153 commits
+  behind because `make bench` had not been runnable since the CLI took
+  ruby's convention: the bank spelled its compile `zeo <prog.rb> -o <bin>`,
+  which RUNS the program with `["-o", "<bin>"]` for ARGV and exits 0. Perf
+  is not a gate and should not become one -- but a non-gated instrument
+  wants an assert on its own product (the bank checks the binary EXISTS
+  now), because its only other alarm is somebody choosing to run it.
 
 ### Considered, not scheduled
 
