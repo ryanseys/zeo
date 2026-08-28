@@ -174,7 +174,7 @@ required; Zeo's are always present, so the `require` is ceremony (the shape
 
 The whole class surface is present and real — `ZStream`/`Deflate`/`Inflate`,
 `GzipFile`/`GzipWriter`/`GzipReader`, the 38 constants, and the thirteen
-exception classes (in `gems/zlib/lib/zlib.rb`, the gem's Ruby half). The
+exception classes (in `ext/zlib/lib/zlib.rb`, the gem's Ruby half). The
 compression itself is flate2's pure-Rust backend (miniz_oxide), and the gzip
 container is written and parsed by Zeo, since that backend has no gzip mode.
 What that costs:
@@ -754,7 +754,7 @@ the newer id saved where CRuby kept the original.
 
 ## Satisfied faithfully (zeo-bundled gems)
 
-Zeo ships its own copy under `gems/<name>/`, intended to match upstream
+Zeo ships its own copy, intended to match upstream
 behaviour. Recorded `by: bundled-gem` with no divergence flag. These are
 subsets where noted, not substitutions with a foreign backing.
 
@@ -1001,7 +1001,7 @@ object per library the program required (`--report=<path>` picks the path):
 
 ```json
 {
-  "json":     {"by": "bundled-gem", "path": "gems/json/lib/json.rb",
+  "json":     {"by": "bundled-gem", "path": "crates/zeo-rt/src/ext/json/lib/json.rb",
                "diverges": true, "note": "serde_json-backed; not the json gem"},
   "optparse": {"by": "bundled-gem", "path": "gems/optparse/lib/optparse.rb"},
   "base64":   {"by": "builtin-ext", "feature": "base64",

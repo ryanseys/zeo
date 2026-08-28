@@ -3,7 +3,7 @@
 
 # zeo: pull in the statically linked native half FIRST, so `Prism`'s private
 # `serialize_*` class methods exist for `prism/zeo.rb` to call. CRuby's loader
-# idiom -- see `gems/strscan/lib/strscan.rb` for the same shape and the reason
+# idiom -- see `ext/strscan/lib/strscan.rb` for the same shape and the reason
 # for it.
 require "prism.so"
 

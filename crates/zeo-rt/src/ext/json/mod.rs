@@ -16,7 +16,7 @@
 //! real -> `Float` (or `decimal_class:`).
 //!
 //! The exception classes live in this gem's RUBY half
-//! (`gems/json/lib/json.rb`): a feature-gated NATIVE class cannot register a
+//! (`ext/json/lib/json.rb`): a feature-gated NATIVE class cannot register a
 //! constructible exception, so `JSONError`, `ParserError`, `NestingError`
 //! and `GeneratorError` are Ruby there and raised by name from here.
 

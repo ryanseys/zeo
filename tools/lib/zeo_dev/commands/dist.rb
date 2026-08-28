@@ -17,7 +17,7 @@ module ZeoDev
     #     bin/zeo                          # dist-profile build
     #     share/zeo/
     #       dist-manifest.json             # {schema, version, target}
-    #       gems/                          # the repo's gems/, verbatim
+    #       gems/                          # every bundled library (Payload)
     #       lib/<triple>/libzeo.a          # what `zeo -o` links against
     #     share/doc/zeo/                   # README + licenses
     #
@@ -56,7 +56,11 @@ module ZeoDev
         FileUtils.mkdir_p(stage)
         payload = File.join(stage, "share", "zeo")
 
-        copy_tree(File.join(ROOT, "gems"), File.join(payload, "gems"))
+        Payload.files.each do |rel, src|
+          dest = File.join(payload, "gems", rel)
+          FileUtils.mkdir_p(File.dirname(dest))
+          FileUtils.cp(src, dest)
+        end
         File.write(File.join(payload, "dist-manifest.json"), <<~JSON)
           {
             "schema": 1,
@@ -323,17 +327,6 @@ module ZeoDev
         # Not quiet: cargo's own progress belongs on the terminal. Quiet
         # swallows stdout because `metadata` dumps megabytes.
         raise Error, "cargo #{args.join(" ")} exited with #{res.code.inspect}" unless res.success?
-      end
-
-      def copy_tree(src, dst, skip: [])
-        FileUtils.mkdir_p(dst)
-        Dir.children(src).sort.each do |base|
-          next if base == ".DS_Store" || skip.include?(base)
-
-          from = File.join(src, base)
-          to = File.join(dst, base)
-          File.directory?(from) ? copy_tree(from, to, skip: skip) : FileUtils.cp(from, to)
-        end
       end
     end
   end

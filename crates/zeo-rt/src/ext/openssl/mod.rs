@@ -15,7 +15,7 @@
 //! ```
 //!
 //! The exception hierarchy (`OpenSSL::OpenSSLError` and the per-class
-//! errors) lives in `gems/openssl/lib/openssl.rb`, the gem's Ruby half --
+//! errors) lives in `ext/openssl/lib/openssl.rb`, the gem's Ruby half --
 //! see `ext/mod.rs` for why an extension cannot define its own. The native
 //! half raises them by name.
 //!

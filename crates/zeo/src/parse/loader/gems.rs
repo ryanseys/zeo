@@ -6,21 +6,27 @@ use super::{Gem, GemProvenance, PResult};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-/// The `gems/` directory shipped with the compiler, if it exists.
+/// The directories holding the libraries the compiler ships, highest
+/// precedence first. An absent dir contributes nothing.
 ///
-/// Located through the resolved home (see `crate::home`): the repo's `gems/`
-/// in the dev tree, the payload's `gems/` in an installed prefix. An absent
-/// dir contributes no bundled gems, in either mode.
-pub(super) fn bundled_gems_dir() -> Option<PathBuf> {
-    let dir = match crate::home::zeo_home() {
-        crate::home::ZeoHome::DevTree { root } => root.join("gems"),
-        crate::home::ZeoHome::Installed { payload, .. } => payload.join("gems"),
+/// The dev tree has TWO. zeo's own Ruby halves sit beside the Rust that
+/// implements them (`crates/zeo-rt/src/ext/<name>/lib/`), the way CRuby keeps
+/// `ext/socket/lib/socket.rb` beside `socket.c`; the vendored upstream copies
+/// stay in `gems/`. A zeo half must win its name, so it is searched first.
+/// Every other home has one directory, because `dist`/`stage-publish` stage
+/// both tiers into it.
+pub(super) fn bundled_gems_dirs() -> Vec<PathBuf> {
+    let dirs = match crate::home::zeo_home() {
+        crate::home::ZeoHome::DevTree { root } => {
+            vec![root.join("crates/zeo-rt/src/ext"), root.join("gems")]
+        }
+        crate::home::ZeoHome::Installed { payload, .. } => vec![payload.join("gems")],
         // Embedded in the binary at publish time; extracted once per version.
         crate::home::ZeoHome::Registry { cache } => {
-            return crate::home::registry_gems_dir(cache);
+            crate::home::registry_gems_dir(cache).into_iter().collect()
         }
     };
-    dir.is_dir().then_some(dir)
+    dirs.into_iter().filter(|d| d.is_dir()).collect()
 }
 
 /// Whether `ZEO_DEBUG=strict-ambiguous-require` is set: a feature found in
@@ -84,12 +90,13 @@ pub(super) fn lockfile_precedence(
 /// CLI passes default candidate locations that often don't exist).
 pub(super) fn discover_packages(
     package_dirs: &[PathBuf],
-    bundled_dir: Option<&Path>,
+    bundled_dirs: &[PathBuf],
 ) -> PResult<Vec<Gem>> {
     let mut packages: Vec<Gem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for dir in package_dirs {
-        let provenance = if Some(dir.as_path()) == bundled_dir {
+        let bundled = bundled_dirs.contains(dir);
+        let provenance = if bundled {
             GemProvenance::Bundled
         } else {
             GemProvenance::PackageDir
@@ -100,7 +107,7 @@ pub(super) fn discover_packages(
         let mut pkg_dirs: Vec<PathBuf> = entries
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| p.is_dir() && gemspec_path(p).is_some())
+            .filter(|p| p.is_dir() && (gemspec_path(p).is_some() || is_bundled_library(p, bundled)))
             .collect();
         pkg_dirs.sort();
         for pkg_dir in pkg_dirs {
@@ -154,8 +161,9 @@ pub(super) fn discover_packages(
 /// rejecting the gem would refuse to compile every program that depends on it.
 /// An unsatisfiable `require` still fails, which is where the real error is.
 pub(super) fn parse_manifest(pkg_dir: &Path, provenance: GemProvenance) -> PResult<Gem> {
-    let manifest_path =
-        gemspec_path(pkg_dir).ok_or_else(|| format!("{}: no `.gemspec`", pkg_dir.display()))?;
+    let Some(manifest_path) = gemspec_path(pkg_dir) else {
+        return bundled_library(pkg_dir, provenance);
+    };
     let spec = crate::parse::gemspec::parse_file(&manifest_path)?;
     let dir_name = pkg_dir
         .file_name()
@@ -179,6 +187,30 @@ pub(super) fn parse_manifest(pkg_dir: &Path, provenance: GemProvenance) -> PResu
         name: spec.name,
         roots,
         version: spec.version,
+        provenance,
+    })
+}
+
+/// A `lib/` with no `.gemspec` in the tier zeo itself ships: `socket`, `pty`
+/// and `monitor`, which ruby installs on rubylibdir rather than as gems.
+fn is_bundled_library(pkg_dir: &Path, bundled: bool) -> bool {
+    bundled && pkg_dir.join("lib").is_dir()
+}
+
+/// One of those, as a package with no version -- there is no gemspec to state
+/// one, and inventing a number nothing can check is what this replaces.
+fn bundled_library(pkg_dir: &Path, provenance: GemProvenance) -> PResult<Gem> {
+    let lib = pkg_dir.join("lib");
+    if !lib.is_dir() {
+        return Err(format!("{}: no `.gemspec`", pkg_dir.display()).into());
+    }
+    Ok(Gem {
+        name: pkg_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        roots: vec![lib],
+        version: None,
         provenance,
     })
 }
@@ -207,12 +239,12 @@ pub(super) fn gemspec_path(pkg_dir: &Path) -> Option<PathBuf> {
 
 /// CRuby's exact missing-feature message (`load_failed` -> `rb_load_fail`).
 /// A path for the disclosure record, made relative to the current directory
-/// when it sits under it (so a bundled gem reads `gems/json/lib/json.rb`
+/// when it sits under it (so a bundled gem reads `gems/optparse/lib/optparse.rb`
 /// rather than an absolute machine path), else left absolute.
 pub(super) fn display_path(path: &Path) -> String {
     // Canonicalize first so a bundled path baked with `../..`
     // (`CARGO_MANIFEST_DIR/../../gems/...`) collapses before the CWD strip,
-    // yielding a clean `gems/json/lib/json.rb` rather than `crates/zeo/../..`.
+    // yielding a clean relative path rather than `crates/zeo/../..`.
     let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     std::env::current_dir()
         .ok()

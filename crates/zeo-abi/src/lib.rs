@@ -660,7 +660,7 @@ pub const CONSOLE_MODE_CLASS: ClassId = ClassId(98);
 /// ```
 ///
 /// `Zlib`'s thirteen exception classes are NOT here -- a gated row registers
-/// no constructor, so they live in `gems/zlib/lib/zlib.rb` (see `ext/mod.rs`).
+/// no constructor, so they live in `ext/zlib/lib/zlib.rb` (see `ext/mod.rs`).
 pub const ZLIB_ZSTREAM_CLASS: ClassId = ClassId(99);
 /// `Zlib::Deflate < Zlib::ZStream` -- a compressor.
 pub const ZLIB_DEFLATE_CLASS: ClassId = ClassId(100);
@@ -674,13 +674,13 @@ pub const ZLIB_GZIP_WRITER_CLASS: ClassId = ClassId(103);
 pub const ZLIB_GZIP_READER_CLASS: ClassId = ClassId(104);
 /// `pty`: the `PTY` module -- pseudo-terminal allocation (`.open`) and
 /// child processes run under one (`.spawn`/`.getpty`, `.check`). Its
-/// `ChildExited` exception lives in the gem's Ruby half (`gems/pty`), the
+/// `ChildExited` exception lives in the gem's Ruby half (`ext/pty`), the
 /// same split as `Zlib`'s errors.
 pub const PTY_MODULE: ClassId = ClassId(105);
 /// `syslog`: the `Syslog` module over the system `syslog(3)` facility --
 /// `open`/`log`/`mask` plus the priority/facility/option constant set. Its
 /// `Constants`/`Level`/`Option`/`Facility`/`Macros` submodules live in the
-/// gem's Ruby half (`gems/syslog`).
+/// gem's Ruby half (`ext/syslog`).
 pub const SYSLOG_MODULE: ClassId = ClassId(106);
 /// `readline`: the `Readline` module -- `readline` line input (rustyline on a
 /// terminal, a plain read everywhere else) plus the completion/word-break
@@ -695,7 +695,7 @@ pub const READLINE_HISTORY_CLASS: ClassId = ClassId(108);
 /// `nkf`: the `NKF` module -- Network Kanji Filter, Japanese text encoding
 /// conversion (`.nkf` over an option string, `.guess`) rebuilt over the
 /// runtime's own encoding engine. The `Kconv` wrapper is the gem's Ruby
-/// half (`gems/nkf`).
+/// half (`ext/nkf`).
 pub const NKF_MODULE: ClassId = ClassId(109);
 /// `bigdecimal`: the `BigDecimal` class -- arbitrary-precision decimal
 /// arithmetic. The native half is bigdecimal 4.x's C slice (exact
@@ -749,7 +749,7 @@ pub const TRACEPOINT_CLASS: ClassId = ClassId(119);
 /// `digest` framework's `Digest::Class`; zeo's digest classes are native
 /// tables with no shared Ruby superclass, so it sits under `Object` (a
 /// documented divergence). The exception hierarchy lives in
-/// `gems/openssl/lib` -- see `ext/mod.rs` on why a gated native class
+/// `ext/openssl/lib` -- see `ext/mod.rs` on why a gated native class
 /// cannot register a constructible exception.
 pub const OPENSSL_DIGEST_CLASS: ClassId = ClassId(120);
 /// `OpenSSL::Digest`'s fixed algorithm subclasses, one id each, all served

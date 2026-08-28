@@ -222,7 +222,7 @@ function pointer at runtime — from a code address, or from a `Proc` (a
 libffi closure, so the object doubles as a C callback) — and IS an
 `FFI::Pointer` (`Function < Pointer`, as in the gem);
 `FFI::VariadicInvoker#call` marshals trailing `(type, value)` pairs with the
-C default argument promotions. The gem's Ruby half lives in `gems/ffi/`
+C default argument promotions. The gem's Ruby half lives in `ext/ffi/`
 (`Error`/`NullPointerError`, `Platform`, `DataConverter`); every NULL
 read/write through a `Pointer` raises `FFI::NullPointerError` rather than
 crashing.

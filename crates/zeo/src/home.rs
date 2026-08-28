@@ -6,7 +6,7 @@
 //! - **Dev tree**: the zeo repo itself. `cargo run`, the test harness, and
 //!   zeo-dev all execute from binaries under `target/`, and the repo root (baked
 //!   in via `CARGO_MANIFEST_DIR` at compile time) is both the payload (its
-//!   `gems/`, its `crates/zeo-rt`) and the build root (its `target/`).
+//!   libraries, its `crates/zeo-rt`) and the build root (its `target/`).
 //! - **Installed**: a relocatable prefix laid out as `<prefix>/bin/zeo` +
 //!   `<prefix>/share/zeo/{gems,lib}`, assembled by `tools/zeo-dev dist`.
 //!   The payload is found relative to the executable, and all build output

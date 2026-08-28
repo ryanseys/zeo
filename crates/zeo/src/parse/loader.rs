@@ -314,10 +314,10 @@ pub(super) fn lower_main_file(
     };
     // `LoaderState::search_roots` is filled at the END of lowering, once the
     // set of gems a require actually activated is final.
-    let bundled_dir = bundled_gems_dir();
+    let bundled_dirs = bundled_gems_dirs();
     let mut loader = Loader {
         roots: opts.load_roots.clone(),
-        // The gems zeo itself ships are ALWAYS discoverable, appended
+        // The libraries zeo itself ships are ALWAYS discoverable, appended
         // last so any caller-supplied dir shadows them (first-name-wins).
         // They are part of the compiler the way CRuby's rubylibdir is part of
         // ruby -- not ambient machine state a caller opts into. A caller that
@@ -329,9 +329,9 @@ pub(super) fn lower_main_file(
                 .package_dirs
                 .iter()
                 .cloned()
-                .chain(bundled_dir.clone())
+                .chain(bundled_dirs.iter().cloned())
                 .collect::<Vec<_>>(),
-            bundled_dir.as_deref(),
+            &bundled_dirs,
         )?,
         required: HashSet::new(),
         splicing: Vec::new(),

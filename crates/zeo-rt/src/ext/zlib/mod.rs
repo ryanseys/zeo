@@ -22,7 +22,7 @@
 //! from the pure-Rust backend and because `GzipFile`'s accessors need the
 //! header FIELDS (`mtime`/`orig_name`/`comment`/`os_code`), not just the bytes.
 //!
-//! `Zlib`'s thirteen exception classes live in `gems/zlib/lib/zlib.rb`, the
+//! `Zlib`'s thirteen exception classes live in `ext/zlib/lib/zlib.rb`, the
 //! gem's Ruby half -- see `ext/mod.rs` for why an extension cannot define its
 //! own. The native half raises them by name.
 

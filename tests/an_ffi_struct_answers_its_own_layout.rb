@@ -4,7 +4,7 @@
 # compiler already walked, so the descriptors describe exactly the bytes the
 # generated accessors read.
 #
-# One divergence, stated in `gems/ffi/lib/ffi.rb` and not visible here: a
+# One divergence, stated in `ext/ffi/lib/ffi.rb` and not visible here: a
 # `:long` field reports `Type::Builtin::INT64` rather than `LONG`, because
 # the compiler folds the two to one width before a layout is recorded.
 require "ffi"

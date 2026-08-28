@@ -1,6 +1,6 @@
-//! `Gemfile.lock` and the committed `gems/<name>/` trees describe the same
-//! gems and must agree about their versions. Two formats for one fact, and a
-//! fact written twice drifts.
+//! `Gemfile.lock` and the committed library trees describe the same gems and
+//! must agree about their versions. Two formats for one fact, and a fact
+//! written twice drifts.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -33,8 +33,8 @@ const COVERED_BY: &[(&str, &str)] = &[
 ];
 
 /// Names ruby 4.0.6 carries as plain ext/lib with no gemspec anywhere, and
-/// that no repository publishes. Their Ruby halves are zeo-authored and zeo
-/// versions them itself, so there is nothing to compare against.
+/// that no repository publishes. zeo ships them the same way -- a `lib/` and
+/// nothing else -- so they carry no version to compare.
 const NO_SOURCE: &[&str] = &["monitor", "pty", "socket"];
 
 /// Every `name (version)` in the lock's `specs:` block. A gem resolved for
@@ -70,29 +70,36 @@ fn locked_versions() -> BTreeMap<String, Vec<String>> {
     out
 }
 
-/// Every `gems/<name>/` and the version its stub gemspec claims.
-fn vendored_versions() -> BTreeMap<String, String> {
-    let dir = repo_root().join("gems");
+/// Every library the compiler ships and the version its gemspec claims, or
+/// `None` where it has no gemspec. zeo's own Ruby halves sit beside the Rust
+/// that implements them and the vendored copies in `gems/`, so both tiers are
+/// walked -- the same two the loader reads (`bundled_gems_dirs`).
+fn bundled_versions() -> BTreeMap<String, Option<String>> {
+    let root = repo_root();
     let mut out = BTreeMap::new();
-    for entry in std::fs::read_dir(&dir).expect("gems/ is readable") {
-        let path: PathBuf = entry.expect("readable entry").path();
-        if !path.is_dir() {
-            continue;
+    for tier in ["crates/zeo-rt/src/ext", "gems"] {
+        let dir = root.join(tier);
+        for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{tier} is readable: {e}")) {
+            let path: PathBuf = entry.expect("readable entry").path();
+            if !path.join("lib").is_dir() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .expect("a directory name")
+                .to_string_lossy()
+                .to_string();
+            let spec = path.join(format!("{name}.gemspec"));
+            let version = spec.is_file().then(|| {
+                let text = std::fs::read_to_string(&spec)
+                    .unwrap_or_else(|e| panic!("{} is readable: {e}", spec.display()));
+                text.lines()
+                    .find_map(|l| l.split_once("s.version").and_then(|(_, r)| r.split('"').nth(1)))
+                    .unwrap_or_else(|| panic!("{} states no s.version", spec.display()))
+                    .to_string()
+            });
+            out.entry(name).or_insert(version);
         }
-        let name = path
-            .file_name()
-            .expect("a directory name")
-            .to_string_lossy()
-            .to_string();
-        let spec = path.join(format!("{name}.gemspec"));
-        let text = std::fs::read_to_string(&spec)
-            .unwrap_or_else(|e| panic!("{} is readable: {e}", spec.display()));
-        let version = text
-            .lines()
-            .find_map(|l| l.split_once("s.version").and_then(|(_, r)| r.split('"').nth(1)))
-            .unwrap_or_else(|| panic!("{} states no s.version", spec.display()))
-            .to_string();
-        out.insert(name, version);
     }
     out
 }
@@ -106,9 +113,9 @@ fn locked_name(dir: &str) -> Option<&'static str> {
 #[test]
 fn every_vendored_gem_matches_the_locked_version() {
     let locked = locked_versions();
-    let mismatched: Vec<String> = vendored_versions()
+    let mismatched: Vec<String> = bundled_versions()
         .into_iter()
-        .filter(|(dir, _)| !NO_SOURCE.contains(&dir.as_str()))
+        .filter_map(|(dir, v)| v.map(|v| (dir, v)))
         .filter_map(|(dir, vendored)| {
             let name = locked_name(&dir).unwrap_or(&dir);
             let Some(versions) = locked.get(name) else {
@@ -139,19 +146,32 @@ fn every_vendored_gem_matches_the_locked_version() {
 fn every_exemption_still_names_a_vendored_gem() {
     // An exemption that outlives the directory it excuses is how a real
     // mismatch goes unnoticed, so each table entry has to still apply.
-    let vendored = vendored_versions();
+    let bundled = bundled_versions();
     let stale: Vec<&str> = NO_SOURCE
         .iter()
         .chain(RENAMED.iter().map(|(d, _)| d))
         .chain(COVERED_BY.iter().map(|(d, _)| d))
         .copied()
-        .filter(|d| !vendored.contains_key(*d))
+        .filter(|d| !bundled.contains_key(*d))
         .collect();
     assert!(
         stale.is_empty(),
-        "these names have no gems/ directory any more, so drop them from the \
-         tables in this file: {stale:?}"
+        "these names have no library directory any more, so drop them from \
+         the tables in this file: {stale:?}"
     );
+}
+
+/// The versionless set is closed. A gemspec appearing beside one of these
+/// would put a number nothing can check back into the tree, which is what
+/// `socket 0.7.1`, `pty 0.5.9` and `monitor 0.1.0` were.
+#[test]
+fn only_the_no_source_names_ship_without_a_gemspec() {
+    let versionless: Vec<String> = bundled_versions()
+        .into_iter()
+        .filter(|(_, v)| v.is_none())
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(versionless, NO_SOURCE);
 }
 
 #[test]

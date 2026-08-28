@@ -1,5 +1,5 @@
 # Pull in the statically linked native half FIRST, so `Date` exists to be
-# reopened below -- zeo's loader idiom (see gems/strscan/lib/strscan.rb).
+# reopened below -- zeo's loader idiom (see ext/strscan/lib/strscan.rb).
 # Upstream's own half opens with `require 'date_core'`, which reaches the same
 # C extension by its build name.
 require "date.so"

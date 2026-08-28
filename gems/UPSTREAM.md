@@ -37,6 +37,7 @@ license: they are Zeo's own code, under the repository's MIT OR Apache-2.0.
 | forwardable | 1.4.0 | ruby 4.0.5 stdlib |
 | irb | 1.18.0 | ruby 4.0.6 bundled gem |
 | minitest | 6.0.6 | ruby 4.0.6 bundled gem |
+| optparse | 0.8.1 | ruby 4.0.6 default gem |
 | ostruct | 0.6.3 | ruby 4.0.5 default gem |
 | pp | 0.6.4 | upstream ruby/pp |
 | prettyprint | 0.2.0 | ruby 4.0.5 default gem |
@@ -47,19 +48,24 @@ license: they are Zeo's own code, under the repository's MIT OR Apache-2.0.
 | tsort | 0.2.0 | ruby 4.0.5 default gem |
 | weakref | 0.1.4 | ruby 4.0.6 stdlib |
 
+`optparse/` is incomplete: upstream ships eight files under `lib/optparse/`
+and this copy has three, so `require "optparse/time"`, `"optparse/date"`,
+`"optparse/uri"` and `"optparse/ac"` all fail. Resolving the gem from the
+lock closes it.
+
 `irb/` carries one removal: `lib/irb/ext/tracer.rb` is reduced to a
 comment-only file. It hangs off the `tracer` gem, which ruby 4.0.6 does not
 ship and Zeo does not vendor.
 
-**zeo-authored Ruby halves** of libraries whose native half lives in
-`zeo-rt` (`json`, `monitor`, `openssl`, `optparse`, `psych`, `strscan`,
-`zlib`, `socket`, `pty`, `syslog`, `nkf`, `ffi`) -- these are intended to match
-upstream behaviour;
-divergences are documented in `docs/COMPATIBILITY.md`. Two files inside them
-are faithful vendored copies rather than zeo-authored:
-`syslog/lib/syslog/logger.rb` (`Syslog::Logger`, from the ruby 4.0.5
-syslog-0.4.0 gem, verbatim) and `nkf/lib/kconv.rb` (`Kconv` and the String
-patches, from the ruby 4.0.5 nkf-0.3.0 gem, verbatim).
+**zeo-authored Ruby halves** are NOT here. Each sits beside the Rust that
+implements it, at `crates/zeo-rt/src/ext/<name>/lib/` -- `json`, `monitor`,
+`openssl`, `psych`, `strscan`, `zlib`, `socket`, `pty`, `syslog`, `nkf`,
+`ffi`. They are intended to match upstream behaviour; divergences are
+documented in `docs/COMPATIBILITY.md`. Three files inside them are faithful
+vendored copies rather than zeo-authored: `syslog/lib/syslog/logger.rb`
+(`Syslog::Logger`, from the syslog-0.4.0 gem), `nkf/lib/kconv.rb` (`Kconv`
+and the String patches, from the nkf-0.3.0 gem), and `pty/lib/expect.rb`
+(`IO#expect`, from ruby's own `ext/pty/lib/`), all verbatim.
 
 `bigdecimal/` is a third origin: its whole `lib/` tree is vendored from the
 bigdecimal 4.1.2 gem (the version bundled with ruby 4.0.5) -- in 4.x that

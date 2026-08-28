@@ -6,12 +6,17 @@
 //!
 //! # A gem may also have a RUBY half
 //!
-//! An extension here is the NATIVE half of a gem. The gem's Ruby half, when it
-//! has one, lives in `gems/<name>/lib/` and is joined to this module by the
-//! feature string -- the same split CRuby makes between `archdir` (the `.so`)
-//! and `rubylibdir` (the `.rb`), and the reason `digest`, `json`, `socket` and
-//! `strscan` all ship both. The Ruby half pulls this one in with
+//! An extension here is the NATIVE half of a gem. Its Ruby half, when it has
+//! one, sits beside it at `<name>/lib/` -- CRuby's own shape
+//! (`ext/socket/socket.c` + `ext/socket/lib/socket.rb`), and the same split it
+//! makes between `archdir` (the `.so`) and `rubylibdir` (the `.rb`). A
+//! `.gemspec` goes there only where ruby ships one: `socket`, `pty` and
+//! `monitor` are library files, not gems, and the compiler discovers them by
+//! their `lib/` alone. The Ruby half pulls this one in with
 //! `require "<name>.so"`, CRuby's loader idiom.
+//!
+//! An upstream gem's own Ruby (`nkf`'s `kconv.rb`, `syslog`'s `logger.rb`)
+//! rides in that `lib/` too, because one name resolves to one directory.
 //!
 //! That is where an extension's EXCEPTION classes belong. A row in the ABI
 //! table is feature-gated but registers `constructor: None`; the exception
@@ -20,7 +25,7 @@
 //! extension would panic. Defined in the Ruby half they are ordinary user
 //! classes, registered under their fully qualified name with a real
 //! constructor, and raising them by name from here works. See
-//! `gems/strscan/lib/strscan.rb`.
+//! `ext/strscan/lib/strscan.rb`.
 //!
 //! # Two independent gates
 //!

@@ -173,7 +173,7 @@ impl RPointer {
     /// the gem raises `IndexError`; a raw address (unknown size) is unchecked.
     /// A NULL pointer rejects every non-empty access first, as the gem's
     /// `FFI::NullPointerError` does (the class itself is defined by the ffi
-    /// gem's Ruby half, `gems/ffi`, so it is raisable by name).
+    /// gem's Ruby half, `ext/ffi`, so it is raisable by name).
     fn check_bounds(&self, off: usize, len: usize) -> Result<(), Signal> {
         if len > 0 && self.base.is_null() {
             return Err(null_pointer_error());
@@ -300,7 +300,7 @@ impl RubyObject for RPointer {
 }
 
 /// The gem's `FFI::NullPointerError` -- defined by the ffi gem's Ruby half
-/// (`gems/ffi/lib/ffi.rb`), which every `require "ffi"` loads, so raising it
+/// (`ext/ffi/lib/ffi.rb`), which every `require "ffi"` loads, so raising it
 /// by name from here works (the `strscan` pattern; see `ext/mod.rs`).
 fn null_pointer_error() -> Signal {
     raise_error(

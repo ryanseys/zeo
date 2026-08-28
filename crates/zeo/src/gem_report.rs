@@ -34,7 +34,7 @@ pub struct GemRecord {
 pub enum SatisfiedBy {
     /// A statically-linked in-tree `ext/` feature (`require "base64"`).
     BuiltinExt { feature: String },
-    /// A zeo-bundled gem under `gems/<name>/` (`require "optparse"`).
+    /// A library zeo itself ships (`require "optparse"`).
     BundledGem { path: String },
     /// A file found on a `-I` load root (the installed Ruby's own stdlib).
     StdlibRoot { path: String },

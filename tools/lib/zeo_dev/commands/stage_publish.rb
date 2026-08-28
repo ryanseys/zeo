@@ -15,7 +15,7 @@ module ZeoDev
     #   runs (a no-op when fresh) and the build script's own
     #   `$OUT_DIR/class_surface.rs` is copied, so the staged file is
     #   byte-identical to what the dev tree compiles against, by construction.
-    # - `crates/zeo/gems.pregen.tar.gz` -- the bundled `gems/` tree, embedded
+    # - `crates/zeo/gems.pregen.tar.gz` -- every bundled library, embedded
     #   into a registry-installed binary and extracted on first run. Built
     #   deterministically (sorted walk, zeroed mtimes) so `--check` compares
     #   content rather than compression accidents.
@@ -42,7 +42,7 @@ module ZeoDev
         surface_dest = File.join(ROOT, SURFACE)
         gems_dest = File.join(ROOT, GEMS_TAR)
         surface = generated_class_surface
-        gems_tar = build_gems_tar(File.join(ROOT, "gems"))
+        gems_tar = build_gems_tar
 
         return check(surface_dest, surface, gems_dest, gems_tar) if opts[:check]
 
@@ -67,7 +67,8 @@ module ZeoDev
           # (sorted, zeroed mtimes); the gzip envelope need not be.
           staged = Zlib::GzipReader.open(gems_dest, &:read)
           if staged != gems_tar
-            warn "#{GEMS_TAR} is STALE relative to gems/ -- re-run `tools/zeo-dev stage-publish`"
+            warn "#{GEMS_TAR} is STALE relative to the bundled libraries -- re-run " \
+                 "`tools/zeo-dev stage-publish`"
             return 1
           end
         end
@@ -103,30 +104,22 @@ module ZeoDev
         File.binread(File.join(out_dir, "class_surface.rs"))
       end
 
-      # A deterministic tar of `gems/`: entries named relative to the dir, so
-      # the extraction dir IS the gems dir; sorted; mtime 0; mode reduced to
-      # 0644 or 0755. `.DS_Store` is skipped.
-      def build_gems_tar(gems_dir)
-        raise Error, "#{gems_dir} is not a directory" unless File.directory?(gems_dir)
+      # A deterministic tar of every bundled library: entries named
+      # `<name>/...`, so the extraction dir IS the gems dir; sorted; mtime 0;
+      # mode reduced to 0644 or 0755.
+      def build_gems_tar
+        files = Payload.files
+        raise Error, "no bundled libraries found" if files.empty?
 
         io = StringIO.new(+"".b)
         ::Gem::Package::TarWriter.new(io) do |tar|
-          collect_files(gems_dir).each do |path|
-            rel = path.delete_prefix("#{gems_dir}/")
+          files.each do |rel, path|
             data = File.binread(path)
             mode = File.executable?(path) ? 0o755 : 0o644
             tar.add_file_simple(rel, mode, data.bytesize) { |f| f.write(data) }
           end
         end
         io.string
-      end
-
-      def collect_files(dir)
-        Dir.glob("**/*", File::FNM_DOTMATCH, base: dir)
-           .reject { |r| r == "." || r.end_with?("/.", "/..") || File.basename(r) == ".DS_Store" }
-           .map { |r| File.join(dir, r) }
-           .select { |p| File.file?(p) }
-           .sort
       end
 
       # `Compression::best`, and mtime 0 so the envelope carries no clock.

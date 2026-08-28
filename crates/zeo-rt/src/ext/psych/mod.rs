@@ -18,7 +18,7 @@
 //! (`Psych::Nodes::*`), which is not modelled and refuses loudly.
 //!
 //! A syntax error raises `Psych::SyntaxError`, which this gem's RUBY half
-//! (`gems/psych/lib/psych.rb`) defines -- see `ext/json` for why the
+//! (`ext/psych/lib/psych.rb`) defines -- see `ext/json` for why the
 //! exception lives there and not here.
 
 mod emitter;

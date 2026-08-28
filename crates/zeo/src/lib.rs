@@ -129,7 +129,7 @@ pub struct CompileOptions {
     /// `.gemspec` is a gem), searched AFTER every `-I` root, first name wins;
     /// a nonexistent dir contributes nothing. The CLI fills this from
     /// `--gems` plus the input file's sibling `gems/`; the compiler's own
-    /// bundled `gems/` is appended by the loader itself -- see `main.rs`.
+    /// libraries are appended by the loader itself -- see `main.rs`.
     pub package_dirs: Vec<std::path::PathBuf>,
     /// Where to write the gem disclosure record (`gem_report`). `None` -- no
     /// file -- is the DEFAULT, for the library API and the CLI alike (the
