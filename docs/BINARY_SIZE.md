@@ -200,3 +200,35 @@ only `registered_table` at the program's array left the constant installers
 reading an empty slice, and **180 goldens failed with `uninitialized constant
 File::RDWR`** — which reads like a narrowing bug and is not one. Both readers
 go through `builtins::all_tables()` now.
+
+## What a whole library costs, 2026-08-28
+
+`puts 1` is the floor. These are the ceiling, and they moved a long way.
+
+| program | compile (wall) | compile (cpu) | binary |
+|---|---|---|---|
+| `require "rubygems"` | 4.1 s | 19.3 s | 99,489,144 |
+| `require "irb"` | 1.6 s | 7.9 s | 54,134,712 |
+
+The wall and cpu columns differ by about 5x because codegen runs in
+parallel. An irb session -- compile, start, evaluate one line, exit -- is
+3.4 s end to end.
+
+Three months earlier the same two programs were **96 s / 407.6 MB** and
+**18 s / 98.6 MB**. Two changes did it and neither had been re-measured
+against a whole library since:
+
+* **parallel Cranelift codegen**, which is where the 5x cpu-to-wall ratio
+  comes from;
+* **sharing one emitted body** for a definition every class inherits. On
+  `require "rubygems"` that is 28,968 emitted bodies over 13,991
+  definitions, where it used to be 71,389 over 15,858 -- and 40,875 rows
+  now name a body somebody else emitted rather than taking a copy. Read
+  the numbers yourself with `zeo --dump=methods <file>`, which is front-end
+  only and answers in under a second.
+
+**A definition that reaches many classes is still the shape that costs.**
+1,308 definitions reach more than one class and account for 14,977 extra
+bodies -- 52% of everything emitted, down from 78%. The remainder is
+mostly module and superclass bodies whose ivar slots do not agree between
+carriers, which is what `ivar_slots_agree` decides per body.
