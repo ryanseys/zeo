@@ -34,6 +34,45 @@ loop. A dist-mode bank never rewrites the committed `bench/results.tsv`
 (that file is the release-profile diff chain); compare dist banks with
 `--save-baseline` + `critcmp`.
 
+### The journal, and finishing an interrupted bank
+
+A full bank with the oracle is 122 benchmarks and roughly 45 minutes, and
+`results.tsv` is written ONCE, after the last one. Anything that stops the
+run early — a timeout, a Ctrl-C, a closed lid — used to discard every
+number already paid for. One run died at 95 of 122 and left nothing.
+
+So every benchmark appends its median to `target/bench/journal.tsv` the
+moment it finishes, flushed per row:
+
+```
+# group	benchmark	median_secs	key	measured_at_epoch
+zeo	bm_fib	0.191361	5aca85d364df168c	1787932076
+cruby	bm_fib	0.482375	995ae9a424d54bec	1787932083
+```
+
+`key` is a sha256 over the program, its `.expected`, and the identity of
+whatever ran it — for `zeo` the snapshot compiler plus `libzeo.a`, for
+`cruby` the `ruby -v` string. A row whose key still matches measured what
+a re-run would measure; one whose key has changed is stale by
+construction, and says so without anybody remembering to check.
+
+`ZEO_BENCH_RESUME=1` then reuses matching rows and re-times only the rest,
+which turns a killed bank into a short top-up instead of a restart:
+
+```console
+$ ZEO_BENCH_ORACLE=1 ZEO_BENCH_RESUME=1 make bench
+```
+
+**Resume is opt-in on purpose.** Quietly mixing sittings is how a bank
+starts lying — see the drift numbers in the rules below — so reuse happens
+only when asked for, and only for rows whose key still matches.
+
+Only what criterion re-timed in the current run is journalled. Criterion
+keeps the last result on disk for every benchmark, including ones a filter
+skipped, so the estimate's mtime rather than its existence is what decides
+— otherwise a filtered run would stamp the whole corpus with a fresh
+timestamp and stale numbers.
+
 ### Comparing runs (baselines)
 
 Criterion stores results under `target/criterion/` and compares against

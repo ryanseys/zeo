@@ -37,11 +37,14 @@
 //! a bank runs cannot touch what is being timed.
 
 use std::cell::OnceCell;
+use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use criterion::{Criterion, SamplingMode};
+use sha2::{Digest, Sha256};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -269,6 +272,153 @@ fn time_runs(cmd: &mut Command, iters: u64) -> Duration {
     total
 }
 
+/// The outer target dir -- where criterion writes and the journal lives.
+/// NOT `target/bench/`, which holds only the snapshot build.
+fn outer_target(root: &Path) -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target"))
+}
+
+/// Where criterion leaves one benchmark's analysis.
+fn estimates_path(root: &Path, group: &str, name: &str) -> PathBuf {
+    outer_target(root)
+        .join("criterion")
+        .join(group)
+        .join(name)
+        .join("new")
+        .join("estimates.json")
+}
+
+/// One benchmark's median, off criterion's own analysis.
+fn criterion_median(root: &Path, group: &str, name: &str) -> Option<f64> {
+    let bytes = std::fs::read(estimates_path(root, group, name)).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    Some(v["median"]["point_estimate"].as_f64()? / 1e9)
+}
+
+/// Short content hash. 16 hex chars: a bank is ~120 rows, so collision is
+/// not the risk being managed here -- staleness is.
+fn digest(parts: &[&[u8]]) -> String {
+    let mut h = Sha256::new();
+    for p in parts {
+        // Length-prefixed, so ("ab","c") and ("a","bc") differ.
+        h.update((p.len() as u64).to_le_bytes());
+        h.update(p);
+    }
+    format!("{:x}", h.finalize())[..16].to_string()
+}
+
+/// The append-as-you-go record, one row per finished benchmark.
+///
+/// `export_results` runs ONCE, after the last benchmark. A bank is 40+
+/// minutes, so anything that stops it early -- a timeout, a Ctrl-C, a
+/// laptop lid -- used to discard every number it had already paid for.
+/// This run died at 95 of 122 and left nothing. The journal is the durable
+/// half: appended and flushed per benchmark, in `target/bench/journal.tsv`.
+///
+/// `key` is what makes a row reusable rather than merely readable. It
+/// hashes the program, its `.expected`, and the IDENTITY of what was timed
+/// -- for zeo the snapshot `zeo` plus `libzeo.a` (compiler and runtime),
+/// for the oracle `ruby -v` (version and revision). A row whose key still
+/// matches measured what a re-run would measure.
+///
+/// **Reuse is opt-in** (`ZEO_BENCH_RESUME=1`). Quietly mixing sittings is
+/// how a bank starts lying: ambient drift of +2.6%, and once a whole-host
+/// shift of ~65%, have both been measured on this machine. A resumed bank
+/// is for finishing an interrupted run, not for skipping work.
+struct Journal {
+    path: PathBuf,
+    prior: HashMap<(String, String), (String, f64)>,
+    resume: bool,
+    /// When this bank started. An `estimates.json` older than this was
+    /// left by an EARLIER run: criterion keeps the last result on disk for
+    /// every benchmark, including ones the current filter skipped, so
+    /// "the file is there" does not mean "it was measured just now".
+    /// Journalling those would stamp stale numbers with a fresh timestamp,
+    /// which is the exact lie this file exists to prevent.
+    started: SystemTime,
+}
+
+impl Journal {
+    fn open(root: &Path) -> Self {
+        let dir = outer_target(root).join("bench");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("journal.tsv");
+        let mut prior = HashMap::new();
+        for line in std::fs::read_to_string(&path).unwrap_or_default().lines() {
+            if line.starts_with('#') {
+                continue;
+            }
+            // group, benchmark, median_secs, key, measured_at_epoch
+            let f: Vec<&str> = line.split('\t').collect();
+            let [group, name, secs, key, _at] = f[..] else {
+                continue;
+            };
+            let Ok(secs) = secs.parse() else { continue };
+            prior.insert((group.into(), name.into()), (key.to_string(), secs));
+        }
+        if !path.exists() {
+            let _ = std::fs::write(
+                &path,
+                "# appended per benchmark by `cargo bench -p zeo --bench programs`\n\
+                 # group\tbenchmark\tmedian_secs\tkey\tmeasured_at_epoch\n",
+            );
+        }
+        let resume = std::env::var_os("ZEO_BENCH_RESUME").is_some_and(|v| v == "1");
+        Self {
+            path,
+            prior,
+            resume,
+            started: SystemTime::now(),
+        }
+    }
+
+    /// A usable prior measurement for this exact input, when resuming.
+    fn reusable(&self, group: &str, name: &str, key: &str) -> Option<f64> {
+        if !self.resume {
+            return None;
+        }
+        let (had, secs) = self.prior.get(&(group.into(), name.into()))?;
+        (had == key).then_some(*secs)
+    }
+
+    fn record(&self, group: &str, name: &str, key: &str, secs: f64) {
+        let at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&self.path) else {
+            eprintln!("journal: cannot append {group}/{name}");
+            return;
+        };
+        // Flushed per row on purpose: the whole point is surviving a kill.
+        let _ = writeln!(f, "{group}\t{name}\t{secs:.6}\t{key}\t{at}");
+        let _ = f.flush();
+    }
+
+    /// Journal what criterion measured for this benchmark IN THIS RUN.
+    ///
+    /// A filtered bank walks the whole corpus and calls this for every
+    /// benchmark, but criterion only re-times the ones the filter selected
+    /// -- so the estimate's mtime, not its existence, is what says whether
+    /// there is a fresh number to record.
+    fn record_measured(&self, root: &Path, group: &str, name: &str, key: &str) {
+        let path = estimates_path(root, group, name);
+        let fresh = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .is_ok_and(|m| m >= self.started);
+        if !fresh {
+            return;
+        }
+        match criterion_median(root, group, name) {
+            Some(secs) => self.record(group, name, key, secs),
+            // Loud: a silently unjournalled row is the failure this exists
+            // to prevent.
+            None => eprintln!("journal: no criterion estimate for {group}/{name}"),
+        }
+    }
+}
+
 /// `[N/M pct]` progress line ahead of one benchmark -- what a `tail -f`
 /// of a bank's log reads to see how far along the run is.
 fn progress(done: usize, total: usize, group: &str, name: &str) {
@@ -279,11 +429,58 @@ fn progress(done: usize, total: usize, group: &str, name: &str) {
     );
 }
 
-fn bench_zeo(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usize, total: usize) {
+/// This benchmark's journal key: the program, its expected output, and the
+/// identity of whatever runs it.
+fn key_for(group: &str, name: &str, rb: &Path, identity: &str) -> String {
+    let src = std::fs::read(rb).unwrap_or_default();
+    let expected = std::fs::read(rb.with_extension("rb.expected")).unwrap_or_default();
+    digest(&[
+        group.as_bytes(),
+        name.as_bytes(),
+        &src,
+        &expected,
+        identity.as_bytes(),
+    ])
+}
+
+/// What a zeo timing is OF: the snapshot compiler and the runtime archive
+/// it links into every benchmark. Rebuild either and all 61 rows go stale.
+fn zeo_identity(zeo: &Path) -> String {
+    let bin = std::fs::read(zeo).expect("read the snapshot zeo");
+    let lib = zeo
+        .parent()
+        .map(|d| d.join("libzeo.a"))
+        .and_then(|p| std::fs::read(p).ok())
+        .unwrap_or_default();
+    digest(&[&bin, &lib])
+}
+
+/// `ruby -v` carries version, revision and platform -- enough to say a
+/// re-run would time the same interpreter.
+fn ruby_identity(ruby: &str) -> String {
+    let out = Command::new(ruby)
+        .arg("-v")
+        .output()
+        .map(|o| o.stdout)
+        .unwrap_or_default();
+    digest(&[&out])
+}
+
+fn bench_zeo(
+    c: &mut Criterion,
+    corpus: &[PathBuf],
+    lazy: bool,
+    done: &mut usize,
+    total: usize,
+    journal: &Journal,
+) {
+    let identity = zeo_identity(ZEO.get().expect("main built the snapshot"));
+    let root = repo_root();
     let mut g = c.benchmark_group("zeo");
     g.sampling_mode(SamplingMode::Flat).sample_size(10);
     for rb in corpus {
         let name = rb.file_stem().unwrap().to_string_lossy().into_owned();
+        let key = key_for("zeo", &name, rb, &identity);
         let id = name.clone();
         let rb = rb.clone();
         if lazy {
@@ -291,7 +488,7 @@ fn bench_zeo(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usize
             // only for what it selects. The cell outlives warmup +
             // measurement.
             let compiled: OnceCell<PathBuf> = OnceCell::new();
-            g.bench_function(id, move |b| {
+            g.bench_function(id, |b| {
                 let bin = compiled.get_or_init(|| {
                     let bin = compile(&rb, &name);
                     gate(&mut Command::new(&bin), &rb, "zeo binary");
@@ -299,16 +496,22 @@ fn bench_zeo(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usize
                 });
                 b.iter_custom(|iters| time_runs(&mut Command::new(bin), iters));
             });
+            journal.record_measured(&root, "zeo", &name, &key);
         } else {
             progress(*done, total, "zeo", &name);
             *done += 1;
+            if let Some(secs) = journal.reusable("zeo", &name, &key) {
+                eprintln!("resume zeo/{name}: {secs:.4}s from the journal");
+                continue;
+            }
             let bin = compile(&rb, &name);
             let one_run = gate(&mut Command::new(&bin), &rb, "zeo binary");
             eprintln!("gate zeo/{name}: {:.3}s", one_run.as_secs_f64());
             g.measurement_time(target_for(one_run));
-            g.bench_function(id, move |b| {
+            g.bench_function(id, |b| {
                 b.iter_custom(|iters| time_runs(&mut Command::new(&bin), iters));
             });
+            journal.record_measured(&root, "zeo", &name, &key);
         }
     }
     g.finish();
@@ -329,33 +532,49 @@ fn oracle_cmd(ruby: &str, rb: &Path) -> Command {
     cmd
 }
 
-fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usize, total: usize) {
+fn bench_cruby(
+    c: &mut Criterion,
+    corpus: &[PathBuf],
+    lazy: bool,
+    done: &mut usize,
+    total: usize,
+    journal: &Journal,
+) {
     let ruby = std::env::var("ZEO_BENCH_ORACLE_RUBY").unwrap_or_else(|_| "ruby".to_string());
+    let identity = ruby_identity(&ruby);
+    let root = repo_root();
     let mut g = c.benchmark_group("cruby");
     g.sampling_mode(SamplingMode::Flat).sample_size(10);
     for rb in corpus {
         let name = rb.file_stem().unwrap().to_string_lossy().into_owned();
+        let key = key_for("cruby", &name, rb, &identity);
         let rb = rb.clone();
         let ruby = ruby.clone();
         // An oracle mismatch means the .expected snapshot is stale -- fail
         // loudly rather than banking a wrong comparison.
         if lazy {
             let gated: OnceCell<()> = OnceCell::new();
-            g.bench_function(name, move |b| {
+            g.bench_function(name.clone(), |b| {
                 gated.get_or_init(|| {
                     gate(&mut oracle_cmd(&ruby, &rb), &rb, "oracle ruby");
                 });
                 b.iter_custom(|iters| time_runs(&mut oracle_cmd(&ruby, &rb), iters));
             });
+            journal.record_measured(&root, "cruby", &name, &key);
         } else {
             progress(*done, total, "cruby", &name);
             *done += 1;
+            if let Some(secs) = journal.reusable("cruby", &name, &key) {
+                eprintln!("resume cruby/{name}: {secs:.4}s from the journal");
+                continue;
+            }
             let one_run = gate(&mut oracle_cmd(&ruby, &rb), &rb, "oracle ruby");
             eprintln!("gate cruby/{name}: {:.3}s", one_run.as_secs_f64());
             g.measurement_time(target_for(one_run));
-            g.bench_function(name, move |b| {
+            g.bench_function(name.clone(), |b| {
                 b.iter_custom(|iters| time_runs(&mut oracle_cmd(&ruby, &rb), iters));
             });
+            journal.record_measured(&root, "cruby", &name, &key);
         }
     }
     g.finish();
@@ -369,9 +588,7 @@ fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usi
 /// (`ZEO_BENCH_ORACLE=1`); a zeo-only bank keeps the standing CRuby
 /// medians beside its fresh zeo ones so the comparison never vanishes.
 fn export_results(root: &Path, _oracle: bool) {
-    let outer = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("target"));
+    let outer = outer_target(root);
     let mut rows: Vec<(&str, String, f64)> = Vec::new();
     let groups: &[&str] = &["zeo", "cruby"];
     for group in groups {
@@ -432,9 +649,10 @@ fn main() {
         .configure_from_args();
     let total = corpus.len() * if oracle { 2 } else { 1 };
     let mut done = 0;
-    bench_zeo(&mut c, &corpus, lazy, &mut done, total);
+    let journal = Journal::open(&root);
+    bench_zeo(&mut c, &corpus, lazy, &mut done, total, &journal);
     if oracle {
-        bench_cruby(&mut c, &corpus, lazy, &mut done, total);
+        bench_cruby(&mut c, &corpus, lazy, &mut done, total, &journal);
     }
     c.final_summary();
     // A filtered run measured a subset, and a dist-mode bank measured a

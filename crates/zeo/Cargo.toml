@@ -69,6 +69,8 @@ zeo-abi.workspace = true
 datatest-stable.workspace = true
 # The derived manifest gems_vendored.rs reads.
 serde_json.workspace = true
+# The bench journal's per-row staleness key (benches/programs.rs).
+sha2.workspace = true
 # diagnostics.rs renders compile errors the way the CLI does.
 miette.workspace = true
 # The runtime performance bank (benches/programs.rs). Lean build: no
