@@ -13,19 +13,36 @@
 # substituted from CARGO_CFG_TARGET_*). It carries the keys rubygems + bundler
 # actually read (version, platform, install layout).
 #
-# REMAINING LIMITATION: the install prefix is a synthesized FHS default, not a
-# real install layout -- if bundler/rubygems behavior ever keys off the real
-# install dirs, the prefix needs runtime substitution from the resolved home
-# (zeo::home), not a compile-time constant.
 module RbConfig
   ruby_version = "4.0.0"
-  prefix = "/usr/local"
   arch = "@RUBY_PLATFORM@"
+
+  # THE PREFIX IS A REAL DIRECTORY ZEO OWNS, resolved from `zeo::home` and
+  # filled by `parse::loader::shims` (the build cannot know it). It used to be
+  # the literal `/usr/local`, and everything derived from it named a path that
+  # does not exist: `Gem.dir`, `Gem.default_specifications_dir`,
+  # `Gem::Specification.stubs` (empty), `Gem.loaded_specs` (empty).
+  #
+  # It is the WRITABLE build root, not the install prefix, because
+  # `Gem.default_dir` must be creatable: it holds the generated default
+  # gemspecs for zeo's bundled libraries and receives a `gem install` that
+  # names no GEM_HOME. See `zeo::home::ruby_prefix`.
+  prefix = ENV["ZEO_PREFIX"] || "@ZEO_PREFIX@"
 
   # Where `crates/zeo-rt/cext/` landed. `zeo` exports these before it runs an
   # `extconf.rb`; the fallbacks are the dev tree.
   hdrdir = ENV["ZEO_CEXT_HDRDIR"] || "@CEXT_HDRDIR@"
   archhdrdir = ENV["ZEO_CEXT_ARCHHDRDIR"] || "@CEXT_ARCHHDRDIR@"
+
+  # THE INTERPRETER IS ZEO. `RbConfig.ruby` is `bindir` + `ruby_install_name`,
+  # and rubygems spawns exactly that string to run an `extconf.rb`. Left at the
+  # synthesized `/usr/local/bin/ruby` it named a file that does not exist, so
+  # every native-extension gem failed with `extconf failed: No such file or
+  # directory`. The placeholders are filled by `parse::loader::shims` with the
+  # zeo binary that is compiling this program, not by `build.rs` -- the build
+  # has no idea where the binary will live.
+  zeo_bindir = ENV["ZEO_BINDIR"] || "@ZEO_BINDIR@"
+  zeo_ruby_name = ENV["ZEO_RUBY_INSTALL_NAME"] || "@ZEO_RUBY_INSTALL_NAME@"
 
   CONFIG = {
     "MAJOR" => "4",
@@ -34,8 +51,8 @@ module RbConfig
     "PATCHLEVEL" => "5",
     "ruby_version" => ruby_version,
     "RUBY_SO_NAME" => "ruby.4.0",
-    "ruby_install_name" => "ruby",
-    "RUBY_INSTALL_NAME" => "ruby",
+    "ruby_install_name" => zeo_ruby_name,
+    "RUBY_INSTALL_NAME" => zeo_ruby_name,
     "RUBY_BASE_NAME" => "ruby",
 
     # Platform / host triple.
@@ -60,10 +77,12 @@ module RbConfig
     "LIBEXT" => "a",
     "OBJEXT" => "o",
 
-    # Install layout (prefix-relative; a synthesized default, not a real build).
+    # Install layout, prefix-relative. `rubylibprefix` is the load-bearing one:
+    # `Gem.default_dir` is it plus `gems/<ruby_version>`, and
+    # `Gem.default_specifications_dir` hangs off that in turn.
     "prefix" => prefix,
     "exec_prefix" => prefix,
-    "bindir" => "#{prefix}/bin",
+    "bindir" => zeo_bindir,
     "libdir" => "#{prefix}/lib",
     "rubylibprefix" => "#{prefix}/lib/ruby",
     "rubylibdir" => "#{prefix}/lib/ruby/#{ruby_version}",

@@ -8,11 +8,40 @@ use std::path::Path;
 /// from disk. Real Ruby generates these at build time (`rbconfig`); zeo ships a
 /// static stand-in describing the target it emulates. `None` for any other
 /// feature.
-pub(super) fn synthetic_shim_source(feature: &str) -> Option<&'static str> {
+pub(super) fn synthetic_shim_source(feature: &str) -> Option<std::borrow::Cow<'static, str>> {
+    // `rbconfig` is the one shim whose text is not fully known at build time.
+    // Its `bindir`/`ruby_install_name` name THE RUNNING ZEO BINARY and its
+    // `prefix` is the resolved home's writable root -- both run-time facts the
+    // build cannot see. Filled here, where `cext::zeo_binary` and
+    // `home::ruby_prefix` can answer. See the template's own comments.
+    if feature == "rbconfig" {
+        let raw: &'static str = include_str!(concat!(env!("OUT_DIR"), "/rbconfig.rb"));
+        let zeo = crate::cext::zeo_binary().ok();
+        let dir = zeo
+            .as_deref()
+            .and_then(Path::parent)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "/usr/local/bin".to_string());
+        // `file_name`, not `file_stem`: the shim's `EXEEXT` is empty, so the
+        // name has to carry any extension itself.
+        let name = zeo
+            .as_deref()
+            .and_then(Path::file_name)
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "ruby".to_string());
+        let prefix = crate::home::ruby_prefix();
+        return Some(std::borrow::Cow::Owned(
+            raw.replace("@ZEO_BINDIR@", &dir)
+                .replace("@ZEO_RUBY_INSTALL_NAME@", &name)
+                .replace("@ZEO_PREFIX@", &prefix.to_string_lossy()),
+        ));
+    }
+    synthetic_shim_static(feature).map(std::borrow::Cow::Borrowed)
+}
+
+/// The shims whose text IS fully known at build time.
+fn synthetic_shim_static(feature: &str) -> Option<&'static str> {
     match feature {
-        // Rendered by build.rs from shims/rbconfig.rb.in with the build
-        // target's platform facts (arch, darwin major, dlext, ...).
-        "rbconfig" => Some(include_str!(concat!(env!("OUT_DIR"), "/rbconfig.rb"))),
         // `lib/mkmf.rb`, vendored VERBATIM from the same `ruby/ruby` pin the
         // C API headers ride (`crates/zeo-rt/cext/`). An `extconf.rb` runs
         // under zeo and writes a real Makefile, so mkmf is Ruby zeo RUNS

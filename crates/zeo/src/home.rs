@@ -143,6 +143,36 @@ fn resolve(
     ))
 }
 
+/// Where zeo may WRITE: build output, caches, and the materialized RubyGems
+/// store. Never the payload, which may be root-owned (a Homebrew Cellar).
+pub fn build_root() -> PathBuf {
+    match zeo_home() {
+        ZeoHome::DevTree { root } => root.join("target"),
+        ZeoHome::Installed { cache, .. } | ZeoHome::Registry { cache } => cache.clone(),
+    }
+}
+
+/// The install prefix `RbConfig::CONFIG["prefix"]` reports, and with it
+/// `Gem.default_dir` (= `rubylibprefix` + `gems/<api version>`).
+///
+/// It is under [`build_root`] rather than the real install prefix, and that is
+/// deliberate. `Gem.default_dir` has to be a directory zeo can CREATE and
+/// WRITE: it holds the generated `specifications/default/*.gemspec` for the
+/// bundled libraries, and it is where `gem install` lands with no `GEM_HOME`.
+/// An installed zeo's prefix is frequently read-only, so pointing at it would
+/// reproduce the `/usr/local` fiction this replaced -- a path that looks right
+/// and cannot be used.
+///
+/// `bindir` does NOT come from here. It is the directory the running zeo sits
+/// in, so a binstub `gem install` writes lands beside the binary that will run
+/// it, which is what CRuby does with its own prefix.
+pub fn ruby_prefix() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ZEO_PREFIX") {
+        return PathBuf::from(dir);
+    }
+    build_root().join("ruby-prefix")
+}
+
 /// The embedded gems archive, staged into the published crate by
 /// `cargo xtask stage-publish`. Absent (and the cfg off) in every dev build.
 #[cfg(zeo_embedded_gems)]

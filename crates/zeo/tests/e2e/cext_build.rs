@@ -46,6 +46,63 @@ fn have(tool: &str) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
+/// `RbConfig.ruby` names the zeo that is running, and that file exists.
+///
+/// rubygems spawns exactly this string to run a gem's `extconf.rb`
+/// (`Gem.ruby` is `RbConfig.ruby`). The shim used to synthesize
+/// `/usr/local/bin/ruby` from a hardcoded FHS prefix, so every gem with a C
+/// extension died at `extconf failed: No such file or directory` while
+/// pure-ruby gems installed fine -- a failure that names a path nobody in the
+/// repo ever wrote.
+///
+/// The three keys are asserted separately because `bindir` and
+/// `ruby_install_name` are what mkmf and rubygems read directly; a fix that
+/// only patched the joined `RbConfig.ruby` would leave both wrong.
+#[test]
+fn rbconfig_names_the_running_zeo_as_the_interpreter() {
+    let zeo = zeo_bin();
+    let out = Command::new(&zeo)
+        .arg("-e")
+        .arg(
+            r#"require "rbconfig"
+puts RbConfig.ruby
+puts RbConfig::CONFIG["bindir"]
+puts RbConfig::CONFIG["ruby_install_name"]
+puts File.executable?(RbConfig.ruby)
+"#,
+        )
+        // Ambient ruby config must not reach the parse.
+        .env_remove("RUBYOPT")
+        .env_remove("RUBYLIB")
+        .output()
+        .expect("zeo runs");
+    assert!(
+        out.status.success(),
+        "zeo failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 4, "unexpected output:\n{stdout}");
+
+    // Canonicalized on both sides: the test binary is routinely reached
+    // through a symlinked target dir, and the shim reports the real path.
+    let want = zeo.canonicalize().expect("the zeo binary is reachable");
+    assert_eq!(
+        Path::new(lines[0]).canonicalize().ok().as_deref(),
+        Some(want.as_path()),
+        "RbConfig.ruby is `{}`, not this zeo:\n{stdout}",
+        lines[0]
+    );
+    assert_eq!(Some(Path::new(lines[1])), want.parent(), "bindir");
+    assert_eq!(
+        want.file_name().and_then(|n| n.to_str()),
+        Some(lines[2]),
+        "ruby_install_name"
+    );
+    assert_eq!(lines[3], "true", "RbConfig.ruby names a file that runs");
+}
+
 #[test]
 fn an_extension_configures_compiles_and_links() {
     // `make` and a C compiler are what an extension build IS. A machine
