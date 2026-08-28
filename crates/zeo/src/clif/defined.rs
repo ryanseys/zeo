@@ -525,7 +525,14 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
             defining_class: fx.defining_class.or(fx.method_class),
             box_id: 0,
         };
-        if crate::analyze::constfold::const_form_resolves(&env, inner).is_none() {
+        // `!= Some(true)`, not `is_none()`: a bare name nothing defines folds
+        // to `Some(false)`, which is the version-gate idiom's whole value at
+        // ANALYZE time (`defined?(Ractor)` drops the branch). At EMIT time a
+        // guard that folded is already gone, so the only `defined?` left here
+        // is one whose ANSWER the program reads -- and for a program that can
+        // load at run time, "provably absent" is a claim the compiler is not
+        // entitled to make.
+        if crate::analyze::constfold::const_form_resolves(&env, inner) != Some(true) {
             // A positional CLASS answers the scope operator's question -- the
             // name is looked up IN its lexical parent. A value constant a
             // unit assigns answers the BARE one, which reaches a top-level
@@ -560,6 +567,23 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
                         )
                     })
                 });
+            // A program that can load or compile at RUN time may define a
+            // constant this compile never saw -- a require behind a
+            // `$LOAD_PATH.unshift` is the everyday case. Answering a static
+            // nil there is a claim the compiler is not entitled to make, so
+            // the question goes to the run time like any other unresolved
+            // one. A program with no such hatch keeps its static answer.
+            let positional = positional.or_else(|| {
+                fx.an.compiler.compiles_at_runtime().then(|| {
+                    bare = true;
+                    (
+                        fx.defining_class
+                            .or(fx.method_class)
+                            .unwrap_or(crate::compiler::OBJECT_CLASS),
+                        crate::constpath::ConstPath::parse(&name).base().to_string(),
+                    )
+                })
+            });
             if let Some((owner, leaf)) = positional {
                 let sid = fx.b.ins().iconst(types::I32, i64::from(owner.0));
                 let (nptr, nlen) = super::expr::rodata_name(fx, &leaf);
