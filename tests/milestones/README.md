@@ -6,7 +6,7 @@ line inside a bigger suite. `require "rubygems"` is the headline.
 
 | | |
 |---|---|
-| harness | `crates/zeo/tests/milestones.rs` |
+| harness | `crates/zeo/tests/goldens.rs` |
 | run it | `make ci-milestones` (also in `make gate` and CI) |
 | re-record | `tools/zeo-dev bless milestone::` |
 
@@ -18,8 +18,9 @@ line inside a bigger suite. `require "rubygems"` is the headline.
   promote message rather than staying quietly green. Promote by moving the
   `.rb` and its `.expected` up one directory.
 
-Every golden records **ruby 4.0.6's** answer, exactly as `tests/` and
-`tests/gaps/` do.
+`pending/` is to this suite what `tests/gaps/` is to `tests/` — the corpus
+is a 2×2 of cost against outcome, laid out in `tests/README.md`. Every
+golden records **ruby 4.0.6's** answer.
 
 ## Why a suite of its own
 
@@ -33,11 +34,12 @@ profile opts the binary out so the dev loop stays fast, and the leg passes
 ## Writing one: shapes, never versions
 
 Ruby has RubyGems loaded before the program starts, so its `require` answers
-`false` where zeo's answers `true`, and zeo's bundled RubyGems is ahead of the
-reference ruby's. Both engines agree on what the API *does*; neither agrees on
-those two, and a golden that prints them records a difference that means
-nothing. Print `Gem::VERSION.is_a?(String)`, not `Gem::VERSION`.
+`false` where zeo's answers `true`. Both engines agree on what the API
+*does*; neither agrees on that, and a golden that prints it records a
+difference that means nothing. Print `Gem::VERSION.is_a?(String)`, not
+`Gem::VERSION`.
 
 For the same reason, do not print anything that reads the machine's own gem
 store: a milestone must answer the same on a developer's laptop and on a bare
-CI runner.
+CI runner. Both engines resolve `Gemfile.lock` (`make install-deps`), so the
+gems themselves agree.

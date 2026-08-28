@@ -16,6 +16,7 @@
 //!
 //! Each pattern matches ONE level: a subdirectory holds FIXTURES, not tests.
 //! `tests/bench/` is compile-side input with no goldens and stays out.
+//! `tests/README.md` lays the corpus out as a 2x2 of cost against outcome.
 //!
 //! Two corpora cost minutes and gigabytes a case, so they raise the bounds
 //! and take their own nextest deadline (`test(milestone::) | test(gemtest::)`,
