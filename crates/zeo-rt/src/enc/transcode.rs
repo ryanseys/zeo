@@ -172,7 +172,19 @@ pub(crate) fn decode_spans(bytes: &[u8], from: EncodingId) -> Vec<(Unit, usize)>
     }
     match from.kind() {
         EncKind::Latin1 => bytes.iter().map(|b| (Unit::Char(*b as char), 1)).collect(),
-        EncKind::Ascii | EncKind::Binary | EncKind::Registered => bytes
+        // BINARY has no invalid byte -- every one of the 256 is a character
+        // it holds. So a high byte is a valid character with no Unicode
+        // mapping, which is `:undef` territory: CRuby raises
+        // `UndefinedConversionError`, not `InvalidByteSequenceError`.
+        // US-ASCII is the opposite: a high byte is simply not in it.
+        EncKind::Binary => bytes
+            .iter()
+            .map(|b| match *b < 0x80 {
+                true => (Unit::Char(*b as char), 1),
+                false => (Unit::Unmapped(vec![*b]), 1),
+            })
+            .collect(),
+        EncKind::Ascii | EncKind::Registered => bytes
             .iter()
             .map(|b| {
                 let unit = if *b < 0x80 {

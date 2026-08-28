@@ -92,18 +92,32 @@ fn err(msg: impl Into<String>) -> Signal {
     crate::builtins::arg_error!("{}", msg.into())
 }
 
-/// `Array#pack`'s result encoding: UTF-8 when EVERY directive is `U`,
-/// otherwise ASCII-8BIT (CRuby's rule).
+/// `Array#pack`'s result encoding, CRuby's three-tier `enc_info` ladder.
+///
+/// A template starts at US-ASCII and only ever moves DOWN:
+///
+///   * `m`, `M` and `u` write ASCII text and leave the tier alone.
+///   * `U` writes UTF-8, so it lifts US-ASCII to UTF-8.
+///   * Everything else writes raw bytes and pins the answer at ASCII-8BIT.
+///
+/// So an empty template is US-ASCII, `"Um"` is UTF-8, and one `C` anywhere
+/// makes the whole result binary. zeo used to answer UTF-8 only for an
+/// all-`U` template and ASCII-8BIT for everything else, which got `"m"`,
+/// `"Um"` and the empty template wrong.
 pub fn result_encoding(template: &str) -> crate::encoding::EncodingId {
-    let letters: Vec<char> = template
-        .chars()
-        .filter(|c| c.is_ascii_alphabetic())
-        .collect();
-    if !letters.is_empty() && letters.iter().all(|c| *c == 'U') {
-        crate::encoding::UTF_8
-    } else {
-        crate::encoding::ASCII_8BIT
+    let mut enc = crate::encoding::US_ASCII;
+    for c in template.chars() {
+        if !c.is_ascii_alphabetic() && !matches!(c, '@' | 'x' | 'X') {
+            continue;
+        }
+        match c {
+            'm' | 'M' | 'u' => {}
+            'U' if enc == crate::encoding::US_ASCII => enc = crate::encoding::UTF_8,
+            'U' => {}
+            _ => return crate::encoding::ASCII_8BIT,
+        }
     }
+    enc
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +217,40 @@ pub fn pack(elems: &[RubyValue], template: &str) -> Result<Vec<u8>, Signal> {
                     let mut buf = [0u8; 4];
                     out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
                 }
+            }
+            // `B`/`b` -- a string of `0`/`1` characters packed back into
+            // bits, the inverse of the unpack arm below. `B` fills each byte
+            // from the high bit down, `b` from the low bit up; a character
+            // that is not `1` reads as a zero bit, which is CRuby's rule
+            // (`*p & 1`). A partial trailing byte is emitted as it stands.
+            'B' | 'b' => {
+                let s = next_str(elems, &mut idx)?;
+                let take = match d.count {
+                    Count::Star => s.len(),
+                    Count::One => 1,
+                    Count::Fixed(n) => n,
+                };
+                let mut byte = 0u8;
+                for i in 0..take {
+                    let bit = s.get(i).is_some_and(|c| c & 1 == 1);
+                    let shift = if d.kind == 'B' { 7 - (i % 8) } else { i % 8 };
+                    byte |= u8::from(bit) << shift;
+                    if i % 8 == 7 {
+                        out.push(byte);
+                        byte = 0;
+                    }
+                }
+                if take % 8 != 0 {
+                    out.push(byte);
+                }
+            }
+            // `x` writes NUL bytes and consumes no argument.
+            'x' => {
+                let n = match d.count {
+                    Count::Star | Count::One => 1,
+                    Count::Fixed(n) => n,
+                };
+                out.resize(out.len() + n, 0);
             }
             // `X` removes bytes already written; `@` pads with NULs (or
             // truncates) so the next write lands at an absolute offset.

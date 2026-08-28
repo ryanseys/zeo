@@ -634,9 +634,17 @@ pub(super) fn pad(
         _ => unreachable!("String table row dispatched on a non-String receiver"),
     };
     let width = convert::to_index(width)?;
-    let fill = match fill {
-        None => " ".to_string(),
-        Some(f) => convert::to_rstr(f)?.lock().to_utf8_lossy().into_owned(),
+    // The result's encoding combines the receiver's with the PAD's, and
+    // CRuby checks that before it checks whether any padding is needed at
+    // all -- `"café".ljust(1, latin1)` raises even though it pads nothing.
+    let recv_buf = recv_str!(recv).lock().clone();
+    let (fill, enc) = match fill {
+        None => (" ".to_string(), recv_buf.encoding()),
+        Some(f) => {
+            let pad = convert::to_rstr(f)?.lock().clone();
+            let enc = encode::combined_encoding(&recv_buf, &pad)?;
+            (pad.to_utf8_lossy().into_owned(), enc)
+        }
     };
     if fill.is_empty() {
         return Err(arg_error!("zero width padding"));
@@ -652,8 +660,14 @@ pub(super) fn pad(
             format!("{}{text}{}", fill_n(left), fill_n(total - left))
         }
     };
-    match recv {
-        RubyValue::Str(s) => Ok(str_value_like(&s.lock(), &out)),
-        _ => unreachable!("String table row dispatched on a non-String receiver"),
-    }
+    // Already wide enough: the pad contributed no byte, so the answer keeps
+    // the receiver's encoding. The compatibility CHECK above still ran, which
+    // is CRuby's order -- `"café".ljust(1, latin1)` raises.
+    Ok(encode::str_value_in_enc(
+        match total {
+            0 => recv_buf.encoding(),
+            _ => enc,
+        },
+        &out,
+    ))
 }

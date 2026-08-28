@@ -91,8 +91,13 @@ fn build_cext() {
         build.file(format!("csrc/{f}"));
     }
     // `cext_io.c` reads `struct rb_io` out of the shipped headers, which is
-    // the whole point of writing it in C.
-    build.include("cext/include").include("cext/config");
+    // the whole point of writing it in C. Those headers are upstream Ruby's
+    // and warn under `-Wextra` on their own account; `cext_headers.rs` is
+    // what watches them, and it filters to zeo's own files for this reason.
+    build
+        .include("cext/include")
+        .include("cext/config")
+        .flag_if_supported("-Wno-unused-parameter");
     build.warnings(true).compile("zeo_cext");
 }
 

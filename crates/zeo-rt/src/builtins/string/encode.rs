@@ -60,7 +60,7 @@ pub(super) fn guard_valid_compat(recv: &RubyValue) -> Result<(), crate::Signal> 
 /// like CRuby's (receiver's encoding first, `inspect_name` forms --
 /// "incompatible character encodings: BINARY (ASCII-8BIT) and UTF-8",
 /// oracle-verified). See `StrBuf::push_buf`.
-pub(super) fn concat_incompat(left: &StrBuf, right: &StrBuf) -> crate::Signal {
+pub(crate) fn concat_incompat(left: &StrBuf, right: &StrBuf) -> crate::Signal {
     crate::dispatch::raise_error(
         "Encoding::CompatibilityError",
         format!(
@@ -69,6 +69,27 @@ pub(super) fn concat_incompat(left: &StrBuf, right: &StrBuf) -> crate::Signal {
             right.encoding().inspect_name()
         ),
     )
+}
+
+/// The encoding two strings COMBINE into, CRuby's `rb_enc_check`.
+///
+/// An ASCII-only side never moves the answer -- every encoding zeo carries is
+/// ASCII-compatible -- so the other side's encoding wins. Two non-ASCII sides
+/// in different encodings do not combine at all, and that is a
+/// `CompatibilityError`, raised whether or not any byte of the second string
+/// is actually used: `"café".ljust(1, latin1)` raises in ruby even though it
+/// pads nothing.
+pub(crate) fn combined_encoding(
+    left: &StrBuf,
+    right: &StrBuf,
+) -> Result<crate::encoding::EncodingId, crate::Signal> {
+    if right.ascii_only() || left.encoding() == right.encoding() {
+        return Ok(left.encoding());
+    }
+    if left.ascii_only() {
+        return Ok(right.encoding());
+    }
+    Err(concat_incompat(left, right))
 }
 
 /// Rebuild a DERIVED string in the receiver's encoding.
@@ -192,7 +213,7 @@ pub(super) fn char_codepoint(buf: &StrBuf, r: std::ops::Range<usize>) -> i64 {
 /// Locks in address order behind a pointer-equality short-circuit, the same
 /// way `rb_eq`'s String arm does: `sort` calls this on the same pair from
 /// both directions, and the receiver may BE the argument.
-pub(super) fn str_byte_cmp(a: &crate::collections::RStr, b: &crate::collections::RStr) -> i64 {
+pub(crate) fn str_byte_cmp(a: &crate::collections::RStr, b: &crate::collections::RStr) -> i64 {
     if std::sync::Arc::ptr_eq(a, b) {
         return 0;
     }

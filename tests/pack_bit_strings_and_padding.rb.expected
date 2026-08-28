@@ -1,0 +1,25 @@
+B bit string           [65]
+b bit string           [65]
+B partial byte         [64]
+b partial byte         [1]
+B fixed count          [64]
+B non-binary char      [16]
+B round trip           "01000001"
+b round trip           "10000010"
+x null pad             [0, 0, 0]
+x default              [0]
+x between              [65, 0, 66]
+X back up              [65]
+@ absolute             [65, 0, 0, 0]
+empty template         "US-ASCII"
+B encoding             "ASCII-8BIT"
+x encoding             "ASCII-8BIT"
+m encoding             "US-ASCII"
+M encoding             "US-ASCII"
+u encoding             "US-ASCII"
+U encoding             "UTF-8"
+U then m               "UTF-8"
+m then U               "UTF-8"
+U then C               "ASCII-8BIT"
+C encoding             "ASCII-8BIT"
+@ encoding             "ASCII-8BIT"

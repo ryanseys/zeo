@@ -1,0 +1,5 @@
+p pointer size         8
+P pointer size         8
+p round trip           "hello"
+P round trip           "hello"
+p nil                  [0, 0, 0, 0, 0, 0, 0, 0]

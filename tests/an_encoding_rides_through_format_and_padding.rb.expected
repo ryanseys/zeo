@@ -1,0 +1,30 @@
+interp ascii + latin1              ISO-8859-1 [97, 98, 99, 233]
+interp latin1 + ascii              ISO-8859-1 [233, 97, 98, 99]
+interp utf8 + latin1               Encoding::CompatibilityError
+interp ascii only                  UTF-8 [97, 98, 99, 97, 98, 99]
+interp binary                      ASCII-8BIT [97, 98, 99, 99, 97, 102, 195, 169]
+%s ascii fmt, binary arg           ASCII-8BIT [99, 97, 102, 195, 169]
+%s latin1 fmt, ascii arg           ISO-8859-1 [97, 98, 99]
+%d binary fmt                      ASCII-8BIT [53]
+%s no substitution                 ASCII-8BIT [112, 108, 97, 105, 110]
+%s two args, one binary            ASCII-8BIT [97, 98, 99, 99, 97, 102, 195, 169]
+%s incompatible pair               Encoding::CompatibilityError
+format() keeps it                  ASCII-8BIT [99, 97, 102, 195, 169]
+pack empty                         US-ASCII []
+pack m                             US-ASCII [97, 71, 107, 61]
+pack U                             UTF-8 [195, 169]
+pack U then m                      UTF-8 [65, 97, 71, 107, 61, 10]
+pack U then C                      ASCII-8BIT [65, 66]
+pack C                             ASCII-8BIT [65]
+ljust latin1 pad                   ISO-8859-1 [97, 98, 99, 233, 233]
+rjust latin1 pad                   ISO-8859-1 [233, 233, 97, 98, 99]
+center latin1 pad                  ISO-8859-1 [233, 97, 98, 99, 233]
+ljust already wide                 UTF-8 [97, 98, 99]
+ljust incompatible                 Encoding::CompatibilityError
+ljust incompatible, wide           Encoding::CompatibilityError
+binary <=> utf8                    -1
+utf8 <=> binary                    1
+ascii binary <=> ascii             0
+["UTF-8", "ASCII-8BIT", "UTF-8"]
+binary high byte to utf8           Encoding::UndefinedConversionError
+Encoding::UndefinedConversionError: "\xC3" from ASCII-8BIT to UTF-8

@@ -380,21 +380,51 @@ pub unsafe extern "C" fn zeo_rt_str_append_bytes(s: *const RubyValue, ptr: *cons
 /// Append an interpolated value: `try_display_string` dispatches a
 /// user-defined `to_s`, whose raise propagates (catchable at the
 /// interpolation site, CRuby's rule).
+///
+/// A String argument goes in as BYTES through `push_buf`, so the result's
+/// encoding is negotiated the way `+` and `Array#join` negotiate it and an
+/// incompatible pair raises. Rendering it as text instead tagged every
+/// interpolation UTF-8, so `"#{latin1}"` came back re-encoded and
+/// `"#{utf8}#{latin1}"` silently produced mojibake where ruby raises.
+///
+/// A non-String `to_s` result still goes in as text. Every renderer zeo has
+/// answers UTF-8 or ASCII, so only a user `to_s` returning a differently
+/// encoded String is left flattened -- `display_with` flattens it first.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_str_append_value(s: *const RubyValue, v: *const RubyValue) -> i32 {
     use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
     let RubyValue::Str(rs) = (unsafe { &*s }) else {
         panic!("str_append_value on a non-string")
     };
+    let fail = |sig| {
+        crate::signal::set_pending(sig);
+        STATUS_SIGNAL
+    };
+    if let RubyValue::Str(other) = unsafe { &*v } {
+        // Same object both sides (`s = "x"; s << "#{s}"`): the two locks
+        // would be one, so copy the bytes out first.
+        if std::sync::Arc::ptr_eq(rs, other) {
+            let copy = other.lock().clone();
+            return match rs.lock().push_buf(&copy) {
+                Ok(()) => STATUS_OK,
+                Err(_) => fail(crate::builtins::string::encode::concat_incompat(&copy, &copy)),
+            };
+        }
+        let g = other.lock();
+        return match rs.lock().push_buf(&g) {
+            Ok(()) => STATUS_OK,
+            Err(_) => {
+                let left = rs.lock().clone();
+                fail(crate::builtins::string::encode::concat_incompat(&left, &g))
+            }
+        };
+    }
     match unsafe { &*v }.try_display_string() {
         Ok(text) => {
             rs.lock().push_str(&text);
             STATUS_OK
         }
-        Err(sig) => {
-            crate::signal::set_pending(sig);
-            STATUS_SIGNAL
-        }
+        Err(sig) => fail(sig),
     }
 }
 

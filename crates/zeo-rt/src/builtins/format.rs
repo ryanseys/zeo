@@ -853,6 +853,21 @@ fn replay_ops<'t>(
 
 /// Render a parsed template against one argument list.
 pub fn render_template(t: &Template, args: &[RubyValue]) -> Result<String, Signal> {
+    render_template_enc(t, args, &mut Vec::new())
+}
+
+/// [`render_template`], also reporting the encoding of every String the
+/// template SUBSTITUTES through a `%s`. [`negotiate_encoding`] folds them
+/// with the template's own to get the result's encoding.
+///
+/// Only `%s` contributes. Every other conversion renders text of its own
+/// making -- `%d` digits, `%p` an `inspect` -- and CRuby's `inspect` is
+/// ASCII-compatible, so neither can move the answer.
+pub fn render_template_enc(
+    t: &Template,
+    args: &[RubyValue],
+    used: &mut Vec<crate::RStr>,
+) -> Result<String, Signal> {
     let mut out = String::new();
     let mut next_arg = 0usize;
     // CRuby refuses a template that mixes the three ways of naming an
@@ -901,6 +916,9 @@ pub fn render_template(t: &Template, args: &[RubyValue]) -> Result<String, Signa
             next_arg += 1;
             a
         };
+        if let (RubyValue::Str(s), 's') = (&arg, spec.conv) {
+            used.push(s.clone());
+        }
         let Rendered { head, body, fill } = render(&spec, &arg)?;
         let visible = head.chars().count() + body.chars().count();
         // An explicit precision disables the `0` flag for integer conversions
@@ -936,6 +954,59 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
     render_template(&parse_template(template), args)
 }
 
+/// The encoding a formatted result carries.
+///
+/// CRuby's `rb_str_format` starts the answer in the TEMPLATE's encoding and
+/// `rb_enc_check`s each substituted String into it, so `"%s" % "café".b` is
+/// BINARY and `"%s".force_encoding("ISO-8859-1") % "abc"` stays ISO-8859-1.
+/// zeo tagged every result UTF-8, which lost the template's encoding and the
+/// argument's alike.
+///
+/// The rule is `Encoding.compatible?`, folded: an ASCII-only side never moves
+/// the answer, two non-ASCII sides in different encodings are a
+/// `CompatibilityError`.
+pub fn negotiate_encoding(
+    template: &crate::RStr,
+    used: &[crate::RStr],
+) -> Result<crate::encoding::EncodingId, Signal> {
+    let (mut enc, mut ascii) = {
+        let t = template.lock();
+        (t.encoding(), t.ascii_only())
+    };
+    for s in used {
+        let g = s.lock();
+        if g.ascii_only() {
+            continue;
+        }
+        if ascii {
+            (enc, ascii) = (g.encoding(), false);
+            continue;
+        }
+        if g.encoding() != enc {
+            return Err(crate::dispatch::raise_error(
+                "Encoding::CompatibilityError",
+                format!(
+                    "incompatible character encodings: {} and {}",
+                    enc.inspect_name(),
+                    g.encoding().inspect_name()
+                ),
+            ));
+        }
+    }
+    Ok(enc)
+}
+
+/// [`sprintf_cached`] that also answers the result's encoding.
+pub fn sprintf_encoded(
+    template: &crate::RStr,
+    args: &[RubyValue],
+) -> Result<RubyValue, Signal> {
+    let mut used = Vec::new();
+    let text = sprintf_collect(template, args, &mut used)?;
+    let enc = negotiate_encoding(template, &used)?;
+    Ok(crate::builtins::string::encode::str_value_in_enc(enc, &text))
+}
+
 /// The parsed-template cache behind [`sprintf_cached`]: FROZEN templates
 /// keyed by their `Arc` address. The stored strong `RStr` keeps the
 /// allocation alive, so the address can never be reused while its entry
@@ -950,7 +1021,13 @@ static TEMPLATES: std::sync::Mutex<
 /// frozen-string-literal, and every interned literal) parses ONCE and
 /// renders from the cached pieces -- also skipping the per-call
 /// `to_utf8_lossy` copy. A mutable template parses per call, as before.
-pub fn sprintf_cached(template: &crate::RStr, args: &[RubyValue]) -> Result<String, Signal> {
+///
+/// Collects the substituted Strings for [`negotiate_encoding`].
+fn sprintf_collect(
+    template: &crate::RStr,
+    args: &[RubyValue],
+    used: &mut Vec<crate::RStr>,
+) -> Result<String, Signal> {
     if template.is_frozen() {
         let key = std::sync::Arc::as_ptr(template) as usize;
         let cached = TEMPLATES
@@ -970,10 +1047,10 @@ pub fn sprintf_cached(template: &crate::RStr, args: &[RubyValue]) -> Result<Stri
                 t
             }
         };
-        return render_template(&t, args);
+        return render_template_enc(&t, args, used);
     }
     let text = template.lock().to_utf8_lossy().into_owned();
-    sprintf(&text, args)
+    render_template_enc(&parse_template(&text), args, used)
 }
 
 /// Consumes chars up to (and including) `end`, returning the text between.

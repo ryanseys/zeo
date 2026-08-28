@@ -5,7 +5,7 @@
 //! modern CRuby); the bytes/encoding surface is Tier C, documented in the
 //! plan.
 
-mod encode;
+pub(crate) mod encode;
 mod split;
 mod subst;
 
@@ -2298,10 +2298,7 @@ ruby_class! {
             RubyValue::Array(a) => a.lock().to_vec(),
             other => vec![other.clone()],
         };
-        Ok(str_value(crate::builtins::format::sprintf_cached(
-            rstr,
-            &format_args,
-        )?))
+        crate::builtins::format::sprintf_encoded(rstr, &format_args)
     }
     def "=~" (recv, other) {
         let husk = crate::regexp::husk_payload(other);
