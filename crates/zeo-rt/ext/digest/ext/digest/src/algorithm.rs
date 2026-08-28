@@ -104,6 +104,36 @@ ruby_class! {
         reset_buf(recv);
         Ok(recv.clone())
     }
+    // The three BANG forms: the same value, then the instance goes back to
+    // empty. rubygems' package verification reaches `hexdigest!` on every
+    // file it unpacks, so `zeo bundle install` needs them.
+    def "digest!"(recv) {
+        let out = finalize(recv, None)?;
+        reset_buf(recv);
+        Ok(RubyValue::Str(string_from_bytes(out, ASCII_8BIT)))
+    }
+    def "hexdigest!"(recv) {
+        let out = hex(&finalize(recv, None)?);
+        reset_buf(recv);
+        Ok(str(out))
+    }
+    def "base64digest!"(recv) {
+        let out = base64(&finalize(recv, None)?);
+        reset_buf(recv);
+        Ok(str(out))
+    }
+    // The INSTANCE half of `file`: feed the file's bytes in and answer self,
+    // so `Digest::SHA256.new.file(path).hexdigest` reads as one chain.
+    def "file"(recv, name) {
+        let path = crate::builtins::convert::to_rstr(name)?
+            .lock()
+            .to_utf8_lossy()
+            .into_owned();
+        let bytes = std::fs::read(&path)
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "rb_sysopen", &path))?;
+        push_bytes(recv, &bytes);
+        Ok(recv.clone())
+    }
     def "digest_length" | "length" | "size"(recv) {
         Ok(RubyValue::Int(digest_length_of(recv)))
     }
