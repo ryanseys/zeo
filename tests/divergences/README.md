@@ -12,7 +12,7 @@ a program here will never match ruby and says why in its own header.
 
 Each file opens with the reason and, where it helps, ruby's own answer
 recorded verbatim, so the divergence stays executable evidence rather than
-prose. `tools/zeo-dev bless divergence::<stem>` re-records these from **zeo**,
+prose. `cargo xtask bless divergence::<stem>` re-records these from **zeo**,
 which is what keeps them machine-recorded like every other golden.
 
 Adding one is a decision, not a workaround. The bar is the project rule: a

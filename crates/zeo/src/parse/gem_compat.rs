@@ -2,7 +2,7 @@
 //! never runs the compiler. `gems_require.rs` is the consumer.
 //!
 //! Not lowering -- this classifies a gem STORE against a lockfile and is
-//! consumed by the zeo-dev compat matrix (plus one e2e test). It sits beside the
+//! consumed by one e2e test. It sits beside the
 //! store/lockfile/gemspec readers it calls, rather than in `parse/mod.rs`,
 //! which it has nothing to do with.
 

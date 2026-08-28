@@ -3,7 +3,7 @@
 //! An always-on builtin's method table is tens of kilobytes, and the
 //! smallest program there is used to carry every one of them. A `puts 1`
 //! that ships `Ractor`, `Marshal`, `TracePoint` and `Pathname` pays for
-//! classes nothing in it can name. `zeo-dev size` prices them;
+//! classes nothing in it can name. `cargo xtask size` prices them;
 //! `docs/BINARY_SIZE.md` carries the numbers.
 //!
 //! Narrowing is safe to be WRONG in one direction only. A class kept for

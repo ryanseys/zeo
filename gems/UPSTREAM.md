@@ -5,8 +5,8 @@ Every directory here is a pure-Ruby gem Zeo compiles in when a program
 each compile's `zeo-gems.json`). Three origins -- git-sourced, vendored from
 the oracle's installation, and zeo-authored:
 
-**Git-sourced.** 24 gems are fetched from their own upstream repository by
-`tools/zeo-dev gem`, pinned in `upstream.rb` by `github`, release `tag`
+**Git-sourced.** 24 gems were fetched from their own upstream repository,
+pinned in `upstream.rb` by `github`, release `tag`
 and a full commit `rev` (the reproducible pin; `bundler` also carries a
 `subdir`). Their versions live in each gem's own gemspec, their licenses in
 each gem's own tree. Currently: `abbrev`, `benchmark`, `bundler`, `csv`,
@@ -85,10 +85,15 @@ Zeo tracks each gem's **latest upstream release**, not the version the oracle
 Ruby happens to bundle. The stdlib gems release independently of Ruby itself,
 and pinning to a Ruby release would freeze Zeo behind fixes its users want.
 
-`tools/zeo-dev gem outdated` prints, per git-sourced gem, the current
-pin beside two reference points: what the oracle install resolves, and the
-newest upstream tag. Bump with `gem update <name> --tag vX.Y.Z` -- nothing
-bumps automatically, so every move is deliberate.
+**There is no longer a tool that re-vendors or checks this tree.** The
+`zeo-dev gem` command was deleted with the rest of the Ruby toolchain, and
+with it the CI leg that proved each `gems/<name>/lib` still matched its
+pinned upstream, plus the `outdated` report that compared a pin against the
+newest upstream tag. Nothing here is checked or refreshed until the Gemfile
+migration replaces the whole tree: `Gemfile.lock` becomes the pin and
+`vendor/bundle` becomes the storage, at which point `upstream.rb`,
+`upstream.lock` and these directories go away together. Until then, treat
+every directory here as frozen -- a hand-edit would be invisible.
 
 Where a gem ends up ahead of the Ruby it is compared against, expect the
 oracle to disagree about that gem's `VERSION`, and record the divergence in

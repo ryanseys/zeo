@@ -41,6 +41,6 @@ A SUBDIRECTORY anywhere else holds fixtures — files another program requires
 
 `tests/bench/` is compile-side input for the perf bank and has no goldens.
 
-Re-record with `tools/zeo-dev bless <filter>`, which is the only golden
+Re-record with `cargo xtask bless <filter>`, which is the only golden
 writer. The filter is required and is a substring of the case name,
 `<corpus>::<path>` — `bless gap::`, `bless spinel::yield_`.

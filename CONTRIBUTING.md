@@ -6,7 +6,7 @@
   used in development) and a C compiler.
 - A real Ruby matching the oracle version pinned in `mise.toml`
   (via `mise install`) — only needed when re-blessing golden output from the
-  oracle (`tools/zeo-dev bless`); the committed snapshots cover ordinary runs.
+  oracle (`cargo xtask bless`); the committed snapshots cover ordinary runs.
 - Network access on a fresh clone, once, for `make install-deps`.
 
 ```console
@@ -58,7 +58,7 @@ Targeted runs go through nextest directly:
 $ cargo nextest run -p zeo --test goldens     # every ruby-oracle corpus
 $ cargo nextest run -p zeo -E 'test(example::)'  # one corpus
 $ cargo nextest run -p zeo -P full            # + the whole-gem cases
-$ tools/zeo-dev bless <filter>              # re-record goldens from ruby
+$ cargo xtask bless <filter>              # re-record goldens from ruby
 $ make bench                                # the criterion perf bank (bench/README.md)
 $ make ci-size                              # the linked-binary size gate
 ```
@@ -70,11 +70,11 @@ belong to `make gate`, not to every run.
 - The golden suites live under `tests/` (examples + the spinel corpus + the
   XFAIL gaps tracker) and run as datatest-stable `cargo test`/nextest targets;
   a green `cargo nextest` is the conformance record. A fixed gap fails CI as an
-  XPASS — promote it with `tools/zeo-dev promote-gap`, which moves it into
+  XPASS — promote it with `cargo xtask promote-gap`, which moves it into
   `tests/`, the zeo-authored suite. Not `tests/spinel/`, which mirrors the
   vendored spinel corpus (see `tests/spinel/UPSTREAM.md`).
-- `tools/zeo-dev bless` is the only golden writer: `golden.rs` honours
-  `ZEO_BLESS_FROM_TOOL`, which only `tools/zeo-dev bless` sets, so a bare
+- `cargo xtask bless` is the only golden writer: `golden.rs` honours
+  `ZEO_BLESS_FROM_TOOL`, which only `cargo xtask bless` sets, so a bare
   `ZEO_BLESS=1 cargo test` does nothing.
 - Perf-sensitive changes report their bench delta: save a criterion baseline
   before the change (`cargo bench -p zeo --bench programs -- --save-baseline

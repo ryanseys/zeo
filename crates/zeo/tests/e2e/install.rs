@@ -12,7 +12,7 @@
 //! compiles from an install.
 //!
 //! So this stages a real prefix -- `<prefix>/bin/zeo` plus
-//! `<prefix>/share/zeo/lib/<triple>/libzeo.a`, the layout `tools/zeo-dev
+//! `<prefix>/share/zeo/lib/<triple>/libzeo.a`, the layout `cargo xtask
 //! dist` writes -- and compiles through it.
 //!
 //! Both halves are asserted. A prefix WITH the archive must compile and run;

@@ -15,7 +15,7 @@ env:
 
 jobs:
   # Every target builds natively. Cross-compiling zeo-rt is not worth it: the
-  # runtime links C (Prism, Oniguruma, OpenSSL, libffi), and `zeo-dev dist`
+  # runtime links C (Prism, Oniguruma, OpenSSL, libffi), and `cargo xtask dist`
   # finishes with a smoke test that COMPILES AND RUNS a Ruby program with the
   # staged binary -- which a cross build could not do at all.
   dist:

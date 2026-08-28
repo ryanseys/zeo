@@ -199,10 +199,6 @@ jobs:
           fi
           echo "no tracked file over 1MB"
 
-      # Each vendored gem must still match the commit upstream.rb pins, so a
-      # hand-edit to gems/ cannot silently diverge from its upstream source.
-      - run: tools/zeo-dev gem sync --check
-
       # The MRI C API headers are upstream verbatim PLUS a patch series, and
       # both halves are load-bearing: the verbatim half is what makes a gem's
       # ext/ compile at all, and the patch half is what stops it reading a

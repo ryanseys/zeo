@@ -136,7 +136,7 @@ unicode-normalization = "0.1"
 unicode-segmentation = "1"
 
 # The embedded-gems archive of a registry-installed zeo: tar + gzip (flate2's
-# pure-Rust miniz_oxide backend). `zeo-dev stage-publish` packs it; the zeo
+# pure-Rust miniz_oxide backend). `cargo xtask stage-publish` packs it; the zeo
 # binary extracts it on first run. serde_json also parses cargo's
 # --message-format=json stream for the registry runtime build.
 tar = "0.4"
@@ -209,7 +209,7 @@ codegen-units = 16
 [profile.release.package.zeo-rt]
 codegen-units = 1
 
-# `zeo-dev dist` artifacts only: maximum optimization, paid once per release.
+# `cargo xtask dist` artifacts only: maximum optimization, paid once per release.
 [profile.dist]
 inherits = "release"
 codegen-units = 1

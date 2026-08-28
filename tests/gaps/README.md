@@ -14,7 +14,7 @@ comment names its real cause.
 **Add a gap.** Drop in `foo.rb`, then record its golden:
 
 ```sh
-tools/zeo-dev bless foo
+`cargo xtask bless foo
 ```
 
 If zeo already matches ruby, the test tells you it is not a gap — put the
@@ -23,22 +23,22 @@ file in the ordinary corpus instead.
 **Refresh goldens.** Goldens are recorded from ruby, never hand-written:
 
 ```sh
-tools/zeo-dev bless gap::   # all gaps (the filter is required by design)
-tools/zeo-dev bless foo     # one gap
+`cargo xtask bless gap::   # all gaps (the filter is required by design)
+`cargo xtask bless foo     # one gap
 ```
 
 **Promote a fixed gap.** When zeo starts matching ruby, the gap's test fails
 with a "GAP FIXED — promote" message. Move it into the zeo-authored suite:
 
 ```sh
-tools/zeo-dev promote-gap foo   # moves foo.rb + sidecars to tests/, verifies it
+`cargo xtask promote-gap foo   # moves foo.rb + sidecars to tests/, verifies it
 ```
 
 Promote to `tests/`, not `tests/spinel/` — that directory mirrors the
 vendored spinel corpus, and only the sync tool writes there. A promoted
 file's goldens still carry its old path (`gaps/foo.rb:12`), and output that
 embeds the file's own relative path shifts with the move — so re-bless it in
-its new home right after: `tools/zeo-dev bless foo`. If the source builds
+its new home right after: `cargo xtask bless foo`. If the source builds
 paths from `__dir__`, adjust them for the shallower directory first.
 
 Keep at least one gap here: `datatest-stable` panics rather than reporting
@@ -94,7 +94,7 @@ ordinary suite as passing tests, each with a `<name>.rb.divergence` sidecar.
 
 The sidecar means: the `.expected` records **zeo's own output**,
 deliberately. The sidecar states why and carries ruby's answer verbatim, so
-the divergence stays executable evidence rather than prose. `tools/zeo-dev
+the divergence stays executable evidence rather than prose. `cargo xtask
 bless` reads the sidecar and records zeo instead of the oracle, which keeps
 these goldens machine-recorded like every other one.
 

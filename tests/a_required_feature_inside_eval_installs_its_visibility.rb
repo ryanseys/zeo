@@ -31,7 +31,7 @@
 # view of the unit assembled. `private_constant` and `K.prepend` were the same
 # bug at the top level and are fixed; this is the eval seam's copy of it.
 #
-# It BLOCKS DOGFOODING. `tools/zeo-dev` compiles to a binary with `zeo -o`,
+# It BLOCKS DOGFOODING. A ruby tool compiled to a binary with `zeo -o`
 # but its entry point unshifts a computed path onto `$LOAD_PATH`, so zeo
 # cannot resolve those requires statically and defers each one to a run-time
 # compile. The first library that requires `fileutils` then dies at load, and

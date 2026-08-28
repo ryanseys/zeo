@@ -26,7 +26,7 @@ Everything after `--` is criterion's own CLI: name filters are regexes over
 the benchmark id (`zeo/<name>` or `cruby/<name>`).
 
 The everyday bank measures the release profile. `ZEO_BENCH_DIST=pgo`
-instead snapshots the shipped configuration — the full `zeo-dev dist
+instead snapshots the shipped configuration — the full `cargo xtask dist
 --pgo` pipeline (instrumented build, training on this corpus, profile-use
 rebuild), staged inside the isolated bench target dir. It adds ~15
 minutes of setup, so it is for release-boundary measurements, not the dev
@@ -98,7 +98,7 @@ FFI), so runtime frames resolve by name.
 
 ## The compiler-cost instrument
 
-`tools/zeo-dev bench --compile` measures the other side — what a COMPILE
+`cargo xtask bench --compile` measures the other side — what a COMPILE
 costs and produces (frontend wall time, emitted CLIF lines, peak RSS,
 binary size) across a hello-world-to-bundler ladder — and banks into
 `compile-baseline.tsv` with `--update-baseline`.

@@ -2,7 +2,7 @@
 # target/ tree (mise.toml pins the same version for mise users).
 [toolchain]
 channel = "1.97.1"
-# llvm-tools supplies the toolchain's llvm-profdata -- `zeo-dev dist --pgo`
+# llvm-tools supplies the toolchain's llvm-profdata -- `cargo xtask dist --pgo`
 # merges training profiles with it (profraw formats are LLVM-version-locked,
 # so a system llvm-profdata is never an answer).
 components = ["llvm-tools"]

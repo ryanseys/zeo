@@ -14,7 +14,7 @@
 //!   compiler's folding view can never drift from what the runtime registers.
 //! - **Packaged crate** (no siblings -- a published `.crate` building out of
 //!   the registry): use `src/class_surface.pregen.rs`, the projection
-//!   `tools/zeo-dev stage-publish` generated from the exact zeo-rt this zeo
+//!   `cargo xtask stage-publish` generated from the exact zeo-rt this zeo
 //!   version pins (`=X.Y.Z`), staged into the crate at publish time.
 //!
 //! NEITHER source resolving is a hard error. It used to degrade silently to
@@ -43,7 +43,7 @@ fn main() {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     let out_dir = Path::new(&out_dir);
 
-    // The embedded gems archive (`tools/zeo-dev stage-publish` creates it; the
+    // The embedded gems archive (`cargo xtask stage-publish` creates it; the
     // published .crate ships it). Its presence arms the Registry home tier.
     println!("cargo:rustc-check-cfg=cfg(zeo_embedded_gems)");
     println!("cargo:rerun-if-changed=gems.pregen.tar.gz");
@@ -65,7 +65,7 @@ fn main() {
         panic!(
             "zeo's build script found NEITHER the zeo-rt sibling sources (a dev \
              tree) nor src/class_surface.pregen.rs (a published crate, staged by \
-             `tools/zeo-dev stage-publish`). The builtin class surface cannot be \
+             `cargo xtask stage-publish`). The builtin class surface cannot be \
              projected, and building without it would silently disable the \
              compiler's respond_to?/method_defined?/constant folding. If you are \
              building from a source checkout, the full workspace is required."

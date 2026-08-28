@@ -8,17 +8,17 @@
 # checkouts fetched on demand into the gitignored `vendor/gemtests/<name>/`,
 # because a `.gem` archive does not ship `test/`.
 #
-# `rev` is the reproducible pin: `zeo-dev gem sync` resolves the tag to a
+# `rev` is the reproducible pin: a vendoring run resolves the tag to a
 # commit SHA once and every later sync reuses it. `subdir` is for a repo that
 # ships more than one gem -- `rubygems/rubygems` carries bundler under
 # `bundler/`.
 #
-# Nothing here discovers a new version on its own. `zeo-dev gem outdated` is
+# Nothing here discovers a new version on its own. Checking rubygems.org is
 # the discovery half; it prints each pin beside what the ORACLE ruby installs,
 # which is the version to match. Vendoring ahead of the ruby every golden is
 # blessed against manufactures divergences that are not bugs.
 #
-# Managed by `tools/zeo-dev gem`. `upstream.lock` beside this file is the
+# `upstream.lock` beside this file is the
 # derived JSON everything else reads.
 
 gem "abbrev",

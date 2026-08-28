@@ -29,7 +29,7 @@
 //!   bundled versions differ.
 //! - `tests/gemtests/` -- one driver per gem requires a real upstream test
 //!   file and the framework's autorun executes it. The trees are gitignored
-//!   (`tools/zeo-dev gemtests sync`); an absent tree skips.
+//!   fetched into `vendor/gemtests/` on demand; an absent tree skips.
 //!
 //! Case names are `<fn>::<path>`, so `bless example::` / `gap::` / `spinel::`
 //! / `milestone::` / `gemtest::` each name one corpus.
@@ -129,7 +129,7 @@ fn gemtest(rb: &Path) -> datatest_stable::Result<()> {
     let vendor = paths::workspace_root().join("vendor").join("gemtests");
     let gem_root = vendor.join(&gem);
     if !gem_root.is_dir() {
-        // Fetch-on-demand: no tree, no test. `tools/zeo-dev gemtests sync`.
+        // Fetch-on-demand: no tree, no test.
         return Ok(());
     }
     raise_the_bounds();

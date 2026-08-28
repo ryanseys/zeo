@@ -57,7 +57,7 @@ fn repo_root() -> PathBuf {
 /// long it runs and whatever happens in the main target dir meanwhile.
 ///
 /// `ZEO_BENCH_DIST=pgo` swaps the snapshot for the SHIPPED configuration:
-/// the full `zeo-dev dist --pgo` pipeline (instrument, train, profile-use
+/// the full `cargo xtask dist --pgo` pipeline (instrument, train, profile-use
 /// rebuild) staged inside the same isolated dir. It costs ~15 minutes of
 /// setup, so the everyday bank stays on release -- and a dist-mode bank
 /// never rewrites the committed `bench/results.tsv` (that file is the
@@ -89,20 +89,21 @@ fn build_snapshot(root: &Path) -> PathBuf {
     zeo
 }
 
-/// The `ZEO_BENCH_DIST=pgo` snapshot: `zeo-dev dist --pgo` staged into
+/// The `ZEO_BENCH_DIST=pgo` snapshot: `cargo xtask dist --pgo` staged into
 /// the isolated bench target dir, so its builds and training profiles
 /// never touch the ordinary target dir either. `--no-smoke` because the
 /// bank's own `.expected` gate is the stronger check.
 fn build_dist_snapshot(root: &Path, bench_target: &Path) -> PathBuf {
     let stage = bench_target.join("dist-stage");
-    let status = Command::new(root.join("tools/zeo-dev"))
-        .args(["dist", "--pgo", "--no-smoke", "-o"])
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let status = Command::new(cargo)
+        .args(["xtask", "dist", "--pgo", "--no-smoke", "-o"])
         .arg(&stage)
         .env("CARGO_TARGET_DIR", bench_target)
         .current_dir(root)
         .status()
-        .expect("spawn zeo-dev dist");
-    assert!(status.success(), "zeo-dev dist --pgo failed");
+        .expect("spawn cargo xtask dist");
+    assert!(status.success(), "cargo xtask dist --pgo failed");
     let tree = std::fs::read_dir(&stage)
         .expect("the dist stage exists")
         .filter_map(|e| {
