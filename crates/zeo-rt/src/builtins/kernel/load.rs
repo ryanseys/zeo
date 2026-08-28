@@ -171,18 +171,53 @@ pub(crate) fn missing_feature_error(path: &str) -> crate::Signal {
 /// file relatively (`require_relative "smtp/auth_plain"`, with or without
 /// `.rb`). Suffix matching finds both spellings, and the `/` boundary keeps
 /// `auth_plain.rb` from matching `not_auth_plain.rb`.
+///
+/// A ONE-SEGMENT name needs more than that boundary, because a bare word is
+/// too weak an identity: `require "fileutils"` matched bundler's
+/// `.../bundler/vendor/fileutils/lib/fileutils.rb`, answered `false`, and left
+/// `FileUtils` undefined for rubygems' next line. So a bare name must sit
+/// directly under a `$LOAD_PATH` root -- CRuby's own rule, which resolves the
+/// name against that list before it consults `$LOADED_FEATURES` at all. A
+/// multi-segment name keeps the plain boundary rule: it already carries enough
+/// path to identify one file.
 pub(crate) fn feature_already_loaded(path: &str) -> bool {
     let RubyValue::Array(features) = crate::globals::global_get(0, "$LOADED_FEATURES") else {
         return false;
     };
     let wanted = path.trim_end_matches(".rb");
+    let roots = load_path_roots(wanted);
     features.lock().iter().any(|f| {
         let RubyValue::Str(s) = f else { return false };
         let loaded = s.lock().to_utf8_lossy().into_owned();
         let loaded = loaded.trim_end_matches(".rb");
         loaded == wanted
-            || loaded
-                .strip_suffix(wanted)
-                .is_some_and(|head| head.ends_with('/'))
+            || loaded.strip_suffix(wanted).is_some_and(|head| {
+                head.ends_with('/')
+                    && match &roots {
+                        None => true,
+                        Some(roots) => roots.iter().any(|r| r == head.trim_end_matches('/')),
+                    }
+            })
     })
+}
+
+/// `$LOAD_PATH` as plain strings, or `None` when `wanted` carries a `/` and so
+/// needs no root check. Read once per call rather than per loaded feature.
+fn load_path_roots(wanted: &str) -> Option<Vec<String>> {
+    if wanted.contains('/') {
+        return None;
+    }
+    let RubyValue::Array(paths) = crate::globals::global_get(0, "$LOAD_PATH") else {
+        return Some(Vec::new());
+    };
+    let paths = paths.lock();
+    Some(
+        paths
+            .iter()
+            .filter_map(|p| match p {
+                RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
+                _ => None,
+            })
+            .collect(),
+    )
 }
