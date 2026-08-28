@@ -1,7 +1,3 @@
-# CRuby's protocol at the typed argument slots the emitters fill directly: a
-# user object converts through #to_str / #to_int where the slot asks, a value
-# of another class is the slot's TypeError, and a lookup slot -- a Hash key, an
-# Array element to find, a Range member -- takes any object and simply misses.
 class Sep
   def to_str
     "-"
@@ -20,7 +16,6 @@ rescue StandardError => e
   [e.class, e.message]
 end
 
-# String slots
 p "a-b-".chomp(Sep.new)
 s = String.new("a-b")
 p [s.chomp!(Sep.new), s]
@@ -72,7 +67,6 @@ p err { Time.utc(2000).strftime(1) }
 p err { Regexp.escape(1) }
 p err { String.new(1) }
 
-# Integer slots
 a = [1, 2, 3]
 p [a.slice!(Idx.new, Idx.new), a]
 p 8[Idx.new]
@@ -100,7 +94,6 @@ p err { Math.sqrt("x") }
 p err { Math.sqrt(nil) }
 p err { Math.sqrt(Sep.new) }
 
-# lookup slots: any object, a miss is a miss
 h = { 1 => 2 }
 p h.dig("a")
 p h.dig(1.0)
@@ -135,11 +128,8 @@ p (1..2).count("x")
 p [1, 2.0].count(2)
 p [1, 2].count(1.0)
 
-# a Bignum never equals an element of an Integer array (a user object whose
-# class compares is refused at compile time: test/rbs-seed/typed_slot_compare_obj.rb)
 p [1, 2].count(2**100)
 
-# container slots: #to_ary / #to_hash, or CRuby's TypeError
 class Pair
   def to_ary
     [1, 2]
@@ -165,14 +155,12 @@ p err { { "a" => 1 }.merge(5) }
 p err { { "a" => 1 }.merge(Inert.new) }
 p({ "a" => 1 }[Sep.new])
 
-# the receiver still evaluates before the operand
 def trace(label, value)
   puts label
   value
 end
 p trace("recv", [1]).product(trace("arg", [2]))
 
-# nil where CRuby has a default, and the slots that are not the int slot
 path = "/tmp/spinel_typed_slot_conversion.txt"
 File.write(path, "x")
 p File.utime(nil, nil, path)
@@ -187,22 +175,16 @@ p err { 7.fdiv("x") }
 p "a1b2c".split(/\d/) { |x| p x }
 p err { "a b".split(true) }
 
-# a key expression evaluates once whether it hits or misses
 calls = 0
 mk = -> { calls += 1; "k" }
 p [h.fetch(mk.call, 0), h.dig(mk.call), h.values_at(mk.call), calls]
 
-# the time-interval slot names the class the way rb_time_interval does
-# (sleep(nil) sleeps forever in CRuby and is not pinned here)
 p err { sleep(true) }
 p err { sleep(:s) }
 p err { File.utime(false, false, "/nonexistent") }
 
-# rb_reg_operand takes a Symbol by its name; the #to_str slot would refuse it
 p Regexp.escape(:"a.b")
 
-# a nil receiver from a typed-container miss raises NoMethodError without
-# asking the argument's #to_str
 class Needle
   def to_str
     puts "to_str asked"

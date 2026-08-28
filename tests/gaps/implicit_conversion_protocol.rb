@@ -1,7 +1,3 @@
-# CRuby's implicit conversion protocol at the builtin slots that take a path,
-# a mode, an offset, or a write payload: a user object converts through
-# #to_path / #to_str / #to_int / #to_s where the slot asks for it, instead of
-# being refused at compile time.
 require "pathname"
 require "stringio"
 
@@ -14,7 +10,6 @@ Dir.mkdir(dir)
 file = "#{dir}/a.txt"
 File.write(file, "abcdef\n")
 
-# a #to_path the analysis cannot pin to String: CRuby checks the result
 class Conf
   attr_accessor :path
 
@@ -33,7 +28,6 @@ class PathLike
   end
 end
 
-# a class naming the path through #to_str is accepted too
 class StrLike
   def initialize(path)
     @path = path
@@ -44,7 +38,6 @@ class StrLike
   end
 end
 
-# #to_path wins over #to_str when both exist (rb_get_path's order)
 class Both
   def initialize(path)
     @path = path
@@ -112,15 +105,12 @@ p Dir.mkdir(sub)
 p Dir.exist?(sub)
 p Dir.rmdir(sub)
 
-# Pathname is the everyday #to_path
 pn = Pathname.new(file)
 p File.exist?(pn)
 p File.basename(pn)
 p File.join(Pathname.new("a"), "b")
 p IO.read(pn)
 
-# through a boxed slot: the parameter's class is only known at run time,
-# and #to_path still comes before #to_str there
 def size_of(path)
   File.size(path)
 end
@@ -131,7 +121,6 @@ p size_of(StrLike.new(file))
 p size_of(Both.new(file))
 p IO.sysopen(pl).class
 
-# IO.copy_stream, IO#reopen, File.rename, File.symlink, File.delete
 copy = "#{dir}/b.txt"
 p IO.copy_stream(pl, PathLike.new(copy))
 p File.read(copy)
@@ -147,7 +136,6 @@ p File.readlink(PathLike.new(link)) == moved
 p File.delete(PathLike.new(link), PathLike.new(moved))
 p File.exist?(moved)
 
-# a mode object: #to_int is asked first, as CRuby's mode parsing does
 class ReadMode
   def to_int
     File::RDONLY
@@ -171,9 +159,6 @@ made = "#{dir}/made.txt"
 File.open(made, CreateMode.new, 0600) { |f| f.write("m") }
 p format("%o", File.stat(made).mode & 0777)
 File.delete(made)
-# the permission bits reach open(2) behind a String mode too, positionally,
-# as `perm:`, and behind `mode:`; a nil perm is the default; an exclusive
-# mode still refuses an existing file
 File.open(made, "w", 0600) { |f| f.write("m") }
 p format("%o", File.stat(made).mode & 0777)
 File.delete(made)
@@ -217,7 +202,6 @@ end
 File.open(made, "wx+", 0600) { |f| f.write("zz"); f.rewind; p f.read }
 File.delete(made)
 
-# the path is evaluated once even where the predicate stats it twice
 class Counted
   def initialize(path)
     @path = path
@@ -234,7 +218,6 @@ end
 counted = Counted.new(file)
 p [File.file?(counted), counted.calls]
 
-# a Time offset through #to_str
 class Zone
   def to_str
     "+01:00"
@@ -246,7 +229,6 @@ t = Time.at(0)
 t.localtime(Zone.new)
 p t.utc_offset
 
-# write payloads take #to_s, not #to_str
 class Payload
   def to_s
     "payload"
@@ -283,8 +265,6 @@ p File.write(pl, Payload.new)
 p File.write(pl, 42, mode: "a")
 p File.write(pl, :sym, 2)
 p File.read(file)
-# the count answered is the count written, an embedded NUL included, whether
-# the payload is a String statically or only at run time
 def payload(nul)
   nul ? "a\0b" : Payload.new
 end
@@ -292,7 +272,6 @@ p File.write(pl, payload(true))
 p File.size(file)
 p File.write(pl, payload(false))
 
-# a #to_path that builds its answer is held across its siblings' conversions
 class Fresh
   def initialize(n)
     @n = n
@@ -307,8 +286,6 @@ bad = 0
   bad += 1 unless r == "seg#{i}/seg#{i + 1}/seg#{i + 2}"
 end
 p bad
-# ...and across any call's other operands: the path's answer survives a
-# payload's #to_s and a second path's #to_path, each of which allocates
 class Churn
   def initialize(n)
     @n = n
@@ -330,8 +307,6 @@ File.rename(Churn.new(1), Churn.new(2))
 p [File.exist?("#{dir}/churn1.txt"), File.exist?("#{dir}/churn2.txt")]
 p File.expand_path(Churn.new(1), Churn.new(2)) == "#{dir}/churn2.txt#{dir}/churn1.txt"
 File.delete("#{dir}/churn2.txt")
-# a single component is held through the join's own allocation, and an
-# Array that contains itself is refused, not walked forever
 class Built
   def to_path
     b = ""
@@ -350,10 +325,6 @@ rescue ArgumentError => e
   p e.message
 end
 
-# the hold does not move a conversion: a call's other operands evaluate
-# before any operand converts, each of IO#write's operands converts right
-# before its own write, and a call with more operands than any hold size
-# still holds them all
 class Noisy
   def initialize(n)
     @n = n
@@ -393,7 +364,6 @@ bad = 0
 end
 p bad
 
-# the receiver and the argument still evaluate in order, once each
 def trace(label, value)
   puts label
   value
@@ -404,8 +374,6 @@ def trace_io(label, io)
 end
 p File.exist?(trace("arg", pl))
 p trace_io("recv", sio).write(trace("arg", Payload.new))
-# ...and a converting operand that is a bare local converts only after the
-# sibling it precedes has run: every argument first, then the conversions
 class Announced
   def initialize(path)
     @path = path

@@ -1,7 +1,3 @@
-# The `chomp:` keyword on String#lines and #each_line and on IO#gets,
-# #readline and #readlines, with a literal true, false, nil, a non-boolean
-# literal, and a value known only at run time. CRuby generated the
-# expectations.
 p "ab\n".each_line(chomp: 1).to_a
 p "ab\n".each_line(chomp: nil).to_a
 p "ab\ncd\n".lines(chomp: 1)

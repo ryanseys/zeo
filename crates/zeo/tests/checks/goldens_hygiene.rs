@@ -45,6 +45,54 @@ fn every_golden_uses_the_rb_sidecar_convention() {
     );
 }
 
+/// A gap file is the PROGRAM that diverges, and nothing else.
+///
+/// Gap headers used to carry a diagnosis -- which file, which function, which
+/// rule was thought to be at fault. Those are hypotheses written at the moment
+/// of least knowledge, and they were wrong often enough to cost real time:
+/// `method_added_arrives_through_extend.rb` blamed the run-time definition
+/// path when the cause was a missing compile-time edge, and the ROADMAP
+/// section on `require "rubygems"` named two source lines that were symptoms
+/// rather than causes. A stale explanation is worse than none, because the
+/// next reader starts from it instead of from the program.
+///
+/// So the reproducer stays and the story goes in the commit message, the task,
+/// or `docs/`, where it is dated and can be corrected. `#` inside a string or
+/// regexp is untouched -- only real comments are refused.
+#[test]
+fn a_gap_file_carries_no_commentary() {
+    let dir = repo_root().join("tests").join("gaps");
+    let mut offenders: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(&dir).expect("tests/gaps exists") {
+        let path = entry.expect("readable gaps entry").path();
+        if !path.extension().is_some_and(|e| e == "rb") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).expect("gap file is utf-8");
+        // Whole-line comments only. A trailing `#` needs the parser to tell a
+        // comment from a string, and no gap file has one today; this catches
+        // the shape anyone actually writes.
+        let lines: Vec<usize> = src
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| l.trim_start().starts_with('#'))
+            .map(|(i, _)| i + 1)
+            .collect();
+        if !lines.is_empty() {
+            offenders.push(format!(
+                "{}: line(s) {lines:?}",
+                path.file_name().expect("a file name").to_string_lossy()
+            ));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "a gap file is the reproducer alone -- put the explanation in the \
+         commit message or the task, where it can be corrected:\n{}",
+        offenders.join("\n")
+    );
+}
+
 #[test]
 fn no_golden_embeds_a_machine_specific_path() {
     // `/home/user` is a fixture constant some tests PRINT (a stubbed HOME),

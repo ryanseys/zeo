@@ -19,12 +19,10 @@ p h.sort { |x, y| x[0] <=> y[0] }
 objs = [{ "k" => 3 }, { "k" => 1 }, { "k" => 2 }]
 p objs.sort { |x, y| x["k"] <=> y["k"] }.map { |h| h["k"] }
 
-# a big enough input that a quadratic sort would be visible, checked by value
 big = Array.new(2000) { |i| (i * 7919) % 2003 }
 sorted = big.sort { |x, y| x <=> y }
 p sorted == big.sort
 p sorted.first, sorted.last
 
-# stability: equal keys keep their original order
 tagged = Array.new(60) { |i| [i % 3, i] }
 p tagged.sort { |x, y| x[0] <=> y[0] }.first(6)

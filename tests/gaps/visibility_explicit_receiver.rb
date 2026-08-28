@@ -1,8 +1,3 @@
-# Method visibility on a call with an explicit receiver: private through
-# literal `self.` only, protected from an instance of the declaring class
-# only, both bypassed by send and honoured by public_send and respond_to?;
-# writers made private by name, and declarations inherited from a module.
-# CRuby generated the expectations.
 def t; yield; rescue NoMethodError => e; puts "NoMethodError: #{e.message[0, 44]}"; end
 
 class A
@@ -48,7 +43,6 @@ class Savings < Account
   def cmp(o); balance > o.balance; end
   def poke(o); o.secret; end
 end
-# a fresh name: reusing `a` would widen it to a receiver of two classes
 acct = Account.new(10); s = Savings.new(5)
 t { p acct > s }
 t { p acct.bigger_than_all?([s, Account.new(1)]) }
@@ -64,8 +58,6 @@ t { p s.poke(acct) }
 t { p acct.to_s }
 t { p s.balance }
 
-# the name rides the error; a writer made private by name; a module's own
-# declaration follows its method into the includer
 begin
   acct.secret
 rescue NoMethodError => e

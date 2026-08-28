@@ -1,6 +1,3 @@
-# sort, min and max with a comparator block of two, one and zero
-# parameters, on Integer, Float and String arrays. CRuby generated the
-# expectations.
 p [1, 5, 3].max { |x| -x }
 p [3, 1, 2].sort { |x| 0 }
 p [3, 1, 2].sort { 0 }

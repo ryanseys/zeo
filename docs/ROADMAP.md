@@ -28,11 +28,21 @@ oracle-verified, divergence-documented.
 
 ## Divergences (tracked as executable gaps)
 
-[`tests/gaps/`](../tests/gaps) is the real tracker; each file's header carries
-the cause, and the suite fails the day a gap starts matching ruby. This file
-does not mirror the directory's contents — a table here rotted once already
-(it kept naming gaps that had long been promoted). `ls tests/gaps/*.rb` is
-the current list.
+[`tests/gaps/`](../tests/gaps) is the real tracker, and the suite fails the
+day a gap starts matching ruby. This file does not mirror the directory's
+contents — a table here rotted once already (it kept naming gaps that had
+long been promoted). `ls tests/gaps/*.rb` is the current list.
+
+**A gap file is the diverging program and nothing else — no comments.**
+Headers used to carry a diagnosis, and a diagnosis written at the moment of
+least knowledge is a guess that outlives its own correction.
+`method_added_arrives_through_extend.rb` blamed the run-time definition path
+for two months; the cause was a missing compile-time edge. The section above
+on `require "rubygems"` named two source lines that were symptoms. A stale
+explanation is worse than none, because the next reader starts from it
+instead of from the program. The story belongs in the commit message, the
+task, or here — all of which are dated and can be corrected in place.
+`goldens_hygiene::a_gap_file_carries_no_commentary` enforces it.
 
 Declined divergences do not live there either — the gaps README sends them to
 a passing test that documents the step-around. Current declined set: `callcc`

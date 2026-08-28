@@ -1,8 +1,3 @@
-# A class sits ABOVE Kernel in the ancestry, so its own method answers a bare
-# call before a Kernel builtin of the same name does. Spinel reached the Kernel
-# arms by position -- the implicit-self resolution sits far below them in both
-# halves of the compiler -- so `def puts` in a class was emitted and never
-# called.
 class K
   def puts(v) = "class-puts:#{v}"
   def print(v) = "class-print:#{v}"
@@ -38,7 +33,6 @@ end
 
 K.new.run
 
-# an attr reader on the class answers a bare call the same way
 class R
   attr_reader :format
 
@@ -52,7 +46,6 @@ end
 STDOUT.write(R.new.run)
 STDOUT.write("\n")
 
-# class > top-level > Kernel, all three present
 def puts(v) = "top-puts:#{v}"
 
 class Three

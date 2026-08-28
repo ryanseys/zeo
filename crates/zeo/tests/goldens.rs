@@ -11,7 +11,9 @@
 //! - `tests/jit/` -- JIT-only; the program needs the compiler and itself in
 //!   one process.
 //! - `tests/gaps/` -- XFAIL: a diverging gap passes, one that starts matching
-//!   ruby fails with a "promote" message (`cargo xtask promote-gap`).
+//!   ruby fails with a "promote" message (`cargo xtask promote-gap`). A gap
+//!   file is the diverging PROGRAM and nothing else -- no comments; see
+//!   `goldens_hygiene::a_gap_file_carries_no_commentary` for why.
 //! - `tests/spinel/` -- the corpus vendored from spinel; must match ruby.
 //!
 //! Each pattern matches ONE level: a subdirectory holds FIXTURES, not tests.
