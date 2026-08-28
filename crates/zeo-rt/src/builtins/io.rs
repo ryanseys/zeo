@@ -945,6 +945,78 @@ pub(crate) fn as_rio(recv: &RubyValue) -> Option<&RIo> {
     }
 }
 
+/// The `FMODE_*` word `rb_io_mode` answers a C extension, from what this
+/// handle was opened with. The numbers are `ruby/io.h`'s own.
+///
+/// CRuby keeps this word in `fptr->mode` and builds it while parsing the mode
+/// string; zeo keeps the mode STRING and rebuilds the word on demand, which is
+/// why the parse lives here rather than at open time. The two agree on every
+/// bit an extension can act on. The three CRuby sets that zeo cannot: `DUPLEX`
+/// (zeo has no tied write half -- see `rb_io_set_write_io`), `TEXTMODE`
+/// (nothing on a Unix stream distinguishes it from binary), and
+/// `SETENC_BY_BOM` (a transient of the open, not kept).
+pub(crate) fn fmode_bits(recv: &RubyValue) -> i32 {
+    const READABLE: i32 = 0x0000_0001;
+    const WRITABLE: i32 = 0x0000_0002;
+    const BINMODE: i32 = 0x0000_0004;
+    const SYNC: i32 = 0x0000_0008;
+    const TTY: i32 = 0x0000_0010;
+    const APPEND: i32 = 0x0000_0040;
+    const CREATE: i32 = 0x0000_0080;
+    const EXCL: i32 = 0x0000_0400;
+    const TRUNC: i32 = 0x0000_0800;
+
+    let Some(io) = as_rio(recv) else {
+        return 0;
+    };
+    let recorded = io.open_mode.lock().clone();
+    let mut bits = match recorded.as_deref() {
+        // Everything after `:` names an encoding, not a mode.
+        Some(mode) => {
+            let letters = mode.split(':').next().unwrap_or("");
+            let mut bits = match letters.as_bytes().first() {
+                Some(b'r') => READABLE,
+                Some(b'w') => WRITABLE | CREATE | TRUNC,
+                Some(b'a') => WRITABLE | APPEND | CREATE,
+                _ => READABLE,
+            };
+            for c in letters.bytes() {
+                match c {
+                    b'+' => bits |= READABLE | WRITABLE,
+                    b'b' => bits |= BINMODE,
+                    b'x' => bits |= EXCL,
+                    _ => {}
+                }
+            }
+            bits
+        }
+        // No mode was named: a std stream, or an IO over a descriptor someone
+        // else opened. Its direction is the only thing that can be known.
+        None => match stream_of(recv) {
+            Some(StdStream::Stdin) => READABLE,
+            Some(StdStream::Stdout | StdStream::Stderr) => WRITABLE,
+            None => READABLE | WRITABLE,
+        },
+    };
+    if io.binmode.load(std::sync::atomic::Ordering::Relaxed) {
+        bits |= BINMODE;
+    }
+    if io.sync.load(std::sync::atomic::Ordering::Relaxed) {
+        bits |= SYNC;
+    }
+    // Asked of the descriptor rather than of `#tty?`, which answers false for
+    // anything that is not a std stream -- a pty a gem opened is a tty, and
+    // this word is what a gem checks before turning on line buffering.
+    if let Ok(RubyValue::Int(fd)) = fileno_value(recv)
+        && let Ok(fd) = i32::try_from(fd)
+        // SAFETY: a plain query on a descriptor this handle owns.
+        && unsafe { libc::isatty(fd) } == 1
+    {
+        bits |= TTY;
+    }
+    bits
+}
+
 /// `#fileno`'s value -- also what `raw_fd` reads before narrowing it to a
 /// `libc::c_int` for the ioctl/poll/termios calls.
 fn fileno_value(recv: &RubyValue) -> Result<RubyValue, Signal> {

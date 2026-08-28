@@ -34,6 +34,7 @@ typedef unsigned long ID;
 /* Implemented in Rust (crates/zeo-rt/src/cext/format.rs). */
 extern const char *zeo_cext_value_text(VALUE v, int inspect);
 extern VALUE zeo_cext_str_new_len(const char *p, long len);
+extern VALUE rb_enc_str_new(const char *p, long len, void *enc);
 extern VALUE zeo_cext_str_cat_len(VALUE str, const char *p, long len);
 
 /* MRI truncates a formatted message too; this is its ceiling for one. */
@@ -388,6 +389,35 @@ VALUE rb_sprintf(const char *fmt, ...)
     n = zeo_cext_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
     return zeo_cext_str_new_len(msg, (long)n);
+}
+
+/*
+ * `rb_enc_vsprintf` / `rb_enc_sprintf`: the same formatting, with the caller
+ * naming the answer's encoding instead of taking the default.
+ *
+ * `rb_encoding *` is a `void *` here because this file includes no ruby
+ * header; it is a pointer either way, so the ABI is the same one the
+ * extension's own prototype describes. What the pointer MEANS is zeo's
+ * business, and `rb_enc_str_new` is where it is read.
+ */
+VALUE rb_enc_vsprintf(void *enc, const char *fmt, va_list ap)
+{
+    char msg[ZEO_FMT_MAX];
+    int n = zeo_cext_vsnprintf(msg, sizeof(msg), fmt, ap);
+
+    return rb_enc_str_new(msg, (long)n, enc);
+}
+
+VALUE rb_enc_sprintf(void *enc, const char *fmt, ...)
+{
+    char msg[ZEO_FMT_MAX];
+    va_list ap;
+    int n;
+
+    va_start(ap, fmt);
+    n = zeo_cext_vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+    return rb_enc_str_new(msg, (long)n, enc);
 }
 
 VALUE rb_str_vcatf(VALUE str, const char *fmt, va_list ap)

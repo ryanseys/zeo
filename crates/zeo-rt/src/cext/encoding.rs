@@ -100,6 +100,52 @@ crate::cext_fn! {
         Ok(token(crate::encoding::find(&n).unwrap_or(crate::encoding::ASCII_8BIT)))
     }
 
+    /// `rb_default_external_encoding()`: `Encoding.default_external`, which is
+    /// the encoding bytes crossing the process boundary are tagged with.
+    fn rb_default_external_encoding() -> Encoding {
+        Ok(token(crate::encoding::default_external()))
+    }
+
+    /// `rb_default_internal_encoding()`: `Encoding.default_internal`, NULL
+    /// when it is nil -- which is ruby's default and MRI's own answer for it.
+    fn rb_default_internal_encoding() -> Encoding {
+        Ok(match crate::encoding::default_internal() {
+            Some(id) => token(id),
+            None => std::ptr::null(),
+        })
+    }
+
+    /// `rb_find_encoding(v)`: the encoding an `Encoding`, a String naming one,
+    /// or an encoding-carrying object names -- and NULL rather than a raise
+    /// when it names none. That is the whole difference from
+    /// `rb_to_encoding`, and an extension branches on the null.
+    fn rb_find_encoding(v: Value) -> Encoding {
+        Ok(match unsafe { enc_arg(v) } {
+            Ok(id) => token(id),
+            Err(_) => std::ptr::null(),
+        })
+    }
+
+    /// `rb_define_dummy_encoding(name)`: the index of a dummy encoding by
+    /// that name, registering one if it is new.
+    ///
+    /// zeo's registry is generated and fixed at build time -- the same reason
+    /// `rb_enc_alias` refuses -- so the registering half cannot happen. The
+    /// asking half can, and it is the half that runs: the dummy encodings a
+    /// gem asks for (`ISO-2022-JP` and its neighbours) are already in the
+    /// table, because it was derived from ruby's own. A name that is not
+    /// there says so rather than answering an index that resolves to nothing.
+    fn rb_define_dummy_encoding(name: *const c_char) -> c_int {
+        let n = unsafe { cstr(name) };
+        match crate::encoding::find(&n) {
+            Some(id) => Ok(c_int::from(id.0)),
+            None => Err(crate::builtins::arg_error!(
+                "zeo's encoding registry is generated and fixed; it cannot \
+                 define the dummy encoding {n}"
+            )),
+        }
+    }
+
     /// `rb_enc_find_index(name)`: the index, or -1 for a name no encoding
     /// answers to. The -1 is what separates it from `rb_enc_find`, which
     /// cannot report a miss.

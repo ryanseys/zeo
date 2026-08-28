@@ -76,7 +76,9 @@ fn declare_exts() {
 /// `cext_va.c`, `cext_fmt.c` and `cext_err.c` hold every variadic entry: Rust
 /// cannot read a `va_list`, and guessing is how a pointer gets read out of the
 /// wrong register. `cext_err.c` also owns `errno`, which is a macro over a
-/// per-thread location Rust cannot name.
+/// per-thread location Rust cannot name. `cext_native_thread.c` takes pointers
+/// to a real `pthread_mutex_t` and `pthread_cond_t`, which is a layout only C
+/// knows.
 fn build_cext() {
     for f in CEXT_SOURCES {
         println!("cargo:rerun-if-changed=csrc/{f}");
@@ -91,7 +93,13 @@ fn build_cext() {
     build.warnings(true).compile("zeo_cext");
 }
 
-const CEXT_SOURCES: &[&str] = &["cext_jmp.c", "cext_va.c", "cext_fmt.c", "cext_err.c"];
+const CEXT_SOURCES: &[&str] = &[
+    "cext_jmp.c",
+    "cext_va.c",
+    "cext_fmt.c",
+    "cext_err.c",
+    "cext_native_thread.c",
+];
 
 /// `<cpu>-<os>` in Ruby's spelling (its `RUBY_PLATFORM` convention), from the
 /// Cargo target the crate is being built for.

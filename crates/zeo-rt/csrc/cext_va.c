@@ -27,6 +27,9 @@ typedef unsigned long ID;
 /* Implemented in Rust (crates/zeo-rt/src/cext/). */
 extern VALUE rb_funcallv(VALUE recv, ID mid, int argc, const VALUE *argv);
 extern VALUE zeo_cext_raise_str(VALUE exc, const char *msg);
+extern VALUE rb_enc_vsprintf(void *enc, const char *fmt, va_list ap);
+extern VALUE rb_exc_new_str(VALUE klass, VALUE mesg);
+extern void rb_exc_raise(VALUE exc);
 extern VALUE zeo_cext_rescue2(VALUE (*body)(VALUE), VALUE barg,
                               VALUE (*resc)(VALUE, VALUE), VALUE rarg,
                               const VALUE *classes, int nclasses);
@@ -92,6 +95,27 @@ void rb_raise(VALUE exc, const char *fmt, ...)
     zeo_cext_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
     zeo_cext_raise_str(exc, msg);
+    /* Not reached: the Rust side longjmps. */
+}
+
+/*
+ * `rb_enc_raise(enc, exc, fmt, ...)`: `rb_raise` with the message string
+ * tagged in `enc` rather than in the default.
+ *
+ * It cannot share `rb_raise`'s body, because that one hands a `const char *`
+ * to `zeo_cext_raise_str` and loses the encoding on the way. This builds the
+ * message as a real Ruby String first, which is MRI's own route through
+ * `rb_enc_vsprintf` and `rb_exc_new_str`.
+ */
+void rb_enc_raise(void *enc, VALUE exc, const char *fmt, ...)
+{
+    va_list ap;
+    VALUE mesg;
+
+    va_start(ap, fmt);
+    mesg = rb_enc_vsprintf(enc, fmt, ap);
+    va_end(ap);
+    rb_exc_raise(rb_exc_new_str(exc, mesg));
     /* Not reached: the Rust side longjmps. */
 }
 

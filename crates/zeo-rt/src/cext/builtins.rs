@@ -494,6 +494,67 @@ crate::cext_fn! {
         }
     }
 
+    /// `rb_reg_quote(str)`: `Regexp.escape`, so text can be spliced into a
+    /// pattern as a literal.
+    fn rb_reg_quote(s: Value) -> Value {
+        let text = unsafe { value_of(s) };
+        to_value(&send(&class_named("Regexp")?, "escape", &[text])?)
+    }
+
+    /// `rb_reg_regcomp(str)`: `Regexp.new(str)` with no options. MRI caches
+    /// the compiled result against the source string; zeo compiles each time,
+    /// which costs a little and cannot be observed -- the answer is a fresh
+    /// equal Regexp either way.
+    fn rb_reg_regcomp(s: Value) -> Value {
+        new_regexp(unsafe { value_of(s) }, 0)
+    }
+
+    /// `rb_char_to_option_kcode(c, &option, &kcode)`: read one `/pattern/x`
+    /// flag letter.
+    ///
+    /// `option` takes the `Regexp::IGNORECASE`/`EXTENDED`/`MULTILINE` bit, or
+    /// `FIXEDENCODING`/`NOENCODING` for a letter that names an encoding
+    /// instead. `kcode` takes that encoding's index, and `-1` when the letter
+    /// named none. The numbers are ruby's own public `Regexp` constants,
+    /// which is what makes them checkable rather than remembered.
+    ///
+    /// An unknown letter answers 0 with `*option` 0 -- MRI's own way of
+    /// saying "not a flag", and the caller's cue to reject it.
+    fn rb_char_to_option_kcode(c: c_int, option: *mut c_int, kcode: *mut c_int) -> c_int {
+        const IGNORECASE: c_int = 1;
+        const EXTENDED: c_int = 2;
+        const MULTILINE: c_int = 4;
+        const FIXEDENCODING: c_int = 16;
+        const NOENCODING: c_int = 32;
+
+        let named = |name: &str| c_int::from(crate::encoding::find(name).map_or(0, |e| e.0));
+        let (opt, code) = match u8::try_from(c).unwrap_or(0) {
+            b'n' => (NOENCODING, named("ASCII-8BIT")),
+            b'e' => (FIXEDENCODING, named("EUC-JP")),
+            b's' => (FIXEDENCODING, named("Windows-31J")),
+            b'u' => (FIXEDENCODING, named("UTF-8")),
+            b'i' => (IGNORECASE, -1),
+            b'x' => (EXTENDED, -1),
+            b'm' => (MULTILINE, -1),
+            _ => (0, -1),
+        };
+        if !option.is_null() {
+            // SAFETY: the caller's own `int`.
+            unsafe { option.write(opt) };
+        }
+        if !kcode.is_null() {
+            // SAFETY: as above.
+            unsafe { kcode.write(code) };
+        }
+        // The encoding letters answer 1 rather than their bit, which is what
+        // MRI does: the caller counts them, it does not or them together.
+        Ok(match opt {
+            0 => 0,
+            FIXEDENCODING => 1,
+            other => other,
+        })
+    }
+
     /// `rb_reg_match(re, str)`: the match POSITION, as `=~` answers -- NOT a
     /// MatchData, which is why it cannot be a forwarded row.
     fn rb_reg_match(re: Value, s: Value) -> Value {

@@ -122,6 +122,21 @@ crate::cext_fn! {
         outside_str(p, -1)
     }
 
+    /// `rb_external_str_new_with_enc(p, len, enc)`: the same outside bytes,
+    /// with the caller naming the encoding rather than taking the boundary's.
+    ///
+    /// MRI also re-encodes into `Encoding.default_internal` when one is set.
+    /// zeo does not, and neither does its `rb_external_str_new` -- the bytes
+    /// are tagged, never converted. `default_internal` is nil by default and
+    /// setting it is rare; when it is set, this hands back the caller's bytes
+    /// under the caller's encoding, which is what every other `str_new` here
+    /// does.
+    fn rb_external_str_new_with_enc(p: *const c_char, len: c_long, e: *const c_void) -> Value {
+        let bytes = unsafe { super::string::borrow_bytes(p, len) };
+        let id = super::misc::encoding_of(e);
+        to_value(&RubyValue::Str(crate::string_from_bytes(bytes, id)))
+    }
+
     fn rb_locale_str_new(p: *const c_char, len: c_long) -> Value {
         outside_str(p, len)
     }

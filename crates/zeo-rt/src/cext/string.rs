@@ -30,7 +30,7 @@ use super::value::Value;
 use crate::RubyValue;
 use crate::collections::RStr;
 use std::cell::RefCell;
-use std::ffi::{c_char, c_int, c_long};
+use std::ffi::{c_char, c_int, c_long, c_void};
 
 /// One pinned string's bytes: what C sees, and what to write back into.
 struct Pin {
@@ -275,7 +275,62 @@ crate::cext_fn! {
     }
 }
 
+/// How many bytes one code unit occupies -- CRuby's `mbminlen`.
+///
+/// Read off the kind, and off the NAME for the two dummy rows: a dummy
+/// `UTF-16` has no per-character structure in zeo's table (it reads as
+/// `Binary`), but its units are still two bytes wide and MRI reports 2.
+fn code_unit_width(enc: crate::encoding::EncodingId) -> usize {
+    match enc.spec().kind {
+        crate::encoding::EncKind::Utf16 { .. } => 2,
+        crate::encoding::EncKind::Utf32 { .. } => 4,
+        _ if enc.name().starts_with("UTF-16") => 2,
+        _ if enc.name().starts_with("UTF-32") => 4,
+        _ => 1,
+    }
+}
+
 crate::cext_fn! {
+    // ---- searching bytes --------------------------------------------------
+
+    /// `rb_memsearch(needle, m, haystack, n, enc)`: the byte offset of the
+    /// first `needle` in `haystack`, or `-1`.
+    ///
+    /// The encoding is not there to decode with -- it fixes the STEP. UTF-16
+    /// and UTF-32 hold their code units two and four bytes wide, so a match
+    /// found at an odd offset in UTF-16 is two halves of two different
+    /// characters and is not a match at all. Every other encoding steps one
+    /// byte, which is why MRI reads `mbminlen` here and nothing else.
+    fn rb_memsearch(
+        needle: *const c_void,
+        m: c_long,
+        haystack: *const c_void,
+        n: c_long,
+        enc: *const c_void,
+    ) -> c_long {
+        if m > n || m < 0 || n < 0 || (m > 0 && needle.is_null()) || haystack.is_null() {
+            return Ok(-1);
+        }
+        // SAFETY: the caller promised `m` and `n` readable bytes.
+        let (x, y) = unsafe {
+            (
+                std::slice::from_raw_parts(needle.cast::<u8>(), m as usize),
+                std::slice::from_raw_parts(haystack.cast::<u8>(), n as usize),
+            )
+        };
+        // An empty needle is at the start, which is `String#index("")`'s own
+        // answer and MRI's `m < 1` case.
+        if x.is_empty() {
+            return Ok(0);
+        }
+        let step = code_unit_width(super::misc::encoding_of(enc));
+        Ok(y
+            .windows(x.len())
+            .step_by(step)
+            .position(|w| w == x)
+            .map_or(-1, |i| (i * step) as c_long))
+    }
+
     // ---- building --------------------------------------------------------
 
     fn rb_str_buf_new_cstr(p: *const c_char) -> Value {

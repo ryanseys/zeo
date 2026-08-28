@@ -26,7 +26,7 @@
 //! prototype mismatch; on both ABIs zeo targets it is safe. The caller passes
 //! arguments in registers and on a stack it cleans up itself, the callee
 //! reads none of them, and it never returns -- so there is no return value to
-//! disagree about and no frame to unwind. Writing 191 correct
+//! disagree about and no frame to unwind. Writing 147 correct
 //! signatures would buy nothing: not one of these functions runs. 33
 //! of them are refusals rather than gaps.
 //!
@@ -420,18 +420,6 @@ pub extern "C" fn rb_add_event_hook2() -> ! {
     unimplemented("rb_add_event_hook2")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_char_to_option_kcode() -> ! {
-    unimplemented("rb_char_to_option_kcode")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_id_cstr() -> ! {
-    unimplemented("rb_check_id_cstr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_check_symbol_cstr() -> ! {
-    unimplemented("rb_check_symbol_cstr")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_debug_inspector_backtrace_locations() -> ! {
     unimplemented("rb_debug_inspector_backtrace_locations")
 }
@@ -462,18 +450,6 @@ pub extern "C" fn rb_debug_inspector_frame_self_get() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_debug_inspector_open() -> ! {
     unimplemented("rb_debug_inspector_open")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_default_external_encoding() -> ! {
-    unimplemented("rb_default_external_encoding")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_default_internal_encoding() -> ! {
-    unimplemented("rb_default_internal_encoding")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_define_dummy_encoding() -> ! {
-    unimplemented("rb_define_dummy_encoding")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_econv_append() -> ! {
@@ -572,34 +548,6 @@ pub extern "C" fn rb_econv_substr_convert() -> ! {
     unimplemented("rb_econv_substr_convert")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_enc_raise() -> ! {
-    unimplemented("rb_enc_raise")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_enc_sprintf() -> ! {
-    unimplemented("rb_enc_sprintf")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_enc_vsprintf() -> ! {
-    unimplemented("rb_enc_vsprintf")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_eof_error() -> ! {
-    unimplemented("rb_eof_error")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_external_str_new_with_enc() -> ! {
-    unimplemented("rb_external_str_new_with_enc")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_fdopen() -> ! {
-    unimplemented("rb_fdopen")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_find_encoding() -> ! {
-    unimplemented("rb_find_encoding")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_int_pair_to_real() -> ! {
     unimplemented("rb_int_pair_to_real")
 }
@@ -644,20 +592,12 @@ pub extern "C" fn rb_io_check_initialized() -> ! {
     unimplemented("rb_io_check_initialized")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_io_check_io() -> ! {
-    unimplemented("rb_io_check_io")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_io_check_readable() -> ! {
     unimplemented("rb_io_check_readable")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_io_check_writable() -> ! {
     unimplemented("rb_io_check_writable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_descriptor() -> ! {
-    unimplemented("rb_io_descriptor")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_io_extract_encoding_option() -> ! {
@@ -670,14 +610,6 @@ pub extern "C" fn rb_io_extract_modeenc() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_io_fptr_finalize() -> ! {
     unimplemented("rb_io_fptr_finalize")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_get_io() -> ! {
-    unimplemented("rb_io_get_io")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_get_write_io() -> ! {
-    unimplemented("rb_io_get_write_io")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_io_make_open_file() -> ! {
@@ -694,10 +626,6 @@ pub extern "C" fn rb_io_maybe_wait_readable() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_io_maybe_wait_writable() -> ! {
     unimplemented("rb_io_maybe_wait_writable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_mode() -> ! {
-    unimplemented("rb_io_mode")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_io_modestr_fmode() -> ! {
@@ -728,32 +656,12 @@ pub extern "C" fn rb_io_set_nonblock() -> ! {
     unimplemented("rb_io_set_nonblock")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_io_set_timeout() -> ! {
-    unimplemented("rb_io_set_timeout")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_set_write_io() -> ! {
-    unimplemented("rb_io_set_write_io")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_io_stdio_file() -> ! {
     unimplemented("rb_io_stdio_file")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_io_synchronized() -> ! {
     unimplemented("rb_io_synchronized")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_taint_check() -> ! {
-    unimplemented("rb_io_taint_check")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_wait_readable() -> ! {
-    unimplemented("rb_io_wait_readable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_wait_writable() -> ! {
-    unimplemented("rb_io_wait_writable")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_memory_view_available_p() -> ! {
@@ -810,74 +718,6 @@ pub extern "C" fn rb_memory_view_register() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_memory_view_release() -> ! {
     unimplemented("rb_memory_view_release")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_memsearch() -> ! {
-    unimplemented("rb_memsearch")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_native_cond_broadcast() -> ! {
-    unimplemented("rb_native_cond_broadcast")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_native_cond_destroy() -> ! {
-    unimplemented("rb_native_cond_destroy")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_native_cond_initialize() -> ! {
-    unimplemented("rb_native_cond_initialize")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_native_cond_signal() -> ! {
-    unimplemented("rb_native_cond_signal")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_native_cond_timedwait() -> ! {
-    unimplemented("rb_native_cond_timedwait")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_native_cond_wait() -> ! {
-    unimplemented("rb_native_cond_wait")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_native_mutex_destroy() -> ! {
-    unimplemented("rb_native_mutex_destroy")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_native_mutex_initialize() -> ! {
-    unimplemented("rb_native_mutex_initialize")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_native_mutex_lock() -> ! {
-    unimplemented("rb_native_mutex_lock")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_native_mutex_trylock() -> ! {
-    unimplemented("rb_native_mutex_trylock")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_native_mutex_unlock() -> ! {
-    unimplemented("rb_native_mutex_unlock")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_nativethread_lock_destroy() -> ! {
-    unimplemented("rb_nativethread_lock_destroy")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_nativethread_lock_initialize() -> ! {
-    unimplemented("rb_nativethread_lock_initialize")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_nativethread_lock_lock() -> ! {
-    unimplemented("rb_nativethread_lock_lock")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_nativethread_lock_unlock() -> ! {
-    unimplemented("rb_nativethread_lock_unlock")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_nativethread_self() -> ! {
-    unimplemented("rb_nativethread_self")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_nogvl() -> ! {
@@ -1036,14 +876,6 @@ pub extern "C" fn rb_reg_prepare_re() -> ! {
     unimplemented("rb_reg_prepare_re")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_reg_quote() -> ! {
-    unimplemented("rb_reg_quote")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_reg_regcomp() -> ! {
-    unimplemented("rb_reg_regcomp")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_reg_region_copy() -> ! {
     unimplemented("rb_reg_region_copy")
 }
@@ -1058,10 +890,6 @@ pub extern "C" fn rb_reg_search() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_remove_event_hook_with_data() -> ! {
     unimplemented("rb_remove_event_hook_with_data")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_stat_new() -> ! {
-    unimplemented("rb_stat_new")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_thread_add_event_hook() -> ! {
@@ -1158,10 +986,6 @@ pub extern "C" fn rb_tracepoint_enabled_p() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_tracepoint_new() -> ! {
     unimplemented("rb_tracepoint_new")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_wait_for_single_fd() -> ! {
-    unimplemented("rb_wait_for_single_fd")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruby_enc_find_basename() -> ! {

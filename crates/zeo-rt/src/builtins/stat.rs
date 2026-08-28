@@ -156,6 +156,22 @@ pub fn stat_from_path(path: &str, follow: bool) -> Result<RubyValue, Signal> {
     Ok(stat_value(p.st, p.birth))
 }
 
+/// `rb_stat_new(&st)` -- a `File::Stat` over a snapshot a C extension took
+/// itself.
+///
+/// No birth time: `struct stat` carries one on macOS and not on Linux, and
+/// this has no path or descriptor to run the `statx` that would recover it
+/// there. `#birthtime` therefore raises `NotImplementedError` on Linux for a
+/// stat that came from C, which is what it already answers for a filesystem
+/// that records none.
+pub fn stat_from_raw(st: libc::stat) -> RubyValue {
+    #[cfg(target_vendor = "apple")]
+    let birth = Some((st.st_birthtime, st.st_birthtime_nsec));
+    #[cfg(not(target_vendor = "apple"))]
+    let birth = None;
+    stat_value(st, birth)
+}
+
 /// `File#stat` -- a `fstat(2)` on the open descriptor.
 pub fn stat_from_fd(fd: i32) -> Result<RubyValue, Signal> {
     let mut st: libc::stat = unsafe { std::mem::zeroed() };

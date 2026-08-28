@@ -53,9 +53,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// was read off the oracle with `ObjectSpace.dump`, not guessed: `Range` is
 /// `T_STRUCT` and `Proc` is `T_DATA`, and neither is obvious.
 ///
-/// `T_FILE` is absent because zeo has no `RubyValue` for an IO yet; it
-/// arrives with the IO handles, and until then an IO refuses a handle rather
-/// than being tagged something it is not.
+/// `T_FILE` is absent DELIBERATELY, and an IO is not refused a handle -- it
+/// is a `RubyValue::Object`, so it crosses as `T_OBJECT`. The tag is what is
+/// withheld: `T_FILE` promises C that `RFILE(v)->fptr` reads an `rb_io_t`,
+/// and zeo has no `rb_io_t` to put there. A wrong `RB_TYPE_P(v, T_FILE)` is
+/// an answer a gem can branch on; a garbage `fptr` is a read through a
+/// pointer that was never written. The entries that used to need the tag ask
+/// `builtins::io::as_rio` instead -- see `rb_io_check_io`.
 mod t {
     pub const OBJECT: usize = 0x01;
     pub const CLASS: usize = 0x02;

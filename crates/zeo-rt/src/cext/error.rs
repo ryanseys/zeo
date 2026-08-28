@@ -145,6 +145,13 @@ crate::cext_fn! {
         Err(crate::builtins::not_impl_error!("the platform does not support this method"))
     }
 
+    /// `rb_eof_error()`: what a reader raises when it runs out of input. The
+    /// message is ruby's own, so a `rescue EOFError => e` prints the same
+    /// text whether the reader was Ruby or C.
+    fn rb_eof_error() -> () {
+        Err(crate::builtins::eof_error!("end of file reached"))
+    }
+
     // ---- errno ---------------------------------------------------------
 
     fn rb_syserr_new(code: c_int, msg: *const c_char) -> Value {

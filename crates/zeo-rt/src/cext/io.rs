@@ -6,7 +6,7 @@
 //! reassigned is the one a C extension writes to, which a direct `write(2)`
 //! would not be.
 //!
-//! # The `cloexec` family is the exception
+//! # The descriptor entries are the exception
 //!
 //! `rb_cloexec_open` and its four neighbours are raw file descriptors, not
 //! Ruby objects: MRI has them because it must set `FD_CLOEXEC` atomically so
@@ -14,6 +14,14 @@
 //! too, so they are real syscalls rather than method calls -- and each uses
 //! the atomic form (`O_CLOEXEC`, `dup3`, `F_DUPFD_CLOEXEC`) where the
 //! platform has one.
+//!
+//! `rb_wait_for_single_fd`, the two `rb_io_wait_*` and `rb_fdopen` are the
+//! same shape: a bare `int` and no IO in sight. The two `wait` entries read
+//! `errno` to decide, which is the whole reason they take a descriptor rather
+//! than the object -- the caller has already had a read fail.
+//!
+//! Every one of them polls in a loop around `check_ints`, so a thread parked
+//! in a C extension's wait still answers `Thread#kill`.
 
 use super::convert::{to_value, value_of};
 use super::object::{args_of, cstr, send};
@@ -373,6 +381,248 @@ crate::cext_fn! {
     /// what makes the bookkeeping unnecessary.
     fn rb_update_max_fd(_fd: c_int) -> () {
         Ok(())
+    }
+
+    // ---- the IO an extension was handed ----------------------------------
+
+    /// `rb_io_check_io(v)`: the IO `v` names, through `to_io`, or nil when it
+    /// names none.
+    ///
+    /// MRI writes this as `rb_check_convert_type(v, T_FILE, "IO", "to_io")`
+    /// and zeo cannot: an IO reaches C tagged `T_OBJECT`, because a `T_FILE`
+    /// tag is a promise that `RFILE(v)->fptr` reads an `rb_io_t`, and zeo has
+    /// no `rb_io_t`. So the check is made against zeo's own handle instead,
+    /// which answers the same question without the promise.
+    fn rb_io_check_io(v: Value) -> Value {
+        let val = unsafe { value_of(v) };
+        Ok(match io_behind(&val)? {
+            Some(io) => to_value(&io)?,
+            None => super::value::Q_NIL,
+        })
+    }
+
+    /// `rb_io_get_io(v)`: the same, raising rather than answering nil.
+    fn rb_io_get_io(v: Value) -> Value {
+        let val = unsafe { value_of(v) };
+        match io_behind(&val)? {
+            Some(io) => to_value(&io),
+            None => Err(crate::builtins::type_error!(
+                "no implicit conversion of {} into IO",
+                crate::dispatch::class_name(val.class_id()).unwrap_or("Object".into())
+            )),
+        }
+    }
+
+    /// `rb_io_get_write_io(io)`: the half of a duplex IO that writes.
+    ///
+    /// MRI answers the io itself unless something tied a separate write half
+    /// to it, and zeo has no tied half to find -- see `rb_io_set_write_io`.
+    /// The conversion still runs, so a non-IO raises here as it does there.
+    fn rb_io_get_write_io(io: Value) -> Value {
+        unsafe { Ok(rb_io_get_io(io)) }
+    }
+
+    /// `rb_io_set_write_io(io, w)`: tie a separate IO for `io` to write to.
+    ///
+    /// zeo's duplex handles use ONE descriptor for both directions, so there
+    /// is no second object to record and nothing that would consult it: a
+    /// write through `io` would keep going to `io`. Recording `w` and then
+    /// ignoring it is the silent kind of wrong, so only the calls that ask
+    /// for nothing are answered -- untying, or tying an IO to itself -- and
+    /// anything else says what it cannot do.
+    ///
+    /// The answer is the PREVIOUS write half, which for zeo is always nil.
+    fn rb_io_set_write_io(io: Value, w: Value) -> Value {
+        let target = unsafe { value_of(io) };
+        let write = unsafe { value_of(w) };
+        if io_behind(&target)?.is_none() {
+            return Err(wrong_arg_type(&target, "IO"));
+        }
+        if matches!(write, RubyValue::Nil | RubyValue::Bool(false)) || io == w {
+            return Ok(super::value::Q_NIL);
+        }
+        Err(crate::builtins::not_impl_error!(
+            "zeo cannot tie a separate write IO: its duplex handles read and \
+             write one descriptor, so a write through the first IO would not \
+             reach the second"
+        ))
+    }
+
+    /// `rb_io_descriptor(io)`: `IO#fileno`, the entry that replaced reaching
+    /// into `fptr->fd`.
+    fn rb_io_descriptor(io: Value) -> c_int {
+        let target = unsafe { value_of(io) };
+        match send(&target, "fileno", &[])? {
+            RubyValue::Int(fd) => Ok(fd as c_int),
+            other => Err(wrong_arg_type(&other, "Integer")),
+        }
+    }
+
+    /// `rb_io_mode(io)`: the `FMODE_*` word, the entry that replaced reaching
+    /// into `fptr->mode`. See `builtins::io::fmode_bits` for which bits zeo
+    /// can answer and which it cannot.
+    fn rb_io_mode(io: Value) -> c_int {
+        let target = unsafe { value_of(io) };
+        if io_behind(&target)?.is_none() {
+            return Err(wrong_arg_type(&target, "IO"));
+        }
+        Ok(crate::builtins::io::fmode_bits(&target) as c_int)
+    }
+
+    /// `rb_io_set_timeout(io, timeout)`: `IO#timeout=`, which zeo records and
+    /// reads back without enforcing -- its reads block. Stated in
+    /// COMPATIBILITY.md, and true whether the setter is Ruby or C.
+    fn rb_io_set_timeout(io: Value, timeout: Value) -> Value {
+        let target = unsafe { value_of(io) };
+        let seconds = unsafe { value_of(timeout) };
+        send(&target, "timeout=", &[seconds])?;
+        Ok(timeout)
+    }
+
+    /// `rb_io_taint_check(io)`: taint is gone from ruby, and what survives of
+    /// this entry is the frozen check MRI still makes -- so a `RB_IO_POINTER`
+    /// on a frozen IO raises rather than handing out a writable pointer.
+    fn rb_io_taint_check(io: Value) -> Value {
+        let target = unsafe { value_of(io) };
+        let frozen = crate::dispatch::send_value(&target, Symbol::intern("frozen?"), &[], None)?;
+        if matches!(frozen, RubyValue::Bool(true)) {
+            return Err(crate::builtins::frozen_error!(
+                "can't modify frozen {}",
+                crate::dispatch::class_name(target.class_id()).unwrap_or("IO".into())
+            ));
+        }
+        Ok(io)
+    }
+
+    /// `rb_stat_new(&st)`: a `File::Stat` over a snapshot the extension took
+    /// itself, so it reads the fields back through ruby's own accessors
+    /// rather than through a struct layout it would have to know.
+    fn rb_stat_new(st: *const libc::stat) -> Value {
+        if st.is_null() {
+            return Err(crate::builtins::arg_error!("rb_stat_new was given no stat"));
+        }
+        // SAFETY: the caller promised a readable `struct stat`. It is plain
+        // old data, so the copy is a memcpy and outlives the caller's buffer.
+        to_value(&crate::builtins::stat::stat_from_raw(unsafe { st.read() }))
+    }
+
+    // ---- waiting on a descriptor -----------------------------------------
+
+    /// `rb_wait_for_single_fd(fd, events, tv)`: block until one of `events`
+    /// is ready, and answer the events that are. `tv` null means no timeout.
+    ///
+    /// `poll` rather than `select`, which is what MRI uses where it has it:
+    /// `select` cannot see a descriptor above `FD_SETSIZE` and writes past
+    /// the end of an `fd_set` if handed one.
+    fn rb_wait_for_single_fd(fd: c_int, events: c_int, tv: *mut libc::timeval) -> c_int {
+        let timeout = if tv.is_null() {
+            -1
+        } else {
+            // SAFETY: the caller promised a readable `struct timeval`.
+            let t = unsafe { tv.read() };
+            let ms = (t.tv_sec as i64) * 1000 + (t.tv_usec as i64) / 1000;
+            c_int::try_from(ms.max(0)).unwrap_or(c_int::MAX)
+        };
+        let mut pfd = libc::pollfd { fd, events: events as i16, revents: 0 };
+        loop {
+            // SAFETY: one `pollfd` this frame owns.
+            let n = unsafe { libc::poll(&raw mut pfd, 1, timeout) };
+            if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                // The safepoint: an interrupted wait is where `Thread#kill`
+                // and `Thread#raise` land, and re-polling without asking
+                // would swallow them.
+                crate::check_ints()?;
+                continue;
+            }
+            return Ok(if n <= 0 { n } else { c_int::from(pfd.revents) });
+        }
+    }
+
+    /// `rb_io_wait_readable(fd)`: after a read that failed, should it be
+    /// retried?
+    ///
+    /// The question is asked of `errno`, which is why this takes a bare
+    /// descriptor and no IO. `EINTR` answers yes at once, after the
+    /// safepoint; `EAGAIN` waits for the descriptor first; anything else is
+    /// a real error and answers no, leaving the caller to raise it.
+    fn rb_io_wait_readable(fd: c_int) -> c_int {
+        wait_retry(fd, libc::POLLIN)
+    }
+
+    fn rb_io_wait_writable(fd: c_int) -> c_int {
+        wait_retry(fd, libc::POLLOUT)
+    }
+
+    /// `rb_fdopen(fd, mode)`: a C stdio stream over an existing descriptor.
+    ///
+    /// MRI collects and retries once when it runs out of descriptors, because
+    /// its own IOs close only when they are collected. zeo's close when they
+    /// drop, so there is no reserve for a collection to release and nothing
+    /// for a retry to find -- the first failure is the answer.
+    fn rb_fdopen(fd: c_int, mode: *const c_char) -> *mut libc::FILE {
+        let text = unsafe { cstr(mode) };
+        let Ok(c) = std::ffi::CString::new(text) else {
+            return Err(crate::builtins::arg_error!("mode contains a null byte"));
+        };
+        // SAFETY: the caller's own descriptor and a NUL-terminated mode.
+        let file = unsafe { libc::fdopen(fd, c.as_ptr()) };
+        if file.is_null() {
+            return Err(last_errno());
+        }
+        Ok(file)
+    }
+}
+
+/// The IO `v` names, through `to_io` when it is not one itself.
+///
+/// `None` means it names none, which is the difference between
+/// `rb_io_check_io` and `rb_io_get_io`. A `to_io` that answers a non-IO is
+/// the caller's bug and raises here, exactly as MRI's type check does.
+fn io_behind(v: &RubyValue) -> Result<Option<RubyValue>, Signal> {
+    if crate::builtins::io::as_rio(v).is_some() {
+        return Ok(Some(v.clone()));
+    }
+    let to_io = Symbol::intern("to_io");
+    if !crate::dispatch::responds_to_value(v, to_io, true) {
+        return Ok(None);
+    }
+    let out = crate::dispatch::send_value(v, to_io, &[], None)?;
+    if crate::builtins::io::as_rio(&out).is_none() {
+        return Err(crate::builtins::type_error!(
+            "can't convert {} to IO ({}#to_io gives the wrong type)",
+            crate::dispatch::class_name(v.class_id()).unwrap_or("Object".into()),
+            crate::dispatch::class_name(v.class_id()).unwrap_or("Object".into())
+        ));
+    }
+    Ok(Some(out))
+}
+
+/// The shared half of `rb_io_wait_readable`/`_writable`: read `errno`, and
+/// answer whether the caller should try its read or write again.
+fn wait_retry(fd: c_int, event: i16) -> Result<c_int, Signal> {
+    if fd < 0 {
+        return Err(crate::builtins::io_error!("closed stream"));
+    }
+    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    if errno == libc::EINTR {
+        crate::check_ints()?;
+        return Ok(1);
+    }
+    if errno != libc::EAGAIN && errno != libc::EWOULDBLOCK {
+        return Ok(0);
+    }
+    let mut pfd = libc::pollfd { fd, events: event, revents: 0 };
+    loop {
+        // SAFETY: one `pollfd` this frame owns. `-1` is "no timeout": the
+        // caller asked to wait until the descriptor is ready.
+        let n = unsafe { libc::poll(&raw mut pfd, 1, -1) };
+        if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+            crate::check_ints()?;
+            continue;
+        }
+        // Ready, or a poll that failed for a reason the caller's own retry
+        // will hit again and report properly.
+        return Ok(1);
     }
 }
 

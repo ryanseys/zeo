@@ -28,7 +28,7 @@ use super::value::{self, Value};
 use crate::builtins::wrong_arg_type;
 use crate::dispatch::ClassId;
 use crate::{RubyValue, Signal, Symbol};
-use std::ffi::{c_char, c_int};
+use std::ffi::{c_char, c_int, c_long};
 
 /// A C extension loads into the main program, so its globals are the main
 /// program's. A box gets its own extension only when G7 B2 lands.
@@ -743,6 +743,30 @@ crate::cext_fn! {
     /// `Qnil` rather than an `ID` or `0`.
     fn rb_check_symbol(slot: *mut Value) -> Value {
         let id = unsafe { rb_check_id(slot) };
+        if id == 0 {
+            return Ok(value::Q_NIL);
+        }
+        to_value(&RubyValue::Symbol(symbol_of(id)))
+    }
+
+    /// `rb_check_id_cstr(p, len, enc)`: the same question asked of C bytes
+    /// rather than a `VALUE`, so there is no slot to rewrite and no
+    /// conversion to make. `0` still means "never interned", and still means
+    /// the caller can skip a lookup that cannot succeed.
+    ///
+    /// The `enc` is what MRI tags the name with while looking it up. zeo's
+    /// symbol table is keyed by the name's characters rather than by its
+    /// bytes plus an encoding, so two names that differ only in encoding are
+    /// one symbol here -- which is the same rule `rb_intern3` already
+    /// follows, and the reason it ignores its own `enc` too.
+    fn rb_check_id_cstr(p: *const c_char, len: c_long, _enc: *const std::ffi::c_void) -> Id {
+        let bytes = unsafe { super::string::borrow_bytes(p, len) };
+        let name = String::from_utf8_lossy(&bytes).into_owned();
+        Ok(Symbol::interned(&name).map_or(0, |s| s.to_u32() as Id))
+    }
+
+    fn rb_check_symbol_cstr(p: *const c_char, len: c_long, enc: *const std::ffi::c_void) -> Value {
+        let id = unsafe { rb_check_id_cstr(p, len, enc) };
         if id == 0 {
             return Ok(value::Q_NIL);
         }
