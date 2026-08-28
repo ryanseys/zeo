@@ -6,6 +6,7 @@ members = [
     "crates/zeo-dsl",
     "crates/zeo-macros",
     "crates/zeo-rt",
+    "crates/xtask",
 ]
 
 [workspace.package]

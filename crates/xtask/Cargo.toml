@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "The repo's own chores: staging, distribution, the C API headers, the golden oracle"
+
+[dependencies]
+flate2.workspace = true
+serde_json.workspace = true
+tar.workspace = true

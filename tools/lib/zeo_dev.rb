@@ -37,7 +37,6 @@ module ZeoDev
     gemtests
     cext
     linux
-    stage-publish
     dist
   ].freeze
 
