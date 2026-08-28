@@ -102,7 +102,6 @@ commands:
   diff            compare a snippet across ruby and zeo, and file a gap
   dist            assemble the relocatable distribution
   linux           run the suites in the linux container
-  probe           run a differential probe matrix across ruby and zeo
   promote-gap     move a fixed gap into the passing suite
   stage-publish   stage the artifacts the published crate ships
 
@@ -127,7 +126,6 @@ fn main() -> std::process::ExitCode {
         "diff" => commands::diff::run(rest),
         "dist" => commands::dist::run(rest),
         "linux" => commands::linux::run(rest),
-        "probe" => commands::probe::run(rest),
         "promote-gap" => commands::promote_gap::run(rest),
         "stage-publish" => commands::stage_publish::run(rest),
         other => Err(Error::new(format!(

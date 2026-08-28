@@ -85,6 +85,24 @@ is quietly wrong rather than loudly absent.
 A file may carry both kinds — `rubyvm_iseq_serialization` and
 `error_highlight_library` do — which is why the headers read row by row.
 
+## A gap can carve one row out of a matrix golden
+
+`tests/probe_{arguments,messages,roundtrip}.rb` are matrix goldens: one
+Ruby program, one `name<TAB>result` row per assertion, 222 rows compared
+against ruby in a single `.expected`. A golden is all-or-nothing, so one
+divergent row would hold every other row out of the suite.
+
+The answer is a `SKIP` table at the top of each matrix naming the rows zeo
+does not answer yet, each pointing at the gap file here that tracks it. The
+carved row is left OUT of the output rather than recorded wrong. When the
+gap is promoted, delete its `SKIP` entry and re-bless -- the row comes back
+into the matrix and starts guarding the fix.
+
+Four rows are carved today: `module_new_refuses_an_argument`,
+`a_failed_exec_names_the_program`,
+`a_binary_string_survives_a_yaml_round_trip` and
+`marshal_carries_an_array_s_ivars`.
+
 ## Decided divergences live in `tests/`, not here
 
 A divergence zeo has **decided** to keep is not work, so a gap file is the

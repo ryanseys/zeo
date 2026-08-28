@@ -16,6 +16,13 @@ ROWS = {}
 
 def probe(name, &blk) = ROWS[name] = blk
 
+# Rows zeo does not answer yet, each naming the gap that tracks it. A carved
+# row is left OUT of the output rather than recorded wrong. When a gap is
+# promoted, delete its entry here and re-bless; the row comes back.
+SKIP = {
+  "exec missing" => "tests/gaps/a_failed_exec_names_the_program.rb",
+}.freeze
+
 DIR = Dir.mktmpdir("zeo-probe")
 MISSING = File.join(DIR, "no-such-file")
 EXISTING = File.join(DIR, "a-file")
@@ -135,6 +142,8 @@ probe("backquote missing") { `/no/such/program-zeo` }
 probe("system exception") { system("/no/such/program-zeo", exception: true) }
 
 ROWS.each do |name, fn|
+  next if SKIP.key?(name)
+
   r = begin
     v = fn.call
     "ok #{v.inspect}"

@@ -543,7 +543,6 @@ tests/       example goldens, the spinel corpus, the gaps tracker, gemtests
 gems/        67 bundled gems (upstream.lock pins the git-tracked ones)
 bench/       61 benchmark programs; read bench/README.md
 vendor/      rubygems and fetched test trees (gitignored)
-tools/probes the differential probe matrices (`cargo xtask probe`)
 Makefile     the front door: make / test / check / gate / linux
 Dockerfile   the linux verification image (`cargo xtask linux`)
 ```

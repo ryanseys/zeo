@@ -2,7 +2,8 @@
 #
 # For every serializer and every container, asserts that a value survives
 # its own encoding -- `load(dump(x)) == x`, sizes preserved, key identity
-# preserved. Run through `cargo xtask probe roundtrip`.
+# preserved. A GOLDEN: the `.expected` beside it is ruby 4.0.6's own
+# answers.
 #
 # This is the highest-yield way to catch SILENT corruption, because it needs
 # no reference output to compare against: a value that does not survive its
@@ -22,6 +23,14 @@ require "stringio"
 ROWS = {}
 
 def probe(name, &blk) = ROWS[name] = blk
+
+# Rows zeo does not answer yet, each naming the gap that tracks it. A carved
+# row is left OUT of the output rather than recorded wrong. When a gap is
+# promoted, delete its entry here and re-bless; the row comes back.
+SKIP = {
+  "yaml:string_binary" => "tests/gaps/a_binary_string_survives_a_yaml_round_trip.rb",
+  "marshal array ivar" => "tests/gaps/marshal_carries_an_array_s_ivars.rb",
+}.freeze
 
 VALUES = {
   "nil" => nil,
@@ -228,6 +237,8 @@ probe("yaml cycle") do
 end
 
 ROWS.each do |name, fn|
+  next if SKIP.key?(name)
+
   r = begin
     v = fn.call
     "ok #{v.inspect}"

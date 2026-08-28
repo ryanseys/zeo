@@ -2264,7 +2264,6 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "flate2",
- "indexmap",
  "regex",
  "serde_json",
  "sha2",

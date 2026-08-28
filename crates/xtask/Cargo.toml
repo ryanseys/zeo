@@ -8,7 +8,6 @@ description = "The repo's own chores: staging, distribution, the C API headers, 
 
 [dependencies]
 flate2.workspace = true
-indexmap.workspace = true
 regex.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

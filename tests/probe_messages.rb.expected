@@ -1,0 +1,73 @@
+File.read(missing)	Errno::ENOENT: No such file or directory @ rb_sysopen - <TMP>/no-such-file
+File.open(missing)	Errno::ENOENT: No such file or directory @ rb_sysopen - <TMP>/no-such-file
+File.read(directory)	Errno::EISDIR: Is a directory @ io_fread - <TMP>
+File.stat(missing)	Errno::ENOENT: No such file or directory @ rb_file_s_stat - <TMP>/no-such-file
+File.lstat(missing)	Errno::ENOENT: No such file or directory @ rb_file_s_lstat - <TMP>/no-such-file
+File.size(missing)	Errno::ENOENT: No such file or directory @ rb_file_s_size - <TMP>/no-such-file
+File.mtime(missing)	Errno::ENOENT: No such file or directory @ rb_file_s_mtime - <TMP>/no-such-file
+File.delete(missing)	Errno::ENOENT: No such file or directory @ apply2files - <TMP>/no-such-file
+File.unlink(missing)	Errno::ENOENT: No such file or directory @ apply2files - <TMP>/no-such-file
+File.chmod(missing)	Errno::ENOENT: No such file or directory @ apply2files - <TMP>/no-such-file
+File.utime(missing)	Errno::ENOENT: No such file or directory @ apply2files - <TMP>/no-such-file
+File.realpath(missing)	Errno::ENOENT: No such file or directory @ rb_check_realpath_internal - <TMP>/no-such-file
+File.rename(missing)	Errno::ENOENT: No such file or directory @ rb_file_s_rename - (<TMP>/no-such-file, <TMP>/a-file)
+File.symlink(exists)	Errno::EEXIST: File exists @ syserr_fail2_in - <TMP>/a-file
+File.link(exists)	Errno::EEXIST: File exists @ syserr_fail2_in - <TMP>/a-file
+Dir.chdir(missing)	Errno::ENOENT: No such file or directory @ chdir_path - <TMP>/no-such-file
+Dir.chdir(missing){}	Errno::ENOENT: No such file or directory @ dir_chdir0 - <TMP>/no-such-file
+Dir.mkdir(exists)	Errno::EEXIST: File exists @ dir_s_mkdir - <TMP>
+Dir.entries(missing)	Errno::ENOENT: No such file or directory @ dir_initialize - <TMP>/no-such-file
+IO.read(missing)	Errno::ENOENT: No such file or directory @ rb_sysopen - <TMP>/no-such-file
+sort mixed	ArgumentError: comparison of Integer with String failed
+sort_by mixed	ArgumentError: comparison of Integer with String failed
+min_by mixed	ArgumentError: comparison of Float with 1.0 failed
+max_by mixed	ArgumentError: comparison of Float with 1.0 failed
+min mixed	ArgumentError: comparison of String with 1 failed
+max mixed	ArgumentError: comparison of String with 1 failed
+sort NaN	ArgumentError: comparison of Float with NaN failed
+<=> nil compare	ArgumentError: comparison of Integer with String failed
+Array#<=> mixed	ok "nil"
+undefined method	NoMethodError: undefined method 'no_such_method' for an instance of Object
+undefined local	NameError: undefined local variable or method 'no_such_local_or_method' for main
+wrong arity	ArgumentError: wrong number of arguments (given 0, expected 1)
+wrong arity method	ArgumentError: wrong number of arguments (given 0, expected 1)
+private call	NoMethodError: private method 'hidden' called for an instance of #<Class:0xADDR>
+protected call	NoMethodError: protected method 'guarded' called for an instance of #<Class:0xADDR>
+unknown keyword	ArgumentError: unknown keyword: :b
+missing keyword	ArgumentError: missing keyword: :a
+uninitialized constant	NameError: uninitialized constant NoSuchConstant
+trap unknown signal	ArgumentError: unsupported signal 'SIGNOPE'
+kill unknown signal	ArgumentError: unsupported signal 'SIGNOPE'
+NoMethodError on nil	NoMethodError: undefined method 'no_such' for nil
+frozen String	FrozenError: can't modify frozen String: "x"
+frozen Array	FrozenError: can't modify frozen Array: []
+frozen Hash	FrozenError: can't modify frozen Hash: {}
+frozen Class	FrozenError: can't modify frozen Class: #<Class:0xADDR>
+super without method	ok "#<Class:0xADDR>"
+Array + Integer	TypeError: no implicit conversion of Integer into Array
+String + Integer	TypeError: no implicit conversion of Integer into String
+Integer + String	TypeError: String can't be coerced into Integer
+Integer + nil	TypeError: nil can't be coerced into Integer
+String * String	TypeError: no implicit conversion of String into Integer
+Hash#[]= frozen key	TypeError: no implicit conversion of Integer into Hash
+implicit to_str	TypeError: no implicit conversion of Integer into String
+implicit to_int	TypeError: no implicit conversion of Symbol into Integer
+zero division	ZeroDivisionError: divided by 0
+Integer overflow shift	ok 0
+bad property	RegexpError: invalid character property name {NoSuchProperty}: /\p{NoSuchProperty}/
+bad posix class	RegexpError: invalid POSIX bracket type: /[[:nosuch:]]/
+unterminated group	RegexpError: end pattern with unmatched parenthesis: /(/
+bad repeat	RegexpError: upper is smaller than lower in repeat range: /a{2,1}/
+bad backref	RegexpError: undefined name <nope> reference: /\k<nope>/
+encode unknown	Encoding::ConverterNotFoundError: code converter not found (UTF-8 to NoSuchEncoding)
+encode unknown pair	Encoding::ConverterNotFoundError: code converter not found (NoSuchSource to NoSuchTarget)
+Encoding.find unknown	ArgumentError: unknown encoding name - NoSuchEncoding
+Encoding.find symbol	TypeError: no implicit conversion of Symbol into String
+force_encoding frozen	FrozenError: can't modify frozen String: "a"
+undefined conversion	Encoding::UndefinedConversionError: U+00E9 from UTF-8 to US-ASCII
+invalid byte sequence	Encoding::InvalidByteSequenceError: "\xFF" on UTF-8
+negative sleep	ArgumentError: time interval must not be negative
+set_backtrace(bad)	TypeError: backtrace must be an Array of String or an Array of Thread::Backtrace::Location
+Etc user missing	ArgumentError: can't find user for no-such-user-zeo
+backquote missing	Errno::ENOENT: No such file or directory - /no/such/program-zeo
+system exception	Errno::ENOENT: No such file or directory - /no/such/program-zeo
