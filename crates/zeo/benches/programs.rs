@@ -457,13 +457,19 @@ fn zeo_identity(zeo: &Path) -> String {
 
 /// `ruby -v` carries version, revision and platform -- enough to say a
 /// re-run would time the same interpreter.
+///
+/// `RECIPE` covers the other half: HOW the oracle is invoked. Changing the
+/// command line changes the timing without changing the interpreter, so a
+/// journal row measured under the old recipe must not look reusable. Bump
+/// it whenever [`oracle_cmd`] changes.
 fn ruby_identity(ruby: &str) -> String {
+    const RECIPE: &str = "bare-ruby-no-bundler-v2";
     let out = Command::new(ruby)
         .arg("-v")
         .output()
         .map(|o| o.stdout)
         .unwrap_or_default();
-    digest(&[&out])
+    digest(&[&out, RECIPE.as_bytes()])
 }
 
 fn bench_zeo(
@@ -517,19 +523,55 @@ fn bench_zeo(
     g.finish();
 }
 
-/// The oracle, resolved against `Gemfile.lock` exactly as the goldens' is.
-/// A number banked against a differently-resolved ruby compares zeo to a
-/// library set it was never measured against.
+/// The oracle: a bare `ruby <prog.rb>` with the ambient library dials
+/// cleared, so nothing anybody `gem install`ed decides a timing.
+///
+/// **No `-rbundler/setup` here, unlike the goldens' oracle.** That costs 60
+/// ms of interpreter startup, and this bank charges zeo nothing comparable
+/// -- it times a native binary with no loader at all. The goldens need
+/// bundler because they compare OUTPUT and a wrongly-resolved library
+/// answers differently; the bank compares TIME, and 60 ms against
+/// programs a third of which finish inside 100 ms is not a difference
+/// between zeo and ruby, it is a difference between two command lines.
+///
+/// It was measured. With `bundler/setup` the CRuby side of 25 benchmarks
+/// came out 35% slower and zeo's ratio rose from 1.93x to 2.92x, having
+/// changed nothing about zeo. That number would have been a fabrication.
+///
+/// This is sound only while no bench program requires anything --
+/// [`assert_corpus_needs_no_bundler`] holds the bank to it.
 fn oracle_cmd(ruby: &str, rb: &Path) -> Command {
     let mut cmd = Command::new(ruby);
     cmd.arg(rb)
-        .env("BUNDLE_GEMFILE", repo_root().join("Gemfile"))
-        .env("RUBYOPT", "-rbundler/setup")
+        .env_remove("RUBYOPT")
         .env_remove("RUBYLIB")
         .env_remove("GEM_HOME")
         .env_remove("GEM_PATH")
         .env_remove("GEM_SPEC_CACHE");
     cmd
+}
+
+/// The bench corpus is pure computation: 61 programs, not one `require`.
+/// That is what lets the oracle skip bundler and stay a fair comparison.
+/// Add a program that requires a gem and this fails, which is the moment
+/// to decide how BOTH sides should resolve it -- not to quietly hand one
+/// of them a loader the other never runs.
+fn assert_corpus_needs_no_bundler(corpus: &[PathBuf]) {
+    let mut needy = Vec::new();
+    for rb in corpus {
+        let src = std::fs::read_to_string(rb).unwrap_or_default();
+        if src
+            .lines()
+            .any(|l| l.trim_start().starts_with("require ") || l.trim_start().starts_with("require("))
+        {
+            needy.push(rb.file_stem().unwrap().to_string_lossy().into_owned());
+        }
+    }
+    assert!(
+        needy.is_empty(),
+        "these bench programs `require` something, so the oracle's library \
+         resolution is back in question: {needy:?}\nSee oracle_cmd."
+    );
 }
 
 fn bench_cruby(
@@ -639,6 +681,7 @@ fn main() {
     ZEO.set(build_snapshot(&root)).expect("main runs once");
     let corpus = programs(&root);
     assert!(!corpus.is_empty(), "no programs under bench/");
+    assert_corpus_needs_no_bundler(&corpus);
     let lazy = lazy_mode();
     let oracle = std::env::var_os("ZEO_BENCH_ORACLE").is_some_and(|v| v == "1");
     // Defaults BEFORE configure_from_args, so criterion's own CLI flags
