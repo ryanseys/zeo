@@ -9,7 +9,7 @@
 //! `method_missing` and the same visibility rules, and cannot drift from the
 //! method it stands for.
 //!
-//! Reimplementing 99 of these in Rust would be 99 more places for
+//! Reimplementing 103 of these in Rust would be 103 more places for
 //! `String#length` to be subtly wrong.
 
 //! # The record
@@ -90,12 +90,16 @@ pub(crate) const FORWARDED: &[(&str, &str, &str, u8)] = &[
     ("rb_hash_freeze", "Hash", "freeze", 0),
     ("rb_io_binmode", "IO", "binmode", 0),
     ("rb_io_close", "IO", "close", 0),
+    ("rb_io_closed_p", "IO", "closed?", 0),
     ("rb_io_eof", "IO", "eof", 0),
     ("rb_io_flush", "IO", "flush", 0),
     ("rb_io_getbyte", "IO", "getbyte", 0),
     ("rb_io_gets", "IO", "gets", 0),
+    ("rb_io_path", "IO", "path", 0),
+    ("rb_io_timeout", "IO", "timeout", 0),
     ("rb_io_ungetbyte", "IO", "ungetbyte", 1),
     ("rb_io_ungetc", "IO", "ungetc", 1),
+    ("rb_io_wait", "IO", "wait", 2),
     ("rb_io_write", "IO", "write", 1),
     ("rb_mod_ancestors", "Module", "ancestors", 0),
     ("rb_mod_include_p", "Module", "include?", 1),
@@ -422,6 +426,11 @@ fn rb_io_close(recv: Value) -> Value {
     forward(recv, "close", &[])
 }
 
+/// `IO#closed?`
+fn rb_io_closed_p(recv: Value) -> Value {
+    forward(recv, "closed?", &[])
+}
+
 /// `IO#eof`
 fn rb_io_eof(recv: Value) -> Value {
     forward(recv, "eof", &[])
@@ -442,6 +451,16 @@ fn rb_io_gets(recv: Value) -> Value {
     forward(recv, "gets", &[])
 }
 
+/// `IO#path`
+fn rb_io_path(recv: Value) -> Value {
+    forward(recv, "path", &[])
+}
+
+/// `IO#timeout`
+fn rb_io_timeout(recv: Value) -> Value {
+    forward(recv, "timeout", &[])
+}
+
 /// `IO#ungetbyte`
 fn rb_io_ungetbyte(recv: Value, a0: Value) -> Value {
     forward(recv, "ungetbyte", &[a0])
@@ -450,6 +469,11 @@ fn rb_io_ungetbyte(recv: Value, a0: Value) -> Value {
 /// `IO#ungetc`
 fn rb_io_ungetc(recv: Value, a0: Value) -> Value {
     forward(recv, "ungetc", &[a0])
+}
+
+/// `IO#wait`
+fn rb_io_wait(recv: Value, a0: Value, a1: Value) -> Value {
+    forward(recv, "wait", &[a0, a1])
 }
 
 /// `IO#write`

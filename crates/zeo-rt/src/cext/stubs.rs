@@ -26,7 +26,7 @@
 //! prototype mismatch; on both ABIs zeo targets it is safe. The caller passes
 //! arguments in registers and on a stack it cleans up itself, the callee
 //! reads none of them, and it never returns -- so there is no return value to
-//! disagree about and no frame to unwind. Writing 195 correct
+//! disagree about and no frame to unwind. Writing 191 correct
 //! signatures would buy nothing: not one of these functions runs. 33
 //! of them are refusals rather than gaps.
 //!
@@ -656,10 +656,6 @@ pub extern "C" fn rb_io_check_writable() -> ! {
     unimplemented("rb_io_check_writable")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_io_closed_p() -> ! {
-    unimplemented("rb_io_closed_p")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_io_descriptor() -> ! {
     unimplemented("rb_io_descriptor")
 }
@@ -720,10 +716,6 @@ pub extern "C" fn rb_io_open_descriptor() -> ! {
     unimplemented("rb_io_open_descriptor")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_io_path() -> ! {
-    unimplemented("rb_io_path")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_io_read_check() -> ! {
     unimplemented("rb_io_read_check")
 }
@@ -754,14 +746,6 @@ pub extern "C" fn rb_io_synchronized() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_io_taint_check() -> ! {
     unimplemented("rb_io_taint_check")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_timeout() -> ! {
-    unimplemented("rb_io_timeout")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_wait() -> ! {
-    unimplemented("rb_io_wait")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_io_wait_readable() -> ! {
