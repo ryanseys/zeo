@@ -227,6 +227,13 @@ against a whole library since:
   the numbers yourself with `zeo --dump=methods <file>`, which is front-end
   only and answers in under a second.
 
+The whole ladder, hello-world to bundler, is banked in
+[`bench/compile-baseline.tsv`](../bench/compile-baseline.tsv) and refreshed
+with `cargo xtask bench --compile --update-baseline`. Its `frontend_ms` and
+`peak_rss` columns time `--emit-clif`, which renders the CLIF as text, so
+they are larger than the `-o` wall times above and are not the same
+measurement.
+
 **A definition that reaches many classes is still the shape that costs.**
 1,308 definitions reach more than one class and account for 14,977 extra
 bodies -- 52% of everything emitted, down from 78%. The remainder is

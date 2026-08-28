@@ -12,12 +12,12 @@
 # holding a lazy unit's class registrations back until its unit runs, not
 # adding a hook at the constant read.
 #
-# Measured cost: this is what blocks entering `tests/bench/rubygems.rb` and
-# `tests/bench/bundler.rb` at the umbrella `require "rubygems"`. Both goldens
-# name their own pieces instead, and say so in their headers. With the
-# declaration eager, `rubygems.rb`'s `autoload :RequestSet` runs
-# `request_set/gem_dependency_api.rb` before `rubygems/platform` is required,
-# and it dies on `uninitialized constant Gem::Platform`.
+# Measured cost, while it was broken: this was one of the things that blocked
+# `require "rubygems"`, so `tests/bench/rubygems.rb` and `bundler.rb` entered
+# at sub-files instead. With the declaration eager, `rubygems.rb`'s `autoload
+# :RequestSet` ran `request_set/gem_dependency_api.rb` before
+# `rubygems/platform` was required, and died on `uninitialized constant
+# Gem::Platform`. Both bench programs enter at the umbrella now.
 $LOAD_PATH.unshift(File.expand_path("autoload_fixture", __dir__))
 
 puts "before the module"
