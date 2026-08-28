@@ -31,8 +31,8 @@ gem "benchmark",
   rev: "efa6e613cee9e3e47831c6767a1df08ac35b18cc"
 gem "bundler",
   github: "rubygems/rubygems",
-  tag: "v4.0.18",
-  rev: "7e934435ff880a9a6f78b9ca5fea396a275bd5c4",
+  tag: "v4.0.16",
+  rev: "fc18079dba6c2caf60ea45a68dcd7840e25b38ea",
   subdir: "bundler"
 gem "csv",
   github: "ruby/csv",
@@ -104,8 +104,8 @@ gem "resolv",
   rev: "8fc05c1cb6cd36e4a8d0391aeb8cacdcb2368b4c"
 gem "rubygems",
   github: "rubygems/rubygems",
-  tag: "v4.0.18",
-  rev: "7e934435ff880a9a6f78b9ca5fea396a275bd5c4"
+  tag: "v4.0.16",
+  rev: "fc18079dba6c2caf60ea45a68dcd7840e25b38ea"
 gem "tempfile",
   github: "ruby/tempfile",
   tag: "v0.3.1",

@@ -215,13 +215,7 @@ module Bundler
           agent << " #{ruby.engine}/#{ruby.versions_string(engine_version)}"
         end
 
-        # Some settings keys embed a URI (e.g. `mirror.<uri>`) whose userinfo can
-        # carry credentials. Strip the userinfo before advertising the setting
-        # names so we don't leak secrets to every gem source we talk to.
-        options = Bundler.settings.all.map do |key|
-          key.include?("://") ? key.gsub(%r{//[^/@]+@}, "//") : key
-        end
-        agent << " options/#{options.join(",")}"
+        agent << " options/#{Bundler.settings.all.join(",")}"
 
         agent << " ci/#{cis.join(",")}" if cis.any?
 

@@ -76,15 +76,10 @@ module Gem::Util
 
   ##
   # Globs for files matching +pattern+ inside of +directory+,
-  # returning absolute paths to the matching files. Unlike a plain
-  # Dir.glob with an interpolated path, glob metacharacters in
-  # +base_path+ are not treated as part of the pattern.
+  # returning absolute paths to the matching files.
 
   def self.glob_files_in_dir(glob, base_path)
-    expanded_path = nil
-    Dir.glob(glob, base: base_path).map! do |f|
-      File.expand_path(f, expanded_path ||= File.expand_path(base_path))
-    end
+    Dir.glob(glob, base: base_path).map! {|f| File.expand_path(f, base_path) }
   end
 
   ##

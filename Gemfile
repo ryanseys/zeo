@@ -37,10 +37,17 @@ source "https://rubygems.org"
 #                     A `gem "bundler"` line would additionally force every
 #                     contributor to run exactly that bundler.
 #   gems/socket, gems/pty, gems/monitor
-#                  -> absent. ruby 4.0.6 carries these as plain ext/lib with
-#                     no gemspec anywhere, and no repository publishes them,
-#                     so there is nothing to pin. Their Ruby halves are
-#                     zeo-authored and zeo versions them itself.
+#                  -> absent. ruby carries these as `ext/socket`, `ext/pty`
+#                     and `ext/monitor`, with no gemspec at any point in its
+#                     history, so they are extensions rather than gems and
+#                     there is nothing to pin. Their Ruby halves are
+#                     zeo-authored and live beside the Rust that implements
+#                     them.
+#
+# Every version below is the latest upstream release, which is deliberately
+# ahead of what ruby 4.0.6 ships for 13 of them. That only works because the
+# oracle resolves this same lock, so it runs the versions zeo implements.
+# `rubygems` is the one exception and gets ruby's own version -- see below.
 
 gem "abbrev", "0.1.2"
 gem "benchmark", "0.5.0"
@@ -92,7 +99,12 @@ gem "rake", "13.4.2"
 gem "reline", "0.7.0"
 gem "resolv", "0.7.1"
 gem "rexml", "3.4.4"
-gem "rubygems-update", "4.0.18"
+# The one gem that must MATCH ruby rather than lead it. RubyGems loads before
+# bundler, so `Gem::VERSION` in the oracle is whatever the running ruby ships
+# -- 4.0.16 -- and no Gemfile can change it. Vendoring 4.0.18 would be a
+# version zeo reports and the oracle can never agree with. bundler rides the
+# same release, so it stays in step.
+gem "rubygems-update", "4.0.16"
 gem "shellwords", "0.2.2"
 gem "singleton", "0.3.0"
 gem "strscan", "3.1.6"
@@ -107,6 +119,18 @@ gem "un", "0.3.0"
 gem "uri", "1.1.1"
 gem "weakref", "0.1.4"
 gem "zlib", "3.2.3"
+
+# --- Pulled in by the gems above, and named so they cannot float ----------
+#
+# zeo implements none of these, so they have no reason to lead ruby: the rule
+# is that the oracle IS ruby 4.0.6 except where zeo deliberately ships newer.
+# Left to the resolver they came out ahead of it -- io-console 0.9.2 against
+# ruby's 0.8.2, rdoc 8.0.0 against 7.0.4, rbs 4.2.0 against 3.10.0 -- which
+# nobody had chosen and nothing recorded. `io-console` is the one that could
+# actually move a golden: it rides under reline.
+gem "io-console", "0.8.2"
+gem "rbs", "3.10.0"
+gem "rdoc", "7.0.4"
 
 # --- What only the oracle needs -------------------------------------------
 #

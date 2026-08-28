@@ -110,7 +110,7 @@ module Gem
           msg = [
             "NOTE: #{target}#{name} is deprecated",
             repl == :none ? " with no replacement" : "; use #{repl} instead",
-            Kernel.format(". It will be removed on or after %4d-%02d.", year, month),
+            format(". It will be removed on or after %4d-%02d.", year, month),
             "\n#{target}#{name} called from #{Gem.location_of_caller.join(":")}",
           ]
           warn "#{msg.join}." unless Gem::Deprecate.skip

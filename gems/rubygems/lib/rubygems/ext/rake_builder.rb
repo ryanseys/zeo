@@ -14,15 +14,13 @@ class Gem::Ext::RakeBuilder < Gem::Ext::Builder
     end
 
     if /mkrf_conf/i.match?(File.basename(extension))
-      # Gem.ruby is quoted if it contains whitespace, so split it into argv
-      # elements to keep the quotes out of the spawned command.
-      run([*shellsplit(Gem.ruby), File.basename(extension), *args], results, class_name, extension_dir)
+      run([Gem.ruby, File.basename(extension), *args], results, class_name, extension_dir)
     end
 
     rake = ENV["rake"]
 
     if rake
-      rake = shellsplit_command(rake)
+      rake = shellsplit(rake)
     else
       begin
         rake = ruby << "-rrubygems" << Gem.bin_path("rake", "rake")

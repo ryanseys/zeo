@@ -183,10 +183,7 @@ command to remove old versions.
       say "Installing RubyGems #{version}" unless options[:silent]
 
       installed = preparing_gem_layout_for(version) do
-        # Gem.ruby is quoted if it contains whitespace, so split it into argv
-        # elements to keep the quotes out of the spawned command.
-        require "shellwords"
-        system(*Shellwords.split(Gem.ruby), "--disable-gems", "setup.rb", *args)
+        system Gem.ruby, "--disable-gems", "setup.rb", *args
       end
 
       unless options[:silent]
