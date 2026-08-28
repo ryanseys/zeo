@@ -116,7 +116,13 @@
 #define SIZEOF_PID_T 4
 #define SIZEOF_UID_T 4
 #define SIZEOF_GID_T 4
-#define SIZEOF_DEV_T 4
+/* `dev_t` is the one width the two platforms disagree on: `int32_t` on
+ * darwin, `unsigned long` on glibc. */
+#ifdef __APPLE__
+# define SIZEOF_DEV_T 4
+#else
+# define SIZEOF_DEV_T 8
+#endif
 #define SIZEOF_STRUCT_STAT_ST_SIZE SIZEOF_OFF_T
 #define SIZEOF_STRUCT_STAT_ST_BLOCKS SIZEOF_OFF_T
 
@@ -131,6 +137,86 @@
 #else
 # define SIZEOF_MODE_T 4
 #endif
+
+/* clang and gcc both offer __int128 on every target zeo builds for. */
+#define SIZEOF___INT128 16
+#define HAVE_INT128_T 1
+#define int128_t __int128
+#define SIZEOF_INT128_T SIZEOF___INT128
+#define HAVE_UINT128_T 1
+#define uint128_t unsigned __int128
+#define SIZEOF_UINT128_T SIZEOF___INT128
+
+#define HAVE_CLOCKID_T 1
+#define SIZEOF_CLOCKID_T 4
+
+/* The printf prefixes autoconf measures. `ruby/backward/2/inttypes.h` derives
+ * the rest of the family from these three. */
+#define PRI_LL_PREFIX "ll"
+#define PRI_PTR_PREFIX "l"
+#define PRI_SIZE_PREFIX "z"
+#define PRI_PTRDIFF_PREFIX "t"
+
+/* The `<type> <-> VALUE` conversions. MRI derives each from the width and
+ * signedness autoconf measured; zeo states them, because it knows the four
+ * targets it supports. A wrong choice here is silent -- a negative `pid_t`
+ * would come back as a huge positive -- so each row names its C type.
+ *
+ * `off_t` is deliberately absent: `internal/arithmetic/off_t.h` picks it from
+ * SIZEOF_OFF_T, and defining it here would only give one fact two owners. */
+#define SIGNEDNESS_OF_PID_T -1               /* int */
+#define PIDT2NUM(v) INT2NUM(v)
+#define NUM2PIDT(v) NUM2INT(v)
+#define PRI_PIDT_PREFIX PRI_INT_PREFIX
+
+#define SIGNEDNESS_OF_UID_T +1               /* unsigned int */
+#define UIDT2NUM(v) UINT2NUM(v)
+#define NUM2UIDT(v) NUM2UINT(v)
+#define PRI_UIDT_PREFIX PRI_INT_PREFIX
+
+#define SIGNEDNESS_OF_GID_T +1               /* unsigned int */
+#define GIDT2NUM(v) UINT2NUM(v)
+#define NUM2GIDT(v) NUM2UINT(v)
+#define PRI_GIDT_PREFIX PRI_INT_PREFIX
+#define GETGROUPS_T gid_t
+
+#define SIGNEDNESS_OF_TIME_T -1              /* long */
+#define TIMET2NUM(v) LONG2NUM(v)
+#define NUM2TIMET(v) NUM2LONG(v)
+#define PRI_TIMET_PREFIX PRI_LONG_PREFIX
+
+#define SIGNEDNESS_OF_RLIM_T +1              /* unsigned long long */
+#define RLIM2NUM(v) ULL2NUM(v)
+#define NUM2RLIM(v) NUM2ULL(v)
+#define PRI_RLIM_PREFIX PRI_LL_PREFIX
+
+#ifdef __APPLE__
+# define SIGNEDNESS_OF_DEV_T -1              /* int32_t */
+# define DEVT2NUM(v) INT2NUM(v)
+# define NUM2DEVT(v) NUM2INT(v)
+# define PRI_DEVT_PREFIX PRI_INT_PREFIX
+# define SIGNEDNESS_OF_MODE_T +1             /* unsigned short */
+# define MODET2NUM(v) USHORT2NUM(v)
+# define NUM2MODET(v) NUM2USHORT(v)
+# define PRI_MODET_PREFIX PRI_SHORT_PREFIX
+# define SIGNEDNESS_OF_CLOCKID_T +1          /* unsigned int */
+# define CLOCKID2NUM(v) UINT2NUM(v)
+# define NUM2CLOCKID(v) NUM2UINT(v)
+#else
+# define SIGNEDNESS_OF_DEV_T +1              /* unsigned long */
+# define DEVT2NUM(v) ULONG2NUM(v)
+# define NUM2DEVT(v) NUM2ULONG(v)
+# define PRI_DEVT_PREFIX PRI_LONG_PREFIX
+# define SIGNEDNESS_OF_MODE_T +1             /* unsigned int */
+# define MODET2NUM(v) UINT2NUM(v)
+# define NUM2MODET(v) NUM2UINT(v)
+# define PRI_MODET_PREFIX PRI_INT_PREFIX
+/* glibc hands out NEGATIVE clock ids for the per-pid clocks. */
+# define SIGNEDNESS_OF_CLOCKID_T -1          /* int */
+# define CLOCKID2NUM(v) INT2NUM(v)
+# define NUM2CLOCKID(v) NUM2INT(v)
+#endif
+#define PRI_CLOCKID_PREFIX PRI_INT_PREFIX
 
 typedef int rb_pid_t;
 #define rb_pid_t rb_pid_t
@@ -216,6 +302,17 @@ typedef unsigned int rb_mode_t;
 #define HAVE_GCC_ATOMIC_BUILTINS 1
 #define HAVE_GCC_SYNC_BUILTINS 1
 #define HAVE_ATTRIBUTE_FUNCTION_ALIAS 1
+
+#define ENUM_OVER_INT 1
+#define USE_UNALIGNED_MEMBER_ACCESS 1
+#define RBIMPL_ATTR_PACKED_STRUCT_BEGIN()
+#define RBIMPL_ATTR_PACKED_STRUCT_END() __attribute__((packed))
+#define NO_SANITIZE(san, x) __attribute__ ((__no_sanitize__(san))) x
+#define NO_SANITIZE_ADDRESS(x) __attribute__ ((__no_sanitize_address__)) x
+#define NO_ADDRESS_SAFETY_ANALYSIS(x) __attribute__ ((__no_address_safety_analysis__)) x
+#define ERRORFUNC(mesg, x) __attribute__ ((__error__ mesg)) x
+#define WARNINGFUNC(mesg, x) __attribute__ ((__warning__ mesg)) x
+#define WEAK(x) __attribute__ ((__weak__)) x
 
 #define RUBY_ALIGNAS(x) _Alignas(x)
 #define RUBY_ALIGNOF _Alignof
