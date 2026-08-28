@@ -1,0 +1,10 @@
+bare defined?	"constant"
+const_defined?	true
+autoload?	"autoload_widget"
+before	nil
+nested defined?	"constant"
+after	true
+missing nested	nil
+bare ask	"constant"
+still unloaded	nil
+after read	true

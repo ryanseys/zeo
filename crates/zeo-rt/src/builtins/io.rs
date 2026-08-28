@@ -1802,6 +1802,40 @@ fn is_io_object(v: &RubyValue) -> bool {
     )
 }
 
+/// Whether `IO.copy_stream` should READ this argument as a stream rather than
+/// open it as a file.
+///
+/// Ruby's rule is a duck test, not a class list: a String or anything with a
+/// `to_path` names a FILE, and everything else must answer `read`. Testing
+/// for `IO`/`File`/`StringIO` instead refused a `Zlib::GzipReader` with "no
+/// implicit conversion into String" -- which is how rubygems unpacks every
+/// `.gem`, so no gem could be extracted.
+fn reads_like_io(v: &RubyValue) -> bool {
+    if names_a_file(v) {
+        return false;
+    }
+    crate::dispatch::responds_to_value(v, crate::Symbol::intern("read"), true)
+}
+
+/// The WRITE half of the same test.
+fn writes_like_io(v: &RubyValue) -> bool {
+    if names_a_file(v) {
+        return false;
+    }
+    crate::dispatch::responds_to_value(v, crate::Symbol::intern("write"), true)
+}
+
+/// Whether this argument NAMES a file: a String, or an object with `to_path`
+/// (which is what `Pathname` has). Checked first, because ruby checks it
+/// first -- a `File` has `to_path` too, and is still a stream.
+fn names_a_file(v: &RubyValue) -> bool {
+    if is_io_object(v) {
+        return false;
+    }
+    matches!(v, RubyValue::Str(_))
+        || crate::dispatch::responds_to_value(v, crate::Symbol::intern("to_path"), true)
+}
+
 /// `#gets`'s value, shared with the rows that drain through it
 /// (`readline`, `readlines`, `each_line`).
 fn gets_value(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
@@ -2281,8 +2315,19 @@ ruby_class! {
         if let Some(RubyValue::Str(buf)) = outbuf {
             match &result {
                 RubyValue::Str(s) => {
-                    let txt = s.lock().to_utf8_lossy().into_owned();
-                    buf.lock().replace_utf8(txt);
+                    // The BYTES, not a lossy re-encoding of them. Going
+                    // through UTF-8 turns every byte no character claims into
+                    // a three-byte replacement, so a 100-byte read filled the
+                    // caller's buffer with 125 -- see `readpartial`.
+                    let bytes = s.lock().bytes().to_vec();
+                    let mut g = buf.lock();
+                    // The buffer KEEPS its own encoding. Measured: ruby fills
+                    // a `+""` and it stays UTF-8, fills a `"".b` and it stays
+                    // binary, fills a EUC-JP one and it stays EUC-JP. Only
+                    // the bytes are replaced.
+                    let enc = g.encoding();
+                    g.replace_bytes(bytes, enc);
+                    drop(g);
                     return Ok(RubyValue::Str(buf.clone()));
                 }
                 RubyValue::Nil => {
@@ -2442,16 +2487,30 @@ ruby_class! {
             }
             return Err(eof_error!("end of file reached"));
         }
-        let text = String::from_utf8_lossy(&bytes).into_owned();
+        // BINARY, and the bytes exactly as read. `readpartial` and `sysread`
+        // are byte reads: ruby tags what they answer ASCII-8BIT whatever the
+        // stream's encoding is.
+        //
+        // This went through `String::from_utf8_lossy`, which turns every byte
+        // no character claims into a three-byte replacement -- so a 559-byte
+        // read answered 1,002 bytes of something else. rubygems digests a
+        // `.gem`'s members through exactly this call, so every downloaded gem
+        // failed its checksum and nothing could be installed.
+        let read = crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT);
         // The second argument is an output BUFFER: CRuby fills it in place and
         // returns that same object, so the caller may read the bytes back out of
         // it or compare with `equal?`.
         match outbuf {
             Some((orig, buf)) => {
-                buf.lock().replace_utf8(text);
+                let bytes = read.lock().bytes().to_vec();
+                // The buffer keeps its own encoding -- see `read(n, buf)`.
+                let mut g = buf.lock();
+                let enc = g.encoding();
+                g.replace_bytes(bytes, enc);
+                drop(g);
                 Ok(orig.clone())
             }
-            None => Ok(RubyValue::Str(crate::collections::string_new(text))),
+            None => Ok(RubyValue::Str(read)),
         }
     }
 
@@ -2977,13 +3036,21 @@ ruby_class! {
             buf.truncate(n);
             Ok(buf)
         })?;
-        let text = String::from_utf8_lossy(&data).into_owned();
+        // Binary, and the bytes as read -- a byte count can land mid-character,
+        // so decoding here would both change the length and lie about it.
         match buffer {
             Some(RubyValue::Str(buf)) => {
-                buf.lock().replace_utf8(text);
+                // The buffer keeps its own encoding -- see `read(n, buf)`.
+                let mut g = buf.lock();
+                let enc = g.encoding();
+                g.replace_bytes(data, enc);
+                drop(g);
                 Ok(RubyValue::Str(buf.clone()))
             }
-            _ => Ok(RubyValue::Str(crate::collections::string_new(text))),
+            _ => Ok(RubyValue::Str(crate::string_from_bytes(
+                data,
+                crate::encoding::ASCII_8BIT,
+            ))),
         }
     }
 
@@ -3220,7 +3287,7 @@ ruby_class! {
     // Each end is either an IO-like object (read from / written to at its current
     // position, via `read`/`write`) or a filename (String/`to_path`).
     def self."copy_stream" cfunc (_recv, src, dst, _copy_length?, _src_offset?, &_blk) {
-        let bytes = if is_io_object(src) {
+        let bytes = if reads_like_io(src) {
             match crate::dispatch::send_value(src, crate::Symbol::intern("read"), &[], None)? {
                 RubyValue::Str(s) => s.lock().bytes().to_vec(),
                 RubyValue::Nil => Vec::new(), // EOF
@@ -3236,7 +3303,7 @@ ruby_class! {
         };
         let n = bytes.len();
 
-        if is_io_object(dst) {
+        if writes_like_io(dst) {
             let s = RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT));
             crate::dispatch::send_value(dst, crate::Symbol::intern("write"), &[s], None)?;
         } else {

@@ -215,7 +215,77 @@ fn const_lookup(cid: crate::ClassId, name: &str, how: Search) -> Option<RubyValu
 /// The scope OPERATOR's search, not `const_defined?`'s -- `defined?(K::TOP)` is
 /// nil for a top-level `TOP` that `K.const_defined?(:TOP)` answers true for.
 pub fn const_defined_in(cid: crate::ClassId, name: &str) -> bool {
-    const_lookup(cid, name, Search::Scoped).is_some()
+    if const_lookup(cid, name, Search::Scoped).is_some() || autoload_declared(cid, name) {
+        return true;
+    }
+    // The SCOPE may itself be an autoload that has not run, and then the
+    // question cannot be answered without running it: `defined?(A::B)` is a
+    // real read of `A`. Measured -- ruby loads the file here and does NOT
+    // load it for a bare `defined?(A)`.
+    //
+    // This is what `Gem::HAVE_OPENSSL = defined? OpenSSL::SSL` needs, one
+    // line after `autoload :OpenSSL, "openssl"`. Answering nil made rubygems
+    // refuse every HTTPS source with "OpenSSL is not available".
+    if run_scope_autoload(cid) {
+        return const_lookup(cid, name, Search::Scoped).is_some();
+    }
+    false
+}
+
+/// Run the autoload that would define `cid` itself, if one is pending.
+///
+/// `cid`'s own name says where its record lives: `A::B` is registered as
+/// `B` under `A`, and a top-level name as itself under `Object`. Answers
+/// whether anything was loaded.
+///
+/// A load that RAISES answers false rather than propagating: this is reached
+/// from `defined?`, which is not allowed to raise.
+fn run_scope_autoload(cid: crate::ClassId) -> bool {
+    if !ANY_PENDING_AUTOLOAD.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    let Some(full) = crate::dispatch::class_name(cid) else {
+        return false;
+    };
+    let (owner_path, leaf) = match full.rsplit_once("::") {
+        Some((path, leaf)) => (path, leaf),
+        None => ("", full.as_str()),
+    };
+    let owner = if owner_path.is_empty() {
+        crate::ClassId(0)
+    } else {
+        match const_lookup(crate::ClassId(0), owner_path, Search::Inherited) {
+            Some(RubyValue::Class(c)) => c,
+            _ => return false,
+        }
+    };
+    if !has_pending_autoload(owner.0, leaf) {
+        return false;
+    }
+    run_pending_autoload(owner.0, leaf).is_ok()
+}
+
+/// Whether an `autoload` has been DECLARED for `owner::name` and has not run.
+///
+/// ruby announces such a constant the moment the `autoload` is written, long
+/// before the file loads and whether or not it ever can -- so `defined?` says
+/// "constant" and `const_defined?` says true. Answering nil instead is what
+/// made rubygems decide it had no OpenSSL: `rubygems/openssl.rb` is
+/// `autoload :OpenSSL, "openssl"` followed by `HAVE_OPENSSL = defined?
+/// OpenSSL::SSL`, so every HTTPS source was refused before a byte was sent.
+///
+/// It does NOT run the autoload, and ruby does not either -- measured: asking
+/// `defined?(Deferred)` leaves the file unloaded. A NESTED ask loads it,
+/// because resolving the head is a real constant read.
+fn autoload_declared(cid: crate::ClassId, name: &str) -> bool {
+    if !ANY_PENDING_AUTOLOAD.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    let pending = pending_autoloads().lock();
+    pending.contains_key(&(cid.0, name.to_string()))
+        // A top-level `autoload` records against `Object`, and every class
+        // and module sees `Object`'s constants.
+        || (cid.0 != 0 && pending.contains_key(&(0, name.to_string())))
 }
 
 /// `defined?(NAME)`'s membership test for a BARE name codegen could not fold
@@ -228,7 +298,7 @@ pub fn const_defined_in(cid: crate::ClassId, name: &str) -> bool {
 /// for every constant a unit assigned at ITS top level, while the read beside
 /// it answered the value.
 pub fn const_defined_bare(cid: crate::ClassId, name: &str) -> bool {
-    const_lookup(cid, name, Search::Inherited).is_some()
+    const_lookup(cid, name, Search::Inherited).is_some() || autoload_declared(cid, name)
 }
 
 /// The scope operator's own receiver check, for the DYNAMIC form (`obj::NAME`,

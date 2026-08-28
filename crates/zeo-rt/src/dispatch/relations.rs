@@ -305,11 +305,30 @@ fn is_a_singleton_class(recv: &RubyValue, target: ClassId) -> bool {
 }
 
 /// `rescue *list => e` matching: does the raised `exc` match any class in the
-/// splatted `list`? `list` is the EVALUATED splat expression -- an Array of
-/// exception classes (`rescue *errs`), or, splatting a non-array, a single
-/// class (`rescue *ArgumentError`). An empty array matches nothing. A
-/// non-Module element is CRuby's `TypeError: class or module required for
-/// rescue clause`. OR'd in after a clause's static class list by codegen.
+/// splatted `list`?
+///
+/// `list` is the EVALUATED splat expression, and the splat's own rule decides
+/// what it becomes -- the same rule an argument list follows:
+///
+///   * an Array is its elements (`rescue *errs`);
+///   * `nil` is NO elements, so the clause matches nothing and the exception
+///     goes on past it;
+///   * anything else with a `to_a` is that array;
+///   * anything else is one element (`rescue *ArgumentError`).
+///
+/// A non-Module element is then CRuby's `TypeError: class or module required
+/// for rescue clause`. OR'd in after a clause's static class list by codegen.
+///
+/// THE NIL CASE IS NOT AN EDGE CASE. rubygems writes
+///
+///     rescue Gem::Timeout::Error, IOError, SocketError, SystemCallError,
+///            *(OpenSSL::SSL::SSLError if Gem::HAVE_OPENSSL) => e
+///
+/// and without openssl loaded that splat is nil. Treating it as one element
+/// raised `TypeError` in place of whatever the body raised -- but only for an
+/// exception the earlier entries did NOT match, which is why it hid until a
+/// download failed. Measured against ruby 4.0.6 for all six shapes; see
+/// `tests/a_rescue_splat_follows_the_splat_rule.rb`.
 pub fn rescue_matches_any(exc: &RubyValue, list: &RubyValue) -> Result<bool, Signal> {
     match list {
         RubyValue::Array(a) => {
@@ -320,7 +339,28 @@ pub fn rescue_matches_any(exc: &RubyValue, list: &RubyValue) -> Result<bool, Sig
             }
             Ok(false)
         }
-        single => rescue_class_matches(single, exc),
+        RubyValue::Nil => Ok(false),
+        // A Class is the common single-element splat and has no `to_a`, so it
+        // skips the probe -- this path runs with an exception in flight.
+        RubyValue::Class(_) => rescue_class_matches(list, exc),
+        single => {
+            let to_a = Symbol::intern("to_a");
+            if crate::dispatch::responds_to_value(single, to_a, true) {
+                let expanded = send_value(single, to_a, &[], None)?;
+                // One level only: `to_a` answering something that is not an
+                // Array is the caller's problem, and the element check names
+                // it.
+                if let RubyValue::Array(a) = expanded {
+                    for el in a.lock().to_vec() {
+                        if rescue_class_matches(&el, exc)? {
+                            return Ok(true);
+                        }
+                    }
+                    return Ok(false);
+                }
+            }
+            rescue_class_matches(single, exc)
+        }
     }
 }
 

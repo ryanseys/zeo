@@ -665,10 +665,18 @@ pub fn depth() -> usize {
 }
 
 /// `Kernel#__method__` / `#__callee__`: the innermost frame's METHOD name,
-/// with the `Class#` qualifier the backtrace label carries stripped off.
+/// with the owner qualifier the backtrace label carries stripped off.
 /// `None` at the top level and inside a block, which is what ruby answers
 /// there too. A builtin row pushes no frame of its own, so the top frame is
 /// the caller whose name is being asked for.
+///
+/// BOTH separators, and the second one is not decoration. An instance method
+/// is labelled `Owner#name` and a class or singleton method `Owner.name`, so
+/// stripping only `#` left every `def self.x` answering `:"Owner.x"`. What
+/// that breaks is `to_enum(__method__, ...)`, the standard way a method hands
+/// back an enumerator over itself: the enumerator named a method that does
+/// not exist, and re-entering it raised `NoMethodError`. rubygems' vendored
+/// `TSort.tsort` is written exactly that way, so no gem could be resolved.
 pub fn current_frame_method() -> Option<&'static str> {
     with_frames(|f| {
         // A block's label names the method it was written in
@@ -679,7 +687,9 @@ pub fn current_frame_method() -> Option<&'static str> {
         if owner.starts_with('<') {
             return None;
         }
-        Some(match owner.split_once('#') {
+        // The LAST separator: an owner may be `A::B`, and a method name can
+        // hold neither character.
+        Some(match owner.rsplit_once(['#', '.']) {
             Some((_, name)) => name,
             None => owner,
         })
