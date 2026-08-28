@@ -3,10 +3,12 @@
 //! `Gemfile.lock` against the vendored gems, and the diagnostic renderings.
 //! One binary -- a test target costs a full link of the whole compiler.
 
+mod binary_size;
 mod builtin_shape;
 mod cli;
 mod clif;
 mod diagnostics;
+mod env_vars;
 mod gem_versions;
 mod goldens_hygiene;
 

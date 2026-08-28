@@ -1000,8 +1000,8 @@ fn main() -> ExitCode {
     // A diagnostic read by a machine must not be reflowed. miette hard-wraps at
     // the terminal width and breaks after `/` and `-`, so an absolute path in a
     // message arrives split across two lines -- and whoever rejoins them cannot
-    // tell the inserted space from a real one. That silently defeated the
-    // gem-probe's path scrubber and committed 12 rows carrying this machine's
+    // tell the inserted space from a real one. That silently defeated a
+    // harness's path scrubber and recorded 12 rows carrying this machine's
     // home directory. A pipe gets the message on one line; a terminal keeps the
     // wrapping, and colour still degrades on its own either way.
     if !std::io::stderr().is_terminal() {

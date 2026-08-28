@@ -179,13 +179,7 @@ jobs:
       # number someone measured once and typed. `puts 1` is the floor every
       # program pays, and a table added to the always-on set moves it for
       # every program at once -- silently, because nothing fails.
-      - run: tools/zeo-dev size --check
-
-      # A documented environment variable with no reader is a silent no-op.
-      # Three of those shipped at once: `ZEO_BLESS=1` had been replaced by
-      # `ZEO_BLESS_FROM_XTASK`, and two ledgers plus a doc still told the
-      # reader to use the spelling that does nothing.
-      - run: tools/zeo-dev check-env-vars
+      - run: make ci-size
 
       # A file this large in the working tree is almost always a build
       # artifact committed by mistake. History was rewritten to strip blobs

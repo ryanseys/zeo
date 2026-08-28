@@ -22,8 +22,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 /// The exit status a ceiling breach reports. `12` is `ENOMEM`, chosen so a
 /// harness can tell "this machine could not hold the compile" from an
-/// ordinary compile failure (`1`) without parsing stderr -- see
-/// the gem-probe ledger, which records the two as different outcomes.
+/// ordinary compile failure (`1`) without parsing stderr.
 pub const EXIT_MEMORY_LIMIT: i32 = 12;
 
 /// The stderr line a breach prints, matched by harnesses that only have the

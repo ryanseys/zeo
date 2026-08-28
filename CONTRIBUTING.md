@@ -60,7 +60,7 @@ $ cargo nextest run -p zeo -E 'test(example::)'  # one corpus
 $ cargo nextest run -p zeo -P full            # + the whole-gem cases
 $ tools/zeo-dev bless <filter>              # re-record goldens from ruby
 $ make bench                                # the criterion perf bank (bench/README.md)
-$ tools/zeo-dev size                        # what each class table costs a binary
+$ make ci-size                              # the linked-binary size gate
 ```
 
 The default profile is the dev loop. `-P full` adds the cases that compile a

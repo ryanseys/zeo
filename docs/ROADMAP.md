@@ -80,9 +80,11 @@ front end of the **rustc emitter that has since been deleted**, and its
 not been re-run. A stratified sample re-probe is owed before the number is
 quoted anywhere public.
 
-The ledger is not in git — see [`GEM_TESTING.md`](GEM_TESTING.md). The probe
-runs the compiler front end over a real gem in an isolated view of itself and
-its declared dependencies, pinned by the `.gem`'s sha256.
+**The probe itself is retired.** It ran the compiler front end over a real gem
+in an isolated view of itself and its declared dependencies, pinned by the
+`.gem`'s sha256, and wrote a 21 MB ledger that was never in git. Its frontier
+reached empty, so the tool was deleted; what follows is the record it left,
+kept because the buckets still name real work.
 
 ### What that number does and does not say
 

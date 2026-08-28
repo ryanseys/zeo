@@ -3,10 +3,9 @@
 # The shared half of `tools/zeo-dev`.
 #
 # Everything here is stdlib only, and everything here runs under BOTH `ruby`
-# from PATH and a zeo-compiled binary. Ruby is the mechanism: a tool that only
-# runs when zeo is correct cannot diagnose zeo when it is not, and `bless`
-# and `gem-probe` are exactly what you reach for when something is broken.
-# Compiling the tools with zeo is a dogfooding signal, never the way they run.
+# from PATH and a zeo-compiled binary. A tool that only runs when zeo is
+# correct cannot diagnose zeo when it is not, and `bless` is exactly what you
+# reach for when something is broken.
 #
 # One rule keeps both engines working (this list once had three; the
 # autoload and builtin-alias bugs closed and became passing goldens):
@@ -36,11 +35,7 @@ module ZeoDev
     bench
     gem
     gemtests
-    gem-probe
     cext
-    check-env-vars
-    size
-    test-times
     linux
     stage-publish
     dist

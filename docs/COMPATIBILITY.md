@@ -992,7 +992,7 @@ are not drawn from the store.
 This classification is a layout question, not a compile one. It is available
 programmatically through `zeo::gem_compat` and `zeo::gem_compat_installed`,
 which `gems_require.rs` exercises. To measure whether a gem actually compiles,
-run `gem-probe` — see [`GEM_TESTING.md`](GEM_TESTING.md).
+compile it and read the `--report` record.
 
 ## The per-compile record
 

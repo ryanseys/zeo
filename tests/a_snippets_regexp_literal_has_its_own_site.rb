@@ -5,7 +5,7 @@
 # answered whichever pattern reached the cache first.
 #
 # It is silent: both sides get a working Regexp, just the wrong one. The
-# tools found it -- `zeo-dev check-env-vars` scanned every doc with a pattern
+# tools found it -- the env-var check scanned every doc with a pattern
 # from a run-time-required unit and reported the whole file as an undefined
 # variable name.
 #

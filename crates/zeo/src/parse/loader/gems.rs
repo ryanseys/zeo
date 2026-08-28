@@ -1,6 +1,5 @@
 //! Gem discovery: the packages/bundled-gems directory scan, gemspec/manifest
-//! parsing, lockfile precedence, and the native-gem/feature classifiers whose
-//! message text the gem-probe ledger keys on.
+//! parsing, lockfile precedence, and the native-gem/feature classifiers.
 
 use super::{Gem, GemProvenance, PResult};
 use std::collections::{HashMap, HashSet};

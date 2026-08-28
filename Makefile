@@ -49,7 +49,6 @@ install-deps:
 
 test: all
 	$(NEXTEST) --workspace
-	-$(ZEO_DEV) test-times test
 
 check:
 	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
@@ -114,6 +113,12 @@ DOCS_RS_FEATURES := $(shell sed -n '/\[package.metadata.docs.rs\]/,/^\[dependenc
 ci-features:
 	$(CARGO) check -p zeo-rt --no-default-features
 	$(CARGO) check -p zeo-rt --no-default-features --features '$(DOCS_RS_FEATURES)'
+
+# `puts 1` is the floor every program pays, and a table joining the always-on
+# set moves it for every program at once. Ignored by default: it builds the
+# release compiler and links a program.
+ci-size:
+	$(NEXTEST) -p zeo --test checks --run-ignored all -E 'test(binary_size::)'
 
 # The native-library table an AOT link names is HAND-WRITTEN
 # (backend/link.rs); this asks rustc for the live answer and diffs it.

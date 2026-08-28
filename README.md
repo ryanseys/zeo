@@ -471,7 +471,7 @@ Narrower runs go through cargo and the dev CLI directly:
 $ cargo nextest run -p zeo --test goldens       # every golden corpus
 $ tools/zeo-dev bless spinel::                  # re-record goldens from ruby
 $ make bench                                    # the performance suite (criterion)
-$ tools/zeo-dev size                            # what each class table costs
+$ make ci-size                                   # the linked-binary size gate
 ```
 
 Suites are [`datatest-stable`](https://crates.io/crates/datatest-stable)
@@ -538,7 +538,7 @@ structurally impossible.
 ```
 crates/      the six workspace crates (above)
 docs/        BINARY_SIZE, CLIF, COMPATIBILITY, EVAL, EXTENSIONS,
-             GEM_TESTING, ROADMAP
+             ROADMAP
 tests/       example goldens, the spinel corpus, the gaps tracker, gemtests
 gems/        67 bundled gems (upstream.lock pins the git-tracked ones)
 bench/       61 benchmark programs; read bench/README.md

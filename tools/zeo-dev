@@ -21,9 +21,7 @@ USAGE = <<~TEXT
     bench           the runtime performance suite under `bench/`
     gem             manage the vendored upstream gems
     gemtests        run a vendored gem's own test suite
-    gem-probe       fetch a gem and record whether zeo compiles it
     cext            manage the vendored MRI C API headers and the rb_* census
-    check-env-vars  every documented ZEO_* variable has a reader
     linux           run the suites in the linux container
     stage-publish   stage the artifacts the published crate ships
     dist            assemble the relocatable distribution

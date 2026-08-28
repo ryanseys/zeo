@@ -152,11 +152,13 @@ five with it.
 
 ## How to measure it
 
-`tools/zeo-dev size` links `puts 1`, then links it again once per class table
-with that table dropped (`ZEO_DEBUG_DROP_TABLE`), and diffs. That is exact
-per-table attribution, and there is no other way to get it; every figure in
-this document before it was prose. `zeo-dev size --check` is a CI gate on the
-baseline, so a regression is loud.
+`make ci-size` links `puts 1` with the release compiler and compares it
+against a committed baseline, so a regression is loud rather than prose.
+
+The per-table columns below were measured by linking `puts 1` once per class
+table with that table dropped (`ZEO_DEBUG_DROP_TABLE`) and diffing — exact
+per-table attribution, and there is no other way to get it. That sweep is a
+one-off; the gate defends the total.
 
 The columns OVERLAP: two tables can root the same code, so they do not sum.
 The largest, measured 2026-08-24:
