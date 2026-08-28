@@ -319,3 +319,44 @@ fn a_library_named_in_the_runtime_load_dial_loads_at_run_time() {
         stderr_of(&sub_file)
     );
 }
+
+/// `zeo --irb` opens a real irb session and evaluates what is typed at it.
+///
+/// The transcript arrives on stdin, which is also why the FLAG exists: the
+/// bare-`zeo` form asks whether both ends are a terminal, and a piped test has
+/// neither. `--irb` is the same shell said by name.
+///
+/// This is the second deliberately heavy case here, and it is affordable now:
+/// `require "irb"` compiles in about 1.6 seconds where it once took 18. What
+/// it proves is not one method but a graph -- reline's line editor,
+/// io/console, the ANSI IOGate, `IO.new` taking its options and `$LOAD_PATH`
+/// filled by the compiler -- each of which was its own fix, and none of which
+/// had an end-to-end test.
+#[test]
+fn the_irb_shell_evaluates_a_piped_transcript() {
+    use std::io::Write;
+
+    let mut child = zeo()
+        .arg("--irb")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn zeo --irb");
+    child
+        .stdin
+        .take()
+        .expect("a piped stdin")
+        .write_all(b"p 6 * 7\nputs \"typed\"\n[1, 2].map { |n| n + 1 }\nexit\n")
+        .expect("write the transcript");
+
+    let out = child.wait_with_output().expect("wait for the shell");
+    let text = stdout_of(&out);
+    assert!(out.status.success(), "irb exited {:?}:\n{text}", out.status);
+    // The evaluated ANSWERS, not just the echoed input -- irb echoes what it
+    // reads from a pipe, so matching the input alone would pass on a shell
+    // that evaluated nothing.
+    for want in ["42", "typed", "[2, 3]"] {
+        assert!(text.contains(want), "irb never printed {want}:\n{text}");
+    }
+}

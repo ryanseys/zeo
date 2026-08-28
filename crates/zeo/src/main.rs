@@ -240,6 +240,8 @@ modes:
                         with -o, write the binary instead of running it
   (no arguments)        open an irb shell, when there is a terminal to talk
                         to; piping or redirecting zeo is unaffected
+  --irb                 open the shell whether or not there is a terminal --
+                        the same thing by name, for a wrapper or a pty
 
 subcommands:
   gem <args...>         run rubygems -- the real one, compiled from the
@@ -373,6 +375,10 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut gem_paths: Vec<PathBuf> = Vec::new();
     let mut gemfile: Option<PathBuf> = None;
     let mut compile = false;
+    // `--irb`: the shell a bare `zeo` opens on a terminal, asked for by name
+    // so it works where there is no terminal to detect -- a wrapper script, a
+    // pty a test drives, an editor's run pane.
+    let mut irb = false;
     let mut backend: Option<zeo::backend::Backend> = None;
     let mut program_args: Vec<String> = Vec::new();
     let mut required_libraries: Vec<String> = Vec::new();
@@ -436,6 +442,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                     return Err(format!("--{name} needs a feature, e.g. --{name}=gems"));
                 }
                 "compile" => compile = true,
+                "irb" => irb = true,
                 "backend" => backend = Some(zeo::backend::Backend::parse(&value("--backend")?)?),
                 "gems" => package_dirs.push(PathBuf::from(value("--gems")?)),
                 "embed-sources" => {
@@ -642,6 +649,9 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         // Only when nothing else was asked for: `zeo -o out` names an
         // artifact and has no program to put in it, which stays the error it
         // has always been rather than becoming a shell.
+        // Asked for by NAME. It answers before the terminal test, so
+        // `zeo --irb < script` opens a shell rather than reading the script.
+        (None, None) if irb => Source::Irb,
         (None, None)
             if interactive_terminal()
                 && output.is_none()
