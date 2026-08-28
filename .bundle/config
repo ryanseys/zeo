@@ -1,0 +1,9 @@
+---
+# Where `bundle install` puts the resolved gems. Gitignored via `/vendor/`,
+# rebuilt by `make install-deps`.
+BUNDLE_PATH: "vendor/bundle"
+# A lock that does not match the Gemfile is an error, never a silent update.
+# The whole point of the file is that every machine resolves the same set, so
+# an install must never be the thing that changes it. Editing the Gemfile is
+# followed by `bundle lock`, which is allowed to write.
+BUNDLE_FROZEN: "true"

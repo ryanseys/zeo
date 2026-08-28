@@ -7,16 +7,25 @@
 - A real Ruby matching the oracle version pinned in `mise.toml`
   (via `mise install`) — only needed when re-blessing golden output from the
   oracle (`tools/zeo-dev bless`); the committed snapshots cover ordinary runs.
+- Network access on a fresh clone, once, for `make install-deps`.
 
 ```console
-$ make     # cargo build --workspace
+$ make install-deps   # bundle install: Gemfile.lock -> vendor/bundle
+$ make                # cargo build --workspace
 ```
 
+`Gemfile` and `Gemfile.lock` name every gem version zeo depends on. One lock
+decides both what the compiler vendors and what the ruby oracle resolves, so
+the two cannot disagree about a version — which they did, and a golden then
+recorded the difference as a zeo bug.
+
 The golden and e2e suites spawn the built `zeo` binary and link against
-`libzeo.a`. Both are products of the `zeo` package — and the suites live in
-`crates/zeo/tests/`, so cargo rebuilds both before any suite runs. There is
-no "build first" ritual: `cargo nextest run -p zeo --test examples` after a
-compiler edit tests the edited compiler.
+`libzeo.a`. Both are products of the `zeo` package, and the suites live in
+`crates/zeo/tests/`, so `cargo nextest run -p zeo --test examples` after a
+compiler edit tests the edited compiler. One exception: cargo rebuilds the
+binary and the test binaries but **not** `libzeo.a`, which the AOT leg links,
+so that leg checks the archive against the sources itself and refuses a stale
+one by name.
 
 ## The one rule: oracle-verified, divergence-documented
 

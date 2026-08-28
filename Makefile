@@ -3,6 +3,9 @@
 # not. CI's test legs call the ci-* targets here, so `make gate` and CI run
 # the same commands by construction and cannot drift.
 #
+# `make install-deps`
+#                   resolve Gemfile.lock into vendor/bundle (needs network
+#                   once); the gem set both the compiler and the oracle read
 # `make`            build the workspace (the suites hard-require a fresh
 #                   `zeo` binary and `libzeo.a`; nothing gives a test target
 #                   a cargo dependency edge to a binary, so build first)
@@ -29,9 +32,11 @@
 CARGO ?= cargo
 NEXTEST ?= $(CARGO) nextest run
 ZEO_DEV ?= tools/zeo-dev
+BUNDLE ?= bundle
 
 .PHONY: all test check check-batch gate bench pgo install linux clean ci-typed \
-        ci-jit ci-aot ci-memcheck ci-doc ci-natlibs ci-anchor ci-milestones gemstore
+        ci-jit ci-aot ci-memcheck ci-doc ci-natlibs ci-anchor ci-milestones \
+        gemstore install-deps
 
 all: gemstore
 	$(CARGO) build --workspace
@@ -43,6 +48,15 @@ all: gemstore
 # Idempotent and offline once built; the first build needs the network.
 gemstore:
 	@$(ZEO_DEV) gemstore
+
+# Resolve `Gemfile.lock` into `vendor/bundle`. One committed lock decides both
+# what the compiler vendors and what the ruby oracle resolves, so the two
+# cannot disagree about a version the way `upstream.lock` and the machine's
+# own store could. Needs the network the first time and nothing after it.
+# `.bundle/config` sets the path and refuses to rewrite the lock during an
+# install; changing the Gemfile means running `bundle lock` on purpose.
+install-deps:
+	$(BUNDLE) install
 
 test: all
 	$(NEXTEST) --workspace

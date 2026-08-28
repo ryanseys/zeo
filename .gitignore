@@ -8,7 +8,9 @@ target/
 # Generated per-compile gem-disclosure records (zeo CLI)
 zeo-gems.json
 
-# Vendored upstream sources for the bundler north-star (not part of the build)
+# Resolved and fetched, never authored: `vendor/bundle` is what
+# `make install-deps` writes out of Gemfile.lock, and the rest is upstream
+# sources fetched on demand. The lock is the committed half.
 /vendor/
 
 # Measurement, not source: what a gem-probe sweep WROTE. The ledger is 21MB
