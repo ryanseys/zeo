@@ -103,12 +103,11 @@ fn milestone(rb: &Path) -> datatest_stable::Result<()> {
         false => golden::Mode::Pass,
     };
     // `an_rspec_suite_runs.rb` needs rspec, which ruby does not ship and zeo
-    // deliberately does not vendor. The oracle finds it in `vendor/gemstore`
-    // like any other gem it can see; zeo needs `-I` on each gem's `lib/`.
-    // Reading the store rather than naming versions keeps the pins out of the
-    // program. `tools/zeo-dev gemstore` builds it and `make` depends on that.
+    // deliberately does not vendor. The oracle reaches it through bundler;
+    // zeo needs `-I` on each gem's `lib/`. Reading the bundle rather than
+    // naming versions keeps the pins out of the program.
     let env = golden::SuiteEnv {
-        load_roots: golden::gemstore_libs(),
+        load_roots: golden::bundle_rspec_libs(),
         ..Default::default()
     };
     golden::run_golden_env(rb, mode, &golden::tests_run_cwd(), &env)

@@ -300,6 +300,21 @@ fn bench_zeo(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usize
     g.finish();
 }
 
+/// The oracle, resolved against `Gemfile.lock` exactly as the goldens' is.
+/// A number banked against a differently-resolved ruby compares zeo to a
+/// library set it was never measured against.
+fn oracle_cmd(ruby: &str, rb: &Path) -> Command {
+    let mut cmd = Command::new(ruby);
+    cmd.arg(rb)
+        .env("BUNDLE_GEMFILE", repo_root().join("Gemfile"))
+        .env("RUBYOPT", "-rbundler/setup")
+        .env_remove("RUBYLIB")
+        .env_remove("GEM_HOME")
+        .env_remove("GEM_PATH")
+        .env_remove("GEM_SPEC_CACHE");
+    cmd
+}
+
 fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usize, total: usize) {
     let ruby = std::env::var("ZEO_BENCH_ORACLE_RUBY").unwrap_or_else(|_| "ruby".to_string());
     let mut g = c.benchmark_group("cruby");
@@ -314,18 +329,18 @@ fn bench_cruby(c: &mut Criterion, corpus: &[PathBuf], lazy: bool, done: &mut usi
             let gated: OnceCell<()> = OnceCell::new();
             g.bench_function(name, move |b| {
                 gated.get_or_init(|| {
-                    gate(Command::new(&ruby).arg(&rb), &rb, "oracle ruby");
+                    gate(&mut oracle_cmd(&ruby, &rb), &rb, "oracle ruby");
                 });
-                b.iter_custom(|iters| time_runs(Command::new(&ruby).arg(&rb), iters));
+                b.iter_custom(|iters| time_runs(&mut oracle_cmd(&ruby, &rb), iters));
             });
         } else {
             progress(*done, total, "cruby", &name);
             *done += 1;
-            let one_run = gate(Command::new(&ruby).arg(&rb), &rb, "oracle ruby");
+            let one_run = gate(&mut oracle_cmd(&ruby, &rb), &rb, "oracle ruby");
             eprintln!("gate cruby/{name}: {:.3}s", one_run.as_secs_f64());
             g.measurement_time(target_for(one_run));
             g.bench_function(name, move |b| {
-                b.iter_custom(|iters| time_runs(Command::new(&ruby).arg(&rb), iters));
+                b.iter_custom(|iters| time_runs(&mut oracle_cmd(&ruby, &rb), iters));
             });
         }
     }

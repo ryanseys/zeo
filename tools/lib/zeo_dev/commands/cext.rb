@@ -580,7 +580,7 @@ module ZeoDev
         Dir.mktmpdir("zeo-cext-fwd") do |tmp|
           f = File.join(tmp, "verify.rb")
           File.write(f, script)
-          res = Exec.run(Ruby.oracle_argv("-rset", f), stdin: input, capture_stdout: true)
+          res = Exec.run(Ruby.oracle_argv("-rset", f), env: Ruby.oracle_env, stdin: input, capture_stdout: true)
           raise Error, "the oracle could not verify the mappings: #{res.stderr}" unless res.success?
 
           return JSON.parse(res.stdout, symbolize_names: true)

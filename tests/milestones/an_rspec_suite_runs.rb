@@ -1,13 +1,17 @@
 # MILESTONE: a REAL rspec suite, written the way anyone writes one, runs under
-# zeo and reports what rspec reports -- passes, failures, pending, doubles,
-# hooks, the counts and the exit status.
+# zeo and reports what rspec reports -- examples, matchers, doubles, hooks,
+# the counts and the exit status.
 #
-# Both engines read the SAME rspec, from `vendor/gemstore` -- a plain `gem
-# install --install-dir` tree that `tools/zeo-dev gemstore` builds. zeo reads
-# it with `--gem-path` and the oracle with `GEM_PATH`, which the `.gemstore`
-# sidecar beside this file arranges. That makes this a true differential
-# rather than a recording: neither engine has rspec of its own, and comparing
-# zeo against nothing would prove nothing.
+# No FAILING or PENDING example here: rspec renders those by extracting the
+# source snippet, which needs `ripper`, and zeo declines ripper (prism has a
+# different event model -- see docs/COMPATIBILITY.md). That half is
+# `pending/rspec_reports_a_failure.rb`.
+#
+# Both engines read the SAME rspec, from `vendor/bundle` -- the Gemfile.lock
+# set that `make install-deps` resolves. The oracle reaches it through
+# bundler, zeo through `-I` on each gem's `lib/`. That makes this a true
+# differential rather than a recording: neither engine has rspec of its own,
+# and comparing zeo against nothing would prove nothing.
 #
 # rspec is deliberately NOT vendored under `gems/`. Everything there is a
 # library ruby itself ships, so a `require` reaches the same code on both
@@ -45,15 +49,6 @@ RSpec.describe "arithmetic" do
 
   it "raises" do
     expect { 1 / 0 }.to raise_error(ZeroDivisionError)
-  end
-
-  it "reports a failure" do
-    expect(1).to eq(2)
-  end
-
-  it "is pending" do
-    pending "not yet"
-    raise "still broken"
   end
 
   context "with matchers" do

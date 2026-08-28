@@ -51,9 +51,8 @@ module ZeoDev
         { prefix: "gemtest", root: "tests/gemtests", glob: "*/*.rb" },
       ].freeze
 
-      # The gems ruby does not ship, which the oracle is given so it has
-      # something to be compared against. `tools/zeo-dev gemstore` builds it.
-      GEM_STORE = File.join("vendor", "gemstore")
+      # Where `make install-deps` resolves Gemfile.lock.
+      BUNDLE = File.join("vendor", "bundle")
 
       def self.summary = "re-record golden .expected files from the ruby oracle"
 
@@ -178,12 +177,12 @@ module ZeoDev
         capture(env, [*cmd, rb, *argv], stdin, rb)
       end
 
-      # Every `lib/` in `vendor/gemstore`, for the one suite whose ZEO side
-      # needs those gems too -- rspec. The oracle reads the store through
-      # `Ruby.oracle_env` like every other gem it can see. Reading the
-      # directory keeps the pinned versions out of here.
+      # `vendor/bundle`'s rspec trees, for the one suite whose ZEO side needs
+      # those gems too. The oracle reaches them through `Ruby.oracle_env`.
+      # Scoped to rspec rather than the whole bundle, which would put
+      # upstream copies of gems zeo vendors ahead of its own.
       def gem_store_libs
-        Dir.glob(File.join(ROOT, GEM_STORE, "gems", "*", "lib")).sort
+        Dir.glob(File.join(ROOT, BUNDLE, "ruby", "*", "gems", "{rspec,diff-lcs}*", "lib")).sort
       end
 
       # A `tests/divergences/` golden records zeo's own answer on purpose.

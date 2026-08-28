@@ -430,7 +430,9 @@ module ZeoDev
       # gem that ships a file ruby-core drops (open3's `jruby_windows.rb`),
       # which is exactly the sort of thing worth reporting.
       def default_gem_dir(vendored)
-        out = `#{Ruby.oracle} -rrbconfig -e "print RbConfig::CONFIG['rubylibdir']" 2>/dev/null`.strip
+        res = Exec.run(Ruby.oracle_argv("-rrbconfig", "-e", "print RbConfig::CONFIG['rubylibdir']"),
+                       env: Ruby.oracle_env, capture_stdout: true, chdir: ROOT)
+        out = res.stdout.to_s.strip
         return nil if out.empty? || !File.directory?(out)
 
         Vendor.list_files(vendored).any? { |rel| File.file?(File.join(out, rel)) } ? out : nil

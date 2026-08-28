@@ -44,7 +44,7 @@ module ZeoDev
         puts source
         puts
 
-        ruby = Exec.run(Ruby.oracle_argv("-"), stdin: source, capture_stdout: true, chdir: ROOT)
+        ruby = Exec.run(Ruby.oracle_argv("-"), env: Ruby.oracle_env, stdin: source, capture_stdout: true, chdir: ROOT)
         zeo = Exec.run([Ruby.build_zeo!, "-W0", "-e", source], capture_stdout: true, chdir: ROOT)
         show("ruby", ruby)
         puts

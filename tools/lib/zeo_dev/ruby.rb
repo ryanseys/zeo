@@ -39,16 +39,20 @@ module ZeoDev
       end
     end
 
-    # The two generated stores, and nothing else -- see `zeo-dev gemstore`.
-    # Whatever anybody has `gem install`ed on this machine is invisible to a
-    # golden, which it was not: reline 0.7.0 and webrick 1.9.2 sat in this
-    # machine's store and two goldens recorded them as if ruby shipped them.
+    # The oracle resolves `Gemfile.lock` -- the same set the compiler
+    # vendors, so neither side can answer a `require` with a version the
+    # other does not have. `-rbundler/setup` is what `bundle exec` does, one
+    # process cheaper. The `nil`s unset: whatever anybody has `gem
+    # install`ed, or points RUBYLIB at, must not reach a golden.
+    #
+    # Needs `make install-deps` to have run.
     def oracle_env
-      require "zeo_dev/commands/gemstore"
-      mirror = File.join(ROOT, Commands::Gemstore::ORACLE)
-      installed = File.join(ROOT, Commands::Gemstore::INSTALLED)
-      { "GEM_HOME" => mirror,
-        "GEM_PATH" => [mirror, installed].join(File::PATH_SEPARATOR) }
+      { "BUNDLE_GEMFILE" => File.join(ROOT, "Gemfile"),
+        "RUBYOPT" => "-rbundler/setup",
+        "RUBYLIB" => nil,
+        "GEM_HOME" => nil,
+        "GEM_PATH" => nil,
+        "GEM_SPEC_CACHE" => nil }
     end
 
     # The zeo binary a command should drive. `ZEO_BIN` overrides; otherwise

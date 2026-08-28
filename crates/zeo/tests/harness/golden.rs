@@ -548,41 +548,44 @@ fn resolve_ruby(cwd: &Path) -> PathBuf {
     PathBuf::from("ruby")
 }
 
-/// Point the oracle at the two generated gem stores, and at nothing else.
+/// Resolve the oracle against `Gemfile.lock` -- the same set the compiler
+/// vendors, so neither side can answer a `require` with a version the other
+/// does not have. `-rbundler/setup` is what `bundle exec` does, one process
+/// cheaper.
 ///
-/// It used to run against whatever was installed on the machine, and that
-/// quietly decided what a golden recorded: reline 0.7.0 and webrick 1.9.2 sat
-/// in this machine's store, so two goldens claimed ruby 4.0.6 shipped them.
+/// The removals matter as much as the additions: whatever anybody has `gem
+/// install`ed, or points RUBYLIB at, must not decide what a golden records.
 ///
-/// `vendor/oracle-gems` mirrors what ruby itself ships, `vendor/gemstore`
-/// holds the gems it does not (`ffi`, `rspec`), and `tools/zeo-dev gemstore`
-/// builds both -- which `make` depends on. Ruby then resolves them the
-/// ordinary way, so nothing here keeps a list of gem names.
-fn point_oracle_at_the_stores(cmd: &mut Command) {
-    let mirror = workspace_root().join("vendor").join("oracle-gems");
-    cmd.env("GEM_HOME", &mirror).env(
-        "GEM_PATH",
-        std::env::join_paths([mirror, gemstore_dir()]).expect("no store path holds a colon"),
-    );
+/// Needs `make install-deps` to have run.
+fn point_oracle_at_the_bundle(cmd: &mut Command) {
+    cmd.env("BUNDLE_GEMFILE", workspace_root().join("Gemfile"))
+        .env("RUBYOPT", "-rbundler/setup")
+        .env_remove("RUBYLIB")
+        .env_remove("GEM_HOME")
+        .env_remove("GEM_PATH")
+        .env_remove("GEM_SPEC_CACHE");
 }
 
-/// The gem store built by `tools/zeo-dev gemstore`: the gems ruby does NOT
-/// ship -- rspec and its dependencies -- so neither `gems/` nor the machine's
-/// own store has to hold them. Gitignored and fetched on demand, so a fresh
-/// clone still builds offline.
-pub fn gemstore_dir() -> PathBuf {
-    workspace_root().join("vendor").join("gemstore")
-}
-
-/// Every `lib/` in that store, for the zeo side of a suite that needs the
-/// gems themselves (rspec). Reading the directory keeps the pinned versions
-/// out of the harness and out of the golden.
-pub fn gemstore_libs() -> Vec<PathBuf> {
-    let mut libs: Vec<PathBuf> = std::fs::read_dir(gemstore_dir().join("gems"))
+/// `vendor/bundle`'s rspec trees, for the zeo side of the milestone that runs
+/// a real suite. The oracle reaches them through bundler; zeo needs `-I` on
+/// each `lib/`. Scoped to rspec rather than the whole bundle, which would put
+/// upstream copies of gems zeo vendors ahead of its own.
+pub fn bundle_rspec_libs() -> Vec<PathBuf> {
+    let gems = workspace_root().join("vendor").join("bundle").join("ruby");
+    let mut libs: Vec<PathBuf> = std::fs::read_dir(&gems)
         .into_iter()
         .flatten()
         .flatten()
-        .map(|e| e.path().join("lib"))
+        .flat_map(|abi| std::fs::read_dir(abi.path().join("gems")).into_iter().flatten())
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name().is_some_and(|n| {
+                let n = n.to_string_lossy();
+                n.starts_with("rspec") || n.starts_with("diff-lcs")
+            })
+        })
+        .map(|p| p.join("lib"))
         .filter(|p| p.is_dir())
         .collect();
     libs.sort();
@@ -602,7 +605,7 @@ fn run_oracle(
     let mut cmd = Command::new(&ruby);
     cmd.arg("--disable-error_highlight")
         .arg("--disable-did_you_mean");
-    point_oracle_at_the_stores(&mut cmd);
+    point_oracle_at_the_bundle(&mut cmd);
     for inc in &env.oracle_includes {
         cmd.arg("-I").arg(inc);
     }

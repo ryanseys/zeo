@@ -34,7 +34,6 @@ module ZeoDev
     promote-gap
     bench
     gem
-    gemstore
     gemtests
     gem-probe
     cext

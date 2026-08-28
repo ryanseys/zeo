@@ -34,27 +34,18 @@ BUNDLE ?= bundle
 
 .PHONY: all test check check-batch gate bench pgo install linux clean ci-typed \
         ci-jit ci-aot ci-memcheck ci-doc ci-natlibs ci-anchor ci-milestones \
-        gemstore install-deps
+        install-deps
 
-all: gemstore
+all: install-deps
 	$(CARGO) build --workspace
-
-# The gems ruby does not ship, in a real `gem install --install-dir` store:
-# `ffi`, which zeo implements and ruby has no copy of, and `rspec` for the
-# milestone that runs a real suite. Both engines read it, so those goldens
-# compare against a PINNED gem instead of whatever the machine has installed.
-# Idempotent and offline once built; the first build needs the network.
-gemstore:
-	@$(ZEO_DEV) gemstore
 
 # Resolve `Gemfile.lock` into `vendor/bundle`. One committed lock decides both
 # what the compiler vendors and what the ruby oracle resolves, so the two
-# cannot disagree about a version the way `upstream.lock` and the machine's
-# own store could. Needs the network the first time and nothing after it.
-# `.bundle/config` sets the path and refuses to rewrite the lock during an
-# install; changing the Gemfile means running `bundle lock` on purpose.
+# cannot disagree about a version. Needs the network the first time and
+# nothing after it. `.bundle/config` sets the path and refuses to rewrite the
+# lock during an install; changing the Gemfile means `bundle lock` on purpose.
 install-deps:
-	$(BUNDLE) install
+	@$(BUNDLE) install --quiet
 
 test: all
 	$(NEXTEST) --workspace

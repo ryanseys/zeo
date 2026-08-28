@@ -53,7 +53,7 @@ module ZeoDev
       def run_one(name, zeo)
         file = path_of(name)
         puts "=== #{name} ==="
-        ruby = Exec.run(Ruby.oracle_argv(file), capture_stdout: true, chdir: ROOT)
+        ruby = Exec.run(Ruby.oracle_argv(file), env: Ruby.oracle_env, capture_stdout: true, chdir: ROOT)
         mine = Exec.run([zeo, "-W0", file], capture_stdout: true, chdir: ROOT)
         report_engine_failure("ruby", ruby)
         report_engine_failure("zeo", mine)

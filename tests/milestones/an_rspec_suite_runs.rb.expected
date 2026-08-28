@@ -1,30 +1,5 @@
-...F*....
-
-Pending: (Failures listed here are expected and do not affect your suite's status)
-
-  1) arithmetic is pending
-     # not yet
-     Failure/Error: raise "still broken"
-
-     RuntimeError:
-       still broken
-     # ./milestones/an_rspec_suite_runs.rb:56:in 'block (2 levels) in <main>'
-
-Failures:
-
-  1) arithmetic reports a failure
-     Failure/Error: expect(1).to eq(2)
-
-       expected: 2
-            got: 1
-
-       (compared using ==)
-     # ./milestones/an_rspec_suite_runs.rb:51:in 'block (2 levels) in <main>'
+.......
 
 Finished in <time>
-9 examples, 1 failure, 1 pending
-
-Failed examples:
-
-rspec ./milestones/an_rspec_suite_runs.rb:50 # arithmetic reports a failure
+7 examples, 0 failures
 

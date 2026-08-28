@@ -93,10 +93,9 @@ same code under both engines, and a golden that fails is a zeo bug.
 
 Anything else -- `rspec` and its dependencies, `ffi`, `concurrent-ruby` --
 would make zeo answer a require Ruby refuses, which is a divergence dressed as
-a feature. Those live in a real gem store instead:
-`tools/zeo-dev gemstore` writes `vendor/gemstore` with a plain `gem install
---install-dir`, and the goldens that need them read it. Both engines do, so
-those goldens stay differentials rather than recordings.
+a feature. Those come from `vendor/bundle` instead, the Gemfile.lock set
+`make install-deps` resolves, and the goldens that need them read it. Both
+engines do, so those goldens stay differentials rather than recordings.
 
 `rspec-support/` used to carry a marked deviation here, probing for `ripper`
 rather than inferring it from `RUBY_ENGINE`; the store's unpatched copy runs
