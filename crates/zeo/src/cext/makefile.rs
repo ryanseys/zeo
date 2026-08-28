@@ -109,12 +109,17 @@ impl Makefile {
         self.expand(name, &mut Vec::new())
     }
 
-    /// The same, split on whitespace, with empties dropped.
+    /// The same, split the way the shell would.
+    ///
+    /// `make` hands each recipe line to `/bin/sh`, so a Makefile writes its
+    /// flags in the SHELL's spelling: mkmf emits
+    /// `-DRUBY_EXTCONF_H=\"extconf.h\"`, and the shell turns that into
+    /// `-DRUBY_EXTCONF_H="extconf.h"` before the compiler sees it. zeo spawns
+    /// the compiler directly, with no shell in between, so it must do that
+    /// itself -- a plain whitespace split passes the backslashes through and
+    /// the compiler reports `expected "FILENAME" or <FILENAME>`.
     pub fn words(&self, name: &str) -> Vec<String> {
-        self.get(name)
-            .split_whitespace()
-            .map(str::to_string)
-            .collect()
+        shell_words(&self.get(name))
     }
 
     fn expand(&self, name: &str, seen: &mut Vec<String>) -> String {
@@ -235,6 +240,64 @@ fn assignment(line: &str) -> Option<(String, String)> {
     Some((name.to_string(), value.trim().to_string()))
 }
 
+/// Split a recipe's words the way `/bin/sh` does: whitespace separates,
+/// `\` escapes the next character, `'...'` is literal, and inside `"..."` a
+/// backslash escapes only itself, `"`, `$` and a backtick.
+///
+/// This is the unquoting half of the shell, not the whole of it -- no
+/// expansion, no globbing, no operators. A Makefile's flag lines carry none
+/// of those, and `make` has already expanded its own variables by the time
+/// this runs.
+fn shell_words(line: &str) -> Vec<String> {
+    let (mut out, mut word, mut started) = (Vec::new(), String::new(), false);
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            c if c.is_whitespace() => {
+                if started {
+                    out.push(std::mem::take(&mut word));
+                    started = false;
+                }
+            }
+            '\\' => {
+                started = true;
+                if let Some(next) = chars.next() {
+                    word.push(next);
+                }
+            }
+            '\'' => {
+                started = true;
+                for q in chars.by_ref() {
+                    if q == '\'' {
+                        break;
+                    }
+                    word.push(q);
+                }
+            }
+            '"' => {
+                started = true;
+                while let Some(q) = chars.next() {
+                    match q {
+                        '"' => break,
+                        '\\' if matches!(chars.peek(), Some('"' | '\\' | '$' | '`')) => {
+                            word.push(chars.next().expect("peeked"));
+                        }
+                        _ => word.push(q),
+                    }
+                }
+            }
+            _ => {
+                started = true;
+                word.push(c);
+            }
+        }
+    }
+    if started {
+        out.push(word);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,5 +382,35 @@ $(TARGET_SO): $(OBJS) Makefile
     fn a_dollar_dollar_is_a_literal_dollar() {
         let mk = Makefile::parse("A = a$$b\n");
         assert_eq!(mk.get("A"), "a$b");
+    }
+
+    /// mkmf's own spelling. The openssl gem is the one that found this: every
+    /// one of its sources opens `#include RUBY_EXTCONF_H`, so a compile that
+    /// keeps the backslashes fails on the FIRST line of the FIRST file.
+    #[test]
+    fn a_backslash_quoted_define_loses_its_backslashes() {
+        let mk = Makefile::parse("CPPFLAGS = -DRUBY_EXTCONF_H=\\\"extconf.h\\\" -I.\n");
+        assert_eq!(
+            mk.words("CPPFLAGS"),
+            ["-DRUBY_EXTCONF_H=\"extconf.h\"", "-I."]
+        );
+    }
+
+    #[test]
+    fn quoting_holds_a_word_with_a_space_together() {
+        assert_eq!(shell_words("a 'b c' \"d e\" f"), ["a", "b c", "d e", "f"]);
+    }
+
+    /// Inside double quotes a backslash is literal unless it guards one of
+    /// the four characters the shell still reads there.
+    #[test]
+    fn a_backslash_in_double_quotes_only_escapes_the_four() {
+        assert_eq!(shell_words(r#""a\nb" "c\"d" "e\\f""#), [r"a\nb", "c\"d", r"e\f"]);
+    }
+
+    #[test]
+    fn an_empty_value_contributes_no_word() {
+        let mk = Makefile::parse("A =   \n");
+        assert!(mk.words("A").is_empty());
     }
 }
