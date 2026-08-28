@@ -208,6 +208,12 @@ pub struct Compiler {
     /// cannot see one: such a reopen registers an ordinary instance method
     /// whose owner is the very class the no-op default lives on.
     pub global_def_hooks: FSet<String>,
+    /// `(extender, module)` -> the `extend`/`include` statement that recorded
+    /// the edge. The edge itself ([`ClassInfo::extends`]) is a set membership
+    /// with no position, and a hook an extended module supplies is INSTALLED
+    /// here, not where the module wrote its `def` -- see
+    /// [`Compiler::class_method_install_node`].
+    pub extend_sites: FMap<(ClassId, ClassId), crate::hir::NodeId>,
     /// The source extent of every `BEGIN { ... }` block, recorded as the
     /// analyze walk hoists it. Ruby runs these before the main program, so
     /// two definitions written in one file do not run in written order when
@@ -613,6 +619,7 @@ impl Compiler {
             box_surrogates: FMap::default(),
             class_body_sites: Vec::new(),
             global_def_hooks: Default::default(),
+            extend_sites: FMap::default(),
             pre_exec_spans: Vec::new(),
             def_seq: 0,
             top_level_defs: Vec::new(),

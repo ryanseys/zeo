@@ -15,9 +15,9 @@
 //! searches user scopes only, so they never satisfy it. A program that defines
 //! no hook comes out of this pass byte-identical.
 
-use crate::compiler::FMap;
 use crate::compiler::{ClassId, Compiler, DefEvent, SiteDef};
-use crate::hir::{HirNode, NodeId};
+use crate::compiler::{FMap, FSet};
+use crate::hir::{HirNode, NodeId, Span};
 
 /// The seven names. A definition of one of these ON `Module`/`Class` (the
 /// `method_*` trio and `const_added`) or on `BasicObject` (the
@@ -32,6 +32,173 @@ const HOOKS: [&str; 7] = [
     "singleton_method_removed",
     "singleton_method_undefined",
 ];
+
+/// Which feature units a file's own `require`s have already run by a given
+/// point in it -- the fact that lets a hook in ANOTHER file be ordered against
+/// a definition at all.
+///
+/// A unit's body runs when its `require` runs, so "installed first" cannot be
+/// read off raw offsets across two files, and [`fires`] used to refuse every
+/// such pairing. But a file that requires another AT ITS TOP LEVEL, ABOVE the
+/// definition, has run that file whole by the time the definition executes --
+/// whenever, and however often, this file itself runs. That is a fact rather
+/// than an ordering guess, and it is what bundler needs: `bundler/cli.rb`
+/// opens with `require_relative "vendored_thor"` and declares `class CLI <
+/// Thor` below it, so Thor's `method_added` really has seen every command.
+///
+/// DELIBERATELY INCOMPLETE, always in the direction of refusing. Only a bare
+/// top-level `require`/`require_relative` with a literal name counts: one
+/// under a guard, in a `begin`/`rescue`, in a class body or in a method body
+/// may never run, and a method-body `require` is exactly the shape that once
+/// killed `require "rake"` (see [`global_hooks`]). Anything this graph cannot
+/// prove keeps the old answer.
+#[derive(Default)]
+struct RequireGraph {
+    /// Per FILE (`Span::file`), its top-level requires as
+    /// `(byte offset, unit)`, in no particular order.
+    first_hop: FMap<u32, Vec<(u32, usize)>>,
+    /// Per unit, every unit its body loads, transitively. Position-free on
+    /// purpose: once a `require` runs, the file it names runs whole.
+    loads: Vec<FSet<usize>>,
+    /// The file each unit was compiled from, for walking `first_hop` during
+    /// the closure.
+    unit_file: Vec<Option<u32>>,
+}
+
+impl RequireGraph {
+    /// Whether unit `hook` has certainly run by the time the definition at
+    /// `def_at` does.
+    fn runs_before(&self, hook: usize, def_at: Span) -> bool {
+        let Some(hops) = self.first_hop.get(&def_at.file.0) else {
+            return false;
+        };
+        hops.iter().any(|&(at, target)| {
+            at < def_at.start
+                && (target == hook || self.loads[target].contains(&hook))
+        })
+    }
+}
+
+/// Reads the top-level statement streams -- the main list and every unit body
+/// -- and builds [`RequireGraph`].
+fn require_graph(
+    compiler: &Compiler,
+    main_statements: &[NodeId],
+    feature_units: &[(Vec<String>, String, Vec<NodeId>)],
+) -> RequireGraph {
+    // Every spelling a `require` can reach a unit under: its own features and
+    // aliases, plus the absolute path `require_relative` resolves to.
+    let mut by_name: FMap<&str, usize> = FMap::default();
+    let mut by_path: FMap<String, usize> = FMap::default();
+    for (k, (names, absolute, _)) in feature_units.iter().enumerate() {
+        for n in names {
+            by_name.entry(n.as_str()).or_insert(k);
+        }
+        by_path.entry(absolute.clone()).or_insert(k);
+    }
+    let mut g = RequireGraph {
+        unit_file: vec![None; feature_units.len()],
+        loads: vec![FSet::default(); feature_units.len()],
+        ..Default::default()
+    };
+    // Per unit, the targets its whole body names -- the closure's edges,
+    // where `first_hop` is the per-file, position-carrying view.
+    let mut body_edges: Vec<Vec<usize>> = vec![Vec::new(); feature_units.len()];
+    let streams = std::iter::once((None, main_statements))
+        .chain(feature_units.iter().enumerate().map(|(k, u)| (Some(k), u.2.as_slice())));
+    for (unit, stmts) in streams {
+        for &stmt in stmts {
+            let Some(span) = compiler.hir.span(stmt) else {
+                continue;
+            };
+            let Some(target) = require_target(compiler, stmt, span, &by_name, &by_path) else {
+                continue;
+            };
+            g.first_hop.entry(span.file.0).or_default().push((span.start, target));
+            if let Some(k) = unit {
+                body_edges[k].push(target);
+                g.unit_file[k].get_or_insert(span.file.0);
+            }
+        }
+    }
+    for k in 0..feature_units.len() {
+        let mut stack = body_edges[k].clone();
+        while let Some(t) = stack.pop() {
+            if g.loads[k].insert(t) {
+                stack.extend_from_slice(&body_edges[t]);
+            }
+        }
+    }
+    g
+}
+
+/// The unit a top-level statement `require`s, when the statement is exactly a
+/// bare `require`/`require_relative` of a literal name.
+fn require_target(
+    compiler: &Compiler,
+    stmt: NodeId,
+    span: Span,
+    by_name: &FMap<&str, usize>,
+    by_path: &FMap<String, usize>,
+) -> Option<usize> {
+    let HirNode::Call {
+        receiver: None,
+        name,
+        args,
+        block: None,
+        block_arg: None,
+        ..
+    } = &compiler.hir[stmt]
+    else {
+        return None;
+    };
+    let relative = match name.as_str() {
+        "require" => false,
+        "require_relative" => true,
+        _ => return None,
+    };
+    let [arg] = args.as_slice() else { return None };
+    let crate::hir::ArrayElem::Single(text) = arg else {
+        return None;
+    };
+    let feature = crate::lower::eval_splice::literal_string_text(&compiler.hir, *text)?;
+    if !relative && let Some(&k) = by_name.get(feature.as_str()) {
+        return Some(k);
+    }
+    // A KEPT `require_relative` carries an ABSOLUTE argument: lowering rewrites
+    // it, because the call resolves at run time against the frame's file and a
+    // unit's body has no frame of its own (`lower::calls`' `site_kept` arm).
+    // The written-relative spelling still has to work, and it resolves against
+    // the file the statement was WRITTEN in -- the one its span names, not the
+    // unit whose body it now sits in, since a splice puts one file's
+    // statements inside another's.
+    let target = feature.trim_end_matches(".rb");
+    let path = match std::path::Path::new(target).is_absolute() {
+        true => target.to_string(),
+        false => {
+            let name = &compiler.hir.files.get(span.file.0 as usize)?.name;
+            lexical_join(std::path::Path::new(name).parent()?, target)
+        }
+    };
+    by_path.get(&path).copied()
+}
+
+/// `dir` + `rel` with `.` and `..` resolved by TEXT. The real path may not
+/// exist on this machine at all (a unit is compiled in), and canonicalizing
+/// would ask the filesystem a question the answer must not depend on.
+fn lexical_join(dir: &std::path::Path, rel: &str) -> String {
+    let mut parts: Vec<&str> = dir.to_str().unwrap_or_default().split('/').collect();
+    for c in rel.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            _ => parts.push(c),
+        }
+    }
+    parts.join("/")
+}
 
 /// Where a group of defs splices: the main list, a feature unit's body, or a
 /// class-body site's statements. A [`SiteDef::at`] is an index into exactly
@@ -49,12 +216,22 @@ pub fn resolve(
     feature_units: &mut [(Vec<String>, String, Vec<NodeId>)],
 ) {
     // A unit's body runs when its `require` runs, not at boot, so a hook it
-    // installs has not seen anything the main program defined first.
-    let unit_files: crate::compiler::FSet<String> = feature_units
+    // installs has not seen anything the main program defined first -- unless
+    // the defining file required it above the definition, which is what
+    // `RequireGraph` decides.
+    let mut file_ids: FMap<&str, u32> = FMap::default();
+    for (i, f) in compiler.hir.files.iter().enumerate() {
+        file_ids.entry(f.name.as_str()).or_insert(i as u32);
+    }
+    let unit_of_file: FMap<u32, usize> = feature_units
         .iter()
-        .map(|(_, absolute, _)| format!("{absolute}.rb"))
+        .enumerate()
+        .filter_map(|(k, (_, absolute, _))| {
+            file_ids.get(format!("{absolute}.rb").as_str()).map(|&f| (f, k))
+        })
         .collect();
-    for hook in global_hooks(compiler, &unit_files) {
+    let graph = require_graph(compiler, main_statements, feature_units);
+    for hook in global_hooks(compiler, &unit_of_file) {
         compiler.global_def_hooks.insert(hook.to_string());
     }
     let global: Vec<&'static str> = HOOKS
@@ -106,7 +283,16 @@ pub fn resolve(
         })
         .collect();
     for (class, defs, target) in taken {
-        let sends = surviving(compiler, class, &defs, &global, &future, &prelude, &unit_files);
+        let sends = surviving(
+            compiler,
+            class,
+            &defs,
+            &global,
+            &future,
+            &prelude,
+            &graph,
+            &unit_of_file,
+        );
         if sends.is_empty() {
             continue;
         }
@@ -203,6 +389,7 @@ impl Future {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn surviving(
     compiler: &Compiler,
     class: ClassId,
@@ -210,13 +397,14 @@ fn surviving(
     global: &[&'static str],
     future: &Future,
     prelude: &std::collections::HashSet<NodeId>,
-    unit_files: &crate::compiler::FSet<String>,
+    graph: &RequireGraph,
+    unit_of_file: &FMap<u32, usize>,
 ) -> Vec<Send> {
     defs.iter()
         .filter(|d| !prelude.contains(&d.node))
         .filter_map(|d| {
             let hook = d.event.hook(d.singleton);
-            fires(compiler, class, d, hook, global, unit_files).then(|| Send {
+            fires(compiler, class, d, hook, global, graph, unit_of_file).then(|| Send {
                 at: d.at,
                 hook,
                 name: d.name.clone(),
@@ -233,7 +421,8 @@ fn fires(
     def: &SiteDef,
     hook: &str,
     global: &[&'static str],
-    unit_files: &crate::compiler::FSet<String>,
+    graph: &RequireGraph,
+    unit_of_file: &FMap<u32, usize>,
 ) -> bool {
     if global.contains(&hook) {
         return true;
@@ -242,17 +431,20 @@ fn fires(
     // `def self.method_added` here or anywhere up the superclass chain, or one
     // an `extend`ed module supplied. `Module`'s no-op default is an INSTANCE
     // method of Module and never appears here, so it costs nothing.
-    let Some((_, scope)) = compiler.class_method_in_chain(class, hook) else {
+    if compiler.class_method_in_chain(class, hook).is_none() {
         return false;
-    };
+    }
     // A hook INSTALLED after this definition never saw it -- ruby's own rule,
     // and `emit_inherited_hook`'s. Compared by span, and only within one file:
     // a spliced `require` puts another file's statements in the middle of this
     // one, so raw offsets do not order across files. `<=`, not `<`, because a
     // `def self.singleton_method_added` DOES report itself (oracle-verified).
+    // The install position is the `extend` when a module supplied the hook,
+    // which is why this asks `class_method_install_node` rather than reading
+    // the winning body's own `def` -- see that method.
     let where_ = |n: Option<NodeId>| n.and_then(|n| compiler.hir.span(n)).and_then(|s| s.known());
     let (installed, defined) = (
-        where_(compiler.scope(scope).def_node),
+        where_(compiler.class_method_install_node(class, hook)),
         where_(Some(def.node)),
     );
     // A `BEGIN { ... }` body runs before the whole main program, so written
@@ -269,12 +461,17 @@ fn fires(
     match (installed, defined) {
         (Some(i), Some(d)) if i.file == d.file && hoisted(&i) != hoisted(&d) => hoisted(&i),
         (Some(i), Some(d)) if i.file == d.file => i.start <= d.start,
-        // A hook in a FEATURE UNIT is installed by a runtime `require`, so it
-        // never saw a definition in another file: the unit body may not have
-        // run yet, and zeo's own emission agrees -- a unit's reopen of a
-        // builtin forwards to the native row until then. Same file still
-        // compares by position, so a unit's own later defs still announce.
-        _ => !defined_in_a_unit(compiler, scope, unit_files),
+        // A hook in a FEATURE UNIT is installed by a runtime `require`, so a
+        // definition in another file cannot be ordered against it by offset:
+        // the unit body may not have run yet, and zeo's own emission agrees --
+        // a unit's reopen of a builtin forwards to the native row until then.
+        // It CAN be ordered when the defining file required that unit above
+        // the definition, which is what `RequireGraph` proves. A hook the main
+        // program installs is there before any unit runs, so it keeps firing.
+        _ => match installed.and_then(|i| unit_of_file.get(&i.file.0)) {
+            None => true,
+            Some(&u) => defined.is_some_and(|d| graph.runs_before(u, d)),
+        },
     }
 }
 
@@ -313,10 +510,7 @@ fn splice(compiler: &mut Compiler, stmts: &mut Vec<NodeId>, class: ClassId, send
 /// `require "debug/session"`, whose `class ::Module; undef method_added; def
 /// method_added mid; end` is exactly this shape, and `require "rake"` died in
 /// `fileutils`'s module body with `undefined method 'method_added'`.
-fn global_hooks(
-    compiler: &Compiler,
-    unit_files: &crate::compiler::FSet<String>,
-) -> Vec<&'static str> {
+fn global_hooks(compiler: &Compiler, unit_of_file: &FMap<u32, usize>) -> Vec<&'static str> {
     HOOKS
         .into_iter()
         .filter(|hook| {
@@ -328,7 +522,7 @@ fn global_hooks(
             owners.iter().any(|&o| {
                 compiler
                     .method_in_chain(o, hook)
-                    .is_some_and(|(_, scope)| !defined_in_a_unit(compiler, scope, unit_files))
+                    .is_some_and(|(_, scope)| !defined_in_a_unit(compiler, scope, unit_of_file))
             })
         })
         .collect()
@@ -339,15 +533,17 @@ fn global_hooks(
 fn defined_in_a_unit(
     compiler: &Compiler,
     scope: crate::compiler::ScopeId,
-    unit_files: &crate::compiler::FSet<String>,
+    unit_of_file: &FMap<u32, usize>,
 ) -> bool {
     compiler.scope(scope).def_node.is_some_and(|n| {
-        crate::analyze::source::source_location(compiler, n)
-            .is_some_and(|(file, _)| unit_files.contains(file))
+        compiler
+            .hir
+            .span(n)
+            .is_some_and(|s| unit_of_file.contains_key(&s.file.0))
     })
 }
 
-/// Whether the hook body `hook` was already installed at position `at`.
+/// Whether `class`'s `hook` exists AND was already installed at position `at`.
 ///
 /// A hook INSTALLED after the thing it would report never saw it. minitest
 /// reopens `Runnable` at the very end of its main file purely to add
@@ -360,16 +556,26 @@ fn defined_in_a_unit(
 /// method table). Two positions in different files are left alone -- a spliced
 /// `require` puts another file's statements in the middle of this one, so raw
 /// offsets do not order across files -- as is anything span-less. All of those
-/// keep firing.
-pub(crate) fn hook_installed_before(
+/// keep firing. [`fires`] asks the same question about a definition and
+/// refuses instead where this one allows, because a `method_added` it emits
+/// wrongly announces a method that plainly exists, where a missing
+/// `inherited`/`const_added` only stays quiet.
+pub(crate) fn hook_answers(
     compiler: &Compiler,
-    hook: crate::compiler::ScopeId,
+    class: ClassId,
+    hook: &str,
     at: Option<crate::hir::NodeId>,
 ) -> bool {
+    if compiler.class_method_in_chain(class, hook).is_none() {
+        return false;
+    }
     let where_ = |n: Option<crate::hir::NodeId>| {
         n.and_then(|n| compiler.hir.span(n)).and_then(|s| s.known())
     };
-    match (where_(compiler.scope(hook).def_node), where_(at)) {
+    // The `extend` site, not the module's own `def` -- see
+    // `Compiler::class_method_install_node`.
+    let installed = where_(compiler.class_method_install_node(class, hook));
+    match (installed, where_(at)) {
         (Some(installed), Some(at)) if installed.file == at.file => installed.start <= at.start,
         _ => true,
     }

@@ -214,7 +214,7 @@ pub(super) fn scoped_const_read(
         // leaf up. Only `class_value_of` touched, so `Holder::Composed`
         // alone ran the unit and `Holder::Composed::MARK` raised
         // `uninitialized constant` for a constant the unit assigns.
-        emit_autoload_touch(fx, scope_cid);
+        autoload_touch(fx, scope_cid);
         emit_private_constant_guard(fx, scope_cid, name);
     }
     // `Scope::NAME` naming a nested class/module is a Class immediate.
@@ -357,7 +357,7 @@ fn emit_named_autoload_touch(fx: &mut Fx, owner: crate::compiler::ClassId, leaf:
 /// Runs the `autoload` target `cid`'s constant still owes, before the read
 /// resolves. Emitted only for a constant a literal `autoload` named, and the
 /// runtime call itself is one relaxed load when nothing is pending.
-fn emit_autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
+pub(super) fn autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
     // A class DEFINED IN A UNIT is registered from program start while its
     // body has not run, so a read of it must ask even when THIS compile
     // never saw the `autoload` that names it -- a unit is compiled by its
@@ -423,7 +423,7 @@ fn class_value_of(
     // A constant a literal `autoload` names: the READ is what runs the
     // target, and a compiled-in unit's classes are registered from startup,
     // so nothing misses and no hook can carry it. Gate the fold instead.
-    emit_autoload_touch(fx, cid);
+    autoload_touch(fx, cid);
     // Registered but not PROMISED: whether a runtime-conditional class's
     // constant exists is settled by the guarded body having run, so the
     // reference asks -- `NameError` until `reveal_class` fires there.
@@ -519,17 +519,15 @@ pub(crate) fn const_added_send(
     }
     // A `class Module; def const_added` reopen answers for every module,
     // and no per-class scan can see it -- `Compiler::global_def_hooks`.
-    if !fx.an.compiler.global_def_hooks.contains("const_added") {
-        let Some((_, hook)) = fx
-            .an
-            .compiler
-            .class_method_in_chain(zeo_abi::ClassId(owner), "const_added")
-        else {
-            return Ok(());
-        };
-        if !crate::analyze::def_hooks::hook_installed_before(&fx.an.compiler, hook, at) {
-            return Ok(());
-        }
+    if !fx.an.compiler.global_def_hooks.contains("const_added")
+        && !crate::analyze::def_hooks::hook_answers(
+            &fx.an.compiler,
+            zeo_abi::ClassId(owner),
+            "const_added",
+            at,
+        )
+    {
+        return Ok(());
     }
     const_added_announce(fx, owner, name)
 }

@@ -951,4 +951,39 @@ impl Compiler {
         self.lookup_class_method(class, name)
             .map(|e| (e.defined_class(self), e.def))
     }
+
+    /// WHERE class method `name` became available on `class` -- the node whose
+    /// span says when the program installed it.
+    ///
+    /// Usually the body's own `def`, but `extend M` splits the two: `M` writes
+    /// `def method_added` above the class, and the class gains it at the
+    /// `extend`. Ruby announces from the `extend` onwards, so a definition
+    /// written above it is not reported. `class_method_in_chain` answers WHICH
+    /// body wins and cannot answer this, since the edge it resolves through
+    /// carries no position of its own.
+    ///
+    /// `None` when neither end has a span (a native row, an `extend` this
+    /// compile never saw as a statement), which leaves the caller's own
+    /// span-less rule in charge.
+    pub fn class_method_install_node(
+        &self,
+        class: ClassId,
+        name: &str,
+    ) -> Option<crate::hir::NodeId> {
+        self.class_opt(class)?;
+        let entry = self.lookup_class_method(class, name)?;
+        let owner = entry.defined_class(self);
+        // The edge can sit on the class itself or on any ancestor, and the
+        // module it names can be the owner or something that module includes.
+        for &c in std::iter::once(&class).chain(&self.classes[class.0 as usize].ancestors) {
+            for &m in &self.classes[c.0 as usize].extends {
+                if (m == owner || self.classes[m.0 as usize].ancestors.contains(&owner))
+                    && let Some(&node) = self.extend_sites.get(&(c, m))
+                {
+                    return Some(node);
+                }
+            }
+        }
+        self.scope(entry.def).def_node
+    }
 }

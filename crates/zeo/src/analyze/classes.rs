@@ -830,13 +830,13 @@ fn walk_class_body(
                             // is a reopen (the nested Thor::* files created
                             // the shell first), and skipping it here is what
                             // left `Bundler::CLI` with 3 of its ~30 commands.
-                            record_included_hook_extends(compiler, class_id, target, box_id);
+                            record_included_hook_extends(compiler, class_id, target, box_id, stmt);
                             defer_positional_mixin(compiler, site_idx, stmt, target);
                             continue;
                         } else {
                             let ci = &mut compiler.classes[class_id.0 as usize];
                             ci.mixin_order.push((target, false));
-                            record_included_hook_extends(compiler, class_id, target, box_id);
+                            record_included_hook_extends(compiler, class_id, target, box_id, stmt);
                         }
                         compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
@@ -878,6 +878,7 @@ fn walk_class_body(
                             continue;
                         } else {
                             compiler.classes[class_id.0 as usize].extends.push(target);
+                            compiler.extend_sites.insert((class_id, target), stmt);
                         }
                         compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
@@ -1573,12 +1574,16 @@ fn record_included_hook_extends(
     class_id: ClassId,
     target: ClassId,
     box_id: u32,
+    stmt: NodeId,
 ) {
     for name in extends_from_included_hook(compiler, target) {
         if let MixinTarget::Static(cm) = resolve_module_target(compiler, &name, &[target], box_id) {
             let ci = &mut compiler.classes[class_id.0 as usize];
             if !ci.extends.contains(&cm) {
                 ci.extends.push(cm);
+                // The `include`, not the `extend` inside the hook body: the
+                // hook runs where the module is mixed in.
+                compiler.extend_sites.insert((class_id, cm), stmt);
             }
         }
     }

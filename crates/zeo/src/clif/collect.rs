@@ -187,6 +187,14 @@ pub(crate) struct ClassBodyCall {
     /// Bytes in `zeo_reopen_flags` this site's `def`s own -- stored at the
     /// site's own document position, which is what makes a reopen positional.
     pub reopen_flags: Vec<u32>,
+    /// The class an explicit `class Sub < Super` names, when this site
+    /// DECLARES the class. `class Sub < Super` READS the constant `Super`,
+    /// which is what runs an `autoload` target -- and zeo resolves the
+    /// superclass edge at compile time, so without this the read never
+    /// happens. bundler's `plugin/dsl.rb` has no `require` for `Bundler::Dsl`
+    /// at all: `class DSL < Bundler::Dsl` is the only thing that loads it, and
+    /// `Bundler::Dsl`'s class body is where `VALID_KEYS` is assigned.
+    pub superclass_touch: Option<u32>,
 }
 
 /// One compiled class body (a separate Ruby scope, lifted to its own
@@ -284,15 +292,12 @@ pub(super) fn collect_class_bodies(
         // lexically enclosing module -- only from the site that CREATES it.
         let const_added = (declares
             && (compiler.global_def_hooks.contains("const_added")
-                || compiler
-                    .class_method_in_chain(decl_owner, "const_added")
-                    .is_some_and(|(_, hook)| {
-                        crate::analyze::def_hooks::hook_installed_before(
-                            compiler,
-                            hook,
-                            site.def_node,
-                        )
-                    })))
+                || crate::analyze::def_hooks::hook_answers(
+                    compiler,
+                    decl_owner,
+                    "const_added",
+                    site.def_node,
+                )))
         .then(|| (decl_owner.0, compiler.leaf_name(site.class).to_string()));
         // `Super.inherited(C)` fires when the class is CREATED, so only its
         // FIRST site announces; a reopen creates nothing. A hook written
@@ -301,16 +306,20 @@ pub(super) fn collect_class_bodies(
             .then_some(ci.parent)
             .flatten()
             .filter(|&parent| {
-                compiler
-                    .class_method_in_chain(parent, "inherited")
-                    .is_some_and(|(_, hook)| {
-                        crate::analyze::def_hooks::hook_installed_before(
-                            compiler,
-                            hook,
-                            site.def_node,
-                        )
-                    })
+                crate::analyze::def_hooks::hook_answers(
+                    compiler,
+                    parent,
+                    "inherited",
+                    site.def_node,
+                )
             })
+            .map(|parent| parent.0);
+        // The superclass constant READ, which is what runs an `autoload`.
+        // Unlike `inherited` this is not about a hook: it happens whatever the
+        // superclass is, and only where the source wrote one.
+        let superclass_touch = (declares && ci.explicit_superclass)
+            .then_some(ci.parent)
+            .flatten()
             .map(|parent| parent.0);
         // The frozen-reopen guard: a REOPEN under a program that freezes
         // classes raises `FrozenError` for the names it would newly
@@ -381,6 +390,7 @@ pub(super) fn collect_class_bodies(
             tail,
             guard,
             reopen_flags,
+            superclass_touch,
         };
         let is_inline = site.def_node.is_some_and(|n| inline.contains(&n));
         tracing::debug!(
