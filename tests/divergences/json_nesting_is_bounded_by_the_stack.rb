@@ -1,27 +1,28 @@
-# DECIDED DIVERGENCE, and only on the GENERATOR half now: emitting a
-# structure nested past 2,000 deep raises `JSON::NestingError` where ruby
-# recurses until the machine stack ends.
+# DECIDED DIVERGENCE, now down to ONE row, and it is a cycle.
 #
-# PARSING used to be bounded the same way and no longer is. The parser keeps
-# its open containers on an explicit stack, so nesting costs heap and
+# BOTH halves are iterative. The parser and the generator each keep their
+# open containers on an explicit stack, so nesting costs heap and
 # `max_nesting: false` means what it says -- the same guarantee ruby's own
-# parser gives. That change also removed the reason the old limit existed:
-# the 2,000 was MEASURED against a fiber's stack, and a measured number goes
-# stale the moment the parse runs somewhere with less stack than the bench
-# had. A bound that has to be re-measured per environment is not a bound.
+# parser gives, and better than what ruby's generator gives.
 #
-# What is left is two rows where the two engines answer differently, and zeo
-# is the safer one in both:
+# `generate past it` used to be a divergence and is not any more: zeo emits
+# the same 4,202 bytes ruby does. The generator had a hard 2,000-deep
+# ceiling because it recursed, and a depth count cannot tell a document that
+# is legitimately DEEP from one that is CIRCULAR -- so it refused both. They
+# are told apart now: depth costs heap, and a cycle is caught by ANCESTRY,
+# a container appearing inside itself.
+#
+# What is left is two rows where the engines still answer differently, and
+# zeo is the safer one in both:
 #
 #   far past it       100,000 levels. Ruby's parser raises SystemStackError;
 #                     zeo answers the Array, because nothing about its depth
 #                     touches the machine stack.
-#   generate past it  Ruby emits 4,202 bytes here, and on a CYCLIC structure
-#                     the same code raises SystemStackError -- it has no
-#                     bound but the stack. Zeo's generator still recurses, so
-#                     its depth counter is what stands between a cycle and a
-#                     dead process. A loud error the program can rescue beats
-#                     an abort with no line of output, every time.
+#   a cycle with      Ruby raises SystemStackError -- its generator has no
+#   the limit off     bound but the stack. Zeo raises JSON::NestingError,
+#                     naming the circular reference, because it found one
+#                     rather than ran out of room. A loud error the program
+#                     can rescue beats an abort with no line of output.
 #
 # The generator's own default of 100 still applies when nobody turns it off,
 # and ruby says so too: `nesting of 100 is too deep. Did you try to serialize
@@ -67,8 +68,7 @@ show("in a fiber") do
   f.resume
 end
 
-# GENERATING is still bounded, because the depth counter is also its cycle
-# guard.
+# GENERATING past the old ceiling now emits, as ruby does.
 show("generate past it") do
   a = []
   c = a

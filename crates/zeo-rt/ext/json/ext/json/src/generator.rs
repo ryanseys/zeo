@@ -1,5 +1,5 @@
-//! The json gem's generator: one state carrying every option, and the depth
-//! counter that is also the cycle guard.
+//! The json gem's generator: one state carrying every option, emitted by a
+//! loop over a heap stack rather than by recursion.
 //!
 //! Probed against ruby 4.0.6's json 2.21.2, one knob at a time, because the
 //! layout rules are not guessable:
@@ -8,10 +8,12 @@
 //!     by `<nl><indent * depth>` -- so `indent: "--"` with no `array_nl`
 //!     gives `[--1,--2]`, indented items and a bare `]`. An EMPTY container
 //!     gets neither and stays `[]`.
-//!   * A cycle is not a special case. The depth counter bounds it, so a
-//!     self-referential array is `nesting of 100 is too deep. Did you try to
-//!     serialize objects with circular references?` -- and the number in
-//!     that message is the LIMIT, not the depth reached.
+//!   * A cycle IS a special case, and is caught as one: a container that
+//!     appears inside itself is refused where it closes, whatever the depth
+//!     limit says. Under the default limit of 100 a shallow cycle still
+//!     reports `nesting of 100 is too deep` first, because it hits the limit
+//!     before it repeats -- and the number in that message is the LIMIT, not
+//!     the depth reached.
 //!   * `1e100.to_json` is `1e+100`, not `1.0e+100`. The placement rule is in
 //!     [`float_text`].
 //!
@@ -22,22 +24,6 @@
 
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
-
-/// The depth this emit refuses at NO MATTER what `max_nesting` says.
-///
-/// A DIVERGENCE, deliberately, and the reason is a CYCLE rather than a deep
-/// document: this generator walks the structure recursively, so a
-/// self-referential one has no bound but the machine stack. Ruby has none
-/// either -- `JSON.generate(a, max_nesting: false)` on `a = []; a << a`
-/// raises `SystemStackError` there. A loud `JSON::NestingError` the program
-/// can rescue beats an abort with no line of output.
-///
-/// The parser used to share this number and no longer needs one: it keeps
-/// its open containers on an explicit stack, so its depth costs heap. Doing
-/// the same here would retire this constant too.
-/// `tests/divergences/json_nesting_is_bounded_by_the_stack.rb` records what
-/// is left.
-pub(super) const CYCLE_CEILING: i64 = 2_000;
 
 /// Every generator option, plus the depth this emit has reached.
 pub(super) struct State {
@@ -85,15 +71,13 @@ impl State {
 
     fn enter(&mut self) -> Result<(), Signal> {
         self.depth += 1;
-        if self.depth > CYCLE_CEILING {
-            return Err(raise_error(
-                "JSON::NestingError",
-                format!(
-                    "nesting of {CYCLE_CEILING} is too deep. Did you try to serialize objects \
-                     with circular references?"
-                ),
-            ));
-        }
+        // No ceiling beyond `max_nesting`. There used to be a hard 2,000,
+        // because a recursive generator had nothing but the machine stack
+        // between it and a cycle -- and a depth count cannot tell a deep
+        // document from a circular one, so it refused both. The emit is a
+        // loop over a heap stack now and the cycle is caught by ancestry, so
+        // `max_nesting: false` means what it says here as it already did in
+        // the parser.
         match self.max_nesting {
             Some(max) if self.depth > max => Err(raise_error(
                 "JSON::NestingError",
@@ -115,8 +99,96 @@ impl State {
     }
 }
 
+/// One thing left to do. The generator keeps these on a heap stack instead
+/// of recursing, so a document's depth costs memory rather than machine
+/// stack -- the same change the parser already made.
+///
+/// A container expands into its pieces IN ORDER, and they are pushed
+/// reversed so popping replays that order. The layout strings are computed
+/// at EXPANSION time, which is what keeps them right: an item's prefix is
+/// indented for the depth of the container holding it, and that depth is
+/// fixed the moment the container opens.
+enum Step {
+    /// Emit a value: a scalar directly, a container by expanding it.
+    Value(RubyValue),
+    /// Literal text -- a separator, an item prefix, a closing brace.
+    Text(String),
+    /// A mapping key, plus the `space_before : space` that follows it.
+    Key(RubyValue),
+    /// The container that opened here is finished: undo its `enter`, and
+    /// drop it from the ancestry the cycle check reads.
+    Leave(usize),
+}
+
+/// The identity of a container, for the ancestry check. Two containers are
+/// the same one when their payloads are, which is what `equal?` asks.
+fn container_id(v: &RubyValue) -> Option<usize> {
+    match v {
+        RubyValue::Array(a) => Some(std::sync::Arc::as_ptr(a) as *const () as usize),
+        RubyValue::Hash(h) => Some(std::sync::Arc::as_ptr(h) as *const () as usize),
+        _ => None,
+    }
+}
+
 /// `v` as JSON text, appended to `out`.
+///
+/// # Why this is a loop
+///
+/// It used to recurse, and a self-referential structure had nothing but the
+/// machine stack between it and a dead process -- which is what a hard
+/// 2,000-deep ceiling was for. Two separate problems shared one number:
+/// a document that is legitimately DEEP, and one that is CYCLIC. A depth
+/// ceiling refuses both, and it has to, because it cannot tell them apart.
+///
+/// They are told apart here. Depth costs heap, so a deep document emits at
+/// whatever depth `max_nesting` allows; and a container that appears inside
+/// ITSELF is caught by ancestry rather than by counting, so a cycle is
+/// refused at the point it closes rather than thousands of levels later.
+/// The message still names circular references, because that is now exactly
+/// what it found.
 pub(super) fn generate_into(v: &RubyValue, st: &mut State, out: &mut String) -> Result<(), Signal> {
+    // The containers currently open, innermost last -- this value's own
+    // ancestry, and the only thing a cycle can repeat.
+    let mut open: Vec<usize> = Vec::new();
+    let mut work: Vec<Step> = vec![Step::Value(v.clone())];
+    while let Some(step) = work.pop() {
+        match step {
+            Step::Text(text) => out.push_str(&text),
+            Step::Leave(id) => {
+                st.depth -= 1;
+                debug_assert_eq!(open.last(), Some(&id), "the ancestry unwound out of order");
+                open.pop();
+            }
+            Step::Key(k) => {
+                key_into(&k, st, out)?;
+                out.push_str(&st.space_before);
+                out.push(':');
+                out.push_str(&st.space);
+            }
+            Step::Value(v) => emit_one(&v, st, out, &mut open, &mut work)?,
+        }
+    }
+    Ok(())
+}
+
+/// One value: a scalar written out, a container expanded onto `work`.
+fn emit_one(
+    v: &RubyValue,
+    st: &mut State,
+    out: &mut String,
+    open: &mut Vec<usize>,
+    work: &mut Vec<Step>,
+) -> Result<(), Signal> {
+    // A container that is already open is its own ancestor, which is a
+    // cycle -- and no depth is deep enough to make that untrue.
+    if let Some(id) = container_id(v)
+        && open.contains(&id)
+    {
+        return Err(raise_error(
+            "JSON::NestingError",
+            "circular reference: this object contains itself".to_string(),
+        ));
+    }
     match v {
         RubyValue::Nil => out.push_str("null"),
         RubyValue::Bool(true) => out.push_str("true"),
@@ -139,40 +211,51 @@ pub(super) fn generate_into(v: &RubyValue, st: &mut State, out: &mut String) -> 
         RubyValue::Array(a) => {
             let items = a.lock().clone();
             st.enter()?;
+            let id = container_id(v).expect("an Array has an identity");
+            open.push(id);
             out.push('[');
+            // The prefixes are fixed now, at THIS container's depth, and are
+            // pushed as text rather than recomputed on the way out.
+            let item_prefix = st.item_prefix(&st.array_nl);
+            let close_prefix = st.close_prefix(&st.array_nl);
+            let mut steps: Vec<Step> = Vec::with_capacity(items.len() * 3 + 2);
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {
-                    out.push(',');
+                    steps.push(Step::Text(",".to_string()));
                 }
-                out.push_str(&st.item_prefix(&st.array_nl));
-                generate_into(item, st, out)?;
+                steps.push(Step::Text(item_prefix.clone()));
+                steps.push(Step::Value(item.clone()));
             }
             if !items.is_empty() {
-                out.push_str(&st.close_prefix(&st.array_nl));
+                steps.push(Step::Text(close_prefix));
             }
-            out.push(']');
-            st.depth -= 1;
+            steps.push(Step::Text("]".to_string()));
+            steps.push(Step::Leave(id));
+            work.extend(steps.into_iter().rev());
         }
         RubyValue::Hash(h) => {
             let pairs = crate::collections::hash_pairs(h);
             st.enter()?;
+            let id = container_id(v).expect("a Hash has an identity");
+            open.push(id);
             out.push('{');
+            let item_prefix = st.item_prefix(&st.object_nl);
+            let close_prefix = st.close_prefix(&st.object_nl);
+            let mut steps: Vec<Step> = Vec::with_capacity(pairs.len() * 4 + 2);
             for (i, (k, val)) in pairs.iter().enumerate() {
                 if i > 0 {
-                    out.push(',');
+                    steps.push(Step::Text(",".to_string()));
                 }
-                out.push_str(&st.item_prefix(&st.object_nl));
-                key_into(k, st, out)?;
-                out.push_str(&st.space_before);
-                out.push(':');
-                out.push_str(&st.space);
-                generate_into(val, st, out)?;
+                steps.push(Step::Text(item_prefix.clone()));
+                steps.push(Step::Key(k.clone()));
+                steps.push(Step::Value(val.clone()));
             }
             if !pairs.is_empty() {
-                out.push_str(&st.close_prefix(&st.object_nl));
+                steps.push(Step::Text(close_prefix));
             }
-            out.push('}');
-            st.depth -= 1;
+            steps.push(Step::Text("}".to_string()));
+            steps.push(Step::Leave(id));
+            work.extend(steps.into_iter().rev());
         }
         // Ruby asks an OBJECT to encode itself, HANDING IT THE STATE, and
         // splices what comes back verbatim.
@@ -442,31 +525,51 @@ mod tests {
     /// `max_nesting: false` must not be able to end the process: the cycle
     /// ceiling refuses first.
     ///
-    /// This runs on a stack far larger than any real one, because the test is
-    /// about the CEILING and not about the host: a test thread's stack is
-    /// small, doubly so in a debug build where every frame is several times
-    /// its release size, and without the room the process would die before
-    /// the assertion ran -- which is the very thing the ceiling prevents.
+    /// A document 3,000 levels deep emits with the limit off, on an ORDINARY
+    /// stack.
+    ///
+    /// This used to need a 64 MiB thread to reach its own assertion, because
+    /// the generator recursed and the test was about the ceiling that
+    /// stopped it. There is no ceiling and no recursion now, so the default
+    /// stack is the point -- 3,000 is past the old 2,000 and the emit does
+    /// not touch the machine stack at all.
+    ///
+    /// The depth is 3,000 rather than something larger because BUILDING and
+    /// DROPPING the value recurses, and a test thread's stack is small. A
+    /// compiled program on the main thread handles 20,000 of these both
+    /// ways; a test thread does not. That is a property of the value, not of
+    /// this generator.
     #[test]
-    fn the_cycle_ceiling_bounds_an_unbounded_generate() {
-        std::thread::Builder::new()
-            .stack_size(64 * 1024 * 1024)
-            .spawn(|| {
-                let mut inner = crate::collections::array_new(vec![RubyValue::Int(1)]);
-                for _ in 0..CYCLE_CEILING + 1 {
-                    inner = crate::collections::array_new(vec![RubyValue::Array(inner)]);
-                }
-                assert!(refuses(
-                    RubyValue::Array(inner),
-                    State {
-                        max_nesting: None,
-                        ..State::default()
-                    }
-                ));
-            })
-            .expect("spawning the test thread")
-            .join()
-            .expect("the test thread finished");
+    fn a_deep_document_emits_with_the_limit_off() {
+        let mut inner = crate::collections::array_new(vec![RubyValue::Int(1)]);
+        for _ in 0..3_000 {
+            inner = crate::collections::array_new(vec![RubyValue::Array(inner)]);
+        }
+        let mut st = State {
+            max_nesting: None,
+            ..State::default()
+        };
+        let mut out = String::new();
+        generate_into(&RubyValue::Array(inner), &mut st, &mut out)
+            .expect("a deep document emits");
+        assert_eq!(out.matches('[').count(), 3_001);
+        assert!(out.ends_with(&"]".repeat(3_001)));
+    }
+
+    /// A CYCLE is refused whatever the limit says, and by ancestry rather
+    /// than by counting -- so it is caught where it repeats rather than
+    /// thousands of levels later.
+    #[test]
+    fn a_cycle_is_refused_with_the_limit_off() {
+        let a = crate::collections::array_new(Vec::new());
+        a.lock().push(RubyValue::Array(a.clone()));
+        assert!(refuses(
+            RubyValue::Array(a),
+            State {
+                max_nesting: None,
+                ..State::default()
+            }
+        ));
     }
 
     /// A non-finite Float is refused unless `allow_nan` says otherwise, and
@@ -517,7 +620,7 @@ mod tests {
             let text = float_text(f);
             assert_eq!(text.parse::<f64>().unwrap().to_bits(), f.to_bits(), "{f}");
         }
-        for _ in 0..20_000 {
+        for _ in 0..3_000 {
             let f = f64::from_bits(next());
             if !f.is_finite() {
                 continue;

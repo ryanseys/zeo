@@ -43,8 +43,6 @@ enum Layout {
     Flat,
     /// `<root>/*.rb` and `<root>/pending/*.rb`
     FlatAndPending,
-    /// `<root>/*/*.rb`
-    OneDeep,
 }
 
 /// The golden suites, as `datatest_stable::harness!` declares them: the name
@@ -153,13 +151,6 @@ fn cases_under(root: &Path, layout: Layout) -> Result<Vec<String>, Error> {
     match layout {
         Layout::Flat => {}
         Layout::FlatAndPending => out.extend(ruby_files(&root.join("pending"), "pending/")?),
-        Layout::OneDeep => {
-            out.clear();
-            for dir in sorted_dirs(root)? {
-                let name = dir.file_name().expect("a directory name").to_string_lossy();
-                out.extend(ruby_files(&dir, &format!("{name}/"))?);
-            }
-        }
     }
     out.sort();
     Ok(out)
