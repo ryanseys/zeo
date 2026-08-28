@@ -8,12 +8,13 @@
 //!     by `<nl><indent * depth>` -- so `indent: "--"` with no `array_nl`
 //!     gives `[--1,--2]`, indented items and a bare `]`. An EMPTY container
 //!     gets neither and stays `[]`.
-//!   * A cycle IS a special case, and is caught as one: a container that
-//!     appears inside itself is refused where it closes, whatever the depth
-//!     limit says. Under the default limit of 100 a shallow cycle still
-//!     reports `nesting of 100 is too deep` first, because it hits the limit
-//!     before it repeats -- and the number in that message is the LIMIT, not
-//!     the depth reached.
+//!   * A cycle is caught by ANCESTRY -- a container appearing inside itself
+//!     -- but only when `max_nesting` is off. With a limit set, the limit is
+//!     what ruby reports and what zeo reports: `nesting of 100 is too deep.
+//!     Did you try to serialize objects with circular references?`, where
+//!     the number is the LIMIT and not the depth reached. The ancestry check
+//!     exists for the case ruby cannot survive at all, `max_nesting: false`
+//!     on a cycle, where ruby raises SystemStackError.
 //!   * `1e100.to_json` is `1e+100`, not `1.0e+100`. The placement rule is in
 //!     [`float_text`].
 //!
@@ -180,8 +181,14 @@ fn emit_one(
     work: &mut Vec<Step>,
 ) -> Result<(), Signal> {
     // A container that is already open is its own ancestor, which is a
-    // cycle -- and no depth is deep enough to make that untrue.
-    if let Some(id) = container_id(v)
+    // cycle. Asked ONLY when there is no depth limit, and the order matters:
+    // with a limit set, ruby reports `nesting of N is too deep` and so must
+    // zeo, because the limit is what it hits first. Checking ancestry
+    // unconditionally reported the cycle at depth 2 and changed the answer
+    // for every `JSON.generate(cyclic)` -- caught by
+    // `tests/probe_roundtrip.rb`, which compares against ruby row by row.
+    if st.max_nesting.is_none()
+        && let Some(id) = container_id(v)
         && open.contains(&id)
     {
         return Err(raise_error(
