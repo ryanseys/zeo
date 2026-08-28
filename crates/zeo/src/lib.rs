@@ -69,6 +69,7 @@ mod ffi_vocab;
 mod guard_fold;
 pub(crate) mod names;
 pub mod parse;
+pub mod progcache;
 pub mod ruby_features;
 pub mod types;
 
@@ -81,7 +82,7 @@ pub mod types;
 /// has to install through the runtime at its document position -- which
 /// is what the emitter already does for a `def` written somewhere analyze
 /// could not register.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum CompileMode {
     #[default]
     Program,
@@ -104,7 +105,7 @@ impl CompileMode {
 /// see `parse::parse_and_lower_with`. `Default` (no path, no roots) keeps
 /// the pathless `-e` behavior: `require_relative` then fails with
 /// CRuby's own "cannot infer basepath", and a plain `require` finds nothing.
-#[derive(Default)]
+#[derive(Default, Hash)]
 pub struct CompileOptions {
     /// The main file's own path -- the base for its `require_relative`s.
     pub input_path: Option<std::path::PathBuf>,
@@ -180,7 +181,7 @@ pub struct CompileOptions {
 /// than a bare `String` so a gem's name can't be confused with any other
 /// string option, and so identity can grow fields (a version pin) without an
 /// API break.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Gem {
     name: String,
 }
@@ -213,6 +214,12 @@ pub struct ObjectOutput {
     /// `-dead_strip` prunes against: exporting everything unconditionally
     /// would keep the whole runtime in every hello-world.
     pub loads_cext: bool,
+    /// Every source file this compile read, with the exact text it compiled.
+    /// [`progcache`] writes them into a manifest so a later run can tell
+    /// whether the cached binary is still the right answer.
+    ///
+    /// Collecting them costs an `Arc` bump per file, not a copy.
+    pub inputs: Vec<progcache::Input>,
 }
 
 /// The Cranelift pipeline: front end, then `clif::emit`.
@@ -342,10 +349,21 @@ fn compile_object_on_this_thread(
     let object = clif::emit::compile(&analyzed, debuginfo)
         .map_err(|e| CompileError::from_codegen(e, &analyzed.compiler.hir.files))?;
     front.report(t_emit.elapsed(), object.len() as u64, 0);
+    let inputs = analyzed
+        .compiler
+        .hir
+        .files
+        .iter()
+        .map(|f| progcache::Input {
+            name: f.name.clone(),
+            source: std::sync::Arc::clone(&f.source),
+        })
+        .collect();
     Ok(ObjectOutput {
         object,
         debuginfo,
         loads_cext,
+        inputs,
     })
 }
 

@@ -1008,11 +1008,18 @@ fn run() -> Result<(), MainError> {
                     .into(),
             );
         }
+        // The cache runs a program AHEAD of time and execs it, so an
+        // unchanged program never compiles twice. It is tried first, and
+        // falling through to the JIT below is the answer whenever it cannot
+        // help -- see `run_from_cache`.
         let program_name = match &args.source {
             Source::File(path) => path.display().to_string(),
             Source::Eval(_) => "-e".to_string(),
             Source::Irb => "irb".to_string(),
         };
+        if args.backend.is_none() && zeo::progcache::enabled() {
+            run_from_cache(&source, &opts, &program_name, &args.program_args);
+        }
         match zeo::run_jit_with(&source, &opts, &program_name, &args.program_args)? {}
     }
     let compiled = match backend {
@@ -1042,6 +1049,76 @@ fn run() -> Result<(), MainError> {
         p
     });
     Ok(zeo::backend::build_artifact(&program, &output)?)
+}
+
+/// Run this program from the compiled-program cache, and never return.
+///
+/// RETURNS when the cache cannot answer, and every such path is a fall-through
+/// to the in-process JIT rather than an error. That is the whole safety
+/// argument for making this the default: the cache is an accelerator, and a
+/// program it cannot build ahead of time runs exactly the way it always did.
+/// Three shapes reach the JIT --
+///
+/// * `--report` writes a file the compile produces, which a cache HIT would
+///   silently skip;
+/// * the object compile refuses (a program that needs the compiler in its own
+///   process is the JIT-only tier, `tests/jit/`), or the link does;
+/// * writing into the cache directory fails.
+///
+/// A compile ERROR reaches the JIT too, which reports the same error one front
+/// end later. A wrong program is slow to fail here, which is the right way
+/// round.
+fn run_from_cache(
+    source: &str,
+    opts: &zeo::CompileOptions,
+    program_name: &str,
+    program_args: &[String],
+) {
+    if opts.gem_report.is_some() {
+        return;
+    }
+    let key = zeo::progcache::key(source, opts);
+    if let Some(bin) = zeo::progcache::lookup(&key) {
+        exec(&bin, program_name, program_args);
+        return;
+    }
+    let Ok(compiled) = zeo::compile_to_object_with(source, opts, false) else {
+        return;
+    };
+    let Ok(bin) = zeo::progcache::reserve(&key) else {
+        return;
+    };
+    let program = zeo::backend::CompiledProgram::Aot(&compiled);
+    if zeo::backend::build_artifact(&program, &bin).is_err() {
+        return;
+    }
+    // The manifest is what makes the entry a HIT next time. Without it the
+    // binary is there and unread, which costs a rebuild and nothing else.
+    if let Err(e) = zeo::progcache::commit(&key, &compiled.inputs) {
+        tracing::warn!("could not record the program cache manifest: {e}");
+    }
+    exec(&bin, program_name, program_args);
+}
+
+/// Replace this process with `bin`. `exec` rather than spawn-and-wait, so the
+/// program keeps zeo's pid, its stdio, and its signal disposition -- the same
+/// single process an in-process JIT run is.
+///
+/// `arg0` is the PROGRAM's name, not the cached binary's. `$0` is argv[0]
+/// (`globals::seed_default_globals`), so without this a program would report
+/// a path inside the cache: mkmf derives an extension's `srcdir` from `$0`,
+/// and every generated Makefile came out pointing at the cache directory.
+///
+/// Returns only when the exec FAILED, which leaves the caller free to fall
+/// back; the error is reported, because a cached binary that will not run is
+/// worth knowing about even though the program still runs.
+fn exec(bin: &std::path::Path, program_name: &str, program_args: &[String]) {
+    use std::os::unix::process::CommandExt as _;
+    let e = std::process::Command::new(bin)
+        .arg0(program_name)
+        .args(program_args)
+        .exec();
+    tracing::warn!("could not run the cached program {}: {e}", bin.display());
 }
 
 /// Install a `tracing` subscriber (stderr) for the compiler pipeline: `ZEO_LOG`

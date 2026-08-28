@@ -17,7 +17,20 @@ fn zeo() -> Command {
     // Ambient ruby config must not leak into the parse (RUBYOPT would be
     // consulted; a user's RUBYLIB would widen the load path).
     cmd.env_remove("RUBYOPT").env_remove("RUBYLIB");
+    // These tests take the DEFAULT run path, which is the compiled-program
+    // cache -- exactly the surface they exist to check. They get their own
+    // cache directory so they neither read nor grow the developer's. It is
+    // shared across the tests in this binary and NOT wiped per call, because
+    // a second run finding the first run's entry is a thing under test.
+    cmd.env("ZEO_PROGRAM_CACHE", program_cache());
     cmd
+}
+
+/// One cache directory for this test binary, created once.
+fn program_cache() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("zeo-cli-cache-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create the program cache dir");
+    dir
 }
 
 fn scratch(name: &str) -> PathBuf {
@@ -395,5 +408,114 @@ fn the_irb_shell_evaluates_a_piped_transcript() {
     // that evaluated nothing.
     for want in ["42", "typed", "[2, 3]"] {
         assert!(text.contains(want), "irb never printed {want}:\n{text}");
+    }
+}
+
+/// A second run of an unchanged program does not compile it again.
+///
+/// The cache is what makes `zeo gem --version` 0.4s instead of 5s, and its
+/// whole risk is serving a stale answer -- so the two halves are checked
+/// together: the entry appears, and an EDIT to a file the program reads is
+/// still seen.
+#[test]
+fn a_second_run_comes_from_the_program_cache() {
+    let dir = scratch("cache-hit");
+    write(&dir, "lib/answer.rb", "def answer = 41\n");
+    let rb = write(&dir, "t.rb", "require_relative 'lib/answer'\nputs answer\n");
+
+    let first = zeo().arg(&rb).output().expect("zeo runs");
+    assert_eq!(stdout_of(&first).trim(), "41");
+    let entries = std::fs::read_dir(program_cache())
+        .expect("the cache dir is readable")
+        .count();
+    assert!(entries > 0, "the first run recorded nothing");
+
+    let second = zeo().arg(&rb).output().expect("zeo runs");
+    assert_eq!(stdout_of(&second).trim(), "41", "the cached run disagreed");
+
+    // A required file changed. Serving the cached binary here would run the
+    // previous version of the user's program, which is the one failure this
+    // whole mechanism must not have.
+    write(&dir, "lib/answer.rb", "def answer = 42\n");
+    let third = zeo().arg(&rb).output().expect("zeo runs");
+    assert_eq!(
+        stdout_of(&third).trim(),
+        "42",
+        "an edited require was served from the cache"
+    );
+}
+
+/// `ZEO_CACHE=0` runs the program without consulting or filling the cache --
+/// the escape hatch for anyone who needs to know they are running a fresh
+/// compile.
+#[test]
+fn the_cache_can_be_turned_off() {
+    let dir = scratch("cache-off");
+    let rb = write(&dir, "t.rb", "puts 7\n");
+    let cache = std::env::temp_dir().join(format!("zeo-cli-cache-off-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    std::fs::create_dir_all(&cache).expect("create the cache dir");
+
+    let out = zeo()
+        .env("ZEO_CACHE", "0")
+        .env("ZEO_PROGRAM_CACHE", &cache)
+        .arg(&rb)
+        .output()
+        .expect("zeo runs");
+    assert_eq!(stdout_of(&out).trim(), "7");
+    assert_eq!(
+        std::fs::read_dir(&cache).expect("readable").count(),
+        0,
+        "ZEO_CACHE=0 still wrote to the cache"
+    );
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+/// An explicit `--backend` means the caller chose how to run, so the cache
+/// stays out of it. The golden harness relies on this: it spawns every one
+/// of its thousands of children with `--backend jit`.
+#[test]
+fn an_explicit_backend_skips_the_cache() {
+    let dir = scratch("cache-explicit");
+    let rb = write(&dir, "t.rb", "puts 8\n");
+    let cache = std::env::temp_dir().join(format!("zeo-cli-cache-jit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    std::fs::create_dir_all(&cache).expect("create the cache dir");
+
+    let out = zeo()
+        .env("ZEO_PROGRAM_CACHE", &cache)
+        .args(["--backend", "jit"])
+        .arg(&rb)
+        .output()
+        .expect("zeo runs");
+    assert_eq!(stdout_of(&out).trim(), "8");
+    assert_eq!(
+        std::fs::read_dir(&cache).expect("readable").count(),
+        0,
+        "an explicit --backend still wrote to the cache"
+    );
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+/// A cached run reports the PROGRAM's name, not the cache entry's path.
+///
+/// `$0` is argv[0], and the cache execs a binary that lives under the cache
+/// directory. Without an explicit `arg0` every program saw a path it had
+/// never heard of -- and mkmf, which derives an extension's `srcdir` from
+/// `$0`, wrote every generated Makefile pointing into the cache.
+#[test]
+fn a_cached_run_keeps_the_programs_own_name() {
+    let dir = scratch("cache-arg0");
+    let rb = write(&dir, "who.rb", "puts $0\nputs $PROGRAM_NAME\nputs __FILE__\n");
+
+    let want = format!("{0}\n{0}\n{0}\n", rb.display());
+    for run in ["first", "cached"] {
+        let out = zeo().arg(&rb).output().expect("zeo runs");
+        assert_eq!(
+            stdout_of(&out),
+            want,
+            "the {run} run named the wrong program, stderr: {}",
+            stderr_of(&out)
+        );
     }
 }

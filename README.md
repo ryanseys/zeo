@@ -183,6 +183,8 @@ replacement for any removed spelling.
 | `RUBYOPT` / `RUBYLIB` | As in CRuby. `RUBYOPT` accepts only `-I`, `-w`, `-W`. |
 | `GEM_PATH` / `BUNDLE_GEMFILE` | Defaults for `--gem-path` / `--bundle-gemfile`. An ambient store alone never changes a compile. |
 | `ZEO_BACKEND` | `jit` or `aot`; the `--backend` flag wins. |
+| `ZEO_CACHE` | `0` turns the compiled-program cache off, so the run compiles from scratch. |
+| `ZEO_PROGRAM_CACHE` | Where cached programs live (default: `<build root>/programs`). |
 | `ZEO_LOG` / `RUST_LOG` | A `tracing` `EnvFilter` directive, e.g. `zeo::analyze=debug`. Unset means no subscriber and no output. |
 | `ZEO_MEMORY_LIMIT` | Bytes of resident memory a compile may use (default: half of RAM, capped at 8 GiB). A breach exits 12 and names the phase. |
 | `ZEO_GVL` | `1` runs threads on CRuby's schedule (a FIFO global lock with a 100 ms timer). The default is parallel OS threads. |
@@ -207,9 +209,16 @@ foo.rb ─prism─▶ HIR arena ─analyze─▶ typed classes, MRO,   ─clif�
   `Symbol`. That same registry serves `send`, `define_method`,
   `method_missing`, singletons, refinements, and classes built at run time
   with `Class.new`.
-- **Two output modes, one lowering.** Run mode finalizes the same Cranelift
-  IR in process (`--backend jit`, the default). `-o` emits an object file and
-  links it against `libzeo.a` with the system `cc` (`--backend aot`).
+- **Two output modes, one lowering.** `-o` emits an object file and links it
+  against `libzeo.a` with the system `cc` (`--backend aot`). Run mode either
+  finalizes the same Cranelift IR in process (`--backend jit`) or links a
+  binary and `exec`s it.
+- **A program compiles once.** `zeo foo.rb` links its binary into a cache and
+  runs it; the next run with the same sources skips straight to the `exec`,
+  so `zeo gem --version` costs 0.4s rather than 4.9s. A cache entry is keyed
+  by the compile's inputs and checked against them, and anything the cache
+  cannot answer -- an edited file, a program the object backend declines --
+  falls back to compiling. `ZEO_CACHE=0` turns it off.
 - **A complete runtime** (`zeo-rt`): a CRuby-compatible numeric tower
   (`Integer`/`Bignum`/`Rational`/`Complex`), strings as bytes plus an
   encoding, real coroutine `Fiber`s, real OS-thread `Thread`s, and Ruby 4.0's
