@@ -32,6 +32,11 @@ pub fn user_const_missing(cid: ClassId) -> bool {
 /// miss would have. CRuby's exact protocol, which nothing in this runtime
 /// called before: the hook had a definition but no caller.
 pub fn const_miss(cid: ClassId, name: &str) -> Result<RubyValue, Signal> {
+    // An `autoload` gets its one chance HERE, before the miss is reported.
+    // Reading the constant is what runs it in ruby, and this is the read.
+    if let Some(v) = crate::builtins::rmodule::run_autoload_for(cid, name)? {
+        return Ok(v);
+    }
     send_value(
         &RubyValue::Class(cid),
         Symbol::intern("const_missing"),

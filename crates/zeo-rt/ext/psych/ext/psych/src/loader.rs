@@ -793,31 +793,23 @@ pub(super) fn class_named(name: &str) -> Result<RubyValue, Signal> {
     if let Some(id) = crate::runtime_meta::runtime_class_id_by_name(name) {
         return Ok(RubyValue::Class(id));
     }
-    // Walk `A::B::C` from the top-level constant table down.
-    let mut here = zeo_abi::OBJECT_CLASS;
-    let mut found = None;
-    for part in name.split("::") {
-        let Some(v) = crate::constants::const_get(here.0, part) else {
-            found = None;
-            break;
-        };
-        match v {
-            RubyValue::Class(cid) => {
-                here = cid;
-                found = Some(RubyValue::Class(cid));
-            }
-            other => {
-                found = Some(other);
-                break;
-            }
-        }
-    }
-    found.ok_or_else(|| {
-        raise_error(
-            "NameError",
-            format!("uninitialized constant {name} (require it to load this document)"),
-        )
-    })
+    // Through `Module#const_get` rather than the constant table, because
+    // reading a constant is what RUNS ITS AUTOLOAD -- and the table read does
+    // not. rubygems declares `Gem::Dependency` and every one of its
+    // neighbours as an autoload, so a table read answered "no such class" for
+    // a class that was one line away from existing, and a `.gem` could not be
+    // opened. `const_get` also walks `A::B::C` itself, which is the rule
+    // ruby's own `resolve_class` follows.
+    let object = RubyValue::Class(zeo_abi::OBJECT_CLASS);
+    let arg = RubyValue::Str(string_new(name.to_string()));
+    crate::dispatch::send_value(&object, crate::Symbol::intern("const_get"), &[arg], None).map_err(
+        |_| {
+            raise_error(
+                "NameError",
+                format!("uninitialized constant {name} (require it to load this document)"),
+            )
+        },
+    )
 }
 
 /// YAML's `!!binary` payload. Whitespace is layout, not data.

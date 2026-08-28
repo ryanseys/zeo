@@ -1,0 +1,11 @@
+before	true
+autoload?	autoload_widget
+read	ByFeature::Widget
+value	widget
+after	nil
+path read	ByPath::Gadget
+path value	gadget
+const_get	Scoped::Thing
+missing	LoadError
+count	1
+count again	1

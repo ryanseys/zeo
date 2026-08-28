@@ -444,6 +444,31 @@ pub fn run_pending_autoload(owner: u32, name: &str) -> Result<(), crate::Signal>
 /// Called from the baked raise codegen emits for a miss, which is the path
 /// almost every constant read takes -- `const_missing` itself is dispatched
 /// only when a class in the chain defines the hook.
+/// Run `owner::name`'s pending `autoload`, if it has one, and answer the
+/// constant it defined.
+///
+/// READING A CONSTANT IS WHAT RUNS AN AUTOLOAD, and this is the only place a
+/// general one fires. It used to be reachable for a concealed BUILTIN class
+/// and nowhere else, so `autoload :Dependency, "..."` recorded a target that
+/// nothing ever ran: touching the constant went straight to `const_missing`,
+/// which read the record and raised the `LoadError` the load was never given
+/// a chance to avoid. rubygems registers every one of its classes that way,
+/// so nothing could open a `.gem`.
+///
+/// `None` means there was no autoload, or it ran and defined nothing -- and
+/// in the second case the record is spent, so a second read reports the miss
+/// rather than looping.
+pub(crate) fn run_autoload_for(
+    owner: crate::ClassId,
+    name: &str,
+) -> Result<Option<RubyValue>, crate::Signal> {
+    if peek_autoload_target(owner.0, name).is_none() {
+        return Ok(None);
+    }
+    run_pending_autoload(owner.0, name)?;
+    Ok(const_lookup(owner, name, Search::Inherited))
+}
+
 pub fn const_miss_signal(owner: crate::ClassId, name: &str, message: &str) -> crate::Signal {
     let pending = pending_autoloads().lock();
     if !pending.is_empty()

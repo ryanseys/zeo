@@ -12,18 +12,12 @@
 #
 # Shapes, never versions -- see `tests/milestones.rs`.
 
+# Nothing is required but rubygems itself. `Gem::Version`, `Gem::Dependency`
+# and `Gem::Requirement` all arrive through rubygems' own `autoload`, which is
+# how a real caller meets them -- and which zeo could not run at all until the
+# read path was given the chance to.
 require "yaml"
 require "rubygems"
-
-# The three classes the document names. Ruby reaches them through rubygems'
-# own `autoload`, and zeo cannot yet -- an autoload registered with an
-# ABSOLUTE path never loads, which is
-# tests/gaps/an_autoload_of_an_absolute_path_loads.rb. Requiring them by name
-# is what that gap costs a caller today; nothing else here is affected, and
-# the revival below is the same either way.
-require "rubygems/version"
-require "rubygems/dependency"
-require "rubygems/requirement"
 
 YAML_TEXT = <<~Y
   --- !ruby/object:Gem::Specification
