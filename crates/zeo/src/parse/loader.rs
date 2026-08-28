@@ -84,6 +84,7 @@ const LOAD_FAITHFUL: &[&str] = &["rubygems", "bundler", "irb"];
 /// `require_paths` (PLURAL, default `["lib"]`), which is why an installed
 /// store's `specifications/` directory can feed the same values later with no
 /// resolver changes.
+#[derive(Clone)]
 pub(super) struct Gem {
     name: String,
     /// Absolute, existence-checked root directories, in `require_paths` order.
@@ -292,6 +293,39 @@ pub fn read_source(path: &Path) -> Result<String, String> {
 /// user's own source (the exception prelude and `eval` bodies keep going
 /// through plain `parse_and_lower_into`, where the three call shapes are
 /// rejected by `lower_node` instead).
+/// Every `.rb` file under a load-faithful package root, canonicalized --
+/// the spelling `unit_only_targets` is compared against everywhere it is
+/// read.
+///
+/// MEMOIZED for the life of the process. The walk descends the whole
+/// rubygems and bundler trees and canonicalizes each file, which is
+/// thousands of syscalls; it ran on EVERY compile, and a run-time `eval` is
+/// a compile. It was 8.5 ms of the 15 ms an eval cost, so RubyGems'
+/// 66 gemspec evals at boot spent half a second re-walking one directory.
+///
+/// Keyed by the root alone. These roots are zeo's own payload, and nothing
+/// adds a file to them while a compile is running.
+fn faithful_files(root: &Path) -> Vec<PathBuf> {
+    static MEMO: std::sync::Mutex<Option<HashMap<PathBuf, Vec<PathBuf>>>> =
+        std::sync::Mutex::new(None);
+    if let Some(hit) = MEMO
+        .lock()
+        .expect("the load-faithful memo is never poisoned")
+        .get_or_insert_with(HashMap::default)
+        .get(root)
+    {
+        return hit.clone();
+    }
+    let mut files = Vec::new();
+    collect_rb_files(root, &mut files);
+    let canonical: Vec<PathBuf> = files.iter().filter_map(|p| p.canonicalize().ok()).collect();
+    MEMO.lock()
+        .expect("the load-faithful memo is never poisoned")
+        .get_or_insert_with(HashMap::default)
+        .insert(root.to_path_buf(), canonical.clone());
+    canonical
+}
+
 pub(super) fn lower_main_file(
     hir: &mut Hir,
     source: &str,
@@ -1340,12 +1374,7 @@ impl Loader {
             .flat_map(|g| g.roots.iter().cloned())
             .collect();
         for root in &roots {
-            let mut files = Vec::new();
-            collect_rb_files(root, &mut files);
-            // Canonical, because that is the spelling `unit_only_targets` is
-            // compared against everywhere it is read.
-            self.unit_only_targets
-                .extend(files.iter().filter_map(|p| p.canonicalize().ok()));
+            self.unit_only_targets.extend(faithful_files(root));
         }
     }
 

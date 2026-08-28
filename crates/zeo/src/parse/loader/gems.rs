@@ -86,7 +86,46 @@ pub(super) fn lockfile_precedence(
 /// wins" rule, the same shape as Bundler's lockfile picking exactly one
 /// version). A missing/unreadable packages dir contributes nothing (the
 /// CLI passes default candidate locations that often don't exist).
+///
+/// MEMOIZED for the life of the process, and that is not an optimization
+/// detail: a run-time `eval` is a whole compile, so it discovers packages
+/// too. RubyGems evals 66 default gemspecs at boot, and each one re-read
+/// every bundled gem directory and re-parsed every gemspec -- 11.5 ms a
+/// time, which WAS essentially the entire cost of a run-time eval.
+///
+/// The key is the directory list plus each directory's mtime, so a gem
+/// added or removed inside one process is still seen. A gemspec EDITED in
+/// place is not: the directory does not change, and nothing in zeo rewrites
+/// a gemspec while a compile is running. A fresh process reads it.
 pub(super) fn discover_packages(
+    package_dirs: &[PathBuf],
+    bundled_dirs: &[PathBuf],
+) -> PResult<Vec<Gem>> {
+    type Key = (Vec<PathBuf>, Vec<PathBuf>, Vec<Option<std::time::SystemTime>>);
+    static MEMO: std::sync::Mutex<Option<HashMap<Key, Vec<Gem>>>> = std::sync::Mutex::new(None);
+
+    let stamps: Vec<Option<std::time::SystemTime>> = package_dirs
+        .iter()
+        .map(|d| std::fs::metadata(d).and_then(|m| m.modified()).ok())
+        .collect();
+    let key: Key = (package_dirs.to_vec(), bundled_dirs.to_vec(), stamps);
+    if let Some(hit) = MEMO
+        .lock()
+        .expect("the package memo is never poisoned")
+        .get_or_insert_with(HashMap::default)
+        .get(&key)
+    {
+        return Ok(hit.clone());
+    }
+    let packages = discover_packages_uncached(package_dirs, bundled_dirs)?;
+    MEMO.lock()
+        .expect("the package memo is never poisoned")
+        .get_or_insert_with(HashMap::default)
+        .insert(key, packages.clone());
+    Ok(packages)
+}
+
+fn discover_packages_uncached(
     package_dirs: &[PathBuf],
     bundled_dirs: &[PathBuf],
 ) -> PResult<Vec<Gem>> {
@@ -319,4 +358,70 @@ pub(super) fn with_rb_ext(feature: &str) -> String {
 
 pub(super) fn is_native_feature(feature: &str) -> bool {
     feature.ends_with(".so") || feature.ends_with(".o") || feature.ends_with(".bundle")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gem_dir(root: &Path, name: &str, version: &str) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir_all(dir.join("lib")).expect("a lib dir");
+        std::fs::write(
+            dir.join(format!("{name}.gemspec")),
+            format!(
+                "Gem::Specification.new do |s|\n  \
+                 s.name = {name:?}\n  s.version = {version:?}\n  \
+                 s.require_paths = [\"lib\"]\nend\n"
+            ),
+        )
+        .expect("a gemspec");
+        dir
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("zeo-discover-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        dir
+    }
+
+    /// The memo answers the same thing the walk does. A stale or mis-keyed
+    /// memo would show here as a package list that lost a name.
+    #[test]
+    fn a_second_discovery_answers_the_same_packages() {
+        let root = scratch("same");
+        gem_dir(&root, "alpha", "1.0.0");
+        gem_dir(&root, "beta", "2.0.0");
+        let dirs = vec![root.clone()];
+
+        let first = discover_packages(&dirs, &[]).expect("discovery succeeds");
+        let second = discover_packages(&dirs, &[]).expect("discovery succeeds");
+        let names = |gems: &[Gem]| gems.iter().map(|g| g.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&first), vec!["alpha", "beta"]);
+        assert_eq!(names(&first), names(&second));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A gem that appears BETWEEN two compiles in one process is still
+    /// found. This is what the directory mtime is in the key for: `zeo gem
+    /// install` writes a gem and then compiles, in one process.
+    #[test]
+    fn a_gem_added_after_the_first_discovery_is_still_found() {
+        let root = scratch("added");
+        gem_dir(&root, "alpha", "1.0.0");
+        let dirs = vec![root.clone()];
+
+        let before = discover_packages(&dirs, &[]).expect("discovery succeeds");
+        assert_eq!(before.len(), 1, "one gem to start");
+
+        gem_dir(&root, "beta", "2.0.0");
+        let after = discover_packages(&dirs, &[]).expect("discovery succeeds");
+        assert_eq!(
+            after.iter().map(|g| g.name.clone()).collect::<Vec<_>>(),
+            vec!["alpha", "beta"],
+            "the memo served a list that predates the new gem"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
