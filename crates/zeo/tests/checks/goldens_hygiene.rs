@@ -15,17 +15,7 @@ fn repo_root() -> &'static Path {
 
 fn suite_dirs() -> Vec<PathBuf> {
     let root = repo_root().join("tests");
-    let mut dirs = vec![root.clone(), root.join("spinel"), root.join("gaps")];
-    // One subdirectory per gem under tests/gemtests/.
-    if let Ok(entries) = std::fs::read_dir(root.join("gemtests")) {
-        dirs.extend(
-            entries
-                .filter_map(Result::ok)
-                .map(|e| e.path())
-                .filter(|p| p.is_dir()),
-        );
-    }
-    dirs
+    vec![root.clone(), root.join("spinel"), root.join("gaps")]
 }
 
 fn goldens() -> impl Iterator<Item = PathBuf> {

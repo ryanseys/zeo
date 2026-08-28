@@ -71,7 +71,7 @@ const MAX_CHILD_RSS: u64 = 512 << 20; // 512 MiB
 /// [`MAX_CHILD_RSS`], with an env override (`ZEO_GOLDEN_MAX_RSS`, in MiB)
 /// for the cases that legitimately need more, the same way
 /// `ZEO_GOLDEN_RUN_DEADLINE` stretches the clock for them. A case that
-/// compiles a whole gem's require graph in the child (a gemtests case) is
+/// compiles a whole gem's require graph in the child (a milestone case) is
 /// doing real work at a scale the 512 MiB figure was never measured
 /// against.
 fn max_child_rss() -> u64 {
@@ -157,7 +157,8 @@ fn child_rss(_pid: u32) -> Option<u64> {
 
 /// [`RUN_DEADLINE`], with an env override (`ZEO_GOLDEN_RUN_DEADLINE`, in
 /// seconds) for suites whose cases legitimately run longer -- a vendored
-/// gem's whole test file is one case in the `gemtests` suite. The deadline
+/// library's whole require graph is one case in the `milestone` suite. The
+/// deadline
 /// also bounds the ruby oracle during bless, so both sides stretch together.
 fn run_deadline() -> Duration {
     static D: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
@@ -668,10 +669,9 @@ fn bless(
 
 // ---- the entry point ----
 
-/// Per-suite compile/oracle environment beyond the shared defaults. The
-/// `gemtests` suite points `package_dirs` at `vendor/gemtests/` (each fetched
-/// gem is a package there) and `oracle_includes` at each gem's `lib/`, so the
-/// zeo build and the CRuby oracle resolve the same `require "rack"`.
+/// Per-suite compile/oracle environment beyond the shared defaults: a suite
+/// that needs its own package dirs or `-I` roots sets them here, so the zeo
+/// build and the CRuby oracle resolve the same `require`.
 #[derive(Default)]
 pub struct SuiteEnv {
     pub package_dirs: Vec<PathBuf>,

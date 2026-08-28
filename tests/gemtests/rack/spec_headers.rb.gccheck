@@ -1,6 +1,0 @@
-The minitest driver's own machinery at exit (see spec_media_type.rb.gccheck)
-plus this spec's own residue: the Rack::Headers instances and the test-class
-object reach themselves through the collected spec Procs.
-First recorded when the gemtests-under-gccheck leg first actually ran
-(2026-08-25).
-cycle leak: 87 objects (Array x34, Proc x15, Hash x8, OptionParser::Switch::NoArgument x6, cell x6, OptionParser::Switch::RequiredArgument x5, OptionParser::OptionMap x4, OptionParser::Switch::OptionalArgument x3, OptionParser::List x2, Rack::Headers x2, OptionParser x1, RackHeadersTest x1)

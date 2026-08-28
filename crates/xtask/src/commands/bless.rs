@@ -69,7 +69,6 @@ const SUITES: &[Suite] = &[
     Suite { prefix: "gap", root: "tests/gaps", layout: Layout::Flat, records_zeo: false, zeo_reads_store: false },
     Suite { prefix: "spinel", root: "tests/spinel", layout: Layout::Flat, records_zeo: false, zeo_reads_store: false },
     Suite { prefix: "milestone", root: "tests/milestones", layout: Layout::FlatAndPending, records_zeo: false, zeo_reads_store: true },
-    Suite { prefix: "gemtest", root: "tests/gemtests", layout: Layout::OneDeep, records_zeo: false, zeo_reads_store: false },
 ];
 
 const USAGE: &str = "\

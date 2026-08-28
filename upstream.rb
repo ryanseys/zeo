@@ -4,9 +4,11 @@
 #
 # `gem` entries are vendored into the committed `gems/<name>/` -- a stub
 # gemspec plus the verbatim `lib/` -- which is what the compiler reads, so a
-# fresh clone builds offline with no extra step. `gemtest` entries are whole
-# checkouts fetched on demand into the gitignored `vendor/gemtests/<name>/`,
-# because a `.gem` archive does not ship `test/`.
+# fresh clone builds offline with no extra step.
+#
+# There used to be a `gemtest` kind too: a whole upstream checkout fetched on
+# demand, so a gem's own test suite could be run under zeo. It is gone. See
+# the commit that removed it for what that costs and what replaces it.
 #
 # `rev` is the reproducible pin: a vendoring run resolves the tag to a
 # commit SHA once and every later sync reuses it. `subdir` is for a repo that
@@ -130,19 +132,6 @@ gem "uri",
   github: "ruby/uri",
   tag: "v1.1.1",
   rev: "f1b05c89ab38667e7564896f994d4d6cfbc67149"
-gemtest "rack",
-  github: "rack/rack",
-  tag: "v3.2.6",
-  rev: "e1f22fdbe99afd2126b6fbf05bb12399359574b7"
-gemtest "msgpack",
-  github: "msgpack/msgpack-ruby",
-  tag: "v1.8.4",
-  rev: "42378b091b0936d27bc9649da366e90798345fe6"
-
-gem "error_highlight",
-  github: "ruby/error_highlight",
-  tag: "v0.7.2",
-  rev: "d945ffd2aa4e6c36665195b6a5db8a73ac5339af"
 gem "rake",
   github: "ruby/rake",
   tag: "v13.4.2",

@@ -1,7 +1,0 @@
-The minitest driver's own machinery at exit: minitest parses its options
-through OptionParser, whose switch/list/map graph links back to itself and
-to the collected spec Procs -- deliberate rings the program never breaks.
-First recorded when the gemtests-under-gccheck leg first actually ran
-(2026-08-25; the CI leg that claimed to run it was defeated by the nextest
-default-filter for its whole life).
-cycle leak: 80 objects (Array x33, Proc x14, Hash x6, OptionParser::Switch::NoArgument x6, cell x6, OptionParser::Switch::RequiredArgument x5, OptionParser::OptionMap x4, OptionParser::Switch::OptionalArgument x3, OptionParser::List x2, OptionParser x1)

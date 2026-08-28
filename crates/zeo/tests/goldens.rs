@@ -19,7 +19,7 @@
 //! `tests/README.md` lays the corpus out as a 2x2 of cost against outcome.
 //!
 //! Two corpora cost minutes and gigabytes a case, so they raise the bounds
-//! and take their own nextest deadline (`test(milestone::) | test(gemtest::)`,
+//! and take their own nextest deadline (`test(milestone::)`,
 //! which the default profile also opts out of):
 //!
 //! - `tests/milestones/` -- umbrella entry points, each a named case so a
@@ -27,12 +27,10 @@
 //!   must print SHAPES, never versions: ruby has RubyGems loaded before line
 //!   1, so its `require` answers `false` where zeo's answers `true`, and the
 //!   bundled versions differ.
-//! - `tests/gemtests/` -- one driver per gem requires a real upstream test
 //!   file and the framework's autorun executes it. The trees are gitignored
-//!   fetched into `vendor/gemtests/` on demand; an absent tree skips.
 //!
 //! Case names are `<fn>::<path>`, so `bless example::` / `gap::` / `spinel::`
-//! / `milestone::` / `gemtest::` each name one corpus.
+//! / `milestone::` each name one corpus.
 
 #[path = "harness/golden.rs"]
 mod golden;
@@ -81,7 +79,7 @@ fn spinel(rb: &Path) -> datatest_stable::Result<()> {
     run(rb, golden::Mode::Pass)
 }
 
-/// Every milestone and gemtest case is a whole-graph compile by definition,
+/// Every milestone case is a whole-graph compile by definition,
 /// so the raise is unconditional rather than a by-name list.
 ///
 /// SAFETY: nextest runs each test in its own process, and both are set
@@ -114,34 +112,6 @@ fn milestone(rb: &Path) -> datatest_stable::Result<()> {
     golden::run_golden_env(rb, mode, &golden::tests_run_cwd(), &env)
 }
 
-/// Each case runs with the vendored gem root as its working directory (test
-/// frameworks strip the `Dir.pwd` prefix from paths they print), the gem's
-/// `test/` as a load root on BOTH sides, and `vendor/gemtests/` as a zeo
-/// package dir (the stub gemspec makes each tree a requirable package).
-fn gemtest(rb: &Path) -> datatest_stable::Result<()> {
-    let rb = std::fs::canonicalize(rb).unwrap_or_else(|_| rb.to_path_buf());
-    let gem = rb
-        .parent()
-        .and_then(Path::file_name)
-        .expect("tests/gemtests/<gem>/<case>.rb")
-        .to_string_lossy()
-        .into_owned();
-    let vendor = paths::workspace_root().join("vendor").join("gemtests");
-    let gem_root = vendor.join(&gem);
-    if !gem_root.is_dir() {
-        // Fetch-on-demand: no tree, no test.
-        return Ok(());
-    }
-    raise_the_bounds();
-    let env = golden::SuiteEnv {
-        package_dirs: vec![vendor.clone()],
-        load_roots: vec![gem_root.join("test")],
-        oracle_includes: vec![gem_root.join("lib"), gem_root.join("test")],
-        ..Default::default()
-    };
-    golden::run_golden_env(&rb, golden::Mode::Pass, &gem_root, &env)
-}
-
 datatest_stable::harness! {
     { test = example, root = "../../tests", pattern = r"^[^/]+\.rb$" },
     { test = divergence, root = "../../tests/divergences", pattern = r"^[^/]+\.rb$" },
@@ -150,5 +120,4 @@ datatest_stable::harness! {
     { test = gap, root = "../../tests/gaps", pattern = r"^[^/]+\.rb$" },
     { test = spinel, root = "../../tests/spinel", pattern = r"^[^/]+\.rb$" },
     { test = milestone, root = "../../tests/milestones", pattern = r"^(pending/)?[^/]+\.rb$" },
-    { test = gemtest, root = "../../tests/gemtests", pattern = r"^[^/]+/[^/]+\.rb$" },
 }

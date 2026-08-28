@@ -94,9 +94,9 @@ jobs:
 
       # One instrumented corpus pass: the compiled-ownership ledger AND the
       # cycle census together (the two compose; verified 2026-08-25). The
-      # whole-gem gemtests half of the census belongs to `make gate` (the
-      # nextest default-filter excludes `binary(gemtests)`, so listing it
-      # here would silently run nothing -- which is exactly what happened).
+      # whole-gem half of the census belongs to `make gate`: the nextest
+      # default-filter excludes those cases, so listing them here would
+      # silently run nothing -- which is exactly what happened once.
       - run: make ci-memcheck
 
       # The hand-written native-library table vs rustc's live answer.
@@ -115,7 +115,7 @@ jobs:
       # a bigger suite. Each case splices a whole library's require graph, so
       # this is minutes rather than seconds and the nextest default-filter
       # excludes the binary -- the leg passes `-P full` for exactly that
-      # reason, the same trap `make ci-memcheck` fell into with gemtests.
+      # reason, the same trap `make ci-memcheck` fell into once.
       - run: make ci-milestones
 
       # nextest doesn't run doctests; keep them covered.
@@ -132,9 +132,9 @@ jobs:
       # (.config/nextest.toml) caps their concurrency. A fixed gap fails CI as
       # an XPASS (promote it).
       #
-      # NOT run here: the rest of the `-P full` profile's whole-gem cases
-      # (gemtests, every_bundled_gem_compiles). They compile entire require
-      # graphs and belong to the phase gate -- `make gate` runs them. The
+      # NOT run here: the `-P full` profile's whole-gem case
+      # (every_bundled_gem_compiles). It compiles every bundled gem's require
+      # graph and belongs to the phase gate -- `make gate` runs it. The
       # milestones leg above is the exception, and deliberately so: it is the
       # one whole-graph suite whose subject is a headline claim.
   msrv:

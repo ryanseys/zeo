@@ -77,7 +77,7 @@ ci-aot: all
 # double-consume in the emitted lowering) AND the cycle census (gates
 # CHANGE against each program's `.gccheck` sidecar). The two compose:
 # verified 4,393/4,393 with both armed, 2026-08-25. Emitted code only,
-# so golden corpora only. The whole-gem gemtests half lives in `gate`.
+# so golden corpora only. The whole-gem compile lives in `gate`.
 ci-memcheck: all
 	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo --test goldens --no-fail-fast
 
@@ -142,15 +142,14 @@ else
 PLATFORM_CI_LEG := ci-natlibs
 endif
 
-# The boundary gate: the CI legs, the whole-gem cases the default profile
-# opts out of (`-P full`), gemtests under both memory checks, and the AOT
-# leg over the full spinel corpus (CI runs only the AOT smoke tier).
+# The boundary gate: the CI legs, the whole-gem compile the default profile
+# opts out of (`-P full`), and the AOT leg over the full spinel corpus (CI
+# runs only the AOT smoke tier).
 # Bench is deliberately NOT here: perf numbers are recorded on their own
 # cadence (`make bench` after perf commits and at re-banks), never gated.
 gate: ci-jit ci-aot ci-memcheck ci-doc ci-milestones ci-features $(PLATFORM_CI_LEG)
 	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --no-fail-fast -E 'binary(goldens) & test(spinel::)'
-	$(NEXTEST) -p zeo -P full -E 'test(gemtest::) + test(every_bundled_gem_compiles)'
-	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo -P full -E 'test(gemtest::)'
+	$(NEXTEST) -p zeo -P full -E 'test(every_bundled_gem_compiles)'
 
 bench:
 	$(CARGO) bench -p zeo --bench programs
