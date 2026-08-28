@@ -263,16 +263,23 @@ pub(super) fn try_conditional_reopen(
         // was written: `if outer; if inner; <body>; end; end`.
         let mut body = body;
         for &(cond, on_then) in guards.iter().rev() {
+            // The guard's own position and its body's, so the wrapper CONTAINS
+            // what it wraps -- `eval_body_source`'s slice is taken only then.
+            let mut covered = body.clone();
+            covered.push(cond);
+            let span = covering_span(compiler, &covered);
             let (then_body, else_body) = if on_then {
                 (body, Vec::new())
             } else {
                 (Vec::new(), body)
             };
+            compiler.hir.push_span(span);
             let wrapped = compiler.hir.push(HirNode::If {
                 cond,
                 then_body,
                 else_body,
             });
+            compiler.hir.pop_span();
             compiler
                 .hir
                 .set_flag(wrapped, crate::hir::NodeFlag::HOISTED_CLASS_GUARD);
@@ -285,26 +292,62 @@ pub(super) fn try_conditional_reopen(
             .into_iter()
             .map(|part| match part {
                 Guarded::Reopen(name, superclass, body, is_module) => {
+                    let span = covering_span(compiler, &body);
                     let body = wrap_guards(compiler, body);
-                    compiler.hir.push(HirNode::ClassDef {
+                    compiler.hir.push_span(span);
+                    let id = compiler.hir.push(HirNode::ClassDef {
                         name,
                         superclass,
                         body,
                         is_module,
-                    })
+                    });
+                    compiler.hir.pop_span();
+                    id
                 }
                 Guarded::Directive(stmt) => {
+                    let span = covering_span(compiler, &[stmt]);
                     let body = wrap_guards(compiler, vec![stmt]);
-                    compiler.hir.push(HirNode::ClassDef {
+                    compiler.hir.push_span(span);
+                    let id = compiler.hir.push(HirNode::ClassDef {
                         name: "Object".to_string(),
                         superclass: None,
                         body,
                         is_module: false,
-                    })
+                    });
+                    compiler.hir.pop_span();
+                    id
                 }
             })
             .collect(),
     )
+}
+
+/// A span COVERING every statement in `body`, for a `ClassDef` this pass
+/// synthesizes rather than reads off the source.
+///
+/// The node needs one at all because a class body compiled at RUN time is
+/// re-evaluated from its own SOURCE TEXT, sliced between the first and last
+/// statement (`clif::eval::eval_body_source`) -- and the slice is taken only
+/// when the class's own span CONTAINS them. A span-less wrapper made the
+/// run-time compiler refuse the whole file: tomlrb, reached through
+/// `bundler/setup`, died on "a span-less `class` (`Object`)".
+///
+/// `None` (a synthetic or empty body, or statements from two files) keeps the
+/// old `Span::SYNTH`, which is what the wrapper had before.
+fn covering_span(compiler: &Compiler, body: &[NodeId]) -> crate::hir::Span {
+    let mut it = body.iter().filter_map(|&n| compiler.hir.span(n));
+    let Some(first) = it.next() else {
+        return crate::hir::Span::SYNTH;
+    };
+    let mut span = first;
+    for s in it {
+        if s.file != span.file {
+            return crate::hir::Span::SYNTH;
+        }
+        span.start = span.start.min(s.start);
+        span.end = span.end.max(s.end);
+    }
+    span
 }
 
 /// An undecidable-guard top-level `if` whose definitions are `def`s on

@@ -400,11 +400,17 @@ fn node_kind(node: &crate::hir::HirNode) -> String {
 /// backtrace row raised inside it names the same place the snippet does.
 fn eval_body_source(fx: &Fx, stmt: NodeId, body: &[NodeId]) -> CResult<(String, String, u32)> {
     let hir = &fx.an.compiler.hir;
+    // The refusal NAMES the class. A refusal that cannot say which body it
+    // could not place sends the reader bisecting a whole gem by hand.
+    let named = |what: &str| {
+        let name = match &hir[stmt] {
+            crate::hir::HirNode::ClassDef { name, .. } => format!(" (`{name}`)"),
+            _ => String::new(),
+        };
+        CodegenError::unsupported(format!("{what}{name} inside an `eval`"), None)
+    };
     let Some((file, line)) = crate::analyze::source::source_location(&fx.an.compiler, stmt) else {
-        return Err(CodegenError::unsupported(
-            "a span-less `class` inside an `eval`",
-            None,
-        ));
+        return Err(named("a span-less `class`"));
     };
     let (file, mut line) = (file.to_string(), line);
     let (Some(first), Some(last)) = (body.first(), body.last()) else {
@@ -412,13 +418,10 @@ fn eval_body_source(fx: &Fx, stmt: NodeId, body: &[NodeId]) -> CResult<(String, 
     };
     let (Some(a), Some(b)) = (hir.span(*first), hir.span(*last)) else {
         let blame = if hir.span(*first).is_none() { first } else { last };
-        return Err(CodegenError::unsupported(
-            format!(
-                "a span-less {} in a `class` inside an `eval`",
-                node_kind(&hir[*blame])
-            ),
-            None,
-        ));
+        return Err(named(&format!(
+            "a span-less {} in a `class`",
+            node_kind(&hir[*blame])
+        )));
     };
     // The body's TEXT is what runs -- a class body inside a snippet is one
     // more `class_eval` of its own source -- so the usual case is one slice
@@ -427,7 +430,7 @@ fn eval_body_source(fx: &Fx, stmt: NodeId, body: &[NodeId]) -> CResult<(String, 
     let own = hir
         .span(stmt)
         .and_then(|s| s.known())
-        .ok_or_else(|| CodegenError::unsupported("a span-less `class` inside an `eval`", None))?;
+        .ok_or_else(|| named("a span-less `class`"))?;
     if a.file == own.file && a.start >= own.start && b.end <= own.end {
         let src = hir
             .files

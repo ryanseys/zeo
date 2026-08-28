@@ -1018,6 +1018,21 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
         e.methods.insert(new, m);
+        // The VALUE-shaped body travels with the copy. A method has two
+        // installed shapes -- one taking an `&RObj`, one taking a plain
+        // `RubyValue` -- and only the second can run with a CLASS as `self`.
+        // Copying `methods` alone left the alias with no value body, so
+        // `extended_class_method` fell through to the `&RObj` surrogate and a
+        // receiverless call inside the aliased body looked for an INSTANCE
+        // method. Forwardable is the case: `alias def_delegators
+        // def_instance_delegators`, then `extend Forwardable; def_delegators`
+        // raised `undefined method 'def_instance_delegator'`.
+        //
+        // Own-only, matching `overlay_value_body`'s own rule: a body on an
+        // ancestor is still reached through the ordinary walk.
+        if let Some(vb) = e.value_bodies.get(&old).cloned() {
+            e.value_bodies.insert(new, vb);
+        }
         match vis {
             Some(v) => e.methods_vis.insert(new, v),
             None => e.methods_vis.remove(&new),
