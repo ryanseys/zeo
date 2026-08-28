@@ -1,0 +1,50 @@
+String	ivar	[1, 1, [:@counter]]
+String	ivar again	[2, 2, [:@counter]]
+String	const	"top"
+String	owner	Object
+String	private	"private reached"
+String	super	"no super: super: no superclass met"
+String	private?	false
+Array	ivar	[1, 1, [:@counter]]
+Array	ivar again	[2, 2, [:@counter]]
+Array	const	"top"
+Array	owner	Object
+Array	private	"private reached"
+Array	super	"no super: super: no superclass met"
+Array	private?	false
+Hash	ivar	[1, 1, [:@counter]]
+Hash	ivar again	[2, 2, [:@counter]]
+Hash	const	"top"
+Hash	owner	Object
+Hash	private	"private reached"
+Hash	super	"no super: super: no superclass met"
+Hash	private?	false
+Plain	ivar	[1, 1, [:@counter]]
+Plain	ivar again	[2, 2, [:@counter]]
+Plain	const	"top"
+Plain	owner	Object
+Plain	private	"private reached"
+Plain	super	"no super: super: no superclass met"
+Plain	private?	false
+WithIvar	ivar	[101, 101, [:@counter]]
+WithIvar	ivar again	[102, 102, [:@counter]]
+WithIvar	const	"top"
+WithIvar	owner	Object
+WithIvar	private	"private reached"
+WithIvar	super	"no super: super: no superclass met"
+WithIvar	private?	false
+OwnCopy	ivar	[1, 1, [:@counter]]
+OwnCopy	ivar again	[2, 2, [:@counter]]
+OwnCopy	const	"mine"
+OwnCopy	owner	Object
+OwnCopy	private	"private reached"
+OwnCopy	super	"no super: super: no superclass met"
+OwnCopy	private?	false
+owner via Plain	Object
+owner via String	Object
+owner via OwnCopy	OwnCopy
+Plain defines?	false
+Object defines?	true
+separate ivars	[2, 1]
+pre-set ivar	101
+override wins	"overridden"
