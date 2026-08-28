@@ -367,6 +367,71 @@ pub(super) fn defer_runtime_mixin_in_body(compiler: &mut Compiler, site_idx: usi
     compiler.class_body_sites[site_idx].stmts.push(send);
 }
 
+/// The module names a `self.included(base)` hook extends its includer with.
+///
+/// The ClassMethods idiom, and it is everywhere:
+///
+/// ```text
+/// module Hook
+///   def self.included(base) = base.extend(ClassMethods)
+///   module ClassMethods; def method_added(n); ...; end; end
+/// end
+/// ```
+///
+/// `include Hook` therefore gives the including class `ClassMethods`' methods
+/// as CLASS methods. zeo records an `extends` edge for an `extend` written in
+/// a class body, so the direct spelling already worked; this one happens
+/// inside a method that runs at mixin time, so nothing static saw it and the
+/// edge was missing.
+///
+/// What it cost: Thor registers every command by defining a method and
+/// letting `method_added` catch it, and `method_added` arrives exactly this
+/// way. Without the edge `analyze::def_hooks` could not see a hook body, so
+/// no definition announced itself and `Bundler::CLI` finished with 3 of its
+/// ~30 commands -- `zeo bundle install` answered `Could not find command
+/// "install"` with the method sitting right there on the class.
+///
+/// Read conservatively: only a direct `<base>.extend(Const, ...)` on the
+/// hook's own first parameter, at any depth in the body so a guarded one
+/// still counts. Anything else -- a computed module, a different receiver,
+/// `base.send(:extend, m)` -- is left to the runtime path, which is correct
+/// and merely unoptimized.
+pub(super) fn extends_from_included_hook(compiler: &Compiler, module: ClassId) -> Vec<String> {
+    let Some(&hook) = compiler.class(module).own_class_methods.iter().find(|&&s| {
+        let scope = compiler.scope(s);
+        scope.name == "included" && scope.params.required.len() == 1
+    }) else {
+        return Vec::new();
+    };
+    let scope = compiler.scope(hook);
+    let base = scope.params.required[0].as_str();
+
+    fn walk(hir: &crate::hir::Hir, id: NodeId, base: &str, out: &mut Vec<String>) {
+        if let HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            ..
+        } = &hir[id]
+            && name == "extend"
+            && matches!(&hir[*recv], HirNode::LocalRead(l) if l == base)
+        {
+            for a in args {
+                if let HirNode::ClassRef(n) = &hir[a.node_id()] {
+                    out.push(n.clone());
+                }
+            }
+        }
+        hir[id].for_each_child(&mut |c| walk(hir, c, base, out));
+    }
+
+    let mut out = Vec::new();
+    for &stmt in &scope.body {
+        walk(&compiler.hir, stmt, base, &mut out);
+    }
+    out
+}
+
 /// The class a `class Name < Super` clause names, resolved the way ruby
 /// resolves it: the superclass expression runs BEFORE `Name` is bound, so the
 /// class being defined is never a candidate for its own superclass.

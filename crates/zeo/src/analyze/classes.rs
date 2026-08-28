@@ -824,11 +824,19 @@ fn walk_class_body(
                         if compiler.overrides_mixin_primitive(target, "append_features") {
                             defer_mixin_to_runtime(compiler, target);
                         } else if is_reopen_site(compiler, class_id, site_idx) {
+                            // The edge belongs to the INCLUDE, not to how the
+                            // mixin is staged, so it is recorded on this path
+                            // too. `class Bundler::Thor; include Thor::Base`
+                            // is a reopen (the nested Thor::* files created
+                            // the shell first), and skipping it here is what
+                            // left `Bundler::CLI` with 3 of its ~30 commands.
+                            record_included_hook_extends(compiler, class_id, target, box_id);
                             defer_positional_mixin(compiler, site_idx, stmt, target);
                             continue;
                         } else {
                             let ci = &mut compiler.classes[class_id.0 as usize];
                             ci.mixin_order.push((target, false));
+                            record_included_hook_extends(compiler, class_id, target, box_id);
                         }
                         compiler.class_body_sites[site_idx].stmts.push(stmt);
                     }
@@ -1554,6 +1562,28 @@ pub(super) fn defer_reopen_only_defs(compiler: &mut Compiler) {
 ///
 /// Narrower than [`defer_runtime_mixin`], which widens to EVERY name: the
 /// module is resolved here, so only its own names need to leave.
+/// Give `class_id` the class methods `target`'s `included` hook would extend
+/// it with -- the ClassMethods idiom, resolved at compile time.
+///
+/// See [`extends_from_included_hook`] for why the edge cannot be seen any
+/// other way. Constants are resolved in the MODULE's nesting, because that is
+/// where the name is written.
+fn record_included_hook_extends(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    target: ClassId,
+    box_id: u32,
+) {
+    for name in extends_from_included_hook(compiler, target) {
+        if let MixinTarget::Static(cm) = resolve_module_target(compiler, &name, &[target], box_id) {
+            let ci = &mut compiler.classes[class_id.0 as usize];
+            if !ci.extends.contains(&cm) {
+                ci.extends.push(cm);
+            }
+        }
+    }
+}
+
 fn defer_positional_mixin(compiler: &mut Compiler, site_idx: usize, stmt: NodeId, target: ClassId) {
     defer_mixin_to_runtime(compiler, target);
     let send = crate::lower::defs::runtime_directive_spelling(&mut compiler.hir, stmt)
