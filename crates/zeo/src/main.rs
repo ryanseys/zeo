@@ -247,11 +247,12 @@ subcommands:
   gem <args...>         run rubygems -- the real one, compiled from the
                         vendored library, so `zeo gem install rack` needs no
                         ruby on the machine
-  bundle <args...>      run bundler, likewise -- but NOT yet usable: bundler
-                        loads and its command table comes up nearly empty, so
-                        every verb answers `Could not find command`. See
-                        docs/COMPATIBILITY.md. Use the system `bundle` and
-                        point zeo at the lockfile until this lands.
+  bundle <args...>      run bundler, likewise -- `zeo bundle install` resolves
+                        and installs a Gemfile with no ruby on the machine.
+                        `bundle exec` and `bundler/setup` do not work yet:
+                        both ask rubygems for an INSTALLED bundler gem,
+                        and zeo carries bundler as a library. See
+                        docs/COMPATIBILITY.md.
                         A script really named `gem` or `bundle` still runs as
                         `zeo ./gem`; the subcommand never depends on what is
                         in the current directory.

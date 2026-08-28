@@ -957,39 +957,46 @@ it; a class's `dup` and `clone` both keep it, because `rb_mod_init_copy`
 clones the singleton class either way. Pinned by
 `tests/an_extended_receiver_copies_like_ruby.rb`.
 
-## `zeo bundle` reaches Bundler but finds no commands
+## `zeo bundle install` works; `bundle exec` and `bundler/setup` do not
 
 `zeo gem` works end to end — `zeo gem install --no-document tomlrb` resolves
 over HTTPS, verifies both checksums, extracts and installs, with no Ruby on
 the machine. It is RubyGems' own binstub, compiled.
 
-**`zeo bundle` does not.** Every verb answers
+**`zeo bundle install` now does too.** From a directory holding a `Gemfile`:
 
 ```
-$ zeo bundle install
-Could not find command "install".
+$ BUNDLE_PATH=vendor/bundle zeo bundle install
+Fetching gem metadata from https://rubygems.org/.
+Resolving dependencies...
+Fetching tomlrb 2.0.4
+Installing tomlrb 2.0.4
+Bundle complete! 1 Gemfile dependency, 1 gem now installed.
 ```
 
-Bundler loads; its command table is nearly empty. `Bundler::CLI.commands`
-holds 3 of roughly 30 — config, doctor and plugin, the three Thor registers
-directly. Every other command is registered by Thor defining a method and
-letting `method_added` catch it, and zeo does not fire that hook here.
-`Bundler::CLI.instance_methods(false)` lists `add`, `binstubs`, `cache`,
-`check`, `clean`, `install` and the rest: the methods are all present, and
-Thor's own machinery works (`create_command("install")` returns true and
-grows the table). Nothing heard about them.
+`install`, `update`, `list`, `check`, `show`, `info`, `lock`, `config` and
+`--version` all run; `Bundler::CLI.commands.keys` matches CRuby's exactly.
+Four defects stood between Bundler and that, each general and each fixed:
+a hook in another file could not be ordered against a definition, a hook an
+`extend` supplied was installed at the wrong position, a superclass clause
+never ran its `autoload`, and a bare `require` matched any loaded path ending
+in the same name.
 
-Half the cause is fixed — a `method_added` supplied through
-`base.extend(ClassMethods)` now has a compile-time edge. The other half is
-`analyze::def_hooks`, which refuses a hook defined in a feature unit when the
-definition is in a different file, regardless of require order: measured on
-`Bundler::CLI`, all 40 candidates are refused that way even though
-`thor/base.rb` demonstrably runs before `bundler/cli.rb`. Tracked as
-`tests/gaps/bundlers_thor_commands_register_through_method_added.rb`, with
-the full measurement and the reason the obvious fix is unsound on task #76.
+**`bundle exec` and `require "bundler/setup"` still do not**, and both fail
+the same way:
 
-Until it lands, use the system `bundle` to resolve a `Gemfile.lock` and point
-zeo at the result, which is the section below.
+```
+Gem::GemNotFoundException: can't find gem bundler (= 4.0.16) with executable bundle
+```
+
+Bundler asks RubyGems for its own installed gem and binstub so it can set
+`BUNDLE_BIN_PATH` for the child process. Zeo carries Bundler as a compiled-in
+library, not as a gem in a store, so there is nothing for that lookup to find.
+That is a packaging question, tracked on tasks #72 and #73, not a compiler
+gap: the command itself dispatches correctly.
+
+To compile against what a bundle resolved, point zeo at the result — the
+section below.
 
 ## Compiling against an installed gem store
 
