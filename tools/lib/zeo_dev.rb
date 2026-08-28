@@ -34,7 +34,6 @@ module ZeoDev
     bench
     gem
     gemtests
-    cext
     linux
   ].freeze
 

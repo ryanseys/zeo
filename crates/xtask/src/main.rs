@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 mod commands;
 mod exec;
 mod payload;
+mod ruby;
 mod scratch;
+mod vendor;
 
 /// A chore that could not finish, with the reason a person needs.
 pub struct Error(String);
@@ -42,10 +44,20 @@ pub fn root_join(rel: impl AsRef<Path>) -> PathBuf {
     root().join(rel)
 }
 
+/// Write only when the bytes differ, so an unchanged generated file keeps its
+/// mtime and a build that keys on it does not redo itself.
+pub fn write_if_changed(path: &Path, content: &[u8]) -> Result<(), Error> {
+    if std::fs::read(path).is_ok_and(|old| old == content) {
+        return Ok(());
+    }
+    std::fs::write(path, content).map_err(|e| Error::new(format!("writing {}: {e}", path.display())))
+}
+
 const USAGE: &str = "\
 usage: cargo xtask <command> [options]
 
 commands:
+  cext            the vendored MRI C API headers and the rb_* census
   dist            assemble the relocatable distribution
   stage-publish   stage the artifacts the published crate ships
 
@@ -64,6 +76,7 @@ fn main() -> std::process::ExitCode {
     }
     let rest = &args[1..];
     let result = match command.as_str() {
+        "cext" => commands::cext::run(rest),
         "dist" => commands::dist::run(rest),
         "stage-publish" => commands::stage_publish::run(rest),
         other => Err(Error::new(format!(

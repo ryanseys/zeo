@@ -2,7 +2,7 @@
 //!
 //! # Why this file exists at all, and it is not a good reason
 //!
-//! `zeo-dev cext api` scanned `<ruby.h>` alone, so nothing here was in the
+//! `cargo xtask cext api` scanned `<ruby.h>` alone, so nothing here was in the
 //! census, no stub was generated, and a gem that included `ruby/encoding.h`
 //! LINKED and then jumped to a null address on its first call.
 //! `fast_blank` -- 40 lines of C -- did exactly that. A symbol the census

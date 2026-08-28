@@ -208,20 +208,20 @@ jobs:
       # ext/ compile at all, and the patch half is what stops it reading a
       # struct layout zeo does not have. A hand-edit to a vendored header
       # would be invisible in review among 194 files, so the sum is checked.
-      - run: tools/zeo-dev cext sync --check
+      - run: cargo xtask cext sync --check
 
       # `cext/api.rs` and `cext/stubs.rs` are both generated from
       # clang's AST of those headers, so a re-vendor moves them and a new
       # `rb_*` implementation retires a stub. Stale either way means a gem
       # fails to LINK, with a message naming a symbol and no file or line.
-      - run: tools/zeo-dev cext api --check
+      - run: cargo xtask cext api --check
 
       # The forwarding table is a set of CLAIMS that MRI's `rb_x` is exactly
       # `Class#method`. The claims are verified against the oracle by
       # `cext forward --reverify`, which needs ruby 4.0.6 and so never runs
       # here; what CI checks is that the committed table and the generated
       # Rust still agree.
-      - run: tools/zeo-dev cext forward --check
+      - run: cargo xtask cext forward --check
 
       # The published `zeo` crate carries pregenerated artifacts that its
       # build script would otherwise derive from sibling crates absent from

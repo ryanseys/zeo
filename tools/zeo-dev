@@ -21,7 +21,6 @@ USAGE = <<~TEXT
     bench           the runtime performance suite under `bench/`
     gem             manage the vendored upstream gems
     gemtests        run a vendored gem's own test suite
-    cext            manage the vendored MRI C API headers and the rb_* census
     linux           run the suites in the linux container
 
   `tools/zeo-dev <command> --help` describes one command.

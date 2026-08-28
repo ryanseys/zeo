@@ -49,7 +49,7 @@ pub mod value;
 #[cfg(test)]
 mod tests {
     /// `api::API` is the census the stub file is generated from, and the two
-    /// are checked against each other in CI by `zeo-dev cext api --check`.
+    /// are checked against each other in CI by `cargo xtask cext api --check`.
     /// What that check cannot see is whether the census still describes the
     /// RUNTIME, so these do.
     fn ledger() -> &'static [(&'static str, &'static str, &'static str, &'static str)] {

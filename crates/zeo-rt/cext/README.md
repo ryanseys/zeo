@@ -12,13 +12,13 @@ against CRuby's object layout, and zeo has no such layout to offer it.
 
 Upstream `ruby/ruby@v4.0.6`'s `include/` tree, verbatim, plus the series in
 `patches/`. 195 files -- 194 upstream and one zeo adds,
-`ruby/internal/zeo.h`. The pin lives in `upstream.rb`; the tree is rebuilt
-from that sum by
+`ruby/internal/zeo.h`. The pin lives in `ruby-headers.lock`; the tree is
+rebuilt from that sum by
 
 ```
-tools/zeo-dev cext sync            # rewrite include/ from upstream + patches/
-tools/zeo-dev cext sync --check    # prove include/ is exactly that sum
-tools/zeo-dev cext patch <name>    # record a hand-edit as the next patch
+cargo xtask cext sync            # rewrite include/ from upstream + patches/
+cargo xtask cext sync --check    # prove include/ is exactly that sum
+cargo xtask cext patch <name>    # record a hand-edit as the next patch
 ```
 
 `--check` runs in CI. A hand-edit that is not recorded as a patch is drift, and
