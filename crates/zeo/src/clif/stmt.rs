@@ -1753,6 +1753,11 @@ fn class_body_site_run(
 ) -> CResult<super::operand::Operand> {
     use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
     use cranelift_module::Module;
+    // `class Sub < Super` READS `Super` before anything else here, and a read
+    // is what runs an `autoload` target -- see `ClassBodyCall::superclass_touch`.
+    if let Some(parent) = call.superclass_touch {
+        super::consts::autoload_touch(fx, crate::compiler::ClassId(parent));
+    }
     // The frozen-reopen guard runs FIRST: a frozen class raises before the
     // body's declaration bookkeeping, let alone its statements.
     if !call.freeze_guard.is_empty() {
