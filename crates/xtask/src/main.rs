@@ -96,10 +96,12 @@ const USAGE: &str = "\
 usage: cargo xtask <command> [options]
 
 commands:
+  bench           the compiler-cost instrument (runtime suite: cargo bench)
   bless           re-record golden `.expected` files from the ruby oracle
   cext            the vendored MRI C API headers and the rb_* census
   diff            compare a snippet across ruby and zeo, and file a gap
   dist            assemble the relocatable distribution
+  linux           run the suites in the linux container
   probe           run a differential probe matrix across ruby and zeo
   promote-gap     move a fixed gap into the passing suite
   stage-publish   stage the artifacts the published crate ships
@@ -119,10 +121,12 @@ fn main() -> std::process::ExitCode {
     }
     let rest = &args[1..];
     let result = match command.as_str() {
+        "bench" => commands::bench::run(rest),
         "bless" => commands::bless::run(rest),
         "cext" => commands::cext::run(rest),
         "diff" => commands::diff::run(rest),
         "dist" => commands::dist::run(rest),
+        "linux" => commands::linux::run(rest),
         "probe" => commands::probe::run(rest),
         "promote-gap" => commands::promote_gap::run(rest),
         "stage-publish" => commands::stage_publish::run(rest),

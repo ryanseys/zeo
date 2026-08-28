@@ -29,7 +29,6 @@
 
 CARGO ?= cargo
 NEXTEST ?= $(CARGO) nextest run
-ZEO_DEV ?= tools/zeo-dev
 BUNDLE ?= bundle
 
 .PHONY: all test check check-batch gate bench pgo install linux clean ci-typed \
@@ -167,7 +166,7 @@ install:
 	$(CARGO) install --path crates/zeo
 
 linux:
-	$(ZEO_DEV) linux
+	$(CARGO) xtask linux
 
 clean:
 	$(CARGO) clean

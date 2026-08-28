@@ -95,7 +95,7 @@ Three things check it:
   and it reports that too. The shapes it
   catches are pinned by `tests/compiled_code_releases_a_dead_slot.rb`, which
   reproduces both in a few lines each.
-- valgrind, on the Linux leg (`tools/zeo-dev linux valgrind`).
+- valgrind, on the Linux leg (`cargo xtask linux valgrind`).
 
 Pool retention is the known cost: a temporary lives to the end of its
 frame, which is observable when a program watches `ObjectSpace::WeakMap`.

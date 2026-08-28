@@ -6,10 +6,10 @@
 # from PATH and a zeo-compiled binary -- dogfooding, and the reason the rule
 # below exists.
 #
-# What remains is what `cargo xtask` has not taken over yet. The commands the
-# repo depends on daily live there now; the four here are on the way out --
-# `gem`, `gemtests` and `manifest`/`vendor` go with the Gemfile migration,
-# `bench` and `linux` are the last to port.
+# What remains is the two commands the Gemfile migration deletes outright,
+# rather than ports: `gem` vendors the upstream trees `gems/` holds, and
+# `gemtests` runs one vendored gem's own suite. Everything else now lives in
+# `cargo xtask`.
 #
 # One rule keeps both engines working (this list once had three; the
 # autoload and builtin-alias bugs closed and became passing goldens):
@@ -30,10 +30,8 @@ module ZeoDev
 
   # Every command, in the order `--help` lists them.
   COMMANDS = %w[
-    bench
     gem
     gemtests
-    linux
   ].freeze
 
   class Error < StandardError; end

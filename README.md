@@ -527,7 +527,7 @@ tarball in the container instead:
 
 ```console
 $ podman build --platform linux/arm64 -t zeo-linux .
-$ tools/zeo-dev linux dist      # target/dist/zeo-<version>-<triple>.tar.gz
+$ cargo xtask linux dist      # target/dist/zeo-<version>-<triple>.tar.gz
 ```
 
 The artifact is genuinely natively built, so a cross-compile divergence is
@@ -543,9 +543,10 @@ tests/       example goldens, the spinel corpus, the gaps tracker, gemtests
 gems/        67 bundled gems (upstream.lock pins the git-tracked ones)
 bench/       61 benchmark programs; read bench/README.md
 vendor/      rubygems and fetched test trees (gitignored)
-tools/       the Ruby toolchain: `tools/zeo-dev <command>`, plus generators
+crates/xtask the repo's chores: `cargo xtask <command>`
+tools/       the gem vendoring half of `tools/zeo-dev`, plus generators
 Makefile     the front door: make / test / check / gate / linux
-Dockerfile   the linux verification image (`tools/zeo-dev linux`)
+Dockerfile   the linux verification image (`cargo xtask linux`)
 ```
 
 ---
