@@ -415,6 +415,9 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 .collect();
         crate::features::install_declined_features(Vec::leak(declined));
     }
+    // A runtime without the ext measures nothing, so the table it would fill
+    // is never built.
+    #[cfg(feature = "ext-coverage")]
     if desc.n_cov > 0 {
         let cov: Vec<(&'static str, u32, &'static [u32], &'static [u32])> =
             unsafe { rows(desc.coverage, desc.n_cov) }

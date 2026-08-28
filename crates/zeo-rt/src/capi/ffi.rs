@@ -50,7 +50,7 @@ pub unsafe extern "C" fn zeo_rt_ffi_sym(
             unsafe { super::str_slice(s.ptr, s.len) }
         })
         .collect();
-    match crate::ffi::site_symbol(site, &names, sym, mode) {
+    match site_symbol(site, &names, sym, mode) {
         Ok(addr) => {
             unsafe { out.write(addr as usize) };
             STATUS_OK
@@ -70,7 +70,7 @@ pub unsafe extern "C" fn zeo_rt_ffi_sym_slot(
     out: *mut usize,
 ) -> i32 {
     let sym = unsafe { super::str_slice(sym, sym_len) };
-    match crate::ffi::site_symbol_slot(site, slot, sym) {
+    match site_symbol_slot(site, slot, sym) {
         Ok(addr) => {
             unsafe { out.write(addr as usize) };
             STATUS_OK
@@ -178,6 +178,22 @@ pub unsafe extern "C" fn zeo_rt_ffi_invoke(
         Err(s) => fail(s),
     }
 }
+
+#[cfg(not(feature = "ext-ffi"))]
+fn site_symbol(_: u32, _: &[&str], _: &str, _: u8) -> Result<*const std::os::raw::c_void, Signal> {
+    Err(no_ffi())
+}
+
+#[cfg(feature = "ext-ffi")]
+use crate::ffi::site_symbol;
+
+#[cfg(not(feature = "ext-ffi"))]
+fn site_symbol_slot(_: u32, _: usize, _: &str) -> Result<*const std::os::raw::c_void, Signal> {
+    Err(no_ffi())
+}
+
+#[cfg(feature = "ext-ffi")]
+use crate::ffi::site_symbol_slot;
 
 #[cfg(not(feature = "ext-ffi"))]
 unsafe fn invoke(

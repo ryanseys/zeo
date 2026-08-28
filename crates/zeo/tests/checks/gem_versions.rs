@@ -161,6 +161,41 @@ fn every_exemption_still_names_a_vendored_gem() {
     );
 }
 
+/// Every directory in either tier is a real library: it has a `lib/`, a
+/// gemspec, or Rust at `ext/<name>/src/`. Anything else is a leftover -- a
+/// half-finished move, or a directory holding nothing but a `.DS_Store`,
+/// both of which the compiler would silently skip.
+#[test]
+fn no_library_tier_holds_a_leftover_directory() {
+    let root = repo_root();
+    let mut strays: Vec<String> = Vec::new();
+    for tier in ["crates/zeo-rt/ext", "gems"] {
+        let dir = root.join(tier);
+        for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{tier} is readable: {e}")) {
+            let path = entry.expect("readable entry").path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .expect("a directory name")
+                .to_string_lossy()
+                .to_string();
+            let real = path.join("lib").is_dir()
+                || path.join(format!("{name}.gemspec")).is_file()
+                || path.join("ext").join(&name).join("src").is_dir();
+            if !real {
+                strays.push(format!("{tier}/{name}"));
+            }
+        }
+    }
+    assert!(
+        strays.is_empty(),
+        "these directories are not libraries, so nothing will ever load them: \
+         {strays:?}"
+    );
+}
+
 /// The versionless set is closed. A gemspec appearing beside one of these
 /// would put a number nothing can check back into the tree, which is what
 /// `socket 0.7.1`, `pty 0.5.9` and `monitor 0.1.0` were.

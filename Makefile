@@ -104,6 +104,17 @@ ci-milestones: all
 ci-doc: all
 	$(CARGO) test --workspace --doc
 
+# Every `ext-*` feature really is optional. Two configurations are enough:
+# the empty set is the strictest, and the docs.rs set is the one that ships
+# -- it omits `ext-ffi` and `ext-openssl` (both build vendored C), and it
+# silently stopped compiling once. `check`, not `build`: this asks whether
+# the cfgs are right, not for an artifact.
+DOCS_RS_FEATURES := $(shell sed -n '/\[package.metadata.docs.rs\]/,/^\[dependencies\]/p' \
+	crates/zeo-rt/Cargo.toml | sed -n 's/^ *"\(ext-[a-z0-9]*\)",*/\1/p' | paste -sd, -)
+ci-features:
+	$(CARGO) check -p zeo-rt --no-default-features
+	$(CARGO) check -p zeo-rt --no-default-features --features '$(DOCS_RS_FEATURES)'
+
 # The native-library table an AOT link names is HAND-WRITTEN
 # (backend/link.rs); this asks rustc for the live answer and diffs it.
 # Meaningful on Linux (where `-lcrypt` once went missing while macOS stayed
@@ -132,7 +143,7 @@ endif
 # leg over the full spinel corpus (CI runs only the AOT smoke tier).
 # Bench is deliberately NOT here: perf numbers are recorded on their own
 # cadence (`make bench` after perf commits and at re-banks), never gated.
-gate: ci-jit ci-aot ci-memcheck ci-doc ci-milestones $(PLATFORM_CI_LEG)
+gate: ci-jit ci-aot ci-memcheck ci-doc ci-milestones ci-features $(PLATFORM_CI_LEG)
 	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --no-fail-fast -E 'binary(goldens) & test(spinel::)'
 	$(NEXTEST) -p zeo -P full -E 'test(gemtest::) + test(every_bundled_gem_compiles)'
 	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo -P full -E 'test(gemtest::)'

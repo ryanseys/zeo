@@ -121,6 +121,10 @@ jobs:
       # nextest doesn't run doctests; keep them covered.
       - run: make ci-doc
 
+      # Every `ext-*` feature really is optional. The docs.rs configuration
+      # omits `ext-ffi` and had stopped compiling with nobody watching.
+      - run: make ci-features
+
       # The tests/ golden suites -- examples, the full ~3,010-test spinel corpus,
       # and the gaps XFAIL tracker -- all run under `make ci-jit` above
       # (datatest-stable targets tests/{examples,spinel,gaps}.rs) --

@@ -41,14 +41,16 @@ pub fn register_builtins(registry: &mut ClassRegistry) {
 /// member list here and `hidden_ivar_get`/`_set` on its payload, which is
 /// what the protocol reads a member by.
 fn register_native_structs() {
-    for (id, members) in [
-        (
-            zeo_abi::PROCESS_TMS_CLASS,
-            crate::builtins::process::TMS_MEMBERS.as_slice(),
-        ),
+    let mut rows: Vec<(zeo_abi::ClassId, &[&str])> = vec![(
+        zeo_abi::PROCESS_TMS_CLASS,
+        crate::builtins::process::TMS_MEMBERS.as_slice(),
+    )];
+    #[cfg(feature = "ext-etc")]
+    rows.extend([
         (zeo_abi::ETC_PASSWD_CLASS, crate::ext::etc::PASSWD_MEMBERS),
         (zeo_abi::ETC_GROUP_CLASS, crate::ext::etc::GROUP_MEMBERS),
-    ] {
+    ]);
+    for (id, members) in rows {
         crate::register_compiled_struct(id, members, false, None);
     }
 }

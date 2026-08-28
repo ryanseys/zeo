@@ -340,12 +340,20 @@ pub unsafe extern "C" fn zeo_rt_eval_refined_send_args(
 /// coverage-activated program, and nothing at all in one without.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_cov_line(file: *const u8, len: usize, line: u32) {
+    #[cfg(feature = "ext-coverage")]
     crate::ext::coverage::cov_line(unsafe { super::static_str(file, len) }, line);
+    // The symbol stays either way: an emitted program links against it, and
+    // a runtime without the ext simply measures nothing.
+    #[cfg(not(feature = "ext-coverage"))]
+    let _ = (file, len, line);
 }
 
 /// A spliced file's top level is beginning: the file is reported iff
 /// measurement is set up at this moment.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_cov_file_loaded(file: *const u8, len: usize) {
+    #[cfg(feature = "ext-coverage")]
     crate::ext::coverage::cov_file_loaded(unsafe { super::static_str(file, len) });
+    #[cfg(not(feature = "ext-coverage"))]
+    let _ = (file, len);
 }
