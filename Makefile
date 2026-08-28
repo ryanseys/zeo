@@ -157,7 +157,7 @@ bench:
 	$(CARGO) bench -p zeo --bench programs
 
 # The shipped-configuration bank: the same corpus timed against a full
-# `zeo-dev dist --pgo` snapshot (~15 min of setup). Release-boundary
+# `cargo xtask dist --pgo` snapshot (~15 min of setup). Release-boundary
 # measurements only; never rewrites the committed bench/results.tsv --
 # compare runs with --save-baseline + critcmp.
 pgo:

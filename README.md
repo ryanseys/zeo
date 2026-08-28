@@ -281,7 +281,7 @@ finish before CRuby's interpreter is done booting, where a native binary
 starts instantly. That is a real advantage of shipping a binary, but the second
 row is the claim about generated code: on the compute-bound set Zeo wins
 22 of 40 (`range_each` 8.0×, `so_mandelbrot` 4.9×, `nested_loop` 4.0×,
-`matmul` 3.0×, `sieve` 2.4×). Release builds made with `zeo-dev dist
+`matmul` 3.0×, `sieve` 2.4×). Release builds made with `cargo xtask dist
 --pgo` (profile-guided optimization, what the shipped artifacts use) run
 another ~10% faster than the release profile these numbers were taken on.
 
@@ -495,7 +495,7 @@ a bless is always scoped. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 ### A relocatable install
 
 ```console
-$ tools/zeo-dev dist      # target/dist/zeo-<version>-<triple>.tar.gz
+$ cargo xtask dist        # target/dist/zeo-<version>-<triple>.tar.gz
 $ tar xzf zeo-<version>-<triple>.tar.gz -C /usr/local
 ```
 

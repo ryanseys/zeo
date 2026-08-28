@@ -23,7 +23,8 @@ use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 
-use crate::{Error, exec, payload, root, root_join};
+use crate::exec::{self, Capture};
+use crate::{Error, payload, root, root_join};
 
 const SURFACE: &str = "crates/zeo/src/class_surface.pregen.rs";
 const GEMS_TAR: &str = "crates/zeo/gems.pregen.tar.gz";
@@ -120,7 +121,7 @@ fn generated_class_surface() -> Result<Vec<u8>, Error> {
         ],
         root(),
         &[],
-        true,
+        Capture::Stdout,
     )?;
     if !out.success() {
         return Err(Error::new(format!(
@@ -129,7 +130,7 @@ fn generated_class_surface() -> Result<Vec<u8>, Error> {
         )));
     }
     let mut out_dir = None;
-    for line in out.stdout.lines() {
+    for line in out.stdout_text().lines() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };

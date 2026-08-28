@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 mod commands;
 mod exec;
 mod payload;
+mod scratch;
 
 /// A chore that could not finish, with the reason a person needs.
 pub struct Error(String);
@@ -45,6 +46,7 @@ const USAGE: &str = "\
 usage: cargo xtask <command> [options]
 
 commands:
+  dist            assemble the relocatable distribution
   stage-publish   stage the artifacts the published crate ships
 
 `cargo xtask <command> --help` describes one command.
@@ -62,6 +64,7 @@ fn main() -> std::process::ExitCode {
     }
     let rest = &args[1..];
     let result = match command.as_str() {
+        "dist" => commands::dist::run(rest),
         "stage-publish" => commands::stage_publish::run(rest),
         other => Err(Error::new(format!(
             "unknown command {other:?}\n\n{USAGE}"

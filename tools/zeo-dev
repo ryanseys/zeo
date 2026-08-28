@@ -23,7 +23,6 @@ USAGE = <<~TEXT
     gemtests        run a vendored gem's own test suite
     cext            manage the vendored MRI C API headers and the rb_* census
     linux           run the suites in the linux container
-    dist            assemble the relocatable distribution
 
   `tools/zeo-dev <command> --help` describes one command.
 TEXT

@@ -231,7 +231,7 @@ jobs:
       # Stage the payload without building it: proves the tree lays out and
       # the docs and gems copy. The archive and the compile-and-run smoke test
       # need a dist-profile build, which the release workflow does.
-      - run: tools/zeo-dev dist --stage-only
+      - run: cargo xtask dist --stage-only
 
       # `cargo package --list`, NOT `cargo package`. Both `cargo package` and
       # `cargo publish --dry-run` resolve each dependency's version

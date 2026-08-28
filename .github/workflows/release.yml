@@ -51,7 +51,7 @@ jobs:
       # Builds the tree and stages the payload, then proves the staged binary
       # works: it resolves its payload relative to bin/, links against the
       # staged libzeo.a, and compiles and runs a program.
-      - run: tools/zeo-dev dist --target ${{ matrix.target }}
+      - run: cargo xtask dist --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:

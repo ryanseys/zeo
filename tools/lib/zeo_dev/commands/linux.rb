@@ -133,7 +133,7 @@ module ZeoDev
         # not cross-compile to linux; this is the supported path, and the
         # artifact is a genuinely natively-built one, so a cross-compile
         # divergence is structurally impossible.
-        when "dist" then "tools/zeo-dev dist"
+        when "dist" then "cargo xtask dist"
         when "shell" then "exec bash"
         when "-E"
           "cargo nextest run #{cargo_profile} -p zeo --test-threads #{threads} " \
