@@ -234,10 +234,66 @@ impl Loader {
     /// Record that a `require` reached `pkg`, so its roots join `$LOAD_PATH`.
     /// Once per package, in resolution order -- CRuby's activation order.
     fn activate(&self, pkg: &Gem) {
-        let mut seen = self.activated.borrow_mut();
-        if !seen.iter().any(|n| n == &pkg.name) {
-            seen.push(pkg.name.clone());
+        {
+            let mut seen = self.activated.borrow_mut();
+            if !seen.iter().any(|n| n == &pkg.name) {
+                seen.push(pkg.name.clone());
+            }
         }
+        if pkg.name == "rubygems" {
+            self.publish_default_gems();
+        }
+    }
+
+    /// Publish the bundled libraries as RubyGems DEFAULT GEMS.
+    ///
+    /// Triggered by the `require` that reaches RubyGems, and nowhere else:
+    /// the store is a directory tree to build, so a program that never loads
+    /// RubyGems must not pay for it. `zeo -e 'p 1'` compiles in 0.02s and has
+    /// no business writing a gem store.
+    ///
+    /// Only the BUNDLED tier is published. A gem from an external store is
+    /// already a real installed gem with a real gemspec, and re-publishing it
+    /// as a default gem would give RubyGems two rows for one library --
+    /// default gems lose to installed ones, but the duplicate would still
+    /// show in `gem list`.
+    fn publish_default_gems(&self) {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        let mut gems = Vec::new();
+        for pkg in &self.packages {
+            if pkg.provenance != GemProvenance::Bundled {
+                continue;
+            }
+            // A version is not optional here: `<name>-<version>` IS the
+            // gemspec's file name and the stub's identity. zeo's `socket`,
+            // `pty` and `monitor` have no gemspec (ruby ships them with none
+            // either), so they stay invisible to `gem list` rather than
+            // appear under an invented version.
+            let Some(version) = pkg.version.as_deref() else {
+                continue;
+            };
+            // Every root has to sit directly under one gem directory for the
+            // symlink to stand in for all of them.
+            let Some(dir) = pkg.roots.first().and_then(|r| r.parent()) else {
+                continue;
+            };
+            let paths: Vec<String> = pkg
+                .roots
+                .iter()
+                .filter(|r| r.parent() == Some(dir))
+                .filter_map(|r| Some(r.file_name()?.to_string_lossy().into_owned()))
+                .collect();
+            if paths.len() != pkg.roots.len() {
+                continue;
+            }
+            gems.push(crate::default_gems::DefaultGem {
+                name: &pkg.name,
+                version,
+                dir,
+                require_paths: paths,
+            });
+        }
+        ONCE.call_once(|| crate::default_gems::materialize(&gems));
     }
 
     /// What `$LOAD_PATH` holds at run time: the `-I` roots as given, then the

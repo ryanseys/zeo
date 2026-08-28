@@ -43,6 +43,7 @@ pub mod clif;
 pub mod codegen_error;
 pub mod compiler;
 pub(crate) mod debug_flags;
+pub mod default_gems;
 pub mod diagnostics;
 pub mod dump;
 pub mod eval;
