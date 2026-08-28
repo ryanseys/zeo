@@ -999,8 +999,16 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
         if let Some(r) = reg {
             // `inherit=false` restricts the user-method set to this class's own
             // definitions (materialization otherwise flattens inherited in).
+            // CLAIMED before the filter, like the overlay above: one name
+            // resolves to ONE definition, so the first ancestor that defines
+            // it decides which list it lands in. Filtering first left the name
+            // unclaimed, and an ancestor's row under the OTHER visibility took
+            // it -- a public `def exec` in a class still reported Kernel's
+            // private `exec` in `private_methods`, which is exactly what
+            // thor's `private_method?` reads before it will run a command, so
+            // `bundle exec` answered `Could not find command "exec"`.
             for (name, vis) in r.own_instance_method_names(anc, !inherit) {
-                if !removed(name) && filter.matches(vis) && seen.insert(name) {
+                if !removed(name) && seen.insert(name) && filter.matches(vis) {
                     out.push(name);
                 }
             }
@@ -1029,11 +1037,8 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
             } else {
                 MethodVisibility::Public
             };
-            if !filter.matches(vis) {
-                continue;
-            }
             let sym = Symbol::intern(n);
-            if !removed(sym) && seen.insert(sym) {
+            if !removed(sym) && seen.insert(sym) && filter.matches(vis) {
                 out.push(sym);
             }
         }
@@ -1048,10 +1053,7 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
         // `instance_methods` and left `private_instance_methods` empty.
         if let Some(r) = reg {
             for (new, old) in r.alias_rows(anc) {
-                if !filter.matches(builtin_row_visibility(anc, old)) {
-                    continue;
-                }
-                if seen.insert(new) {
+                if seen.insert(new) && filter.matches(builtin_row_visibility(anc, old)) {
                     out.push(new);
                 }
             }
