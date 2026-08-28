@@ -1,0 +1,4 @@
+require        rescued ArgumentError: the required file raised
+require_relative rescued ArgumentError: the required file raised
+load           rescued ArgumentError: the required file raised
+still running
