@@ -37,6 +37,7 @@ yaml:float	ok true
 yaml:float_e	ok true
 yaml:string	ok true
 yaml:string_utf8	ok true
+yaml:string_binary	ok true
 yaml:symbol	ok true
 yaml:array	ok true
 yaml:hash	ok true

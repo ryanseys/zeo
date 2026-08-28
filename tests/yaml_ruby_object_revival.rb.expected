@@ -1,0 +1,45 @@
+plain ivars	#<PlainIvars name="bolt" size=3>
+init_with	#<KnowsInitWith tag="!ruby/object:KnowsInitWith" seen={"a" => 1, "b" => "two"}>
+yaml_initialize	#<KnowsYamlInitialize tag=nil seen=nil>
+allocate not new	#<RefusesNew a=9>
+struct	#<struct Point x=1, y=2>
+struct member order	[1, 2]
+exception	#<ArgumentError: bad>
+exception message	"bad"
+class	String
+module	Comparable
+regexp	/ab+c/mi
+regexp matches	1
+regexp with slash	"a/b"
+string subclass	"hello"
+array subclass	[1, 2]
+hash subclass	{"a" => 1}
+complex	(1+2i)
+rational	(1/2)
+range	1..5
+ostruct	#<OpenStruct a=1>
+set	{"a" => nil, "b" => nil}
+set class	Psych::Set
+omap map	Psych::Omap
+omap seq	{"a" => 1, "b" => 2}
+unknown class	ArgumentError: undefined class/module NoSuchClassHere
+gated object	Psych::DisallowedClass: Tried to load unspecified class: PlainIvars
+gated struct	Psych::DisallowedClass: Tried to load unspecified class: Point
+gated exception	Psych::DisallowedClass: Tried to load unspecified class: ArgumentError
+gated class	Psych::DisallowedClass: Tried to load unspecified class: String
+gated module	Psych::DisallowedClass: Tried to load unspecified class: Comparable
+gated regexp	Psych::DisallowedClass: Tried to load unspecified class: Regexp
+gated string sub	Psych::DisallowedClass: Tried to load unspecified class: String
+gated array sub	Psych::DisallowedClass: Tried to load unspecified class: Array
+gated hash sub	Psych::DisallowedClass: Tried to load unspecified class: Hash
+gated range	Psych::DisallowedClass: Tried to load unspecified class: Range
+gated set	Psych::DisallowedClass: Tried to load unspecified class: Psych::Set
+gated omap map	Psych::DisallowedClass: Tried to load unspecified class: Psych::Omap
+gated omap seq	{"a" => 1}
+gated object seq	[1]
+gated range seq	[1]
+gated set seq	["a"]
+permitted object	#<PlainIvars name="bolt" size=nil>
+permitted struct	Psych::DisallowedClass: Tried to load unspecified class: Symbol
+permitted set	Psych::Set
+parse then to_ruby	#<PlainIvars name="bolt" size=3>

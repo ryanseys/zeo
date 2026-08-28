@@ -28,7 +28,6 @@ def probe(name, &blk) = ROWS[name] = blk
 # row is left OUT of the output rather than recorded wrong. When a gap is
 # promoted, delete its entry here and re-bless; the row comes back.
 SKIP = {
-  "yaml:string_binary" => "tests/gaps/a_binary_string_survives_a_yaml_round_trip.rb",
   "marshal array ivar" => "tests/gaps/marshal_carries_an_array_s_ivars.rb",
 }.freeze
 

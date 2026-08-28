@@ -14,8 +14,15 @@
 //! data loss), a tag was ignored outright (a wrong type AND a defeated
 //! `safe_load` gate), and a `<<` merge key stayed literal. What remains a
 //! real divergence is `Psych::SyntaxError`'s problem TEXT -- see
-//! `tests/psych_syntax_error_carries_marks.rb` -- and the node-tree API
-//! (`Psych::Nodes::*`), which is not modelled and refuses loudly.
+//! `tests/psych_syntax_error_carries_marks.rb`.
+//!
+//! # One tree, three entry points
+//!
+//! Every load now goes through the [`nodes`] tree: the events build it,
+//! [`loader`] walks it into Ruby values, and [`tree_api`] mirrors it into the
+//! `Psych::Nodes::*` objects `Psych.parse` answers. `Nodes::Node#to_ruby`
+//! reads those objects back and walks the same walk, so a hand-built tree and
+//! a parsed one cannot disagree.
 //!
 //! A syntax error raises `Psych::SyntaxError`, which this gem's RUBY half
 //! (`ext/psych/lib/psych.rb`) defines -- see `ext/json` for why the
@@ -23,9 +30,10 @@
 
 mod emitter;
 mod loader;
+mod nodes;
 mod scanner;
+mod tree_api;
 
-use crate::builtins::not_impl_error;
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
 use zeo_macros::ruby_module;
@@ -113,29 +121,49 @@ fn load_opts(opts: Option<&RubyValue>) -> loader::LoadOpts {
     o
 }
 
-/// Every document in `text`.
-fn load_documents(text: &str, opts: &loader::LoadOpts) -> Result<Vec<RubyValue>, Signal> {
-    let text_src = text;
-    let mut sink = loader::Loader::new(opts);
+/// Parse `text` into the node tree every entry point reads.
+///
+/// The anchor NAMES come from a second pass over the scanner -- see
+/// [`nodes::anchor_names`] for why the events cannot supply them -- and the
+/// directives from the same place, because the parser applies `%YAML` and
+/// `%TAG` without reporting them.
+fn parse_tree(text: &str) -> Result<Vec<nodes::Document>, Signal> {
+    let names = nodes::anchor_names(text);
+    let mut builder = nodes::TreeBuilder::new(text, Some(&names));
     yaml_rust2::parser::Parser::new_from_str(text)
-        .load(&mut sink, true)
+        .load(&mut builder, true)
         .map_err(|e| {
-            let text = format!("{e}");
-            // yaml-rust2 refuses an undefined anchor while SCANNING, so
-            // the loader's own `Alias` arm never sees it -- but psych
-            // names it, and a program rescues that name.
-            match text.contains("unknown anchor") {
+            let message = format!("{e}");
+            // yaml-rust2 refuses an undefined anchor while SCANNING, so the
+            // walk's own `Alias` arm never sees it -- but psych names it, and
+            // a program rescues that name.
+            match message.contains("unknown anchor") {
                 true => raise_error(
                     "Psych::AnchorNotDefined",
                     format!(
                         "An alias referenced an unknown anchor: {}",
-                        anchor_name_at(text_src, &text)
+                        anchor_name_at(text, &message)
                     ),
                 ),
-                false => raise_error("Psych::SyntaxError", text),
+                false => raise_error("Psych::SyntaxError", message),
             }
         })?;
-    sink.finish()
+    let mut docs = builder.finish();
+    // The directives belong to the first document; a stream that gives each
+    // document its own is rare enough that reading them per document would
+    // cost a scan each for an answer nothing has asked for.
+    if let Some(first) = docs.first_mut() {
+        let (version, tags) = nodes::directives(text);
+        first.version = version;
+        first.tag_directives = tags;
+    }
+    Ok(docs)
+}
+
+/// Every document in `text`, as Ruby values.
+fn load_documents(text: &str, opts: &loader::LoadOpts) -> Result<Vec<RubyValue>, Signal> {
+    let docs = parse_tree(text)?;
+    loader::Revive::new(opts).documents(&docs)
 }
 
 /// The FIRST document, which is what every `load` entry answers.
@@ -270,13 +298,74 @@ ruby_module! {
         Ok(RubyValue::Array(crate::array_new(docs)))
     }
 
-    // The `parse`/`parse_stream` node-tree API (`Psych::Nodes::*`) isn't
-    // modelled; a clean NotImplementedError rather than a panic.
-    def self."parse" arity -2 (_recv, *_args, &_block) {
-        Err(not_impl_error!("Psych.parse (the node-tree API) is not implemented"))
+    // `Psych.parse(yaml)` -- the FIRST document as a `Psych::Nodes::Document`,
+    // or the `fallback:` (nil by default) for an empty stream. That is psych's
+    // own answer: a document with no root would be a node a caller cannot use.
+    def self."parse" (_recv, yaml, **opts) {
+        let text = load_text(yaml)?;
+        let docs = parse_tree(&text)?;
+        // An empty stream answers FALSE, not nil -- which is `parse`'s own
+        // fallback and differs from `load`'s. Measured, not derived.
+        let fallback =
+            opt(opts.as_ref().copied(), "fallback").unwrap_or(RubyValue::Bool(false));
+        Ok(tree_api::to_ruby_documents(&docs)?
+            .into_iter()
+            .next()
+            .unwrap_or(fallback))
     }
-    def self."parse_stream" arity -2 (_recv, *_args, &_block) {
-        Err(not_impl_error!("Psych.parse_stream (the node-tree API) is not implemented"))
+
+    // `Psych.parse_stream(yaml)` -- the whole stream as a
+    // `Psych::Nodes::Stream`, or each document yielded to a block (then nil,
+    // matching `load_stream`'s block form and CRuby's).
+    def self."parse_stream" (_recv, yaml, **opts, &block) {
+        let _ = &opts;
+        let text = load_text(yaml)?;
+        let docs = parse_tree(&text)?;
+        if let Some(RubyValue::Proc(p)) = &block {
+            for doc in tree_api::to_ruby_documents(&docs)? {
+                p.call(&[doc])?;
+            }
+            return Ok(RubyValue::Nil);
+        }
+        tree_api::to_ruby_stream(&docs)
+    }
+
+    // `Psych::Nodes::Node#to_ruby`'s engine, called from the Ruby half rather
+    // than by a program: it takes the node OBJECT, reads it back into the
+    // parse tree and walks the one walk `load` walks.
+    def self."__node_to_ruby" (_recv, node, **opts) {
+        let mut o = load_opts(opts.as_ref().copied());
+        // A node tree is already parsed, so there is nothing left to gate:
+        // `to_ruby` on a tree the caller is holding is psych's UNSAFE entry,
+        // and its `safe_load` half refuses at parse time instead.
+        o.permitted = None;
+        o.aliases = true;
+        o.symbolize_names = bool_opt(opts.as_ref().copied(), "symbolize_names");
+        o.freeze = bool_opt(opts.as_ref().copied(), "freeze");
+
+        let wrap = |root| nodes::Document {
+            root: Some(root),
+            implicit: true,
+            implicit_end: true,
+            version: None,
+            tag_directives: Vec::new(),
+        };
+        // A STREAM answers one value per document, as an Array. Every other
+        // node answers the single value it describes.
+        if tree_api::node_kind(node) == "Stream" {
+            let docs: Vec<nodes::Document> =
+                tree_api::stream_roots(node)?.into_iter().map(wrap).collect();
+            let values = loader::Revive::new(&o).documents(&docs)?;
+            return Ok(RubyValue::Array(crate::collections::array_new(values)));
+        }
+        let Some(tree) = tree_api::from_ruby_nodes(node)? else {
+            return Ok(RubyValue::Nil);
+        };
+        Ok(loader::Revive::new(&o)
+            .documents(std::slice::from_ref(&wrap(tree)))?
+            .into_iter()
+            .next()
+            .unwrap_or(RubyValue::Nil))
     }
 }
 

@@ -1,4 +1,6 @@
 require "psych.so"
+require "psych/nodes"
+require "psych/coder"
 
 module Psych
   # The engine version. Matches the bundled psych gemspec (5.4.0). Gems probe
