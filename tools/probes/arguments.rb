@@ -2,7 +2,7 @@
 #
 # Feeds deliberately-wrong arguments to the reflection and collection
 # surface and prints the exception class and message per row. Run through
-# `tools/zeo-dev probe arguments`, which diffs the rows against ruby 4.0.6
+# `cargo xtask probe arguments`, which diffs the rows against ruby 4.0.6
 # and lists only the ones that disagree.
 #
 # The point is to convert a long tail of one-off "zeo accepts what ruby

@@ -2,7 +2,7 @@
 #
 # For every serializer and every container, asserts that a value survives
 # its own encoding -- `load(dump(x)) == x`, sizes preserved, key identity
-# preserved. Run through `tools/zeo-dev probe roundtrip`.
+# preserved. Run through `cargo xtask probe roundtrip`.
 #
 # This is the highest-yield way to catch SILENT corruption, because it needs
 # no reference output to compare against: a value that does not survive its

@@ -30,7 +30,7 @@
 //! leg gates against. It is not a leak report: it names the ring the program
 //! builds on purpose. See [`check_gccheck_census`].
 //!
-//! `tools/zeo-dev bless <filter>` re-records the goldens from the real `ruby` oracle
+//! `cargo xtask bless <filter>` re-records the goldens from the real `ruby` oracle
 //! (`--disable-error_highlight --disable-did_you_mean`, resolved via `mise`)
 //! instead of asserting. This is the single golden writer.
 
@@ -623,7 +623,7 @@ fn run_oracle(
     run_bounded(&mut cmd, stdin, "ruby oracle")
 }
 
-/// Under `tools/zeo-dev bless`: (re)write `<rb>.expected` (+ `.err.expected`)
+/// Under `cargo xtask bless`: (re)write `<rb>.expected` (+ `.err.expected`)
 /// from the oracle -- or, for a `.divergence` golden, from zeo.
 /// A stdout-only suite (`check_stderr == false`) never keeps a stderr golden:
 /// ruby's parse warnings, experimental notices and thread exception reports
@@ -802,7 +802,7 @@ pub fn run_golden_env(
         }
         Mode::Xfail if matched => Err(format!(
             "GAP FIXED -- {stem} now matches ruby. Promote it: \
-             `tools/zeo-dev promote-gap {stem}` (moves it + its sidecars into tests/, \
+             `cargo xtask promote-gap {stem}` (moves it + its sidecars into tests/, \
              the zeo-authored suite -- NOT tests/spinel/, which mirrors the vendored \
              spinel corpus).",
             stem = rb.file_stem().unwrap_or(rb.as_os_str()).to_string_lossy()

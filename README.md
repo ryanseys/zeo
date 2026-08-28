@@ -469,7 +469,7 @@ Narrower runs go through cargo and the dev CLI directly:
 
 ```console
 $ cargo nextest run -p zeo --test goldens       # every golden corpus
-$ tools/zeo-dev bless spinel::                  # re-record goldens from ruby
+$ cargo xtask bless spinel::                  # re-record goldens from ruby
 $ make bench                                    # the performance suite (criterion)
 $ make ci-size                                   # the linked-binary size gate
 ```
@@ -481,13 +481,13 @@ targets — one case per `.rb` file:
   for byte.
 - **`tests/*.rb`** — Zeo's own example goldens.
 - **`tests/gaps/`** — known divergences. Each **must** fail; when one starts
-  agreeing with Ruby the suite goes red and `tools/zeo-dev promote-gap`
+  agreeing with Ruby the suite goes red and `cargo xtask promote-gap`
   moves it.
 
 `ZEO_GOLDEN_BACKEND=aot` runs the goldens through a linked binary instead of
 the JIT.
 
-Goldens are only ever written by `tools/zeo-dev bless <filter>`, which runs
+Goldens are only ever written by `cargo xtask bless <filter>`, which runs
 Ruby with `--disable-error_highlight --disable-did_you_mean`, records instead
 of comparing, and reports everything it changed. The filter is mandatory, so
 a bless is always scoped. See [`CONTRIBUTING.md`](CONTRIBUTING.md).

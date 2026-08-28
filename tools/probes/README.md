@@ -4,15 +4,15 @@ One Ruby program per matrix, each row printing `name<TAB>result`. Run one
 through both engines and diff the rows:
 
 ```console
-$ tools/zeo-dev probe                 # every matrix here
-$ tools/zeo-dev probe arguments       # one of them
-$ tools/zeo-dev probe --all-rows      # show the agreeing rows too
+$ cargo xtask probe                 # every matrix here
+$ cargo xtask probe arguments       # one of them
+$ cargo xtask probe --all-rows      # show the agreeing rows too
 ```
 
 The exit status is the number of divergent rows, so a probe can gate a
 branch once its matrix is clean.
 
-## Why a matrix and not `zeo-dev diff`
+## Why a matrix and not `cargo xtask diff`
 
 `diff` compiles one snippet per invocation, which is the right shape for
 the single-divergence loop and the wrong one for hundreds of rows. A probe
@@ -21,7 +21,7 @@ AGREES costs one line and becomes regression cover the moment someone
 breaks it.
 
 The output names only the rows that disagree. Turn a cluster into a gap
-file with `tools/zeo-dev diff -f <snippet> -n <stem>`; the probe finds
+file with `cargo xtask diff -f <snippet> -n <stem>`; the probe finds
 them, `diff` files them.
 
 ## The three matrices

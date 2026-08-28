@@ -290,14 +290,14 @@ fn train_pgo(zeo: &Path, prof_dir: &Path) -> Result<(), Error> {
         if !out.success() {
             return Err(Error::new(format!(
                 "pgo training: compiling {name} failed:\n{}",
-                out.stderr
+                out.stderr_text()
             )));
         }
         let out = exec::run(&[&bin], work.path(), &profile_env, Capture::Both)?;
         if !out.success() {
             return Err(Error::new(format!(
                 "pgo training: {name} exited {:?}:\n{}",
-                out.code, out.stderr
+                out.code, out.stderr_text()
             )));
         }
         let expected = rb.with_extension("rb.expected");
@@ -338,7 +338,7 @@ fn inject_profiler_runtime(built: &Path) -> Result<(), Error> {
         return Err(Error::new(format!(
             "ar x {} failed:\n{}",
             rlib.display(),
-            out.stderr
+            out.stderr_text()
         )));
     }
     let objs = entries_matching(work.path(), "", ".o")?;
@@ -356,7 +356,7 @@ fn inject_profiler_runtime(built: &Path) -> Result<(), Error> {
         return Err(Error::new(format!(
             "ar qs {} failed:\n{}",
             archive.display(),
-            out.stderr
+            out.stderr_text()
         )));
     }
     Ok(())
@@ -381,7 +381,7 @@ fn merge_profiles(prof_dir: &Path, merged: &Path) -> Result<(), Error> {
     if !out.success() {
         return Err(Error::new(format!(
             "llvm-profdata merge failed:\n{}",
-            out.stderr
+            out.stderr_text()
         )));
     }
     Ok(())
@@ -480,7 +480,7 @@ fn smoke_failure(stage: &str, out: &exec::Output) -> Error {
         "smoke test FAILED at {stage} (exit {:?}):\nstdout: {}\nstderr: {}",
         out.code,
         out.stdout_text(),
-        out.stderr
+        out.stderr_text()
     ))
 }
 

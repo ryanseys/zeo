@@ -854,7 +854,7 @@ puts JSON.generate(out)
     if !out.success() {
         return Err(Error::new(format!(
             "the oracle could not verify the mappings: {}",
-            out.stderr
+            out.stderr_text()
         )));
     }
     let parsed: Vec<serde_json::Value> = serde_json::from_str(out.stdout_text().trim())

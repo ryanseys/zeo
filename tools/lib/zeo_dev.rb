@@ -3,9 +3,13 @@
 # The shared half of `tools/zeo-dev`.
 #
 # Everything here is stdlib only, and everything here runs under BOTH `ruby`
-# from PATH and a zeo-compiled binary. A tool that only runs when zeo is
-# correct cannot diagnose zeo when it is not, and `bless` is exactly what you
-# reach for when something is broken.
+# from PATH and a zeo-compiled binary -- dogfooding, and the reason the rule
+# below exists.
+#
+# What remains is what `cargo xtask` has not taken over yet. The commands the
+# repo depends on daily live there now; the four here are on the way out --
+# `gem`, `gemtests` and `manifest`/`vendor` go with the Gemfile migration,
+# `bench` and `linux` are the last to port.
 #
 # One rule keeps both engines working (this list once had three; the
 # autoload and builtin-alias bugs closed and became passing goldens):
@@ -16,7 +20,6 @@
 
 require "zeo_dev/cli"
 require "zeo_dev/exec"
-require "zeo_dev/jobs"
 require "zeo_dev/manifest"
 require "zeo_dev/ruby"
 require "zeo_dev/tsv"
@@ -27,10 +30,6 @@ module ZeoDev
 
   # Every command, in the order `--help` lists them.
   COMMANDS = %w[
-    bless
-    diff
-    probe
-    promote-gap
     bench
     gem
     gemtests

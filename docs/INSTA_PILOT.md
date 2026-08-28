@@ -20,7 +20,7 @@ case with no snapshot at all (the live-oracle fallback).
 | Claim | Result |
 |---|---|
 | Same engine, both formats | `pilot_run`/`pilot_reference` reuse sidecars, skips, the spawned child, normalization, and the census gate; only the store-and-diff tail differs. 10/10 green. |
-| Oracle authority under bless | `tools/zeo-dev bless "pilot::"` records the oracle (zeo for `.divergence`). The blessed `sort_with_comparator.snap` body is **byte-identical** to its committed `.expected` — bless kept zeo's own divergent output. |
+| Oracle authority under bless | `cargo xtask bless "pilot::"` records the oracle (zeo for `.divergence`). The blessed `sort_with_comparator.snap` body is **byte-identical** to its committed `.expected` — bless kept zeo's own divergent output. |
 | The `cargo insta accept` hole is closed | `INSTA_UPDATE` set without `ZEO_BLESS_FROM_TOOL` panics naming the bless command (verified); ordinary runs force `INSTA_UPDATE=no`. |
 | Census stays out of the snapshot | `a_cycle_is_reclaimed` gates its `.gccheck` sidecar exactly as before; the snapshot holds only program output. |
 | Live-oracle fallback | The no-snapshot case runs ruby live and compares, like a fresh `.expected`-less golden. |

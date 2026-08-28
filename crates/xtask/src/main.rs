@@ -18,17 +18,35 @@ mod scratch;
 mod vendor;
 
 /// A chore that could not finish, with the reason a person needs.
-pub struct Error(String);
+pub struct Error {
+    message: String,
+    /// The command already said what went wrong, in its own words and its own
+    /// place. A verdict like "4 divergent rows" is a FINDING the report has
+    /// already laid out row by row; repeating it under an `xtask:` prefix
+    /// would read as a second, tool-level failure.
+    reported: bool,
+}
 
 impl Error {
     pub fn new(message: impl Into<String>) -> Self {
-        Error(message.into())
+        Error {
+            message: message.into(),
+            reported: false,
+        }
+    }
+
+    /// Exit nonzero, printing nothing further.
+    pub fn reported() -> Self {
+        Error {
+            message: String::new(),
+            reported: true,
+        }
     }
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.message)
     }
 }
 
@@ -44,6 +62,27 @@ pub fn root_join(rel: impl AsRef<Path>) -> PathBuf {
     root().join(rel)
 }
 
+/// Build the release `zeo` unless `ZEO_BIN` names one, and answer its path.
+/// Release, because that is what every ledger and golden was recorded
+/// against.
+pub fn build_zeo() -> Result<PathBuf, Error> {
+    let bin = commands::bless::zeo_bin();
+    if std::env::var_os("ZEO_BIN").is_some() {
+        return Ok(bin);
+    }
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let out = exec::run(
+        &[&cargo, "build", "--quiet", "--release", "-p", "zeo"],
+        root(),
+        &[],
+        exec::Capture::Nothing,
+    )?;
+    if !out.success() {
+        return Err(Error::new("cargo build -p zeo failed"));
+    }
+    Ok(bin)
+}
+
 /// Write only when the bytes differ, so an unchanged generated file keeps its
 /// mtime and a build that keys on it does not redo itself.
 pub fn write_if_changed(path: &Path, content: &[u8]) -> Result<(), Error> {
@@ -57,8 +96,12 @@ const USAGE: &str = "\
 usage: cargo xtask <command> [options]
 
 commands:
+  bless           re-record golden `.expected` files from the ruby oracle
   cext            the vendored MRI C API headers and the rb_* census
+  diff            compare a snippet across ruby and zeo, and file a gap
   dist            assemble the relocatable distribution
+  probe           run a differential probe matrix across ruby and zeo
+  promote-gap     move a fixed gap into the passing suite
   stage-publish   stage the artifacts the published crate ships
 
 `cargo xtask <command> --help` describes one command.
@@ -76,8 +119,12 @@ fn main() -> std::process::ExitCode {
     }
     let rest = &args[1..];
     let result = match command.as_str() {
+        "bless" => commands::bless::run(rest),
         "cext" => commands::cext::run(rest),
+        "diff" => commands::diff::run(rest),
         "dist" => commands::dist::run(rest),
+        "probe" => commands::probe::run(rest),
+        "promote-gap" => commands::promote_gap::run(rest),
         "stage-publish" => commands::stage_publish::run(rest),
         other => Err(Error::new(format!(
             "unknown command {other:?}\n\n{USAGE}"
@@ -86,7 +133,9 @@ fn main() -> std::process::ExitCode {
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("xtask: {e}");
+            if !e.reported {
+                eprintln!("xtask: {e}");
+            }
             std::process::ExitCode::FAILURE
         }
     }

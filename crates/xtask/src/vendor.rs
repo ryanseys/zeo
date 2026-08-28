@@ -109,7 +109,7 @@ pub fn git(args: &[&str], dir: &Path) -> Result<String, Error> {
         return Err(Error::new(format!(
             "git {} failed: {}",
             args.join(" "),
-            out.stderr.trim()
+            out.stderr_text().trim()
         )));
     }
     Ok(out.stdout_text().into_owned())
@@ -208,7 +208,7 @@ pub fn diff_trees(a: &Path, b: &Path) -> Result<String, Error> {
     if text.is_empty() {
         return Err(Error::new(format!(
             "git diff --no-index produced nothing: {}",
-            out.stderr.trim()
+            out.stderr_text().trim()
         )));
     }
     Ok(text)

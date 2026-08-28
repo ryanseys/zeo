@@ -29,13 +29,15 @@ impl Capture {
     }
 }
 
-/// What a finished child left behind. `stdout` stays BYTES: a program's
-/// output is compared against a recorded file, and a lossy decode makes a
-/// binary answer unequal to its own recording however equal the bytes are.
+/// What a finished child left behind. Both streams stay BYTES: a program's
+/// output is recorded into a golden and compared against it later, and a
+/// lossy decode makes a non-UTF-8 answer unequal to its own recording however
+/// equal the bytes are. The `_text` accessors are for the callers reading a
+/// tool's own report, where the output is ASCII by construction.
 pub struct Output {
     pub code: Option<i32>,
     pub stdout: Vec<u8>,
-    pub stderr: String,
+    pub stderr: Vec<u8>,
 }
 
 impl Output {
@@ -43,9 +45,21 @@ impl Output {
         self.code == Some(0)
     }
 
-    /// stdout as text, for the callers reading a tool's own report.
     pub fn stdout_text(&self) -> std::borrow::Cow<'_, str> {
         String::from_utf8_lossy(&self.stdout)
+    }
+
+    pub fn stderr_text(&self) -> std::borrow::Cow<'_, str> {
+        String::from_utf8_lossy(&self.stderr)
+    }
+
+    /// The exit status for a person to read. `None` means a signal killed the
+    /// child, which `Some(0)`-style formatting buries.
+    pub fn code_text(&self) -> String {
+        match self.code {
+            Some(code) => code.to_string(),
+            None => "killed by a signal".into(),
+        }
     }
 }
 
@@ -57,6 +71,19 @@ pub fn run<S: AsRef<OsStr>>(
     dir: &Path,
     env: &[(&str, Option<&str>)],
     capture: Capture,
+) -> Result<Output, Error> {
+    run_with_stdin(argv, dir, env, capture, None)
+}
+
+/// The same, feeding `stdin` to the child. The write runs on its own thread:
+/// a child that fills its stdout pipe while the parent is still writing stdin
+/// deadlocks both sides otherwise.
+pub fn run_with_stdin<S: AsRef<OsStr>>(
+    argv: &[S],
+    dir: &Path,
+    env: &[(&str, Option<&str>)],
+    capture: Capture,
+    stdin: Option<&[u8]>,
 ) -> Result<Output, Error> {
     let (program, rest) = argv
         .split_first()
@@ -72,21 +99,35 @@ pub fn run<S: AsRef<OsStr>>(
     let pipe = |on: bool| if on { Stdio::piped() } else { Stdio::inherit() };
     cmd.stdout(pipe(capture.stdout()));
     cmd.stderr(pipe(capture.stderr()));
-    let child = cmd.spawn().map_err(|e| {
+    if stdin.is_some() {
+        cmd.stdin(Stdio::piped());
+    }
+    let mut child = cmd.spawn().map_err(|e| {
         Error::new(format!(
             "spawning {}: {e}",
             program.as_ref().to_string_lossy()
         ))
     })?;
+    let writer = stdin.map(|bytes| {
+        let bytes = bytes.to_vec();
+        let mut pipe = child.stdin.take().expect("stdin was piped");
+        std::thread::spawn(move || {
+            // A child may exit without reading; a broken pipe is fine.
+            let _ = std::io::Write::write_all(&mut pipe, &bytes);
+        })
+    });
     let out = child.wait_with_output().map_err(|e| {
         Error::new(format!(
             "waiting for {}: {e}",
             program.as_ref().to_string_lossy()
         ))
     })?;
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
     Ok(Output {
         code: out.status.code(),
         stdout: out.stdout,
-        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        stderr: out.stderr,
     })
 }
