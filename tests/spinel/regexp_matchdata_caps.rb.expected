@@ -1,0 +1,20 @@
+[3, "hello world", "hello", "world", nil]
+""
+""
+0
+6
+["hello world", "hello", "world"]
+["hello", "world"]
+[1, "b", nil]
+[4, "a", nil, "c"]
+["ac", "a", nil, "c"]
+32
+["a", "a", "a", "a"]
+31
+["a"]
+30
+31
+["2026", "08", "25"]
+["y", "mo", "d"]
+{"y" => "2026", "mo" => "08", "d" => "25"}
+[3, "y", "z", "y", "z"]

@@ -1,0 +1,17 @@
+[1, 2]
+5
+nil
+"d"
+:sym
+{"k" => 1}
+"SPINEL_ENV_FETCH_NOPESPINEL_ENV_FETCH_NOPE"
+22
+"there"
+"there"
+8
+key not found: "SPINEL_ENV_FETCH_NOPE"
+side!
+"there"
+side!
+9
+42

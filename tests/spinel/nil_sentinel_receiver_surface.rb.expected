@@ -1,0 +1,47 @@
+succ: NoMethodError
+pred: NoMethodError
+next: NoMethodError
+bit_length: NoMethodError
+ceil: NoMethodError
+floor: NoMethodError
+round: NoMethodError
+truncate: NoMethodError
+ord: NoMethodError
+size: NoMethodError
+magnitude: NoMethodError
+digits: NoMethodError
+chr: NoMethodError
+integer?: NoMethodError
+finite?: NoMethodError
+real: NoMethodError
+imaginary: NoMethodError
+numerator: NoMethodError
+denominator: NoMethodError
+to_i: 0
+to_f: 0.0
+to_r: (0/1)
+to_c: (0+0i)
+to_s: ""
+inspect: "nil"
+nil?: true
+hit succ: 2
+hit bit_length: 1
+hit to_r: (1/1)
+hit to_c: (1+0i)
+hit numerator: 1
+hit denominator: 1
+s b: NoMethodError
+s hex: NoMethodError
+s oct: NoMethodError
+s intern: NoMethodError
+s to_sym: NoMethodError
+s lines: NoMethodError
+s to_i: 0
+s to_s: ""
+s nil?: true
+s hit hex: 171
+s hit to_sym: :ab
+s hit lines: ["ab"]
+a succ: NoMethodError
+a to_i: 0
+a hit succ: 8

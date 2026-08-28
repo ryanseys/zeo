@@ -1,0 +1,22 @@
+"Vv\tz  "
+"  Vv\tz"
+"  Vv\tz  "
+true
+true
+"  Vv\tz  "
+"  Vv\tz  "
+false
+"日本"
+"日本"
+true
+[true, true, true]
+[true, true]
+[32, 32, 86, 118, 9, 122, 32, 32]
+[32, 32, 86]
+"V"
+"Vv"
+"  Vv\tz  "
+"  Vv\tz  "
+6
+"日"
+NoMethodError

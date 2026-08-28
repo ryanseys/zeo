@@ -1,0 +1,11 @@
+nested | 0
+nested2 | RegexpError
+collating | 0
+equivalent | 0
+bracket-end | RegexpError
+no-close | RegexpError
+escaped | "["
+escaped-b | "["
+posix | "a"
+posix-neg | "1"
+posix-mix | "x"

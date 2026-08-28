@@ -1,0 +1,10 @@
+lit-cA | 0
+new-cA | 0
+new-C-A | 0
+new-cA-no | nil
+new-c-esc | 0
+short-C | RegexpError
+short-c | RegexpError
+meta | RegexpError
+meta-C | RegexpError
+class-cA | 0

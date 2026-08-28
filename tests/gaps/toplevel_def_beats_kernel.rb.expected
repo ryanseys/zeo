@@ -1,0 +1,15 @@
+raise:1
+system:2
+caller:3
+puts:4
+print:5
+p:6
+require:7
+loop:8
+sleep:9
+exit:10
+gets:11
+sprintf:12
+format:13
+rand:14
+caller:21

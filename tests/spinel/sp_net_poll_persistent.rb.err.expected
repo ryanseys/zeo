@@ -1,0 +1,2 @@
+spinel/sp_net_poll_persistent.rb:10:in '<module:Net>': undefined method 'ffi_func' for module Net (NoMethodError)
+	from spinel/sp_net_poll_persistent.rb:9:in '<main>'

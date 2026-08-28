@@ -1,0 +1,121 @@
+"a-b"
+[nil, "a-b"]
+"a---"
+"---a"
+"--a--"
+1
+3
+1
+true
+true
+["a", "b-c"]
+["a", "b", "c"]
+0
+"a"
+"-bc"
+"-"
+"-"
+"\\-"
+"-"
+"-"
+"v"
+true
+"w"
+"w"
+true
+[TypeError, "no implicit conversion of Integer into String"]
+[TypeError, "no implicit conversion of Integer into String"]
+[TypeError, "no implicit conversion of Integer into String"]
+[TypeError, "wrong argument type Integer (expected Regexp)"]
+[TypeError, "no implicit conversion of Integer into String"]
+[TypeError, "no implicit conversion of Integer into String"]
+[TypeError, "no implicit conversion of Integer into String"]
+[TypeError, "no implicit conversion of Integer into String"]
+[[2], [1, 3]]
+0
+2
+4
+1
+1
+1
+Integer
+Integer
+[[1], [2]]
+3
+[0, 1, [0, 1], [0, 1], ["a"]]
+true
+[TypeError, "no implicit conversion of String into Integer"]
+[TypeError, "no implicit conversion of String into Integer"]
+[TypeError, "no implicit conversion of String into Integer"]
+[TypeError, "no implicit conversion of String into Integer"]
+[TypeError, "no implicit conversion of String into Integer"]
+[TypeError, "can't convert Array into an exact number"]
+[TypeError, "can't convert String into time"]
+[TypeError, "String can't be coerced into Float"]
+[TypeError, "can't convert String into Float"]
+[TypeError, "can't convert nil into Float"]
+[TypeError, "can't convert Sep into Float"]
+nil
+nil
+9
+{1 => 2}
+{1 => 2}
+[nil, 2]
+false
+true
+nil
+[KeyError, "key not found: \"a\""]
+[KeyError, "key not found: :b"]
+nil
+nil
+0
+false
+true
+false
+true
+false
+nil
+:none
+nil
+nil
+nil
+false
+false
+false
+false
+0
+1
+1
+0
+[[3, 1], [4, 2]]
+[[3, 1], [3, 2], [4, 1], [4, 2]]
+{"a" => 1, "b" => 2}
+[TypeError, "wrong argument type Integer (must respond to :each)"]
+[TypeError, "wrong argument type NilClass (must respond to :each)"]
+[TypeError, "wrong argument type Inert (must respond to :each)"]
+[TypeError, "no implicit conversion of String into Array"]
+[TypeError, "no implicit conversion of Integer into Hash"]
+[TypeError, "no implicit conversion of Inert into Hash"]
+nil
+recv
+arg
+[[1, 2]]
+1
+2000-05-01 00:00:00 UTC
+0
+[ArgumentError, "invalid argument - "]
+[TypeError, "nil can't be coerced into Float"]
+[TypeError, ":s can't be coerced into Float"]
+[TypeError, "Sep can't be coerced into Float"]
+[TypeError, "String can't be coerced into Integer"]
+"a"
+"b"
+"c"
+"a1b2c"
+[TypeError, "wrong argument type true (expected Regexp)"]
+[0, nil, [nil], 3]
+[TypeError, "can't convert TrueClass into time interval"]
+[TypeError, "can't convert Symbol into time interval"]
+[TypeError, "can't convert FalseClass into time"]
+"a\\.b"
+[NoMethodError, "undefined method 'rindex' for nil"]

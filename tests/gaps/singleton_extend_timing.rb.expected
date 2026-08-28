@@ -1,0 +1,37 @@
+before extend: "hi"
+before is_a?:  false
+before class:  Plain
+after extend:  "[hi]"
+after is_a?:   true
+after class:   Plain
+sibling:       "hi"
+sibling is_a?: false
+before def: hi
+after def:  <hi>
+before scls: hi
+after scls:  {hi}
+before dsm: hi
+after dsm:  (hi)
+before new-name: NoMethodError
+after new-name:  added
+still shown:     plain
+before: sh
+after:  !sh!
+chain none: -
+chain A1:   a-
+chain B1:   ba-
+chain is_a? A1: true
+chain is_a? B1: true
+chain class:    Base1
+both:       ab-
+both is_a?: true true
+one only:   b-
+one is_a?:  false true
+const before: sh
+const is_a?:  false
+const after:  !sh!
+const is_a?:  true
+cdef before: sh
+cdef after:  def
+cdsm before: sh
+cdsm after:  dsm

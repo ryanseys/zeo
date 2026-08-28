@@ -1,0 +1,23 @@
+true && []: []
+true && {}: {}
+false && []: false
+1 && []: []
+'s' && []: []
+nil && []: nil
+true || []: true
+nil || []: []
+false || []: []
+1 || []: 1
+nil || {}: {}
+true && [1]: [1]
+true && {1=>2}: {1 => 2}
+mutated: [1]
+hash mutated: {"k" => 1}
+size: 0
+each: []
+chain: []
+nested: []
+m true: []
+m false: false
+g nil: {}
+g 1: 1

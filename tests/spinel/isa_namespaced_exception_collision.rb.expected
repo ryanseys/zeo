@@ -1,0 +1,12 @@
+true
+true
+false
+false
+true
+true
+false
+true
+false
+["A::Sub", "A::Error", "StandardError"]
+["B::Sub", "B::Error", "RuntimeError"]
+rescued: A::Sub

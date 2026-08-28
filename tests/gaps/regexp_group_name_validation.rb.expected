@@ -1,0 +1,12 @@
+num-name | RegexpError
+dash-lead-name | RegexpError
+quote-num | RegexpError
+paren-in-name | RegexpError
+ref-bad-paren | RegexpError
+paren-name-def | "x"
+paren-name-ref | "xx"
+dash-in-name | "x"
+space-in-name | "x"
+ref-num | "xx"
+ref-rel | "xx"
+names | ["w", "z"]

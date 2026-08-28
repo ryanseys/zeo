@@ -1,0 +1,33 @@
+true
+true
+false
+false
+"see http://x.test/a"
+"abc_123"
+["A"]
+"aé"
+"Aaéあ"
+["1"]
+["_", "-"]
+["_", "-"]
+["€"]
+[" "]
+1
+7
+7
+["A", "1", "_"]
+"Aa1éあ"
+6
+7
+true
+true
+true
+true
+true
+true
+true
+false
+true
+false
+true
+"WÖRLD! 123"

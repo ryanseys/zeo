@@ -1,0 +1,25 @@
+if both empty: []
+if no else: []
+if vs string: []
+if vs int: []
+unless both: []
+unless no else: []
+ternary both: []
+ternary vs int: []
+case both empty: []
+case no else: []
+case vs string: []
+case vs int: []
+case hash both: {}
+case hash vs s: {}
+casein both: []
+casein vs int: []
+begin both: []
+case vs concrete: []
+case hash conc: {}
+and: []
+or: []
+if no else: [9] size=1
+case vs int: [9] size=1
+casein both: [9] size=1
+hash vs s: {"k" => 9} size=1

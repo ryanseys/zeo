@@ -1,0 +1,17 @@
+literal: 4 /a/m
+local: 2 /a/x
+block param: 6 /a/mx
+destructured: 3 /a/ix
+hash read: 5 /a/mi
+hash miss: 0 /a/
+method ret: 1 /a/i
+zero literal: 0 /a/
+zero via block: 0 /a/
+zero destructured: 0 /a/
+nil: 0 /a/
+false: 0 /a/
+true: 1 /a/i
+0
+nil
+0
+0

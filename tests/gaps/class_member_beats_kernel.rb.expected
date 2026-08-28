@@ -1,0 +1,15 @@
+class-puts:1
+class-print:2
+class-p:3
+class-caller:4
+class-raise:5
+class-system:6
+class-exit:7
+class-loop:8
+class-throw:9
+class-abort:10
+class-warn:11
+reader-format
+class-puts:30
+top-caller:31
+top-puts:32

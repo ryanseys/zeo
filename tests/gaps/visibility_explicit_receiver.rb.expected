@@ -1,0 +1,32 @@
+:pub
+NoMethodError: private method 'priv' called for an instance
+NoMethodError: protected method 'prot' called for an instan
+NoMethodError: private method 'sec' called for an instance 
+:priv
+:priv
+:prot
+:priv
+NoMethodError: private method 'priv' called for an instance
+false
+true
+true
+true
+NoMethodError: protected method 'balance' called for an ins
+10
+NoMethodError: private method 'secret' called for an instan
+NoMethodError: protected method 'balance' called for an ins
+NoMethodError: private method 'secret' called for an instan
+:open
+NoMethodError: private method 'hidden' called for an instan
+false
+NoMethodError: private method 'secret' called for an instan
+"acct:42"
+NoMethodError: protected method 'balance' called for an ins
+[:secret, Account]
+NoMethodError: private method 'w=' called for an instance o
+NoMethodError: private method 'w=' called for an instance o
+8
+NoMethodError: private method 'mpriv' called for an instanc
+NoMethodError: protected method 'mprot' called for an insta
+:mpriv
+:mprot

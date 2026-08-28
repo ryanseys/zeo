@@ -1,0 +1,1 @@
+spinel/gc_full_cycle_space_bound.rb:32:in '<main>': undefined method '>' for nil (NoMethodError)

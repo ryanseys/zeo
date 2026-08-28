@@ -9,9 +9,15 @@ programs (`*.rb` + `.rb.expected` stdout snapshots, `.err.expected` /
 `.args` / `.stdin` sidecars, and fixture subdirectories), every snapshot
 oracle-verified against real `ruby`.
 
-Last synced from upstream `master` at **`c55d9bdb`** (2026-08-17). Record the
-sha on every sync: without it, drift is invisible -- the sync that added this
-line found 444 upstream tests missing and 79 vendored bodies stale.
+Last synced from upstream `master` at **`7863de76`** (2026-08-28), from
+`c55d9bdb` (2026-08-17). Record the sha on every sync: without it, drift is
+invisible -- the sync that added this line found 444 upstream tests missing
+and 79 vendored bodies stale.
+
+The 2026-08-28 sync took 414 upstream commits: 146 tests vendored (121
+passing, 25 filed as gaps), and no regression in the 3,010 already here.
+Upstream also changed 134 bodies already vendored; none were adopted, for
+the reason in the frozen-literal paragraph below.
 
 Programs run from the `tests/` working directory, so a handful of sidecar
 `.args` paths and the source paths embedded in backtrace goldens name the

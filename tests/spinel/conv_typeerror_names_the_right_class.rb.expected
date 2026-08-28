@@ -1,0 +1,6 @@
+"M::Beta can't be coerced into Float"
+"no implicit conversion of M::Beta into Array"
+"no implicit conversion of M::Beta into Hash"
+"Plain can't be coerced into Float"
+"M::Alpha can't be coerced into Float"
+"M::Beta can't be coerced into Float"

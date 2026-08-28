@@ -1,0 +1,20 @@
+42
+"42"
+7
+8
+20
+10
+11
+nil
+"s"
+[1, 2]
+13
+5
+6
+7
+8
+nil
+3.5
+"3.5"
+"poly-str"
+NoMethodError: undefined method 'weight=

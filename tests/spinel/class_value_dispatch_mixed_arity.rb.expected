@@ -1,0 +1,7 @@
+"grammar x"
+"loose 1d"
+"loose 12"
+"tight 12"
+"grammar only"
+"other ab"
+ArgumentError: wrong number of arguments (given 1, expected 2)
