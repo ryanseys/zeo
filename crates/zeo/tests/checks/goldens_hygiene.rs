@@ -176,7 +176,14 @@ fn every_leg_skip_sidecar_is_acknowledged_here() {
         "float_pow_negative_fractional.rb",
         "io_file_stat_rows.rb",
     ];
-    const JIT_ONLY: &[&str] = &["an_ffi_type_crosses_between_snippets.rb"];
+    const JIT_ONLY: &[&str] = &[
+        "an_ffi_type_crosses_between_snippets.rb",
+        // Both name an autoload target with a string the compiler cannot
+        // resolve, so no unit is built and an AOT binary links no run-time
+        // compiler to load it with.
+        "an_autoload_is_defined_before_it_loads.rb",
+        "an_autoload_runs_when_its_constant_is_read.rb",
+    ];
     let mut found: Vec<(String, &'static str)> = Vec::new();
     for (sub, kind) in [("macos", "macos"), ("jit", "jit")] {
         let Ok(entries) = std::fs::read_dir(repo_root().join("tests").join(sub)) else {

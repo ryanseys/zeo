@@ -13,8 +13,16 @@
 # The two asks differ, which is the whole subtlety: a BARE `defined?(A)` says
 # "constant" WITHOUT running the autoload, and `defined?(A::B)` runs it,
 # because resolving the head is a real constant read.
+#
+# JIT-ONLY, and the reason is the AOT backend's own rule rather than this
+# fix: the target here is named by a string the compiler cannot resolve, so
+# no unit is built for it and an AOT binary has no run-time compiler linked
+# to load it with. It says so plainly -- "this program was compiled without
+# the unit compiler". rubygems is unaffected because ITS autoload targets
+# are files the compiler already compiles as units; what it could not do
+# before this fix was RUN one.
 
-DIR = File.expand_path("fixtures/autoload_target", __dir__)
+DIR = File.expand_path("../fixtures/autoload_target", __dir__)
 $LOAD_PATH.unshift(DIR)
 
 module Bare

@@ -5,8 +5,16 @@
 # `LoadError` waiting to happen: the read went straight to `const_missing`,
 # which found the record and raised the error the load was never given a
 # chance to avoid. rubygems declares every one of its classes this way.
+#
+# JIT-ONLY, and the reason is the AOT backend's own rule rather than this
+# fix: the target here is named by a string the compiler cannot resolve, so
+# no unit is built for it and an AOT binary has no run-time compiler linked
+# to load it with. It says so plainly -- "this program was compiled without
+# the unit compiler". rubygems is unaffected because ITS autoload targets
+# are files the compiler already compiles as units; what it could not do
+# before this fix was RUN one.
 
-DIR = File.expand_path("fixtures/autoload_target", __dir__)
+DIR = File.expand_path("../fixtures/autoload_target", __dir__)
 
 # --- the plain case, by feature name --------------------------------------
 $LOAD_PATH.unshift(DIR)
