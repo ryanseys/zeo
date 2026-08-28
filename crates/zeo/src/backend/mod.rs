@@ -69,6 +69,22 @@ pub enum CompiledProgram<'a> {
     Aot(&'a crate::ObjectOutput),
 }
 
+/// A name in the shared temp directory that no other compile can claim.
+///
+/// The process id ALONE is not enough, and the difference is a real bug: a
+/// run-mode binary is written, executed and then deleted under one name, so
+/// two compiles landing on it can have one delete or replace the other's
+/// program while it runs. Ids are reused, and a suite spawning a compile per
+/// case reuses them quickly.
+pub(crate) fn scratch_name(stem: &str) -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{stem}-{}-{nanos:x}-{seq}", std::process::id())
+}
+
 /// Run mode (`zeo file.rb`, `zeo -e`): produce a throwaway program for
 /// `compiled`, run it with `program_args`, and exit this process with the
 /// program's status. Never returns on success.
@@ -81,7 +97,7 @@ pub fn run_program(
         // Aot run mode links a throwaway binary and runs it; the in-process
         // JIT is what an ordinary `zeo file.rb` takes.
         CompiledProgram::Aot(compiled) => {
-            let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
+            let bin = std::env::temp_dir().join(scratch_name("zeo-e"));
             object::object_to_binary(
                 &compiled.object,
                 compiled.debuginfo,

@@ -26,7 +26,7 @@ pub fn object_to_binary(
         p.set_file_name(format!("{name}.o"));
         p
     } else {
-        std::env::temp_dir().join(format!("zeo-p0-{}.o", std::process::id()))
+        std::env::temp_dir().join(format!("{}.o", super::scratch_name("zeo-p0")))
     };
     std::fs::write(&obj_path, object)
         .map_err(|e| format!("writing {}: {e}", obj_path.display()))?;
