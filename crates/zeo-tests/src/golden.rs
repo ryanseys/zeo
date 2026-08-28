@@ -495,13 +495,62 @@ pub fn backend_is_aot() -> bool {
     golden_backend() != "jit"
 }
 
+/// The AOT leg links `libzeo.a`, and cargo does NOT rebuild it for
+/// `cargo nextest run -p zeo` -- only the CLI and the test binaries. So a
+/// change to the RUNTIME can leave this leg linking the previous one and
+/// reporting its answers as this build's, which is a green that means
+/// nothing. It cost a full debugging pass once: a json fix looked like an
+/// AOT-vs-JIT divergence when the AOT side was simply older.
+///
+/// Compared against the SOURCES, not a sibling artifact -- `cargo build`
+/// and `cargo nextest` relink the CLI against each other, so artifact
+/// mtimes say nothing. One walk of the two crates that land in the
+/// staticlib, once per run, against a suite that takes minutes.
+fn assert_staticlib_is_fresh() {
+    let Ok(cli) = zeo_cli() else { return };
+    let lib = cli.with_file_name("libzeo.a");
+    let Ok(lib_at) = std::fs::metadata(&lib).and_then(|m| m.modified()) else {
+        return;
+    };
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut stack: Vec<PathBuf> = ["zeo", "zeo-rt", "zeo-abi", "zeo-macros"]
+        .iter()
+        .map(|c| workspace_root().join("crates").join(c).join("src"))
+        .collect();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.filter_map(Result::ok) {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs")
+                && let Ok(at) = e.metadata().and_then(|m| m.modified())
+                && newest.as_ref().is_none_or(|(n, _)| at > *n)
+            {
+                newest = Some((at, p));
+            }
+        }
+    }
+    if let Some((at, path)) = newest {
+        assert!(
+            lib_at >= at,
+            "{} is older than {} -- the AOT leg would link a stale runtime \
+             and report its answers as this build's. Run `cargo build -p zeo` \
+             first.",
+            lib.display(),
+            path.display()
+        );
+    }
+}
+
 /// The built `zeo` CLI beside this test binary's profile dir.
 ///
-/// Freshness is cargo's own guarantee now: the suite targets live in
-/// `crates/zeo/tests/`, and cargo rebuilds a package's binaries (and its
-/// staticlib, `libzeo.a`) before compiling or running its integration
-/// tests. The 420-syscall source-mtime walk that once policed this by hand
-/// is gone with the cross-package split that made it necessary.
+/// Cargo rebuilds this binary before running the package's integration
+/// tests, so the 420-syscall source-mtime walk that once policed it is
+/// gone. It does NOT extend to the staticlib the AOT leg links -- see
+/// [`assert_staticlib_is_fresh`].
 pub fn zeo_cli() -> Result<PathBuf, String> {
     let mut p = std::env::current_exe().map_err(|e| format!("test binary path: {e}"))?;
     p.pop(); // deps/<test-bin> -> deps
@@ -532,6 +581,10 @@ fn run_via_cli(
     run_cwd: &Path,
     typed_off: bool,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
+    if backend != "jit" {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(assert_staticlib_is_fresh);
+    }
     let mut cmd = Command::new(zeo_cli()?);
     cmd.arg("--backend").arg(backend);
     // The differential-oracle child: the same compile with every
