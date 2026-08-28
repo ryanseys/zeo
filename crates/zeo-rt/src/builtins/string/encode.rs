@@ -185,6 +185,10 @@ pub(super) fn char_codepoint(buf: &StrBuf, r: std::ops::Range<usize>) -> i64 {
 /// compared bytes -- answered false. `sort`, `min`, `max` and `Comparable`
 /// all read this.
 ///
+/// Equal bytes are not always equal strings. CRuby breaks that tie on the
+/// ENCODING when the two are not comparable, so `"café".b <=> "café"` is -1
+/// rather than 0 -- and `sort` and `uniq` read the answer.
+///
 /// Locks in address order behind a pointer-equality short-circuit, the same
 /// way `rb_eq`'s String arm does: `sort` calls this on the same pair from
 /// both directions, and the receiver may BE the argument.
@@ -196,8 +200,24 @@ pub(super) fn str_byte_cmp(a: &crate::collections::RStr, b: &crate::collections:
     let (x, y) = if forward { (a, b) } else { (b, a) };
     let gx = x.lock();
     let gy = y.lock();
-    let ord = gx.bytes().cmp(gy.bytes()) as i64;
+    let ord = match gx.bytes().cmp(gy.bytes()) as i64 {
+        0 => encoding_tiebreak(&gx, &gy),
+        other => other,
+    };
     if forward { ord } else { -ord }
+}
+
+/// CRuby's `rb_str_comparable` tail. Two strings with the same bytes differ
+/// only when their encodings differ AND neither side is ASCII-only -- an
+/// ASCII-only string compares equal against any encoding, because every
+/// encoding zeo carries is ASCII-compatible. The order is the encoding's own
+/// registry index, which is CRuby's too.
+fn encoding_tiebreak(x: &StrBuf, y: &StrBuf) -> i64 {
+    let (ex, ey) = (x.encoding(), y.encoding());
+    if ex == ey || x.ascii_only() || y.ascii_only() {
+        return 0;
+    }
+    (ex.0 as i64 - ey.0 as i64).signum()
 }
 
 use crate::encoding::StrBuf;
