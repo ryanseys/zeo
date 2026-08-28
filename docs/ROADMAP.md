@@ -187,35 +187,30 @@ are gated on those extensions' maturity.
 
 ## Library
 
-### Promote the rubygems/bundler goldens to the umbrella require
+### The rubygems/bundler umbrella requires work
 
-`tests/bench/rubygems.rb` and `tests/bench/bundler.rb` enter at their own files
-(`rubygems/version`, `rubygems/requirement`, `rubygems/dependency`,
-`rubygems/platform`; `bundler/version`) rather than `require "rubygems"` /
-`require "bundler"`, and each header says why.
+DONE, and this section is kept only because its diagnosis was wrong in a way
+worth not repeating. `require "rubygems"` and `require "bundler"` both work.
+Three milestones pin them -- `tests/milestones/require_rubygems.rb`,
+`require_bundler.rb`, `rubygems_then_bundler.rb` -- and a fourth,
+`a_gemspec_loads_from_yaml.rb`, rebuilds a whole `Gem::Specification` graph
+out of YAML.
 
-Re-probed 2026-08-24: both umbrellas still fail, and the old blockers
-(`Gem.operating_system_defaults`, `Gem::Platform.local`) are superseded by
-EARLIER ones — the current shapes:
+WHAT THE OLD DIAGNOSIS SAID, and why it is worth recording that it was wrong:
+it named `specification.rb:136`'s `uninitialized constant Gem::Requirement`
+as a splice-ORDER bug, and `kernel_require.rb:37`'s missing
+`gem_original_require` as an alias that did not install. Both symptoms were
+real. Neither cause was: what actually stood in the way was a family of
+loader and runtime bugs found one at a time by running rubygems' own code --
+autoloads that never fired, `defined?` answering nil for an autoloaded
+constant, `__method__` naming a class method wrongly, a rescue splat, and
+four byte-lossy IO reads. A symptom read off a backtrace is a place, not a
+cause, and this section spent months naming places.
 
-- `require "rubygems"` dies in `specification.rb:136` (`<class:Specification>`)
-  with `uninitialized constant Gem::Requirement` — `rubygems/requirement.rb`
-  is required by `rubygems.rb` before `specification`, so this reads as the
-  positional-require family (a class-body constant read landing before the
-  require that defines it was installed).
-- `require "bundler"` dies in `kernel_require.rb:37` with
-  `undefined method 'gem_original_require' for module Gem` — rubygems'
-  `alias_method :gem_original_require, :require` over the builtin `require`
-  does not install the alias.
-
-When it clears: switch each golden to the umbrella require, restore the
-`Gem::Specification` section (a full spec build with runtime and development
-dependencies, `full_name`/`file_name`, `to_yaml`/`to_ruby`),
-`Gem::Platform.local`, and `Gem::VERSION`/`Gem.ruby_version`/
-`Gem.rubygems_version`; give bundler back `LockfileParser` (specs, transitive
-deps, platforms, sources, `sections_in_lockfile`), `Bundler::Dependency`
-groups/platforms/`to_lock`, `SpecSet`, and the error hierarchy with its exit
-codes. Then delete the "entered at those files" headers.
+`tests/bench/rubygems.rb` and `tests/bench/bundler.rb` still ENTER at their
+own sub-files, and their headers still carry the retired diagnosis. Switching
+them to the umbrella require is the remaining chore -- it is a bench-bank
+change, so it wants a re-bank rather than a quiet edit.
 
 ## Performance
 

@@ -115,8 +115,8 @@ stderr that Ruby never produces.
 
 | `require` | Zeo provides | why it diverges |
 |---|---|---|
-| `json` | `serde_json`-backed built-in | not the `json` gem; parser/generator options and error subclasses differ |
-| `psych` / `yaml` | `yaml-rust2`-backed built-in | not libyaml; tag/anchor and error-position behaviour differ |
+| `json` | a hand-written parser and generator | not the `json` gem's C extension. It targets json 2.21.2 and matches it row for row on the option and error matrix; both halves are ITERATIVE, so `max_nesting: false` costs heap rather than machine stack, which is a stronger guarantee than the gem's own generator gives. The serde_json substitution this row used to describe is long retired. |
+| `psych` / `yaml` | `yaml-rust2` parsing, psych's semantics above it | not libyaml. Tags, anchors, merge keys, `!ruby/object:` revival and the `Psych::Nodes` tree all behave as psych's do; what still differs is `Psych::SyntaxError`'s problem TEXT and a node tree's `#yaml` (see tests/gaps/). |
 | `zlib` | `flate2`-backed built-in | not the `zlib` C extension; four entry points it doesn't expose are declined — see below |
 | `digest` | RustCrypto-backed built-in | not the OpenSSL `digest` C extension |
 | `openssl` | vendored OpenSSL 3 via rust-openssl | the same EVP primitives CRuby binds; PKey generation, X509 issuance and `SSLServer` are declined — see below |
