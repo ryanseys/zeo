@@ -4,7 +4,7 @@ module ZeoDev
   module Commands
     # Fetch the WHOLE source trees of the gems whose test suites the
     # `gemtests` golden suite runs end-to-end
-    # (`crates/zeo-tests/tests/gemtests.rs` over `tests/gemtests/<gem>/*.rb`).
+    # (`crates/zeo/tests/slow_goldens.rs` over `tests/gemtests/<gem>/*.rb`).
     #
     # A `.gem` archive does not ship `test/` -- the gemspec's `files=`
     # excludes it -- so the trees come from the upstream git repos, pinned in

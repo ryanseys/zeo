@@ -10,7 +10,7 @@ fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .expect("crates/zeo-tests sits two levels under the workspace root")
+        .expect("crates/zeo sits two levels under the workspace root")
 }
 
 fn suite_dirs() -> Vec<PathBuf> {

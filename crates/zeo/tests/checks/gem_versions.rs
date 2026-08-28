@@ -1,10 +1,6 @@
 //! `Gemfile.lock` and the committed `gems/<name>/` trees describe the same
-//! gems, and must agree about their versions.
-//!
-//! They are two formats for one fact while the migration to the lock is under
-//! way, and a fact written twice is a fact that drifts: `gems/json` claimed
-//! 2.18.0 in its gemspec and 2.21.2 in its `lib/`, which made a golden
-//! unreadable because neither answer was obviously the wrong one.
+//! gems and must agree about their versions. Two formats for one fact, and a
+//! fact written twice drifts.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

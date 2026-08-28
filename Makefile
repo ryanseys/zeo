@@ -82,7 +82,7 @@ ci-jit: all
 # zeo-authored examples plus the e2e suite catch. The full spinel corpus
 # takes this leg only in `make gate`.
 ci-aot: all
-	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --test examples --test gaps --no-fail-fast
+	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --no-fail-fast -E 'binary(goldens) - test(spinel::)'
 	ZEO_E2E_BACKEND=aot $(NEXTEST) -p zeo --test e2e --no-fail-fast
 
 # ONE instrumented corpus pass carrying both memory checks -- the
@@ -92,7 +92,7 @@ ci-aot: all
 # verified 4,393/4,393 with both armed, 2026-08-25. Emitted code only,
 # so golden corpora only. The whole-gem gemtests half lives in `gate`.
 ci-memcheck: all
-	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
+	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo --test goldens --no-fail-fast
 
 # The typed differential oracle: every golden compiles and runs TWICE --
 # once as-is, once with every TyKind-driven emission off
@@ -101,7 +101,7 @@ ci-memcheck: all
 # changing ANY observable behavior, including behavior the CRuby oracle
 # could not distinguish. Run it on any change to typed emission.
 ci-typed: all
-	ZEO_GOLDEN_DIFF_TYPED=1 $(NEXTEST) -p zeo --test examples --test spinel --test gaps --no-fail-fast
+	ZEO_GOLDEN_DIFF_TYPED=1 $(NEXTEST) -p zeo --test goldens --no-fail-fast
 
 # The umbrella entry points, one named case each (tests/milestones/). Each
 # splices a whole library's require graph, so this is minutes rather than
@@ -109,7 +109,7 @@ ci-typed: all
 # instead of slowing the dev loop. A `pending/` case is an XFAIL and says so
 # the day it starts matching ruby.
 ci-milestones: all
-	$(NEXTEST) -p zeo -P full --test milestones --no-fail-fast
+	$(NEXTEST) -p zeo -P full --no-fail-fast -E 'test(milestone::)'
 
 # nextest doesn't run doctests.
 ci-doc: all
@@ -144,9 +144,9 @@ endif
 # Bench is deliberately NOT here: perf numbers are recorded on their own
 # cadence (`make bench` after perf commits and at re-banks), never gated.
 gate: ci-jit ci-aot ci-memcheck ci-doc ci-milestones $(PLATFORM_CI_LEG)
-	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --test spinel --no-fail-fast
-	$(NEXTEST) -p zeo -P full -E 'binary(gemtests) + test(every_bundled_gem_compiles)'
-	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo -P full --test gemtests
+	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --no-fail-fast -E 'binary(goldens) & test(spinel::)'
+	$(NEXTEST) -p zeo -P full -E 'test(gemtest::) + test(every_bundled_gem_compiles)'
+	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo -P full -E 'test(gemtest::)'
 
 bench:
 	$(CARGO) bench -p zeo --bench programs

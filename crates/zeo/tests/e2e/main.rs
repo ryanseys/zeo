@@ -13,7 +13,10 @@
 //! found, and added next to its neighbours, in what was a single 21,000-line
 //! file.
 
-use zeo_tests::e2e_support as support;
+#[path = "../harness/e2e_support.rs"]
+mod support;
+#[path = "../harness/paths.rs"]
+mod paths;
 
 /// The compiler repo's own bundled packages/ dir, as the test-project
 /// harness's package-dir argument (absolute, so the temp-dir join is a

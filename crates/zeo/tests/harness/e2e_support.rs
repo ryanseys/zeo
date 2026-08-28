@@ -104,7 +104,7 @@ fn run_jit_child(
         opts.gem_report.is_none() && opts.root_gem.is_none(),
         "the jit-child tier does not forward gem_report/root_gem; extend run_jit_child"
     );
-    let cli = crate::golden::zeo_cli().unwrap_or_else(|e| panic!("{e}"));
+    let cli = crate::paths::zeo_cli().unwrap_or_else(|e| panic!("{e}"));
     let mut cmd = std::process::Command::new(cli);
     cmd.arg("--backend").arg("jit");
     for root in &opts.load_roots {

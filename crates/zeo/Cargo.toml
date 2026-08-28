@@ -62,16 +62,9 @@ tar.workspace = true
 flate2.workspace = true
 
 [dev-dependencies]
-# CLIF snapshot pinning (`tests/clif.rs`) and the diagnostic renderings
-# (`tests/repo_checks/diagnostics.rs`).
+# CLIF snapshot pinning (`tests/checks/clif.rs`) and the diagnostic
+# renderings (`tests/checks/diagnostics.rs`).
 insta.workspace = true
-# The golden + e2e harness library. The suites live HERE, in the package
-# that owns the `zeo` binary and the `libzeo.a` staticlib, so cargo itself
-# rebuilds both before any suite runs -- the staleness canary the harness
-# once carried is cargo's own dependency edge now. The dev-dep cycle
-# (zeo-tests depends on zeo) is the standard, cargo-sanctioned shape and is
-# stripped from the published .crate.
-zeo-tests.workspace = true
 zeo-abi.workspace = true
 datatest-stable.workspace = true
 # The derived manifest gems_vendored.rs reads.
@@ -82,35 +75,14 @@ miette.workspace = true
 # plotters/HTML -- saved baselines + `critcmp` are the comparison story.
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 
-# Golden-file suites: one nextest case per `.rb`, comparing zeo's output to
-# the committed ruby-oracle `.expected` (see zeo-tests/src/golden.rs).
-# `harness = false` hands the target to datatest-stable.
-# `tools/zeo-dev bless <filter>` rewrites goldens.
+# One nextest case per `.rb`, diffed against the committed ruby-oracle
+# `.expected` (tests/harness/golden.rs). `harness = false` hands the target
+# to datatest-stable, whose case names are `<fn>::<path>` -- so one binary
+# carries every corpus and a `test(<fn>::)` filter still names exactly one.
+# `tests/checks/` and `tests/e2e/` are autodiscovered.
 [[test]]
-name = "gaps"
-path = "tests/gaps.rs"
-harness = false
-
-[[test]]
-name = "examples"
-path = "tests/examples.rs"
-harness = false
-
-[[test]]
-name = "gemtests"
-path = "tests/gemtests.rs"
-harness = false
-
-# The umbrella entry points, one named case each -- see tests/milestones.rs.
-# Opted out of the default nextest profile with the other whole-graph suites.
-[[test]]
-name = "milestones"
-path = "tests/milestones.rs"
-harness = false
-
-[[test]]
-name = "spinel"
-path = "tests/spinel.rs"
+name = "goldens"
+path = "tests/goldens.rs"
 harness = false
 
 # The runtime performance bank: every `bench/bm_*.rb` compiled with the

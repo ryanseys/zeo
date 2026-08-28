@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn repo_root() -> PathBuf {
-    zeo_tests::golden::workspace_root()
+    crate::paths::workspace_root()
         .canonicalize()
         .expect("the repo root is reachable from the manifest dir")
 }
@@ -36,7 +36,7 @@ fn repo_root() -> PathBuf {
 /// old `target/{debug,release}` guess, this survives CARGO_TARGET_DIR and
 /// custom profiles.
 fn zeo_bin() -> PathBuf {
-    zeo_tests::golden::zeo_cli().unwrap_or_else(|e| panic!("{e}"))
+    crate::paths::zeo_cli().unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn have(tool: &str) -> bool {

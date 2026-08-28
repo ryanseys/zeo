@@ -114,12 +114,12 @@ module ZeoDev
         # the container loop's dominant cost and JIT already runs it here.
         when "aot"
           "ZEO_GOLDEN_BACKEND=aot cargo nextest run #{cargo_profile} -p zeo " \
-            "--test-threads #{threads} --no-fail-fast --test examples --test gaps && " \
+            "--test-threads #{threads} --no-fail-fast -E 'binary(goldens) - test(spinel::)' && " \
             "ZEO_E2E_BACKEND=aot cargo nextest run #{cargo_profile} -p zeo " \
             "--test-threads #{threads} --no-fail-fast --test e2e"
         when "aot-full"
           "ZEO_GOLDEN_BACKEND=aot cargo nextest run #{cargo_profile} -p zeo " \
-            "--test-threads #{threads} --no-fail-fast --test examples --test spinel --test gaps"
+            "--test-threads #{threads} --no-fail-fast --test goldens"
         when "units"
           "cargo nextest run #{cargo_profile} -p zeo -p zeo-rt --test-threads #{threads}"
         # The one test that asks rustc for the live answer instead of trusting

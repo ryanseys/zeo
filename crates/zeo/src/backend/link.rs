@@ -17,12 +17,12 @@ use std::path::PathBuf;
 /// the cache. In the dev tree, missing means the tree is half-built and the
 /// fix is `cargo build`.
 ///
-/// No mtime staleness check: the archive and the binary come out of ONE
-/// cargo build with the archive written first, so "archive older than the
-/// binary" is true of every fresh build -- and a bin-only rebuild leaves an
-/// older archive that is still correct (the lib didn't change). Cargo's own
-/// dependency tracking is the freshness guarantee in the dev tree; an
-/// installed payload's freshness is the install tooling's job.
+/// No mtime staleness check here: "archive older than the binary" is true of
+/// every fresh build, and a bin-only rebuild leaves an older archive that is
+/// still correct. `cargo build` emits the archive; `cargo test` does NOT --
+/// only `cargo build` asks for the lib target's every crate-type, and a test
+/// binary's dependency edge asks for the rlib alone. The golden harness
+/// checks the archive against the runtime sources for that reason.
 pub fn runtime_archive() -> Result<PathBuf, String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the running zeo binary: {e}"))?;

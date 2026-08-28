@@ -51,7 +51,7 @@ fn link_program(source: &str) -> PathBuf {
 /// same cargo invocation as the `libzeo.a` the program links, so it is the
 /// reference for what that archive holds.
 fn zeo_cli() -> PathBuf {
-    zeo_tests::golden::zeo_cli().unwrap_or_else(|e| panic!("{e}"))
+    crate::paths::zeo_cli().unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn read(path: &Path) -> Vec<u8> {

@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 
 fn repo(rel: &str) -> PathBuf {
-    zeo_tests::golden::workspace_root().join(rel)
+    crate::paths::workspace_root().join(rel)
 }
 
 /// The feature name to `require`, when it is not the directory name.

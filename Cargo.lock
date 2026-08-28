@@ -2303,7 +2303,6 @@ dependencies = [
  "zeo-abi",
  "zeo-dsl",
  "zeo-rt",
- "zeo-tests",
 ]
 
 [[package]]
@@ -2366,15 +2365,6 @@ dependencies = [
  "yaml-rust2",
  "zeo-abi",
  "zeo-macros",
-]
-
-[[package]]
-name = "zeo-tests"
-version = "0.1.0"
-dependencies = [
- "datatest-stable",
- "libc",
- "zeo",
 ]
 
 [[package]]

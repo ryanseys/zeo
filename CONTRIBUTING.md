@@ -21,7 +21,7 @@ recorded the difference as a zeo bug.
 
 The golden and e2e suites spawn the built `zeo` binary and link against
 `libzeo.a`. Both are products of the `zeo` package, and the suites live in
-`crates/zeo/tests/`, so `cargo nextest run -p zeo --test examples` after a
+`crates/zeo/tests/`, so `cargo nextest run -p zeo --test goldens` after a
 compiler edit tests the edited compiler. One exception: cargo rebuilds the
 binary and the test binaries but **not** `libzeo.a`, which the AOT leg links,
 so that leg checks the archive against the sources itself and refuses a stale
@@ -55,8 +55,8 @@ $ make linux   # the container verification loop (needs podman)
 Targeted runs go through nextest directly:
 
 ```console
-$ cargo nextest run -p zeo --test spinel      # the full ruby-oracle corpus
-$ cargo nextest run -p zeo --test examples --test gaps
+$ cargo nextest run -p zeo --test goldens     # every ruby-oracle corpus
+$ cargo nextest run -p zeo -E 'test(example::)'  # one corpus
 $ cargo nextest run -p zeo -P full            # + the whole-gem cases
 $ tools/zeo-dev bless <filter>              # re-record goldens from ruby
 $ make bench                                # the criterion perf bank (bench/README.md)
@@ -64,7 +64,7 @@ $ tools/zeo-dev size                        # what each class table costs a bina
 ```
 
 The default profile is the dev loop. `-P full` adds the cases that compile a
-whole gem's require graph (`gemtests`, `every_bundled_gem_compiles`); they
+whole gem's require graph (`slow_goldens`, `every_bundled_gem_compiles`); they
 belong to `make gate`, not to every run.
 
 - The golden suites live under `tests/` (examples + the spinel corpus + the
@@ -104,8 +104,8 @@ The oracle for correctness is `ruby` on `PATH`.
 The golden suites take two legs, and the e2e suite does too:
 
 ```console
-$ cargo nextest run -p zeo --test examples                      # jit
-$ ZEO_GOLDEN_BACKEND=aot   cargo nextest run -p zeo --test examples
+$ cargo nextest run -p zeo --test goldens                       # jit
+$ ZEO_GOLDEN_BACKEND=aot   cargo nextest run -p zeo --test goldens
 $ cargo nextest run -p zeo --test e2e                           # jit child (default)
 $ ZEO_E2E_BACKEND=aot      cargo nextest run -p zeo --test e2e  # link per test
 ```
@@ -117,7 +117,7 @@ every TyKind-driven emission off -- and the two zeo outputs must agree
 byte-for-byte. Run it on any change to typed emission; a wrong static
 type is a miscompile, and this leg is what catches one.
 
-`crates/zeo/tests/clif.rs` holds insta snapshots of the emitted CLIF. They
+`crates/zeo/tests/checks/clif.rs` holds insta snapshots of the emitted CLIF. They
 record emitter *shape*, which no golden can see, so **run `cargo nextest run
 -p zeo` after any `clif/` change**. Each snapshot is its own `#[test]`, so
 one run reports every stale one.

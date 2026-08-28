@@ -106,7 +106,7 @@ module ZeoDev
         puts "wrote tests/gaps/#{name}.rb (+ blessed golden from ruby)"
 
         puts "confirming the XFAIL holds via the gaps harness ..."
-        run_out = Exec.run(%W[cargo nextest run -p zeo --test gaps -E test(#{name})],
+        run_out = Exec.run(%W[cargo nextest run -p zeo --test goldens -E test(#{name})],
                            chdir: ROOT, capture_stdout: true)
         if "#{run_out.stdout}#{run_out.stderr}".include?("GAP FIXED")
           puts

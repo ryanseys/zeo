@@ -6,7 +6,6 @@ members = [
     "crates/zeo-dsl",
     "crates/zeo-macros",
     "crates/zeo-rt",
-    "crates/zeo-tests",
 ]
 
 [workspace.package]
@@ -30,11 +29,6 @@ zeo-abi = { path = "crates/zeo-abi", version = "=0.1.0" }
 zeo-rt = { path = "crates/zeo-rt", version = "=0.1.0" }
 zeo-dsl = { path = "crates/zeo-dsl", version = "=0.1.0" }
 zeo-macros = { path = "crates/zeo-macros", version = "=0.1.0" }
-# The golden/e2e harness library, a dev-dependency of `zeo` (whose tests/
-# host the suites). Path-only, NO version: cargo strips a versionless path
-# dev-dependency from the published .crate, which is what keeps the
-# zeo <-> zeo-tests dev-cycle out of crates.io.
-zeo-tests = { path = "crates/zeo-tests" }
 
 # The Cranelift backend: zeo lowers HIR to CLIF itself and
 # emits object files -- no rustc/LLVM in the compile path. Pinned to the
@@ -164,15 +158,12 @@ unused = "warn"
 [workspace.lints.clippy]
 all = "warn"
 
-# `line-tables-only` everywhere, not just for dependencies.
-#
-# `[profile.dev.package."*"]` covers DEPENDENCIES only, so the workspace's own
-# crates -- `zeo` and `zeo-tests`, both large -- kept building at full DWARF.
-# That debug info is the memory-hungry part of a rustc process and the bulk of
-# what makes `target/` reach tens of gigabytes; `zeo-rt` was demoted for
-# exactly that reason and the compiler crates were missed. A line table is
-# still enough for a backtrace with file and line, which is what anything here
-# is read for.
+# `line-tables-only` everywhere, not just for dependencies:
+# `[profile.dev.package."*"]` covers DEPENDENCIES only, and the workspace's
+# own crates are large. Full DWARF is the memory-hungry part of a rustc
+# process and the bulk of what makes `target/` reach tens of gigabytes. A
+# line table still carries file and line for a backtrace, which is what
+# anything here is read for.
 [profile.dev]
 debug = "line-tables-only"
 
