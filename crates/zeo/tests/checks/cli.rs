@@ -116,6 +116,43 @@ fn compile_writes_the_default_binary_and_runs_nothing() {
 }
 
 #[test]
+fn a_build_flag_after_the_file_is_argv_and_builds_nothing() {
+    // Ruby's rule costs something, and this is the bill. `zeo prog.rb -o bin`
+    // reads like a compile and is a RUN with `["-o", "bin"]` for ARGV: no
+    // binary, and exit 0 to say so.
+    //
+    // This is not hypothetical. The criterion bank spelled its compile that
+    // way, so it died on its first benchmark spawning a file nothing wrote,
+    // and `zeo --help` documented the same spelling in two of its mode lines.
+    let dir = scratch("flag-after-file");
+    let rb = write(&dir, "hello.rb", "p ARGV\n");
+
+    for flag in [vec!["-o", "out"], vec!["--compile"]] {
+        let out = zeo().arg(&rb).args(&flag).output().expect("spawn zeo");
+        assert!(
+            out.status.success(),
+            "{flag:?} after the file should RUN, stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let argv: Vec<String> = flag.iter().map(|s| format!("{s:?}")).collect();
+        assert_eq!(
+            stdout_of(&out),
+            format!("[{}]\n", argv.join(", ")),
+            "{flag:?} after the file should reach the program as ARGV"
+        );
+    }
+    assert!(!dir.join("out").exists(), "`-o out` after the file built one");
+    assert!(!dir.join("hello").exists(), "`--compile` after the file built one");
+
+    // The help text has to spell it the way that works, or it teaches the bug.
+    let help = zeo().arg("--help").output().expect("spawn zeo");
+    let text = stdout_of(&help);
+    for want in ["-o <path> <input.rb>", "--compile <input.rb>"] {
+        assert!(text.contains(want), "`zeo --help` has no `{want}` line:\n{text}");
+    }
+}
+
+#[test]
 fn a_failing_minitest_run_exits_nonzero() {
     // THE promise of run-by-default: `zeo test.rb` reports test failure
     // through the exit status, the way `ruby test.rb` does. Minitest sets

@@ -230,9 +230,9 @@ modes:
                         ARGV. Option parsing STOPS there, ruby's own rule, so
                         `zeo test.rb --seed 42 -v` passes all three on;
                         zeo's own options go BEFORE the file name
-  <input.rb> -o <path>  compile the file to a native binary at <path>
+  -o <path> <input.rb>  compile the file to a native binary at <path>
                         instead of running it
-  <input.rb> --compile  compile to the default output path (the input path
+  --compile <input.rb>  compile to the default output path (the input path
                         with its extension stripped) without running
   -e <code>             compile and run an inline program immediately
                         (repeatable; snippets are joined with newlines);

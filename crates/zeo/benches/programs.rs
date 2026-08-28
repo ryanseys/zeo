@@ -198,11 +198,17 @@ fn scratch() -> PathBuf {
 static ZEO: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// Compile `rb` with the snapshot `zeo` and answer the binary path.
+///
+/// Options BEFORE the file. zeo follows ruby's own convention, where
+/// everything after the script name is the PROGRAM's ARGV -- so `zeo
+/// prog.rb -o bin` RUNS prog.rb and hands it `-o bin`, exits 0, and writes
+/// no binary. This bank spelled it that way and died on the first
+/// benchmark, at the spawn of a file that was never produced.
 fn compile(rb: &Path, name: &str) -> PathBuf {
     let bin = scratch().join(name);
     let out = Command::new(ZEO.get().expect("main built the snapshot"))
-        .arg(rb)
         .args(["-o", bin.to_str().expect("utf-8 scratch path"), "-W0"])
+        .arg(rb)
         .output()
         .expect("spawn zeo");
     assert!(
@@ -210,6 +216,13 @@ fn compile(rb: &Path, name: &str) -> PathBuf {
         "zeo failed on {}: {}",
         rb.display(),
         String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        bin.is_file(),
+        "zeo exited 0 on {} but wrote no binary at {} -- are the options \
+         before the file?",
+        rb.display(),
+        bin.display()
     );
     bin
 }
