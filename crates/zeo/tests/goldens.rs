@@ -39,6 +39,8 @@ mod golden;
 mod normalize;
 #[path = "harness/paths.rs"]
 mod paths;
+#[path = "harness/zeo_bin.rs"]
+mod zeo_bin;
 
 use std::path::Path;
 

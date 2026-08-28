@@ -6,9 +6,7 @@
 # `make install-deps`
 #                   resolve Gemfile.lock into vendor/bundle (needs network
 #                   once); the gem set both the compiler and the oracle read
-# `make`            build the workspace (the suites hard-require a fresh
-#                   `zeo` binary and `libzeo.a`; nothing gives a test target
-#                   a cargo dependency edge to a binary, so build first)
+# `make`            build the workspace
 # `make test`       the dev loop: unit + e2e + golden suites, default profile
 # `make check`      clippy at CI's severity
 # `make check-batch` the mid-tier between batches inside a phase: the

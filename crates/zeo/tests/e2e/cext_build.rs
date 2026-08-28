@@ -36,7 +36,7 @@ fn repo_root() -> PathBuf {
 /// old `target/{debug,release}` guess, this survives CARGO_TARGET_DIR and
 /// custom profiles.
 fn zeo_bin() -> PathBuf {
-    crate::paths::zeo_cli().unwrap_or_else(|e| panic!("{e}"))
+    crate::zeo_bin::zeo_cli().unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn have(tool: &str) -> bool {

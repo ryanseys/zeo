@@ -20,12 +20,12 @@ the two cannot disagree about a version — which they did, and a golden then
 recorded the difference as a zeo bug.
 
 The golden and e2e suites spawn the built `zeo` binary and link against
-`libzeo.a`. Both are products of the `zeo` package, and the suites live in
-`crates/zeo/tests/`, so `cargo nextest run -p zeo --test goldens` after a
-compiler edit tests the edited compiler. One exception: cargo rebuilds the
-binary and the test binaries but **not** `libzeo.a`, which the AOT leg links,
-so that leg checks the archive against the sources itself and refuses a stale
-one by name.
+`libzeo.a`. There is no build-first ritual: `cargo nextest run -p zeo` works
+from a clean tree. Cargo builds the binary, but a test run never builds the
+staticlib — only `cargo build` asks the lib target for every crate-type — so
+anything that links an AOT program goes through `harness::paths::
+runtime_archive()`, which builds it when it is missing or older than the
+sources in it.
 
 ## The one rule: oracle-verified, divergence-documented
 

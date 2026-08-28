@@ -54,8 +54,8 @@ fn stage_prefix(root: &Path, with_archive: bool) -> PathBuf {
             .join("lib")
             .join(zeo::backend::link::host_triple());
         std::fs::create_dir_all(&lib).expect("staging share/zeo/lib/<triple>/");
-        std::fs::hard_link(built.join("libzeo.a"), lib.join("libzeo.a"))
-            .expect("hard-linking libzeo.a");
+        let archive = crate::paths::runtime_archive().expect("libzeo.a");
+        std::fs::hard_link(archive, lib.join("libzeo.a")).expect("hard-linking libzeo.a");
     } else {
         // The payload directory exists and holds no archive -- a tarball
         // staged by the code this replaces.

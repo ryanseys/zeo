@@ -315,16 +315,7 @@ fn object_output_is_deterministic() {
 /// defined `T` symbol in the runtime archive the link consumes.
 #[test]
 fn capi_surface_is_exported_by_the_archive() {
-    let mut dir = std::env::current_exe().expect("test binary path");
-    // target/<profile>/deps/<bin> -> target/<profile>
-    dir.pop();
-    dir.pop();
-    let archive: PathBuf = dir.join("libzeo.a");
-    assert!(
-        archive.is_file(),
-        "libzeo.a must sit beside the test profile dir: {}",
-        archive.display()
-    );
+    let archive: PathBuf = crate::paths::runtime_archive().expect("libzeo.a");
     let out = std::process::Command::new("nm")
         .arg(&archive)
         .output()
@@ -383,14 +374,7 @@ fn capi_surface_is_exported_by_the_archive() {
 /// looked right produced phantom names from `let x = zeo_abi::..` lines.
 #[test]
 fn class_tables_are_complete() {
-    let mut dir = std::env::current_exe().expect("test binary path");
-    dir.pop();
-    dir.pop();
-    let archive: PathBuf = dir.join("libzeo.a");
-    assert!(
-        archive.is_file(),
-        "libzeo.a must sit beside the test profile dir"
-    );
+    let archive: PathBuf = crate::paths::runtime_archive().expect("libzeo.a");
     let out = std::process::Command::new("nm")
         .arg(&archive)
         .output()

@@ -26,6 +26,8 @@ use object::{Object, ObjectSection};
 /// it is a working program (an assert on a binary that cannot run proves
 /// nothing), and hand back the path. The caller removes it.
 fn link_program(source: &str) -> PathBuf {
+    // The link needs the archive, which a test run does not build.
+    crate::paths::runtime_archive().unwrap_or_else(|e| panic!("{e}"));
     let opts = zeo::CompileOptions::default();
     let compiled = zeo::compile_to_object_with(source, &opts, false)
         .unwrap_or_else(|e| panic!("compile_to_object_with failed: {e}"));
@@ -51,7 +53,7 @@ fn link_program(source: &str) -> PathBuf {
 /// same cargo invocation as the `libzeo.a` the program links, so it is the
 /// reference for what that archive holds.
 fn zeo_cli() -> PathBuf {
-    crate::paths::zeo_cli().unwrap_or_else(|e| panic!("{e}"))
+    crate::zeo_bin::zeo_cli().unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn read(path: &Path) -> Vec<u8> {

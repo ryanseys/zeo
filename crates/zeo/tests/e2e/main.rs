@@ -17,6 +17,8 @@
 mod support;
 #[path = "../harness/paths.rs"]
 mod paths;
+#[path = "../harness/zeo_bin.rs"]
+mod zeo_bin;
 
 /// The compiler repo's own bundled packages/ dir, as the test-project
 /// harness's package-dir argument (absolute, so the temp-dir join is a

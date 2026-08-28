@@ -1,6 +1,4 @@
-//! Shared golden-file test helper for the datatest-stable suites
-//! (`tests/gaps.rs`, `tests/examples.rs`, `tests/spinel.rs`,
-//! `tests/gemtests.rs`).
+//! Golden-file helper for the datatest-stable suite (`tests/goldens.rs`).
 //!
 //! One function, [`run_golden`], drives every `.rb`: spawn the built `zeo`
 //! CLI on the chosen backend, then diff stdout/stderr against the committed
@@ -41,7 +39,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::normalize::{normalize_addresses, normalize_thread_ids};
-use crate::paths::{workspace_root, zeo_cli};
+use crate::paths::workspace_root;
+use crate::zeo_bin::zeo_cli;
 
 /// Hard bounds on any child this harness runs (a compiled golden binary, or the
 /// ruby oracle).
@@ -417,56 +416,6 @@ pub fn backend_is_aot() -> bool {
     golden_backend() != "jit"
 }
 
-/// The AOT leg links `libzeo.a`, and cargo does NOT rebuild it for
-/// `cargo nextest run -p zeo` -- only the CLI and the test binaries. So a
-/// change to the RUNTIME can leave this leg linking the previous one and
-/// reporting its answers as this build's, which is a green that means
-/// nothing. It cost a full debugging pass once: a json fix looked like an
-/// AOT-vs-JIT divergence when the AOT side was simply older.
-///
-/// Compared against the SOURCES, not a sibling artifact -- `cargo build`
-/// and `cargo nextest` relink the CLI against each other, so artifact
-/// mtimes say nothing. One walk of the two crates that land in the
-/// staticlib, once per run, against a suite that takes minutes.
-fn assert_staticlib_is_fresh() {
-    let Ok(cli) = zeo_cli() else { return };
-    let lib = cli.with_file_name("libzeo.a");
-    let Ok(lib_at) = std::fs::metadata(&lib).and_then(|m| m.modified()) else {
-        return;
-    };
-    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
-    let mut stack: Vec<PathBuf> = ["zeo", "zeo-rt", "zeo-abi", "zeo-macros"]
-        .iter()
-        .map(|c| workspace_root().join("crates").join(c).join("src"))
-        .collect();
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for e in entries.filter_map(Result::ok) {
-            let p = e.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else if p.extension().is_some_and(|x| x == "rs")
-                && let Ok(at) = e.metadata().and_then(|m| m.modified())
-                && newest.as_ref().is_none_or(|(n, _)| at > *n)
-            {
-                newest = Some((at, p));
-            }
-        }
-    }
-    if let Some((at, path)) = newest {
-        assert!(
-            lib_at >= at,
-            "{} is older than {} -- the AOT leg would link a stale runtime \
-             and report its answers as this build's. Run `cargo build -p zeo` \
-             first.",
-            lib.display(),
-            path.display()
-        );
-    }
-}
-
 /// The Cranelift legs' runner: one spawned `zeo` child per golden, which
 /// compiles AND runs the program. This used to be preceded by an in-process
 /// object-compile probe -- a full second compile of every golden -- whose
@@ -483,9 +432,9 @@ fn run_via_cli(
     run_cwd: &Path,
     typed_off: bool,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
+    // The AOT leg links the archive, which a test run does not build.
     if backend != "jit" {
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(assert_staticlib_is_fresh);
+        crate::paths::runtime_archive()?;
     }
     let mut cmd = Command::new(zeo_cli()?);
     cmd.arg("--backend").arg(backend);

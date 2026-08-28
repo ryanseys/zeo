@@ -56,6 +56,8 @@ pub fn compile_link_run_aot(
     env: &[(&str, &str)],
     args: &[&str],
 ) -> RunResult {
+    // The link needs the archive, which a test run does not build.
+    crate::paths::runtime_archive().unwrap_or_else(|e| panic!("{e}"));
     let compiled = zeo::compile_to_object_with(source, opts, false)
         .unwrap_or_else(|e| panic!("compile_to_object_with failed: {e}"));
     let bin = std::env::temp_dir().join(format!(
@@ -104,7 +106,7 @@ fn run_jit_child(
         opts.gem_report.is_none() && opts.root_gem.is_none(),
         "the jit-child tier does not forward gem_report/root_gem; extend run_jit_child"
     );
-    let cli = crate::paths::zeo_cli().unwrap_or_else(|e| panic!("{e}"));
+    let cli = crate::zeo_bin::zeo_cli().unwrap_or_else(|e| panic!("{e}"));
     let mut cmd = std::process::Command::new(cli);
     cmd.arg("--backend").arg("jit");
     for root in &opts.load_roots {

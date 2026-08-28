@@ -19,10 +19,10 @@ use std::path::PathBuf;
 ///
 /// No mtime staleness check here: "archive older than the binary" is true of
 /// every fresh build, and a bin-only rebuild leaves an older archive that is
-/// still correct. `cargo build` emits the archive; `cargo test` does NOT --
-/// only `cargo build` asks for the lib target's every crate-type, and a test
-/// binary's dependency edge asks for the rlib alone. The golden harness
-/// checks the archive against the runtime sources for that reason.
+/// still correct. `cargo build` emits the archive; a test run does NOT --
+/// only `cargo build` asks the lib target for every crate-type, and a test
+/// binary's dependency edge asks for the rlib alone. The suites build it
+/// themselves (`harness::paths::runtime_archive`).
 pub fn runtime_archive() -> Result<PathBuf, String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the running zeo binary: {e}"))?;

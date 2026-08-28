@@ -15,3 +15,7 @@ mod goldens_hygiene;
 #[path = "../harness/normalize.rs"]
 mod normalize;
 mod normalize_tests;
+
+// `clif` reads `libzeo.a`, which a test run does not build.
+#[path = "../harness/paths.rs"]
+mod paths;
