@@ -532,9 +532,10 @@ ruby_module! {
     // argument parsing, so env/chdir/redirects apply to THIS process in the
     // instant before the exec. A failure to exec raises the matching Errno.
     def self.exec(_recv, *args, &_block) {
+        let target = launch_target(args);
         let mut cmd = build_spawn_command(args)?;
         // `CommandExt::exec` returns only on failure (it diverges on success).
-        Err(spawn_error(&cmd.exec()))
+        Err(spawn_error_for(&cmd.exec(), &target))
     }
 
     // `Process::Status` -- the object `$?` holds after a wait/system/backtick.

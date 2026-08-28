@@ -71,7 +71,6 @@ fn every_payload_struct_is_opaque() {
         "RRegexp",
         "RObject",
         "RMatch",
-        "RFile",
         "RData",
         "RTypedData",
     ] {
@@ -84,4 +83,23 @@ fn every_payload_struct_is_opaque() {
             name.to_uppercase()
         );
     }
+}
+
+/// `RFile` is the one payload struct with a definition, and it is safe only
+/// because `RFILE(obj)` stopped being a cast: it calls `rb_zeo_rfile`, which
+/// answers a view the runtime owns rather than the object's own bytes. The
+/// moment that macro casts again, the definition becomes a wrong read.
+#[test]
+fn rfile_is_a_view_rather_than_a_cast() {
+    let text = std::fs::read_to_string(cext().join("include/ruby/internal/core/rfile.h"))
+        .expect("the vendored header is present");
+    assert!(
+        text.contains("struct RFile *rb_zeo_rfile(VALUE obj);"),
+        "rfile.h no longer declares the view entry"
+    );
+    assert!(
+        !text.contains("RBIMPL_CAST((struct RFile *)"),
+        "RFILE casts the object again; with `struct RFile` now defined, \
+         `RFILE(v)->fptr` would read a byte zeo does not own"
+    );
 }

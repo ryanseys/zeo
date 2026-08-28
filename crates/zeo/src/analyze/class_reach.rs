@@ -180,12 +180,18 @@ const METHOD_SEEDS: &[(&str, &[ClassId])] = &[
         &[zeo_abi::RANDOM_CLASS, zeo_abi::RANDOM_BASE_CLASS],
     ),
     // A child process reports through `$?`, a Process::Status.
-    ("system", &[zeo_abi::PROCESS_STATUS_CLASS]),
-    ("spawn", &[zeo_abi::PROCESS_STATUS_CLASS]),
-    ("`", &[zeo_abi::PROCESS_STATUS_CLASS]),
-    ("exec", &[zeo_abi::PROCESS_STATUS_CLASS]),
-    ("fork", &[zeo_abi::PROCESS_STATUS_CLASS]),
-    ("waitpid", &[zeo_abi::PROCESS_STATUS_CLASS]),
+    //
+    // `Process` itself rides along because the Kernel spelling of each of
+    // these FORWARDS to it: `Kernel#exec` is a send to `Process.exec`, so a
+    // program that writes `exec` and never writes `Process` still reaches
+    // Process's table -- and dropping it aborted the program rather than
+    // raising the `Errno::ENOENT` it was rescuing.
+    ("system", &[zeo_abi::PROCESS_CLASS, zeo_abi::PROCESS_STATUS_CLASS]),
+    ("spawn", &[zeo_abi::PROCESS_CLASS, zeo_abi::PROCESS_STATUS_CLASS]),
+    ("`", &[zeo_abi::PROCESS_CLASS, zeo_abi::PROCESS_STATUS_CLASS]),
+    ("exec", &[zeo_abi::PROCESS_CLASS, zeo_abi::PROCESS_STATUS_CLASS]),
+    ("fork", &[zeo_abi::PROCESS_CLASS, zeo_abi::PROCESS_STATUS_CLASS]),
+    ("waitpid", &[zeo_abi::PROCESS_CLASS, zeo_abi::PROCESS_STATUS_CLASS]),
     ("trap", &[zeo_abi::SIGNAL_MODULE]),
     // `Process.detach` answers a Process::Waiter, which IS a Thread.
     (
