@@ -78,6 +78,16 @@ show("high surrogate then escape") { JSON.parse('"\\ud800\\n"') }
 show("escaped nul") { JSON.parse('"\\u0000"').bytes }
 show("raw control byte") { JSON.parse(%Q{"\x01"}) }
 show("escaped solidus") { JSON.parse('"\\/"') }
+
+# What a message QUOTES BACK: from the offending byte to the first
+# whitespace, capped at 32. Not one byte, and not the rest of the input --
+# `[x]` reaches the `]` because nothing separates them, and the same `x` on
+# its own line stops at the newline.
+show("quote to the closer") { JSON.parse("[x]") }
+show("quote stops at nl") { JSON.parse("[\nx\n]") }
+show("quote stops at space") { JSON.parse("[\nx ]") }
+show("quote stops at tab") { JSON.parse("[\nx\t]") }
+show("quote caps at 32") { JSON.parse("[\n#{"x" * 50}\n]") }
 show("long string") { JSON.parse(%Q{"#{'a' * 100_000}"}).size }
 show("deep escapes") { JSON.parse(%Q{"#{'\\n' * 10_000}"}).size }
 

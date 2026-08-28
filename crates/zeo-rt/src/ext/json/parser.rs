@@ -110,38 +110,30 @@ pub(super) struct Parser<'a> {
     opts: &'a Opts,
 }
 
-/// The `(line, column)` a message reports.
-///
-/// Counted the way the gem's C parser counts, which is one line SHORT.
-///
-/// The column is the ordinary thing: `at + 1` less the start of its line. The
-/// line is the newline COUNT up to and including `at`, floored at one -- so a
-/// position on the third line reports `line 2`, and only a document with no
-/// newline at all reports the line a reader would count.
-///
-/// That is the gem's own off-by-one, measured across the whole matrix in
-/// `tests/json_parser_edge_cases.rb`: `"\nx"` is line 1, `"\n\nx"` is line 2,
-/// `"[1,\n2,\nx]"` is line 2. Zeo counted the way a reader does and was one
-/// ahead of ruby on every multi-line document.
+/// The `(line, column)` a message reports, both 1-based over the bytes
+/// BEFORE `at`: the line is one more than the newlines it holds, the column
+/// is `at` less the start of its line.
 fn line_col(src: &[u8], at: usize) -> (usize, usize) {
-    let upto = (at + 1).min(src.len());
-    let head = &src[..upto];
-    let line = head.iter().filter(|&&b| b == b'\n').count().max(1);
+    let head = &src[..at.min(src.len())];
+    let line = head.iter().filter(|&&b| b == b'\n').count() + 1;
     let bol = head.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-    (line, (at + 1).saturating_sub(bol))
+    (line, at - bol + 1)
 }
 
-/// Up to [`QUOTE`] bytes from `at`, as lossy text -- what the gem quotes
-/// back. It quotes the REST of the input from the offending byte, capped,
-/// not just the one byte.
+/// What the gem quotes back: the input from the offending byte up to the
+/// first WHITESPACE, capped at [`QUOTE`] bytes -- not one byte, and not the
+/// whole rest. So `[x]` quotes `x]` while `[\nx\n]` quotes just `x`.
+///
+/// A NUL ends it too: the gem hands a C string to its formatter, which is
+/// why a stray NUL after a document reports an EMPTY quote.
 fn snippet(src: &[u8], at: usize) -> String {
     let start = at.min(src.len());
     let end = (start + QUOTE).min(src.len());
     let run = &src[start..end];
-    // Stops at a NUL: the gem hands a C string to its formatter, so a NUL
-    // ends the quoted text -- which is why a stray NUL after a document
-    // reports an EMPTY one.
-    let run = match run.iter().position(|&b| b == 0) {
+    let run = match run
+        .iter()
+        .position(|&b| b == 0 || b.is_ascii_whitespace())
+    {
         Some(i) => &run[..i],
         None => run,
     };
@@ -290,13 +282,10 @@ impl<'a> Parser<'a> {
             // wrong: the scanner still recognised a literal, so it reports a
             // TOKEN. One letter is enough -- ruby answers the same for `N`.
             Some(b'N' | b'I') => Err(self.unexpected_token()),
-            // `-Infinity` is a literal the number branch matches first, so a
-            // COMPLETE one refused for `allow_nan` reports as a token. `-I`
-            // and `-Ix` never match it, and fail as numbers below.
-            Some(b'-') if self.src[self.at..].starts_with(b"-Infinity") => {
-                if !self.opts.allow_nan {
-                    return Err(self.unexpected_token());
-                }
+            // A leading `-` is the NUMBER path, `-Infinity` included: every
+            // one the gem refuses there reports `invalid number`, never a
+            // token. Only the accepted form is special-cased here.
+            Some(b'-') if self.opts.allow_nan && self.src[self.at..].starts_with(b"-Infinity") => {
                 self.at += 1;
                 self.keyword(b"Infinity", RubyValue::Float(f64::NEG_INFINITY))
             }
@@ -1034,13 +1023,14 @@ mod tests {
     #[test]
     fn line_and_column_count_the_way_the_gem_does() {
         assert_eq!(line_col(b"[1,]", 3), (1, 4));
-        // The gem's line is one SHORT once a newline is behind the position,
-        // and the column is the ordinary one. Both halves are oracle-checked
-        // in `tests/json_parser_edge_cases.rb`.
-        assert_eq!(line_col(b"a\nbc", 3), (1, 2));
-        assert_eq!(line_col(b"a\nb\ncd", 5), (2, 2));
-        // The byte IS the line break, so it belongs to neither side.
-        assert_eq!(line_col(b"\"a\nb\"", 2), (1, 0));
+        // Both 1-based over the bytes BEFORE the position; oracle-checked in
+        // `tests/json_parser_edge_cases.rb`. json 2.18.0 reported a line one
+        // SHORT here and 2.21.2 fixed it, which is why the version this
+        // parser targets is pinned rather than left to the machine.
+        assert_eq!(line_col(b"a\nbc", 3), (2, 2));
+        assert_eq!(line_col(b"a\nb\ncd", 5), (3, 2));
+        // A position ON the break belongs to the line the break ENDS.
+        assert_eq!(line_col(b"\"a\nb\"", 2), (1, 3));
         // Past the end (every truncation message) stays in range.
         assert_eq!(line_col(b"ab", 99), (1, 100));
         assert_eq!(line_col(b"", 0), (1, 1));

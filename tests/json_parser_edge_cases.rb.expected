@@ -27,8 +27,8 @@ truncated "tr"	JSON::ParserError: unexpected token 'tr' at line 1 column 1
 truncated "fal"	JSON::ParserError: unexpected token 'fal' at line 1 column 1
 truncated "nul"	JSON::ParserError: unexpected token 'nul' at line 1 column 1
 empty	JSON::ParserError: unexpected end of input at line 1 column 1
-space only	JSON::ParserError: unexpected end of input at line 1 column 3
-comment only	JSON::ParserError: unexpected end of input at line 1 column 1
+space only	JSON::ParserError: unexpected end of input at line 2 column 3
+comment only	JSON::ParserError: unexpected end of input at line 2 column 1
 block comment only	JSON::ParserError: unexpected end of input at line 1 column 14
 unterminated block comment	JSON::ParserError: unterminated comment, expected closing '*/' at line 1 column 5
 nul byte	JSON::ParserError: unexpected token at end of stream  at line 1 column 4
@@ -55,7 +55,7 @@ two dots	JSON::ParserError: expected ',' or ']' after array value at line 1 colu
 hex	JSON::ParserError: expected ',' or ']' after array value at line 1 column 3
 infinity word	JSON::ParserError: unexpected token 'Infinity]' at line 1 column 2
 nan word	JSON::ParserError: unexpected token 'NaN]' at line 1 column 2
-negative infinity	JSON::ParserError: unexpected token '-Infinity]' at line 1 column 2
+negative infinity	JSON::ParserError: invalid number: '-Infinity]' at line 1 column 2
 bad escape	JSON::ParserError: invalid escape character in string: '\q"' at line 1 column 2
 short unicode escape	JSON::ParserError: incomplete unicode character escape sequence at '\u12"' at line 1 column 2
 non-hex unicode escape	JSON::ParserError: incomplete unicode character escape sequence at '\uZZZZ"' at line 1 column 2
@@ -67,6 +67,11 @@ high surrogate then escape	JSON::ParserError: incomplete surrogate pair at '\ud8
 escaped nul	[0]
 raw control byte	JSON::ParserError: invalid ASCII control character in string: '"' at line 1 column 2
 escaped solidus	"/"
+quote to the closer	JSON::ParserError: unexpected character: 'x]' at line 1 column 2
+quote stops at nl	JSON::ParserError: unexpected character: 'x' at line 2 column 1
+quote stops at space	JSON::ParserError: unexpected character: 'x' at line 2 column 1
+quote stops at tab	JSON::ParserError: unexpected character: 'x' at line 2 column 1
+quote caps at 32	JSON::ParserError: unexpected character: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' at line 2 column 1
 long string	100000
 deep escapes	10000
 duplicate keys	{"a" => 2}

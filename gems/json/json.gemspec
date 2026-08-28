@@ -2,7 +2,7 @@
 # module in zeo-rt, joined to this gem by name.
 Gem::Specification.new do |s|
   s.name = "json"
-  s.version = "2.18.0"
+  s.version = "2.21.2"
   s.summary = "JSON's Ruby-level surface: the error hierarchy."
   s.require_paths = ["lib"]
 end

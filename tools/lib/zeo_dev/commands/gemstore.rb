@@ -32,7 +32,13 @@ module ZeoDev
       # Pinned, so the store is the same on every machine and in CI. `gem
       # install` resolves the dependencies (rspec pulls its four siblings and
       # diff-lcs), so only the roots are named.
-      PINS = { "rspec" => "3.13.2", "ffi" => "1.17.4" }.freeze
+      #
+      # `json` is here because zeo ships a NEWER one than ruby 4.0.6 does
+      # (2.21.2 against 2.18.0), and the two disagree about error messages --
+      # a line counter and how a refused `-Infinity` reads. Without the pin a
+      # golden records whichever the machine happens to have, which is how
+      # `json_parser_edge_cases` became unreadable.
+      PINS = { "rspec" => "3.13.2", "ffi" => "1.17.4", "json" => "2.21.2" }.freeze
 
       def self.summary = "build the gem stores the ruby oracle runs against"
 
