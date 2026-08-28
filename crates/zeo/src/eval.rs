@@ -288,11 +288,16 @@ fn refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
 /// a `def` -- one written in the snippet has a block channel of its own.
 fn invalid_yield(analyzed: &crate::analyze::Analyzed) -> Result<(), Refusal> {
     let hir = &analyzed.compiler.hir;
+    let under_a_def = def_bodies(hir);
     let mut stack: Vec<crate::hir::NodeId> = analyzed.main_statements.clone();
     while let Some(id) = stack.pop() {
         // `defined?(yield)` asks a question rather than yielding, and
         // CRuby answers it with nil rather than refusing the compile.
-        if matches!(hir[id], HirNode::DefMethod { .. } | HirNode::Defined(_)) {
+        if matches!(
+            hir[id],
+            HirNode::DefMethod { is_def: true, .. } | HirNode::Defined(_)
+        ) || under_a_def.contains(&id)
+        {
             continue;
         }
         hir[id].for_each_child(&mut |c| stack.push(c));
@@ -306,6 +311,39 @@ fn invalid_yield(analyzed: &crate::analyze::Analyzed) -> Result<(), Refusal> {
         }
     }
     Ok(())
+}
+
+/// Every node UNDER a `def`, transitively.
+///
+/// A `def` opens a block channel, so a `yield` beneath one is fine however
+/// the walk reaches it -- and the walk does not always reach it through the
+/// `DefMethod`. A `class << self` body in a snippet lowers to BOTH a
+/// `DefMethod` and the `define_method`-shaped `Lambda` that installs it at
+/// run time, sharing one body; the walk arrives through the `Lambda`, where
+/// guarding the `DefMethod` node alone never fires. That is bundler's shape:
+/// `time.rb`'s `class << self; def strptime(...) ... yield(year) ...` made
+/// `require "bundler/setup"` refuse the whole file.
+///
+/// Marking the descendants rather than the direct children matters: a `yield`
+/// inside an `if` inside the `def` is not a child of the `DefMethod`.
+///
+/// `is_def` is the whole discrimination. A literal `define_method(:x) { ... }`
+/// desugars into a `DefMethod` too, and its body is a BLOCK -- ruby refuses a
+/// `yield` there (oracle-verified, both plainly and inside `class << self`).
+fn def_bodies(hir: &crate::hir::Hir) -> crate::compiler::FSet<crate::hir::NodeId> {
+    let mut stack: Vec<crate::hir::NodeId> = Vec::new();
+    for (id, node) in hir.iter_with_ids() {
+        if matches!(node, HirNode::DefMethod { is_def: true, .. }) {
+            hir[id].for_each_child(&mut |c| stack.push(c));
+        }
+    }
+    let mut seen = crate::compiler::FSet::default();
+    while let Some(id) = stack.pop() {
+        if seen.insert(id) {
+            hir[id].for_each_child(&mut |c| stack.push(c));
+        }
+    }
+    seen
 }
 
 /// The shapes that are wrong ANYWHERE in a snippet, `def` bodies

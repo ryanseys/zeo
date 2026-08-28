@@ -1,0 +1,12 @@
+compiles  def f1; yield; end
+compiles  def g1; if true; yield; end; end
+compiles  module M1; class << self; def t(n); yield n; end; end; end
+compiles  module M2; def self.t(n); yield n; end; end
+compiles  class K1; def t; [1].each { yield }; end; end
+refused   -> { yield }
+refused   [1].each { yield }
+refused   yield
+refused   class C1; define_method(:x) { yield }; end
+refused   class C2; class << self; define_method(:x) { yield }; end; end
+Invalid yield
+4
