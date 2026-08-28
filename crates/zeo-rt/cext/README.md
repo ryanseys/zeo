@@ -86,9 +86,23 @@ never a wrong answer.
 
 ## Known divergences
 
-A C extension cannot load yet, so none of these is a gap file: a gap is a
-runnable Ruby program, and there is nothing to run. They move to
-`tests/gaps/` as the loader lands.
+The rows below are the twelve places zeo's answer differs from MRI's for an
+extension that has loaded.
+
+None of them is a gap file, and the reason has changed. It used to be that a C
+extension could not load; that is no longer true. `require "foo"` on a store
+gem with an `extensions` entry runs its `extconf.rb`, compiles and links the
+`.c` out of tree, and calls `Init_foo` -- measured end to end, a
+`rb_define_global_function` registered by a probe extension answers from
+Ruby. `crates/zeo/src/parse/loader/cext.rs` is that path and
+`crates/zeo/tests/e2e/cext_build.rs` gates the build half of it.
+
+What is missing now is the INSTRUMENT, not the loader. A gap file is a Ruby
+program run under zeo and under the oracle ruby, and `tests/harness/golden.rs`
+has no step that builds a C extension for either side -- so a golden that
+requires one would compare zeo against a ruby that raises `LoadError`.
+Building the extension twice, once per set of headers, is what these rows are
+waiting on.
 
 | Divergence | Why |
 |---|---|
