@@ -1,35 +1,18 @@
-# rubygems vendored (`upstream.rb`: rubygems/rubygems). Version arithmetic,
-# requirement matching and platform parsing are what every gemspec and lockfile
-# is written against, and they are pure computation.
+# The bundled RubyGems, entered at the umbrella. This is the compile-cost
+# instrument's largest rung: `cargo xtask bench --compile` times how long the
+# front end takes on the whole `require "rubygems"` graph and how much it
+# holds while doing it.
 #
-# Entered at those files rather than at `rubygems`, for a reason worth stating
-# rather than hiding. Two blockers under the umbrella are now FIXED: the
-# method-body require hoist, and `Module#autoload` running its target at the
-# declaration (`tests/autoload_is_lazy.rb`).
+# The body below is deliberately small and pure -- version arithmetic,
+# requirement matching, platform parsing, what every gemspec and lockfile is
+# written against. Almost all of the cost this measures is the require graph,
+# not these lines.
 #
-# A THIRD is still open, and is a splice-ORDER bug rather than an autoload
-# one. specification.rb's class body runs at main statement 48 while the
-# `module Gem` body holding the autoloads runs at 114, so
-# `Gem::Requirement.default` at specification.rb:157 reads a constant whose
-# declaration has not run. rubygems.rb requires specification.rb at 1418,
-# below the autoloads at 1398-1414, and nothing else requires it -- so the
-# splice moved it. A late top-level `require_relative` is NOT hoisted on its
-# own (verified with a two-file repro), so what moves this one is not yet
-# isolated. It is not filed as a gap because the program takes 149s to
-# compile, which is too slow to run on every push.
-#
-# `Gem::Platform.local` is left out for the same reason as the umbrella file:
-# it reads `Gem.target_rbconfig`, which `rubygems.rb` defines.
-#
-# Naming the pieces is a no-op under ruby, which has rubygems loaded already,
-# so both sides see the same world. That the FULL `require "rubygems"` graph
-# still reaches codegen with every class intact is asserted separately, without
-# `rustc`, in `crates/zeo/tests/e2e/gems_vendored.rs`.
-require "rubygems/deprecate"
-require "rubygems/version"
-require "rubygems/requirement"
-require "rubygems/dependency"
-require "rubygems/platform"
+# This file used to enter at `rubygems/version` and four siblings because the
+# umbrella did not compile. It does now; `tests/milestones/require_rubygems.rb`
+# is the regression test, and `crates/zeo/tests/e2e/gems_vendored.rs` asserts
+# separately that every class in the graph reaches codegen.
+require "rubygems"
 
 # --- Gem::Version: the ordering every gemspec and lockfile depends on -------
 v = Gem::Version.new("1.2.3")
@@ -99,3 +82,20 @@ p Gem::Platform.new("universal-darwin-19").to_s
 p Gem::Platform.new("x86_64-linux") == Gem::Platform.new("x86_64-linux")
 p Gem::Platform::RUBY
 p Gem::Platform.new("x86_64-linux") === Gem::Platform.new("x86_64-linux")
+# Reads `Gem.target_rbconfig`, which only `rubygems.rb` itself defines -- so
+# this line is reachable only from the umbrella.
+p Gem::Platform.local.is_a?(Gem::Platform)
+
+# --- Gem::Specification: the class the umbrella exists to reach -------------
+spec = Gem::Specification.new do |s|
+  s.name = "zeo-bench"
+  s.version = "0.1.0"
+  s.summary = "a compile-cost input"
+  s.authors = ["nobody"]
+  s.files = ["lib/zeo_bench.rb"]
+  s.require_paths = ["lib"]
+  s.add_dependency "rake", ">= 13.0"
+end
+p spec.full_name, spec.file_name, spec.require_paths
+p spec.dependencies.map { |d| [d.name, d.type, d.requirement.to_s] }
+p spec.satisfies_requirement?(Gem::Dependency.new("zeo-bench", "~> 0.1"))
