@@ -1647,6 +1647,12 @@ pub(crate) fn int_of(v: &RubyValue) -> Result<i64, Signal> {
 pub(crate) fn offset_of(v: &RubyValue) -> Result<i64, Signal> {
     match v {
         RubyValue::Nil => Err(type_error!("no implicit conversion from nil")),
+        // A String gets the same bare shape, lowercased -- `seek("5")`,
+        // `pread(2, "1")` and `copy_stream(a, b, "5")` all say "no implicit
+        // conversion from string" where a Symbol gets the ordinary "of
+        // Symbol into Integer". Oracle-verified; it is `rb_num2off`'s own
+        // split, not a per-method message.
+        RubyValue::Str(_) => Err(type_error!("no implicit conversion from string")),
         v => convert::to_index(v),
     }
 }
@@ -1815,6 +1821,83 @@ fn reads_like_io(v: &RubyValue) -> bool {
         return false;
     }
     crate::dispatch::responds_to_value(v, crate::Symbol::intern("read"), true)
+}
+
+/// Whether `v` is a REAL IO -- one with a descriptor behind it.
+///
+/// Narrower than [`is_io_object`], which counts `StringIO`. `copy_stream`'s
+/// `src_offset` needs a descriptor to `pread` at, and CRuby refuses the
+/// argument for a `StringIO` by name: "cannot specify src_offset for non-IO".
+fn is_real_io(v: &RubyValue) -> bool {
+    matches!(v, RubyValue::Object(o) if matches!(o.class_id(), IO_CLASS | zeo_abi::FILE_CLASS))
+}
+
+/// How much `copy_stream` asks for next: a whole chunk, or what is left of a
+/// `copy_length` when that is smaller. Zero means the copy is done.
+///
+/// Chunked rather than one big read: reading a whole source into memory made
+/// the peak the size of the file. 16 KiB is CRuby's own chunk.
+///
+/// zeo asks a source through `read(n)` where CRuby uses `readpartial(n, buf)`
+/// falling back to `read(n, buf)`. The bytes are the same for any source that
+/// implements `read` the way `IO` does; an unbounded copy from a LIVE pipe
+/// reaches the destination later, because `read(n)` waits for the chunk.
+fn chunk_len(remaining: Option<u64>) -> usize {
+    const CHUNK: u64 = 16 * 1024;
+    match remaining {
+        None => CHUNK as usize,
+        Some(left) => left.min(CHUNK) as usize,
+    }
+}
+
+/// `copy_stream`'s destination: an object that answers `write`, or a file to
+/// create. Opened BEFORE the source is read, so copying a path onto itself
+/// truncates first and answers 0 -- CRuby's behaviour.
+enum Sink<'a> {
+    Io(&'a RubyValue),
+    File(std::fs::File, String),
+}
+
+impl<'a> Sink<'a> {
+    fn open(dst: &'a RubyValue) -> Result<Sink<'a>, Signal> {
+        if writes_like_io(dst) {
+            return Ok(Sink::Io(dst));
+        }
+        let path = crate::builtins::file::path_arg(dst, "copy_stream")?;
+        let file = crate::gvl::without_gvl(|| std::fs::File::create(&path))
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "rb_sysopen", &path))?;
+        Ok(Sink::File(file, path))
+    }
+
+    fn write(&mut self, bytes: Vec<u8>) -> Result<(), Signal> {
+        match self {
+            Sink::Io(dst) => {
+                let s = RubyValue::Str(crate::string_from_bytes(
+                    bytes,
+                    crate::encoding::ASCII_8BIT,
+                ));
+                crate::dispatch::send_value(dst, crate::Symbol::intern("write"), &[s], None)?;
+                Ok(())
+            }
+            Sink::File(file, path) => {
+                use std::io::Write as _;
+                crate::gvl::without_gvl(|| file.write_all(&bytes))
+                    .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", path))
+            }
+        }
+    }
+
+    /// A Ruby sink flushes itself; `write` is the whole contract.
+    fn finish(&mut self) -> Result<(), Signal> {
+        match self {
+            Sink::Io(_) => Ok(()),
+            Sink::File(file, path) => {
+                use std::io::Write as _;
+                crate::gvl::without_gvl(|| file.flush())
+                    .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", path))
+            }
+        }
+    }
 }
 
 /// The WRITE half of the same test.
@@ -3283,35 +3366,133 @@ ruby_class! {
         out
     }
 
-    // `IO.copy_stream(src, dst)` -- copy `src` to `dst`, answering the byte count.
-    // Each end is either an IO-like object (read from / written to at its current
-    // position, via `read`/`write`) or a filename (String/`to_path`).
-    def self."copy_stream" cfunc (_recv, src, dst, _copy_length?, _src_offset?, &_blk) {
-        let bytes = if reads_like_io(src) {
-            match crate::dispatch::send_value(src, crate::Symbol::intern("read"), &[], None)? {
-                RubyValue::Str(s) => s.lock().bytes().to_vec(),
-                RubyValue::Nil => Vec::new(), // EOF
-                other => crate::builtins::convert::to_rstr(&other)?
-                    .lock()
-                    .bytes()
-                    .to_vec(),
+    // `IO.copy_stream(src, dst, copy_length = nil, src_offset = nil)` -- copy
+    // `src` to `dst`, answering the byte count.
+    //
+    // Each end is either an IO-like object (read from / written to at its
+    // current position, via `read`/`write`) or a filename (String/`to_path`).
+    //
+    // `copy_length` is what rubygems unpacks every `.gem` with
+    // (`copy_stream(tar.io, out, entry.size)`), and it used to be dropped:
+    // every extracted file got the rest of the archive appended.
+    def self."copy_stream" cfunc (_recv, src, dst, copy_length?, src_offset?, &_blk) {
+        // A negative length or offset is IGNORED, not refused: `-1` copies
+        // the whole file and a negative offset reads from the start.
+        let limit: Option<u64> = match copy_length {
+            None | Some(RubyValue::Nil) => None,
+            Some(v) => match offset_of(&v)? {
+                n if n < 0 => None,
+                n => Some(n as u64),
+            },
+        };
+        let offset: Option<u64> = match src_offset {
+            None | Some(RubyValue::Nil) => None,
+            Some(v) => match offset_of(&v)? {
+                n if n < 0 => None,
+                n => Some(n as u64),
+            },
+        };
+        // An offset needs a descriptor to `pread` at. CRuby refuses it for a
+        // StringIO or any other duck by name, so the message is theirs.
+        if offset.is_some() && reads_like_io(src) && !is_real_io(src) {
+            return Err(arg_error!("cannot specify src_offset for non-IO"));
+        }
+
+        // The destination opens FIRST: `copy_stream(path, path)` truncates
+        // before it reads, so a file copied onto itself answers 0.
+        let mut sink = Sink::open(dst)?;
+        let mut copied: u64 = 0;
+        let mut remaining = limit;
+
+        if reads_like_io(src) {
+            // An offset reads through `pread`, which leaves the position
+            // where it was.
+            if let Some(mut at) = offset.filter(|_| is_real_io(src)) {
+                loop {
+                    let want = chunk_len(remaining);
+                    if want == 0 {
+                        break;
+                    }
+                    let got = with_file(src, |f, path| {
+                        use std::os::unix::fs::FileExt;
+                        let mut buf = vec![0u8; want];
+                        let n = f.read_at(&mut buf, at).map_err(|e| {
+                            crate::builtins::file::raise_errno(&e, "copy_stream", path)
+                        })?;
+                        buf.truncate(n);
+                        Ok(buf)
+                    })?;
+                    if got.is_empty() {
+                        break;
+                    }
+                    at += got.len() as u64;
+                    copied += got.len() as u64;
+                    remaining = remaining.map(|r| r - got.len() as u64);
+                    sink.write(got)?;
+                }
+            } else {
+                loop {
+                    let want = chunk_len(remaining);
+                    if want == 0 {
+                        break;
+                    }
+                    let read = crate::dispatch::send_value(
+                        src,
+                        crate::Symbol::intern("read"),
+                        &[RubyValue::Int(want as i64)],
+                        None,
+                    )?;
+                    let got = match read {
+                        // `read(n)` answers nil at EOF, which is the loop's end.
+                        RubyValue::Nil => break,
+                        RubyValue::Str(s) => s.lock().bytes().to_vec(),
+                        other => crate::builtins::convert::to_rstr(&other)?
+                            .lock()
+                            .bytes()
+                            .to_vec(),
+                    };
+                    if got.is_empty() {
+                        break;
+                    }
+                    copied += got.len() as u64;
+                    remaining = remaining.map(|r| r.saturating_sub(got.len() as u64));
+                    sink.write(got)?;
+                }
             }
         } else {
-            let src = crate::builtins::file::path_arg(src, "copy_stream")?;
-            crate::gvl::without_gvl(|| std::fs::read(&src))
-                .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &src))?
-        };
-        let n = bytes.len();
-
-        if writes_like_io(dst) {
-            let s = RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT));
-            crate::dispatch::send_value(dst, crate::Symbol::intern("write"), &[s], None)?;
-        } else {
-            let dst = crate::builtins::file::path_arg(dst, "copy_stream")?;
-            crate::gvl::without_gvl(|| std::fs::write(&dst, &bytes))
-                .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &dst))?;
+            let path = crate::builtins::file::path_arg(src, "copy_stream")?;
+            // `rb_sysopen`, not `copy_stream`: CRuby names the OPEN in the
+            // Errno message, and a caller matching on it reads that name.
+            let mut file = crate::gvl::without_gvl(|| std::fs::File::open(&path))
+                .map_err(|e| crate::builtins::file::raise_errno(&e, "rb_sysopen", &path))?;
+            if let Some(at) = offset {
+                use std::io::Seek as _;
+                crate::gvl::without_gvl(|| file.seek(std::io::SeekFrom::Start(at)))
+                    .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &path))?;
+            }
+            loop {
+                use std::io::Read as _;
+                let want = chunk_len(remaining);
+                if want == 0 {
+                    break;
+                }
+                let got = crate::gvl::without_gvl(|| {
+                    let mut buf = vec![0u8; want];
+                    let n = (&mut file).take(want as u64).read(&mut buf)?;
+                    buf.truncate(n);
+                    Ok::<Vec<u8>, std::io::Error>(buf)
+                })
+                .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &path))?;
+                if got.is_empty() {
+                    break;
+                }
+                copied += got.len() as u64;
+                remaining = remaining.map(|r| r - got.len() as u64);
+                sink.write(got)?;
+            }
         }
-        Ok(RubyValue::Int(n as i64))
+        sink.finish()?;
+        Ok(RubyValue::Int(copied as i64))
     }
 
     // `IO.sysopen(path, mode = "r", perm = 0o666)` -- open and answer the raw fd
