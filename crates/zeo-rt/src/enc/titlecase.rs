@@ -1,5 +1,8 @@
-//! Titlecase deltas, generated from the ruby 4.0.6 oracle by
-//! `tools/titlecase_table.rb`. Do not edit by hand.
+//! Titlecase deltas, derived from the ruby 4.0.6 oracle. Do not edit by
+//! hand -- RE-DERIVE it: `s.capitalize` on a ONE-character string IS its
+//! titlecase, so keep the rows where it differs from `s.upcase`; for
+//! swapcase keep the rows where `s.swapcase` differs from the plain
+//! "up if down, down if up" answer.
 //!
 //! Titlecase is the THIRD of Unicode's case-mapping triple, and Rust's
 //! standard library has no mapping for it: `to_uppercase` answers the

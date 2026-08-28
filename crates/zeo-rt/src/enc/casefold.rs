@@ -1,5 +1,6 @@
-//! Full case folding, generated from the ruby 4.0.6 oracle by
-//! `tools/casefold_table.rb`. Do not edit by hand.
+//! Full case folding, derived from the ruby 4.0.6 oracle. Do not edit by
+//! hand -- RE-DERIVE it: for every codepoint, keep `s.downcase(:fold)`
+//! wherever it differs from `s.downcase`.
 //!
 //! Only the codepoints whose FOLD differs from their lowercase are here:
 //! everything else folds exactly as `String#downcase` maps it. `ß`

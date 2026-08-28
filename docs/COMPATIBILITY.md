@@ -7,8 +7,7 @@ The registry carries all 103 of ruby 4.0.6's encodings, in its order, so
 constant and every `#name`/`#names`/`#dummy?`/`#ascii_compatible?` answer
 match exactly -- see [`tests/encoding_registry.rb`](../tests/encoding_registry.rb).
 The 52 single-byte mapping tables (the ISO-8859, windows-125x, IBM/CP,
-KOI8, mac* and Thai families) are generated from the oracle itself by
-[`tools/encoding_tables.rb`](../tools/encoding_tables.rb), so their
+KOI8, mac* and Thai families) are derived from the oracle itself, so their
 mappings -- including which vendor-page bytes have NO Unicode mapping --
 are exact. Known divergences:
 

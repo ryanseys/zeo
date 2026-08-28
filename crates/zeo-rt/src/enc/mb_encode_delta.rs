@@ -1,5 +1,12 @@
-//! Multi-byte ENCODE deltas against encoding_rs, generated from the ruby
-//! 4.0.6 oracle by `tools/mb_encode_delta.rb`. Do not edit by hand.
+//! Multi-byte ENCODE deltas against encoding_rs, derived from the ruby
+//! 4.0.6 oracle. Do not edit by hand.
+//!
+//! RE-DERIVING THIS HAS A TRAP. The rows are the difference between what
+//! ruby's `s.encode(enc)` accepts and what the BACKEND accepts, so the
+//! backend side must be encoding_rs asked DIRECTLY (it is a dependency) --
+//! never a running zeo, which consults these very tables first (`mb.rs`)
+//! and therefore already agrees with ruby. A probe against a current binary
+//! answers "0 deny, 0 allow" and would delete the table.
 //!
 //! encoding_rs implements the WHATWG tables, which disagree with CRuby's in
 //! the encode direction: WHATWG's Big5 maps MORE than CRuby (the

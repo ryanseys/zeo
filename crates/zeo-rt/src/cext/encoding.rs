@@ -109,8 +109,8 @@ crate::cext_fn! {
     }
 
     /// `rb_enc_alias(alias, orig)`: register another name for an encoding.
-    /// zeo's registry is generated from `tools/encoding_tables.rb` and is
-    /// fixed at build time, so an alias cannot be added -- and answering a
+    /// zeo's registry is derived from the oracle and is fixed at build
+    /// time, so an alias cannot be added -- and answering a
     /// success would leave `Encoding.find` unable to resolve the name the
     /// caller believes it just made.
     fn rb_enc_alias(alias: *const c_char, _orig: *const c_char) -> c_int {

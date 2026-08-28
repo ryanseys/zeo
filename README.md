@@ -378,7 +378,7 @@ crates/
   zeo-abi     a dependency-free leaf: the ClassId numbers both sides agree on
   zeo-dsl     the shared `syn` grammar for the ruby_class! / ruby_module! DSL
   zeo-macros  the macro that expands that DSL into runtime code
-
+  xtask       the repo's own chores (`cargo xtask`); not published
 ```
 
 - **`zeo`** — the driver. `parse/` and `lower/` resolve requires and lower
@@ -543,8 +543,7 @@ tests/       example goldens, the spinel corpus, the gaps tracker, gemtests
 gems/        67 bundled gems (upstream.lock pins the git-tracked ones)
 bench/       61 benchmark programs; read bench/README.md
 vendor/      rubygems and fetched test trees (gitignored)
-crates/xtask the repo's chores: `cargo xtask <command>`
-tools/       the differential probe matrices and the table generators
+tools/probes the differential probe matrices (`cargo xtask probe`)
 Makefile     the front door: make / test / check / gate / linux
 Dockerfile   the linux verification image (`cargo xtask linux`)
 ```

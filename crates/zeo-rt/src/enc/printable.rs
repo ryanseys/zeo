@@ -1,6 +1,7 @@
-//! Which codepoints `String#inspect` ESCAPES, generated from the ruby
-//! 4.0.6 oracle by `tools/inspect_printable.rb`. Do not edit by
-//! hand.
+//! Which codepoints `String#inspect` ESCAPES, derived from the ruby 4.0.6
+//! oracle. Do not edit by hand -- RE-DERIVE it: from 0x80 up, a codepoint
+//! is escaped exactly when `s.inspect != %("#{s}")`; coalesce the runs into
+//! ranges.
 //!
 //! CRuby asks Oniguruma's `ONIGENC_IS_CODE_PRINT`, and its answer follows
 //! no rule the general category alone gives: U+E000 (private use) and
