@@ -37,6 +37,7 @@ pub mod method;
 pub mod misc;
 pub mod numeric;
 pub mod object;
+pub mod ractor;
 pub mod scope;
 pub mod st;
 pub mod string;

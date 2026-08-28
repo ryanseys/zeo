@@ -332,7 +332,7 @@ unsafe impl Send for Root {}
 
 static ROOTS: parking_lot::Mutex<Vec<Root>> = parking_lot::Mutex::new(Vec::new());
 
-fn register_root(slot: *mut Value) {
+pub(super) fn register_root(slot: *mut Value) {
     if slot.is_null() {
         return;
     }

@@ -780,34 +780,6 @@ pub extern "C" fn rb_profile_thread_frames() -> ! {
     unimplemented("rb_profile_thread_frames")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_ractor_local_storage_ptr() -> ! {
-    unimplemented("rb_ractor_local_storage_ptr")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ractor_local_storage_ptr_newkey() -> ! {
-    unimplemented("rb_ractor_local_storage_ptr_newkey")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ractor_local_storage_ptr_set() -> ! {
-    unimplemented("rb_ractor_local_storage_ptr_set")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ractor_local_storage_value() -> ! {
-    unimplemented("rb_ractor_local_storage_value")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ractor_local_storage_value_lookup() -> ! {
-    unimplemented("rb_ractor_local_storage_value_lookup")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ractor_local_storage_value_newkey() -> ! {
-    unimplemented("rb_ractor_local_storage_value_newkey")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_ractor_local_storage_value_set() -> ! {
-    unimplemented("rb_ractor_local_storage_value_set")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_ractor_make_shareable() -> ! {
     unimplemented("rb_ractor_make_shareable")
 }
