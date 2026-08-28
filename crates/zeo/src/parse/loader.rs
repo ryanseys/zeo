@@ -588,6 +588,26 @@ pub(super) fn lower_main_file(
 /// source names `RbConfig` (or the `rbconfig` feature -- a plain substring
 /// scan, deliberately over-approximate: a comment mention costs only the
 /// shim's inclusion), or runtime `eval` exists and could reach it.
+/// Put a spliced require's body INSIDE the `begin` that wrote the require,
+/// ahead of the statements that followed it.
+///
+/// CRuby runs the required file during the `require` call, so a raise from
+/// the file's top level aborts the rest of the `begin` body and reaches the
+/// handler written around it. Splicing the body out as a SIBLING broke both
+/// halves: the raise escaped the handler, and the statements after the
+/// require ran anyway.
+///
+/// One `Begin` rather than two, so the handlers, the `else` and the `ensure`
+/// all keep their single meaning. Answers false when the lowered statement is
+/// not a `Begin` after all, and the caller falls back to the sibling splice.
+fn prepend_to_begin_body(hir: &mut Hir, id: crate::hir::NodeId, spliced: &[crate::hir::NodeId]) -> bool {
+    let crate::hir::HirNode::Begin { body, .. } = &mut hir[id] else {
+        return false;
+    };
+    body.splice(0..0, spliced.iter().copied());
+    true
+}
+
 fn wants_ambient_rbconfig(hir: &Hir) -> bool {
     // Never for a SNIPPET: the running program already loaded whatever it
     // loads, and a snippet resolves every constant at run time. Splicing
@@ -1160,7 +1180,7 @@ impl Loader {
             // (The handler lowers twice -- once here, once in the original
             // begin -- but only one copy can ever see a given raise.)
             let rescued_body_calls: Vec<usize> = match n.as_begin_node() {
-                Some(begin) if rescues_load_error(&begin) => {
+                Some(begin) if rescues_anything(&begin) => {
                     let mut body_reqs = RequireCollector::default();
                     if let Some(stmts) = begin.statements() {
                         use ruby_prism::Visit as _;
@@ -1195,25 +1215,18 @@ impl Loader {
                 }
             }
             if !rescued_spliced.is_empty() {
-                // Wrap ONLY when the spliced statements can actually raise a
-                // LoadError at load time. The common rescued require (`begin;
-                // require "json"; rescue LoadError; <fallback>`) loads
-                // cleanly, and its fallback must stay DEAD -- the cloned
+                // Move ONLY when the spliced statements can actually raise
+                // something the handlers catch. The common rescued require
+                // (`begin; require "json"; rescue LoadError; <fallback>`)
+                // loads cleanly, and its fallback must stay DEAD -- a live
                 // rescue would re-register fallback classes the dead-rescue
                 // elimination exists to keep out of `defined?`.
-                match spliced_may_raise_load_error(hir, &rescued_spliced) {
-                    true => {
-                        let begin = n.as_begin_node().expect("only a begin collects these");
-                        let rescues =
-                            crate::lower::control::lower_rescue_clauses(result, hir, &begin)?;
-                        combined.push(hir.push(crate::hir::HirNode::Begin {
-                            body: rescued_spliced,
-                            rescues,
-                            else_body: None,
-                            ensure_body: None,
-                        }));
-                    }
-                    false => combined.extend(rescued_spliced),
+                let begin_node = n.as_begin_node().expect("only a begin collects these");
+                let caught = rescued_class_names(&begin_node);
+                let moved = spliced_may_raise(hir, &rescued_spliced, &caught)
+                    && prepend_to_begin_body(hir, id, &rescued_spliced);
+                if !moved {
+                    combined.extend(rescued_spliced);
                 }
             }
             // `autoload` (at any structural nesting): every `autoload :C,

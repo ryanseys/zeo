@@ -163,38 +163,101 @@ pub(super) fn mark_ffi_bodies(
     }
 }
 
-pub(super) fn spliced_may_raise_load_error(hir: &Hir, stmts: &[crate::hir::NodeId]) -> bool {
+/// Whether a spliced require's body can raise something the enclosing
+/// `begin`'s handlers would catch.
+///
+/// `caught` is the exception classes the rescue clauses name; empty means a
+/// bare `rescue` (or an `ensure`), which any raise reaches.
+///
+/// The test is syntactic and looks only at raises the spliced statements make
+/// THEMSELVES -- a `def` body does not run at load time, so it is skipped.
+/// That is deliberately narrow: it keeps the everyday `begin; require "json";
+/// rescue LoadError; <fallback>; end` unwrapped when json loads cleanly, so
+/// the fallback stays dead and its classes stay out of `defined?`.
+pub(super) fn spliced_may_raise(
+    hir: &Hir,
+    stmts: &[crate::hir::NodeId],
+    caught: &[String],
+) -> bool {
     use crate::hir::HirNode;
-    fn mentions(hir: &Hir, id: crate::hir::NodeId) -> bool {
-        match &hir[id] {
-            HirNode::ClassRef(n)
-                if matches!(n.as_str(), "LoadError" | "ScriptError" | "Exception") =>
-            {
-                return true;
+    let names = |n: &str| caught.is_empty() || caught.iter().any(|c| c == n);
+    let mentions = |hir: &Hir, id: crate::hir::NodeId| -> bool {
+        fn walk(hir: &Hir, id: crate::hir::NodeId, hit: &mut bool, f: &dyn Fn(&str) -> bool) {
+            match &hir[id] {
+                HirNode::ClassRef(n) | HirNode::QualifiedConstRead(_, n) if f(n.as_str()) => {
+                    *hit = true;
+                }
+                _ => {}
             }
-            HirNode::QualifiedConstRead(_, n)
-                if matches!(n.as_str(), "LoadError" | "ScriptError" | "Exception") =>
-            {
-                return true;
-            }
-            _ => {}
+            hir[id].for_each_child(&mut |c| walk(hir, c, hit, f));
         }
         let mut hit = false;
-        hir[id].for_each_child(&mut |c| hit = hit || mentions(hir, c));
+        walk(hir, id, &mut hit, &names);
         hit
-    }
-    fn walk(hir: &Hir, id: crate::hir::NodeId) -> bool {
+    };
+    fn walk(
+        hir: &Hir,
+        id: crate::hir::NodeId,
+        mentions: &dyn Fn(&Hir, crate::hir::NodeId) -> bool,
+        bare: bool,
+    ) -> bool {
         match &hir[id] {
             HirNode::DefMethod { .. } | HirNode::Lambda { .. } => false,
-            HirNode::Raise(args, _) => args.first().is_some_and(|&a| mentions(hir, a)),
+            // `raise` with no argument re-raises `$!` or a RuntimeError, so
+            // only a handler that names nothing in particular sees it.
+            HirNode::Raise(args, _) => match args.first() {
+                Some(&a) => mentions(hir, a),
+                None => bare,
+            },
             node => {
                 let mut hit = false;
-                node.for_each_child(&mut |c| hit = hit || walk(hir, c));
+                node.for_each_child(&mut |c| hit = hit || walk(hir, c, mentions, bare));
                 hit
             }
         }
     }
-    stmts.iter().any(|&s| walk(hir, s))
+    stmts
+        .iter()
+        .any(|&s| walk(hir, s, &mentions, caught.is_empty()))
+}
+
+/// The exception classes a `begin`'s rescue clauses name, in order. An empty
+/// answer means a bare `rescue` -- which catches `StandardError` -- or an
+/// `ensure` with no rescue at all.
+pub(super) fn rescued_class_names(node: &ruby_prism::BeginNode<'_>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut clause = node.rescue_clause();
+    while let Some(rescue) = clause {
+        for ex in rescue.exceptions().iter() {
+            let name = match (ex.as_constant_read_node(), ex.as_constant_path_node()) {
+                (Some(read), _) => Some(read.name().as_slice().to_vec()),
+                (None, Some(path)) if path.parent().is_none() => {
+                    path.name().map(|n| n.as_slice().to_vec())
+                }
+                _ => None,
+            };
+            if let Some(n) = name {
+                out.push(String::from_utf8_lossy(&n).into_owned());
+            }
+        }
+        clause = rescue.subsequent();
+    }
+    out
+}
+
+/// Whether a `begin` has ANY handler its body's raise could reach.
+///
+/// [`rescues_load_error`] answers a narrower question -- whether a failed
+/// `require` is OPTIONAL -- and only a rescue naming `LoadError` makes it
+/// so. This one decides where a spliced require's BODY lands, and there the
+/// exception class does not matter: CRuby runs the required file during the
+/// `require` call, which is inside the `begin`, so every handler written
+/// around it can see whatever the file raises.
+///
+/// A bare `rescue` counts (it catches `StandardError`), and so does an
+/// `ensure`-only `begin` -- its clause runs on the way out either way.
+pub(super) fn rescues_anything(node: &ruby_prism::BeginNode<'_>) -> bool {
+    node.rescue_clause().is_some() || node.ensure_clause().is_some()
 }
 
 pub(super) fn rescues_load_error(node: &ruby_prism::BeginNode<'_>) -> bool {
