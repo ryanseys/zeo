@@ -321,8 +321,10 @@ fn is_a_singleton_class(recv: &RubyValue, target: ClassId) -> bool {
 ///
 /// THE NIL CASE IS NOT AN EDGE CASE. rubygems writes
 ///
-///     rescue Gem::Timeout::Error, IOError, SocketError, SystemCallError,
-///            *(OpenSSL::SSL::SSLError if Gem::HAVE_OPENSSL) => e
+/// ```ruby
+/// rescue Gem::Timeout::Error, IOError, SocketError, SystemCallError,
+///        *(OpenSSL::SSL::SSLError if Gem::HAVE_OPENSSL) => e
+/// ```
 ///
 /// and without openssl loaded that splat is nil. Treating it as one element
 /// raised `TypeError` in place of whatever the body raised -- but only for an
