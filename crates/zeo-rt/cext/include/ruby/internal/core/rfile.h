@@ -32,12 +32,25 @@ struct rb_io;
  * buffers.   They also  have  encodings.  Various  information are  controlled
  * using this struct.
  */
-/* zeo: opaque. A zeo heap object is a handle whose first two words are a
- * real `struct RBasic` and whose payload the runtime owns, so there is no
- * layout here to read. Upstream already declares `struct RClass` this way.
- * A `RFile(v)->field` is a compile error naming the line, which is the
- * point: it would otherwise read a byte that means nothing. */
-struct RFile;
+struct RFile {
+    struct RBasic basic;
+    struct rb_io *fptr;
+};
+
+/**
+ * zeo: a VIEW of the IO, not the object itself.
+ *
+ * A zeo IO is a handle over a runtime-owned payload; it has no MRI layout, so
+ * casting one to `struct RFile *` would read bytes that mean nothing. This
+ * mints a `struct RFile` beside the object instead and fills it from the IO
+ * on every reach, so `GetOpenFile(io, fp); fp->fd` answers the descriptor the
+ * IO has right now.
+ *
+ * The view is READ-ONLY in effect: writing `fp->fd` changes the view, not the
+ * IO. The fields zeo cannot honour -- the buffers, the converters -- stay
+ * zero. Raises if the object is not an IO.
+ */
+struct RFile *rb_zeo_rfile(VALUE obj);
 
 /**
  * Convenient casting macro.
@@ -45,5 +58,5 @@ struct RFile;
  * @param   obj  An object, which is in fact an ::RFile.
  * @return  The passed object casted to ::RFile.
  */
-#define RFILE(obj) RBIMPL_CAST((struct RFile *)(obj))
+#define RFILE(obj) rb_zeo_rfile(RBIMPL_CAST((VALUE)(obj)))
 #endif /* RBIMPL_RFILE_H */

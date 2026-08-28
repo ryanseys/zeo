@@ -626,6 +626,73 @@ fn wait_retry(fd: c_int, event: i16) -> Result<c_int, Signal> {
     }
 }
 
+/// The storage behind `GetOpenFile`. `csrc/cext_io.c` owns the LAYOUT of what
+/// goes in each block -- a `struct RFile` and the `struct rb_io` it points at
+/// -- because that layout is the header's, and a second copy of it here could
+/// drift. This owns only the block: one per IO, zeroed once, refilled by C on
+/// every reach, and kept for the process because the extension keeps the
+/// pointer it was handed.
+///
+/// The key is the `RIo`'s address. An IO that is collected and whose address
+/// is later reused hands its block on to the new IO, which is harmless: every
+/// field is written before the block is answered.
+static IO_SHIMS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<usize, usize>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+
+crate::cext_fn! {
+    /// One zeroed block per IO, at a stable address. See `IO_SHIMS`.
+    fn zeo_cext_io_shim(io: Value, size: usize) -> *mut std::ffi::c_void {
+        let target = unsafe { value_of(io) };
+        let Some(rio) = crate::builtins::io::as_rio(&target) else {
+            return Err(wrong_arg_type(&target, "IO"));
+        };
+        let key = std::ptr::from_ref(rio) as usize;
+        let mut shims = IO_SHIMS.lock();
+        let block = *shims.entry(key).or_insert_with(|| {
+            let layout = std::alloc::Layout::from_size_align(size, align_of::<usize>())
+                .expect("a shim layout");
+            unsafe { std::alloc::alloc_zeroed(layout) as usize }
+        });
+        Ok(block as *mut std::ffi::c_void)
+    }
+
+    /// `fptr->lineno`, which is `IO#lineno`.
+    fn zeo_cext_io_lineno(io: Value) -> c_int {
+        let target = unsafe { value_of(io) };
+        match send(&target, "lineno", &[])? {
+            RubyValue::Int(n) => Ok(n as c_int),
+            _ => Ok(0),
+        }
+    }
+
+    /// `fptr->pid`, which is `IO#pid` -- 0 where CRuby leaves it unset,
+    /// because only a `popen` handle has one.
+    fn zeo_cext_io_pid(io: Value) -> c_int {
+        let target = unsafe { value_of(io) };
+        match send(&target, "pid", &[])? {
+            RubyValue::Int(n) => Ok(n as c_int),
+            _ => Ok(0),
+        }
+    }
+
+    /// The three `rb_io_check_*` entries, asked of the IO rather than of the
+    /// view an extension holds. `want` is 0 closed, 1 readable, 2 writable.
+    fn zeo_cext_io_check(io: Value, want: c_int) -> () {
+        const READABLE: i32 = 0x0000_0001;
+        const WRITABLE: i32 = 0x0000_0002;
+        let target = unsafe { value_of(io) };
+        if matches!(send(&target, "closed?", &[])?, RubyValue::Bool(true)) {
+            return Err(crate::builtins::io_error!("closed stream"));
+        }
+        let mode = crate::builtins::io::fmode_bits(&target);
+        match want {
+            1 if mode & READABLE == 0 => Err(crate::builtins::io_error!("not opened for reading")),
+            2 if mode & WRITABLE == 0 => Err(crate::builtins::io_error!("not opened for writing")),
+            _ => Ok(()),
+        }
+    }
+}
+
 fn io_send(io: Value, meth: &str, argc: c_int, argv: *const Value) -> Result<Value, Signal> {
     let target = unsafe { value_of(io) };
     let args = unsafe { args_of(argc, argv) };

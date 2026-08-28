@@ -584,20 +584,8 @@ pub extern "C" fn rb_io_check_char_readable() -> ! {
     unimplemented("rb_io_check_char_readable")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_io_check_closed() -> ! {
-    unimplemented("rb_io_check_closed")
-}
-#[unsafe(no_mangle)]
 pub extern "C" fn rb_io_check_initialized() -> ! {
     unimplemented("rb_io_check_initialized")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_check_readable() -> ! {
-    unimplemented("rb_io_check_readable")
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn rb_io_check_writable() -> ! {
-    unimplemented("rb_io_check_writable")
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rb_io_extract_encoding_option() -> ! {

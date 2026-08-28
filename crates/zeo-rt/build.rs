@@ -90,6 +90,9 @@ fn build_cext() {
     for f in CEXT_SOURCES {
         build.file(format!("csrc/{f}"));
     }
+    // `cext_io.c` reads `struct rb_io` out of the shipped headers, which is
+    // the whole point of writing it in C.
+    build.include("cext/include").include("cext/config");
     build.warnings(true).compile("zeo_cext");
 }
 
@@ -98,6 +101,7 @@ const CEXT_SOURCES: &[&str] = &[
     "cext_va.c",
     "cext_fmt.c",
     "cext_err.c",
+    "cext_io.c",
     "cext_native_thread.c",
 ];
 
