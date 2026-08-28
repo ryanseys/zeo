@@ -104,6 +104,14 @@ ruby_class! {
         reset_buf(recv);
         Ok(recv.clone())
     }
+    // `Digest::Instance#new` -- an empty digest of the same class, which is
+    // ruby's `clone.reset`. rubygems calls it on an INSTANCE, so `gem build`
+    // needs it.
+    def "new"(recv) {
+        let copy = crate::dispatch::send_value(recv, crate::Symbol::intern("clone"), &[], None)?;
+        reset_buf(&copy);
+        Ok(copy)
+    }
     // The three BANG forms: the same value, then the instance goes back to
     // empty. rubygems' package verification reaches `hexdigest!` on every
     // file it unpacks, so `zeo bundle install` needs them.

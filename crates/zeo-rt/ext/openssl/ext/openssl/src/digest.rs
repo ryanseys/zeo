@@ -186,6 +186,14 @@ ruby_class! {
         digest_of(recv).buf.lock().clear();
         Ok(recv.clone())
     }
+    // `Digest::Instance#new` -- an empty digest of the same algorithm, which
+    // is ruby's `clone.reset`. rubygems calls it on the INSTANCE that
+    // `Gem::Security.create_digest` answers, so `gem build` needs it.
+    def "new" (recv) {
+        let copy = crate::dispatch::send_value(recv, crate::Symbol::intern("clone"), &[], None)?;
+        digest_of(&copy).buf.lock().clear();
+        Ok(copy)
+    }
     def "name" (recv) {
         Ok(str(digest_of(recv).algo_name()))
     }
