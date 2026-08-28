@@ -30,4 +30,6 @@ check { Math.lgamma }
 check { Dir.mkdir }
 # the valid shapes still answer
 p Hash.new(5)[:missing]
-p File.exist?("README.md")
+# A name no run ever creates: this corpus's own working directory is `tests/`,
+# so anything plausible there is a file somebody may add.
+p File.exist?("no-such-file-e7c1a0")
