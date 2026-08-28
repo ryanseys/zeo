@@ -77,7 +77,7 @@ fn locked_versions() -> BTreeMap<String, Vec<String>> {
 fn bundled_versions() -> BTreeMap<String, Option<String>> {
     let root = repo_root();
     let mut out = BTreeMap::new();
-    for tier in ["crates/zeo-rt/src/ext", "gems"] {
+    for tier in ["crates/zeo-rt/ext", "gems"] {
         let dir = root.join(tier);
         for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{tier} is readable: {e}")) {
             let path: PathBuf = entry.expect("readable entry").path();

@@ -55,8 +55,9 @@ fn main() {
     let pregen = manifest_dir.join("src/class_surface.pregen.rs");
     let dev_tree = rt_src.join("builtins").is_dir();
 
+    let rt_ext = manifest_dir.join("../zeo-rt/ext");
     let code = if dev_tree {
-        generate_class_surface(&rt_src)
+        generate_class_surface(&rt_src, &rt_ext)
     } else if pregen.is_file() {
         println!("cargo:rerun-if-changed=src/class_surface.pregen.rs");
         std::fs::read_to_string(&pregen).expect("reading class_surface.pregen.rs")
@@ -87,10 +88,10 @@ fn write_if_changed(path: &Path, content: &str) {
 }
 
 /// Project `CLASS_SURFACE` from the sibling zeo-rt sources: the core classes
-/// (`builtins/`) and the require-gated extensions (`ext/`, whose gems
-/// namespace their classes in subdirectories -- `socket/`, ...). Ext surfaces
-/// are projected unconditionally of their cargo feature: the surface is
-/// folding-only (a miss falls back to runtime dispatch), and an un-required
+/// (`src/builtins/`) and the require-gated extensions (`ext/`, one gem-shaped
+/// directory each, whose Rust sits at `ext/<name>/ext/<name>/src/`). Ext
+/// surfaces are projected unconditionally of their cargo feature: the surface
+/// is folding-only (a miss falls back to runtime dispatch), and an un-required
 /// ext constant is unreachable regardless.
 ///
 /// The built-in exception tree is deliberately ABSENT: `builtins/exception.rs`
@@ -98,10 +99,10 @@ fn write_if_changed(path: &Path, content: &str) {
 /// runtime-installed table (`EXC_ROWS`), one shared implementation for all
 /// ~171 classes -- so the compiler stays surface-blind there and every
 /// exception-method call resolves through runtime dispatch.
-fn generate_class_surface(rt_src: &Path) -> String {
+fn generate_class_surface(rt_src: &Path, rt_ext: &Path) -> String {
     let mut surfaces: Vec<Surface> = Vec::new();
     collect_from_dir(&rt_src.join("builtins"), &mut surfaces);
-    collect_from_dir(&rt_src.join("ext"), &mut surfaces);
+    collect_from_dir(rt_ext, &mut surfaces);
     assert!(
         !surfaces.is_empty(),
         "projected an EMPTY class surface from {} -- the zeo-rt sources are \
@@ -112,13 +113,14 @@ fn generate_class_surface(rt_src: &Path) -> String {
     // Deterministic output regardless of readdir order.
     surfaces.sort_by(|a, b| a.id_const.cmp(&b.id_const));
 
-    // Every table symbol in the runtime, from the WHOLE `src/` tree rather
-    // than the two directories the folding surface reads. The lists differ:
-    // `Ractor` lives at `src/ractor.rs` and `FFI::Type` outside `ext/`, so a
-    // surface-derived list was five short -- and a class whose table an
+    // Every table symbol in the runtime, from the WHOLE tree rather than the
+    // two directories the folding surface reads. The lists differ: `Ractor`
+    // lives at `src/ractor.rs` and `FFI::Type` outside the ext that owns it,
+    // so a surface-derived list was five short -- and a class whose table an
     // emitted program never names loses every method it has.
     // `class_tables_are_complete` gates the two against `libzeo.a` itself.
     let mut every = collect_table_ids(rt_src);
+    every.extend(collect_table_ids(rt_ext));
     every.sort();
     every.dedup();
 

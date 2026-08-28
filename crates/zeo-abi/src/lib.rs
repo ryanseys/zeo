@@ -701,7 +701,7 @@ pub const NKF_MODULE: ClassId = ClassId(109);
 /// arithmetic. The native half is bigdecimal 4.x's C slice (exact
 /// arithmetic, division precision, rounding, mode state); `power`/`sqrt`/
 /// `BigMath` and the `to_d` family are the gem's own Ruby, vendored in
-/// `gems/bigdecimal`. Not constructible via `new` (CRuby removed it); the
+/// `crates/zeo-rt/ext/bigdecimal`. Not constructible via `new` (CRuby removed it); the
 /// `Kernel#BigDecimal` function is the one constructor.
 pub const BIGDECIMAL_CLASS: ClassId = ClassId(110);
 

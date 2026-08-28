@@ -40,7 +40,7 @@ impl Loader {
             // (`load.c:1159-1181`; `rb_find_file_ext` loops extension-outer,
             // path-inner, `file.c:7173`). This is what lets a gem have a Ruby
             // HALF sitting on top of a native half: `require "strscan"` finds
-            // `crates/zeo-rt/src/ext/strscan/lib/strscan.rb`, and that file pulls its native
+            // `crates/zeo-rt/ext/strscan/lib/strscan.rb`, and that file pulls its native
             // half in with `require "strscan.so"` -- CRuby's loader idiom,
             // exactly as `ext/digest/lib/digest.rb` does.
             //

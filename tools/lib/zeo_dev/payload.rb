@@ -9,7 +9,7 @@ module ZeoDev
   # where the two become one, so `dist` and `stage-publish` cannot disagree
   # about what ships.
   module Payload
-    EXT = "crates/zeo-rt/src/ext"
+    EXT = "crates/zeo-rt/ext"
     GEMS = "gems"
 
     # `["json/lib/json.rb", "/abs/path/..."]` pairs, sorted, for every library.

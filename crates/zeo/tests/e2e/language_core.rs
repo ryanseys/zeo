@@ -861,7 +861,7 @@ fn bundled_optparse_parses_switches_and_leaves_positionals() {
 }
 
 /// Loading the Ruby half must not cost the native half: `require "strscan"`
-/// resolves `crates/zeo-rt/src/ext/strscan/lib/strscan.rb`, which pulls the
+/// resolves `crates/zeo-rt/ext/strscan/lib/strscan.rb`, which pulls the
 /// native half in with `require "strscan.so"` -- CRuby's loader idiom.
 #[test]
 fn the_native_half_still_works_through_its_ruby_half() {

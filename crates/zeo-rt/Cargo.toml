@@ -141,18 +141,17 @@ openssl = { workspace = true, optional = true }
 # opinions would have to be fought, not used (see the plan's P-E note).
 libc.workspace = true
 
-# One cargo feature per in-tree `ext/` extension (CRuby's ext/ model). Each
-# feature compiles in its `ext/<name>.rs` module and its dispatch arms; with
-# the feature off, the extension's code is absent from the binary. `ext-all`
-# is the umbrella and `default` enables everything, so an out-of-the-box build
-# has every extension and `require`ing one just works. Slim a binary with
+# One cargo feature per `ext/` library (CRuby's ext/ model). Each feature
+# compiles in that library's Rust; with the feature off, its code is absent
+# from the binary. `ext-all` is the umbrella and `default` enables everything,
+# so an out-of-the-box build has every extension and `require`ing one just
+# works. Slim a binary with
 # `--no-default-features --features ext-stringio,ext-json,...`.
 #
-# To ADD an extension, see the checklist in `src/ext/mod.rs`. In brief: an ABI
-# row (zeo-abi), an `ext/<name>.rs` module, three cfg-gated dispatch arms in
-# `builtins/mod.rs`, and one line here (+ its umbrella entry).
+# This list is the ONLY hand-written half: build.rs declares the modules from
+# the `ext/` tree itself. To ADD an extension see the checklist in `src/ext.rs`.
 # cargo-machete greps for the crate name; `md-5` is imported as `md5`, so it
-# reads as unused. It is not -- see ext/digest/mod.rs.
+# reads as unused. It is not -- see ext/digest/ext/digest/src/lib.rs.
 [package.metadata.cargo-machete]
 ignored = ["md-5"]
 

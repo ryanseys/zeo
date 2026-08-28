@@ -3,7 +3,7 @@
 # each row is either a value or a Ruby exception, and the golden pins which.
 #
 # Written after the parser was rewritten off serde_json
-# (`crates/zeo-rt/src/ext/json/parser.rs`), and it found real defects rather
+# (`crates/zeo-rt/ext/json/ext/json/src/parser.rs`), and it found real defects rather
 # than confirming a design -- see `json_parser_stress.rb` for the generated
 # half.
 #

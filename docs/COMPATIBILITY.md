@@ -276,14 +276,14 @@ shapes (`no output encoding given`, the `TypeError`s). Divergences:
 ### `bigdecimal`
 
 bigdecimal 4.x splits itself between C and Ruby, and Zeo keeps that split:
-the native half (`crates/zeo-rt/src/ext/bigdecimal/`) reimplements exactly
+the native half (`crates/zeo-rt/ext/bigdecimal/ext/bigdecimal/src/`) reimplements exactly
 the C slice -- the value type over a BigUint coefficient, exact
 add/sub/mult, division to the documented rule (`max(a.precision,
 b.precision) + double_fig`, floored at `2*double_fig`, rounded under the
 current mode with a true sticky tail), the rounding engine, the
 mode/limit/save_* state, conversions, and `Kernel#BigDecimal` -- while
 `**`/`power`, `sqrt` (Newton), `BigMath`, and `util`'s `to_d` family are
-the gem's OWN Ruby code, vendored in `gems/bigdecimal/` and compiled like
+the gem's OWN Ruby code, vendored in `crates/zeo-rt/ext/bigdecimal/` and compiled like
 any user code. Both goldens (`tests/bigdecimal*.rb`) compare live against
 the oracle, engineering-notation `to_s` and division digits included.
 Known divergences of the native slice:
@@ -300,7 +300,7 @@ Known divergences of the native slice:
 
 fiddle 1.x ships its own pure-Ruby FFI backend (`lib/fiddle/ffi_backend.rb`,
 the JRuby/TruffleRuby path), and that is the fiddle Zeo runs: the backend is
-vendored in `gems/fiddle/` over Zeo's ffi runtime tier (`FFI::Type`,
+vendored in `crates/zeo-rt/ext/fiddle/` over Zeo's ffi runtime tier (`FFI::Type`,
 `FFI::DynamicLibrary` over `dlopen(3)`, `FFI::Function` /
 `FFI::VariadicInvoker` over libffi, `FFI.errno`) instead of the fiddle C
 extension. The vendored backend carries `zeo:`-tagged deviations of two
@@ -1001,7 +1001,7 @@ object per library the program required (`--report=<path>` picks the path):
 
 ```json
 {
-  "json":     {"by": "bundled-gem", "path": "crates/zeo-rt/src/ext/json/lib/json.rb",
+  "json":     {"by": "bundled-gem", "path": "crates/zeo-rt/ext/json/lib/json.rb",
                "diverges": true, "note": "serde_json-backed; not the json gem"},
   "optparse": {"by": "bundled-gem", "path": "gems/optparse/lib/optparse.rb"},
   "base64":   {"by": "builtin-ext", "feature": "base64",

@@ -165,7 +165,7 @@ call, not through `send`) is invisible at that call site.
 
 `TracePoint`, `ObjectSpace`, Ractors, and refinements are all in scope and
 implemented in the runtime at large: `TracePoint` (and `set_trace_func`) via
-the armed-only tracing machinery in `zeo-rt/src/ext/tracepoint.rs`,
+the armed-only tracing machinery in `zeo-rt/ext/tracepoint/ext/tracepoint/src/lib.rs`,
 `ObjectSpace` as an always-on builtin (`each_object` alone is a declared
 refusal), Ractors as real OS threads with shareability checks, and refinements
 both as the compile-time lexical rewrite and as runtime `Module#refine` /

@@ -9,16 +9,15 @@ use std::path::{Path, PathBuf};
 /// The directories holding the libraries the compiler ships, highest
 /// precedence first. An absent dir contributes nothing.
 ///
-/// The dev tree has TWO. zeo's own Ruby halves sit beside the Rust that
-/// implements them (`crates/zeo-rt/src/ext/<name>/lib/`), the way CRuby keeps
-/// `ext/socket/lib/socket.rb` beside `socket.c`; the vendored upstream copies
-/// stay in `gems/`. A zeo half must win its name, so it is searched first.
-/// Every other home has one directory, because `dist`/`stage-publish` stage
-/// both tiers into it.
+/// The dev tree has TWO. Each library zeo owns is a gem-shaped directory
+/// under `crates/zeo-rt/ext/`, its Ruby half in `lib/` beside the Rust that
+/// implements it; the vendored upstream copies stay in `gems/`. A zeo
+/// library must win its name, so it is searched first. Every other home has
+/// one directory, because `dist`/`stage-publish` stage both tiers into it.
 pub(super) fn bundled_gems_dirs() -> Vec<PathBuf> {
     let dirs = match crate::home::zeo_home() {
         crate::home::ZeoHome::DevTree { root } => {
-            vec![root.join("crates/zeo-rt/src/ext"), root.join("gems")]
+            vec![root.join("crates/zeo-rt/ext"), root.join("gems")]
         }
         crate::home::ZeoHome::Installed { payload, .. } => vec![payload.join("gems")],
         // Embedded in the binary at publish time; extracted once per version.

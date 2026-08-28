@@ -88,7 +88,7 @@ pub(crate) fn ffi_platform_string(leaf: &str) -> Option<String> {
 
 /// The ffi gem's `FFI::Platform` NUMERIC constants, in the same bits the
 /// runtime half reads back off `FFI::Type::Builtin`
-/// (`crates/zeo-rt/src/ext/ffi/lib/ffi.rb`) --
+/// (`crates/zeo-rt/ext/ffi/lib/ffi.rb`) --
 /// the two have to agree, or a `typedef` folded one way at compile time
 /// contradicts the constant the program prints. vips gates its `:GType`
 /// width on `ADDRESS_SIZE == 64` and crabstone its `:size_t` on
