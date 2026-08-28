@@ -1,0 +1,13 @@
+is_a String        : true
+regexp ===         : true
+regexp === to_s    : true
+regexp match?      : true
+regexp =~          : 0
+string =~          : 0
+no match           : false
+ignores to_s       : true
+case when          : tag
+last match         : "abc-123"
+against an Integer : false
+cleared            : nil
+against a Symbol   : true
