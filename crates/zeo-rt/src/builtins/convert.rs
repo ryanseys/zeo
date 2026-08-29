@@ -221,15 +221,21 @@ fn float_to_long(f: f64) -> Result<i64, Signal> {
 /// capitalized specials (`NaN`, `Inf`, `-Inf`). Only consulted for
 /// out-of-integer-range values, which always take the exponent form.
 fn fmt_g(f: f64) -> String {
+    fmt_g_prec(f, 6)
+}
+
+/// [`fmt_g`] at a chosen significant-digit count. `FLOAT_OUT_OF_RANGE`, which
+/// the FFI slot converters raise through, prints `%-.10g` rather than `%g`.
+pub fn fmt_g_prec(f: f64, sig: usize) -> String {
     if f.is_nan() {
         return "NaN".to_string();
     }
     if f.is_infinite() {
         return if f > 0.0 { "Inf" } else { "-Inf" }.to_string();
     }
-    // `{:.5e}` = 6 significant digits; then trim the mantissa's trailing
-    // zeros and normalize the exponent to `e+NN` (Rust writes `e300`).
-    let s = format!("{f:.5e}");
+    // `{:.<sig-1>e}` gives `sig` significant digits; then trim the mantissa's
+    // trailing zeros and normalize the exponent to `e+NN` (Rust writes `e300`).
+    let s = format!("{f:.*e}", sig.saturating_sub(1));
     let (mantissa, exp) = s.split_once('e').expect("{:e} always has an exponent");
     let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
     let (sign, digits) = match exp.strip_prefix('-') {

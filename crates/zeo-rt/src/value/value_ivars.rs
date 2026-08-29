@@ -184,7 +184,15 @@ pub(crate) fn remove(v: &RubyValue, name: &str) -> Option<RubyValue> {
     Some(slots.remove(at).1)
 }
 
-/// `v`'s ivar names (bare, no `@`) in assignment order.
+/// A name the runtime hangs on a value for its own bookkeeping, hidden from
+/// `instance_variables` -- CRuby's `rb_make_internal_id`, which `pack`'s
+/// `p`/`P` association rides on.
+pub(crate) fn internal(name: &str) -> bool {
+    name.starts_with("__")
+}
+
+/// `v`'s ivar names (bare, no `@`) in assignment order, minus the internal
+/// ones.
 pub(crate) fn names(v: &RubyValue) -> Vec<String> {
     if !any() {
         return Vec::new();
@@ -197,7 +205,13 @@ pub(crate) fn names(v: &RubyValue) -> Vec<String> {
         .read()
         .unwrap()
         .get(&k)
-        .map(|slots| slots.iter().map(|(n, _)| n.clone()).collect())
+        .map(|slots| {
+            slots
+                .iter()
+                .filter(|(n, _)| !internal(n))
+                .map(|(n, _)| n.clone())
+                .collect()
+        })
         .unwrap_or_default()
 }
 

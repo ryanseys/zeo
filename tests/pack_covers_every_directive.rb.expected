@@ -1,0 +1,24 @@
+p size         8
+p enc          "ASCII-8BIT"
+p ivars        []
+p rt           "hello"
+p rt enc       "UTF-8"
+p identity     true
+p2 size        16
+p2 rt          ["a", "b"]
+p star         ["a", "b"]
+p nil          [0, 0, 0, 0, 0, 0, 0, 0]
+p nilptr       nil
+p nonstr       TypeError: no implicit conversion of Integer into String
+p frozen       false
+p dup rt       "hey"
+p unassoc      nil
+p junk         ArgumentError: no associated pointer
+P5 size        8
+P5 rt          "hello"
+P no len       "h"
+P big len      "hi"
+P short        ArgumentError: too short buffer for P(2 for 9)
+P nil          [0, 0, 0, 0, 0, 0, 0, 0]
+P unassoc      nil
+mixed          ["ab", 7]

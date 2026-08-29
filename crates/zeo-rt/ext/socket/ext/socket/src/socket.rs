@@ -341,8 +341,14 @@ ruby_class! {
         if rc == 0 {
             return Ok(RubyValue::Int(0));
         }
-        if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINPROGRESS) {
-            return Err(errno_error("connect(2)"));
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::EINPROGRESS) => {}
+            // A second connect on a socket that already finished one. With
+            // `exception: false` the caller asked for a value rather than a
+            // raise, and CRuby answers 0 -- the same 0 the first, successful
+            // connect returned.
+            Some(libc::EISCONN) if !raises => return Ok(RubyValue::Int(0)),
+            _ => return Err(errno_error("connect(2)")),
         }
         if !raises {
             return Ok(RubyValue::Symbol(Symbol::intern("wait_writable")));

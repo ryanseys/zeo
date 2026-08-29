@@ -1,0 +1,39 @@
+u64 max            18446744073709551615
+u64 -1             18446744073709551615
+u64 2**63          9223372036854775808
+u64 -2**63         9223372036854775808
+u64 2**64          RangeError: bignum too big to convert into 'unsigned long long'
+u64 -2**63-1       RangeError: bignum out of range of unsigned long long
+i64 -1             -1
+i64 min            -9223372036854775808
+i64 2**63          RangeError: bignum too big to convert into 'long long'
+i64 min-1          RangeError: bignum too big to convert into 'long long'
+u32 max            4294967295
+u32 -1             4294967295
+u32 -2**31         2147483648
+u32 2**32          RangeError: integer 4294967296 too big to convert to 'unsigned int'
+u32 -2**31-1       RangeError: integer -2147483649 too small to convert to 'unsigned int'
+i32 2**31          RangeError: integer 2147483648 too big to convert to 'int'
+i32 -2**31-1       RangeError: integer -2147483649 too small to convert to 'int'
+u8 255             255
+u8 -1              255
+u8 256             0
+i8 128             -128
+u16 65536          0
+u8 2**32           RangeError: integer 4294967296 too big to convert to 'unsigned int'
+u8 -2**31-1        RangeError: integer -2147483649 too small to convert to 'unsigned int'
+u64 1.5            1
+u64 -1.5           18446744073709551615
+u32 2.9            2
+u64 1e30           RangeError: float 1e+30 out of range of unsigned long long
+i64 nan            RangeError: float NaN out of range of long long
+to_int             7
+string             TypeError: no implicit conversion of String into Integer
+nil                TypeError: no implicit conversion of nil into Integer
+array u64          [18446744073709551615, 1]
+array i64 big      RangeError: bignum too big to convert into 'long long'
+inspect            "#<FFI::MemoryPointer address=0xADDR size=16>"
+inspect raw        "#<FFI::Pointer address=0xADDR>"
+inspect null       "#<FFI::Pointer address=0xADDR>"
+inspect slice      "#<FFI::Pointer address=0xADDR size=4>"
+to_s is inspect    true

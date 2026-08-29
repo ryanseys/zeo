@@ -124,8 +124,26 @@ pub fn result_encoding(template: &str) -> crate::encoding::EncodingId {
 // pack
 // ---------------------------------------------------------------------------
 
-pub fn pack(elems: &[RubyValue], template: &str) -> Result<Vec<u8>, Signal> {
+/// `p`/`P` write a machine pointer, so the packed string has to keep the
+/// strings it points AT alive and reachable -- CRuby hangs them off the result
+/// in a hidden ivar (`str_associate`) and `unpack` reads them back. This is
+/// that list; `None` when the template has no `p`/`P` at all, which is what
+/// makes "no associated pointer" reachable.
+pub const ASSOCIATED: &str = "__pack_associated__";
+
+/// The token `p`/`P` writes for one string. CRuby writes `RSTRING_PTR` and
+/// matches on it; zeo writes the string's own identity, which is stable where
+/// a buffer address is not and compares exactly the same way.
+fn pack_token(v: &RubyValue) -> u64 {
+    match v {
+        RubyValue::Str(s) => std::sync::Arc::as_ptr(s) as u64,
+        _ => 0,
+    }
+}
+
+pub fn pack(elems: &[RubyValue], template: &str) -> Result<(Vec<u8>, Option<Vec<RubyValue>>), Signal> {
     let mut out: Vec<u8> = Vec::new();
+    let mut associated: Option<Vec<RubyValue>> = None;
     let mut idx = 0usize;
     for d in parse_template(template)? {
         match d.kind {
@@ -161,6 +179,46 @@ pub fn pack(elems: &[RubyValue], template: &str) -> Result<Vec<u8>, Signal> {
             'H' | 'h' => {
                 let s = next_str(elems, &mut idx)?;
                 pack_hex(&mut out, &s, d.kind == 'H', d.count);
+            }
+            // `p`/`P` write one machine pointer each. `P<n>` PEEKS at its
+            // element to check the buffer is long enough, then writes exactly
+            // one pointer -- its count is a width, not a repeat, which is why
+            // `["hello"].pack("P5")` is 8 bytes and consumes one element.
+            'p' | 'P' => {
+                let n = if d.kind == 'P' {
+                    let want = match d.count {
+                        Count::Fixed(n) => n,
+                        Count::One | Count::Star => 1,
+                    };
+                    if let Some(v @ RubyValue::Str(_)) = elems.get(idx) {
+                        let have = match v {
+                            RubyValue::Str(s) => s.lock().bytes().len(),
+                            _ => 0,
+                        };
+                        if have < want {
+                            return Err(err(format!(
+                                "too short buffer for P({have} for {want})"
+                            )));
+                        }
+                    }
+                    1
+                } else {
+                    numeric_count(d.count, elems.len().saturating_sub(idx))
+                };
+                let assoc = associated.get_or_insert_with(Vec::new);
+                for _ in 0..n {
+                    let v = elems.get(idx).cloned().unwrap_or(RubyValue::Nil);
+                    idx += 1;
+                    // `StringValuePtr`: a non-nil element must BE a String or
+                    // convert to one, and the converted string is what the
+                    // pointer names.
+                    let v = match v {
+                        RubyValue::Nil => RubyValue::Nil,
+                        other => crate::builtins::convert::to_str(&other)?,
+                    };
+                    emit_int(&mut out, pack_token(&v), 8, false);
+                    assoc.push(v);
+                }
             }
             // `m` -- base64. The count is the input bytes per wrapped line
             // (rounded down to a multiple of 3); `m0` is RFC 4648: one
@@ -276,7 +334,7 @@ pub fn pack(elems: &[RubyValue], template: &str) -> Result<Vec<u8>, Signal> {
             other => return Err(err(format!("unsupported pack directive: {other}"))),
         }
     }
-    Ok(out)
+    Ok((out, associated))
 }
 
 /// The byte width of an integer directive. `i`/`I` (C `int`) are 4; `j`/`J`
@@ -365,7 +423,13 @@ fn pack_hex(out: &mut Vec<u8>, s: &[u8], high_first: bool, count: Count) {
 // unpack
 // ---------------------------------------------------------------------------
 
-pub fn unpack(bytes: &[u8], template: &str) -> Result<Vec<RubyValue>, Signal> {
+/// `associated` is the source string's `p`/`P` list -- `None` when it carries
+/// none, which is what "no associated pointer" reports.
+pub fn unpack(
+    bytes: &[u8],
+    template: &str,
+    associated: Option<&[RubyValue]>,
+) -> Result<Vec<RubyValue>, Signal> {
     let mut out: Vec<RubyValue> = Vec::new();
     let mut pos = 0usize;
     for d in parse_template(template)? {
@@ -548,6 +612,59 @@ pub fn unpack(bytes: &[u8], template: &str) -> Result<Vec<RubyValue>, Signal> {
                     return Err(err("@ outside of string".to_string()));
                 }
                 pos = n;
+            }
+            // A pointer resolves back to the STRING OBJECT it was taken from,
+            // found in the source string's association list -- so `p`'s answer
+            // keeps that string's own encoding, and a pointer no list explains
+            // is an error rather than junk. A NULL pointer is `nil` and asks
+            // the list nothing, which is why 8 zero bytes unpack fine.
+            'p' | 'P' => {
+                let n = if d.kind == 'P' {
+                    1
+                } else {
+                    numeric_count(d.count, bytes.len().saturating_sub(pos) / 8)
+                };
+                let want = match (d.kind, d.count) {
+                    ('P', Count::Fixed(n)) => n,
+                    ('P', _) => 1,
+                    _ => 0,
+                };
+                for _ in 0..n {
+                    if pos + 8 > bytes.len() {
+                        break;
+                    }
+                    let token = read_int(&bytes[pos..pos + 8], false, false) as u64;
+                    pos += 8;
+                    if token == 0 {
+                        out.push(RubyValue::Nil);
+                        continue;
+                    }
+                    let list = associated.ok_or_else(|| err("no associated pointer"))?;
+                    let found = list
+                        .iter()
+                        .find(|v| pack_token(v) == token)
+                        .ok_or_else(|| err("non associated pointer"))?;
+                    // `P<n>` shorter than the string it names hands back a
+                    // fresh prefix rather than the whole original.
+                    let len = match found {
+                        RubyValue::Str(s) => s.lock().bytes().len(),
+                        _ => 0,
+                    };
+                    out.push(if d.kind == 'P' && want < len {
+                        match found {
+                            RubyValue::Str(s) => {
+                                let (b, enc) = {
+                                    let g = s.lock();
+                                    (g.bytes()[..want].to_vec(), g.encoding())
+                                };
+                                RubyValue::Str(crate::string_from_bytes(b, enc))
+                            }
+                            _ => RubyValue::Nil,
+                        }
+                    } else {
+                        found.clone()
+                    });
+                }
             }
             // CRuby quotes the directive AND echoes the whole template, so a
             // long format says which character failed.
@@ -969,56 +1086,56 @@ mod tests {
 
     #[test]
     fn pack_integers_with_endianness() {
-        assert_eq!(pack(&ints(&[65, 66, 67]), "C*").unwrap(), b"ABC");
-        assert_eq!(pack(&ints(&[1, 2]), "nN").unwrap(), vec![0, 1, 0, 0, 0, 2]);
-        assert_eq!(pack(&ints(&[1, 2]), "vV").unwrap(), vec![1, 0, 2, 0, 0, 0]);
-        assert_eq!(pack(&ints(&[-1]), "c").unwrap(), vec![255]);
-        assert_eq!(pack(&ints(&[258]), "S>").unwrap(), vec![1, 2]);
+        assert_eq!(pack(&ints(&[65, 66, 67]), "C*").unwrap().0, b"ABC");
+        assert_eq!(pack(&ints(&[1, 2]), "nN").unwrap().0, vec![0, 1, 0, 0, 0, 2]);
+        assert_eq!(pack(&ints(&[1, 2]), "vV").unwrap().0, vec![1, 0, 2, 0, 0, 0]);
+        assert_eq!(pack(&ints(&[-1]), "c").unwrap().0, vec![255]);
+        assert_eq!(pack(&ints(&[258]), "S>").unwrap().0, vec![1, 2]);
     }
 
     #[test]
     fn unpack_integers() {
         assert_eq!(
-            i64s(&unpack(b"hello", "C*").unwrap()),
+            i64s(&unpack(b"hello", "C*", None).unwrap()),
             [104, 101, 108, 108, 111]
         );
-        assert_eq!(i64s(&unpack(&[1, 2, 3, 4], "N").unwrap()), [16909060]);
-        assert_eq!(i64s(&unpack(&[255], "c").unwrap()), [-1]);
+        assert_eq!(i64s(&unpack(&[1, 2, 3, 4], "N", None).unwrap()), [16909060]);
+        assert_eq!(i64s(&unpack(&[255], "c", None).unwrap()), [-1]);
     }
 
     #[test]
     fn pack_and_unpack_strings() {
         assert_eq!(
-            pack(&[str_val("abc")], "a5").unwrap(),
+            pack(&[str_val("abc")], "a5").unwrap().0,
             vec![97, 98, 99, 0, 0]
         );
         assert_eq!(
-            pack(&[str_val("abc")], "A5").unwrap(),
+            pack(&[str_val("abc")], "A5").unwrap().0,
             vec![97, 98, 99, 32, 32]
         );
-        assert_eq!(pack(&[str_val("abc")], "Z*").unwrap(), vec![97, 98, 99, 0]);
-        assert_eq!(strs(&unpack(b"abc\0\0", "A5").unwrap()), ["abc"]);
-        assert_eq!(strs(&unpack(b"abc\0de", "Z*").unwrap()), ["abc"]);
+        assert_eq!(pack(&[str_val("abc")], "Z*").unwrap().0, vec![97, 98, 99, 0]);
+        assert_eq!(strs(&unpack(b"abc\0\0", "A5", None).unwrap()), ["abc"]);
+        assert_eq!(strs(&unpack(b"abc\0de", "Z*", None).unwrap()), ["abc"]);
     }
 
     #[test]
     fn hex_and_ber_and_base64() {
-        assert_eq!(pack(&[str_val("ff01")], "H*").unwrap(), vec![255, 1]);
-        assert_eq!(strs(&unpack(&[255, 1], "H*").unwrap()), ["ff01"]);
-        assert_eq!(pack(&ints(&[300]), "w").unwrap(), vec![130, 44]);
-        assert_eq!(i64s(&unpack(&[130, 44], "w").unwrap()), [300]);
+        assert_eq!(pack(&[str_val("ff01")], "H*").unwrap().0, vec![255, 1]);
+        assert_eq!(strs(&unpack(&[255, 1], "H*", None).unwrap()), ["ff01"]);
+        assert_eq!(pack(&ints(&[300]), "w").unwrap().0, vec![130, 44]);
+        assert_eq!(i64s(&unpack(&[130, 44], "w", None).unwrap()), [300]);
         assert_eq!(
-            pack(&[str_val("hello world")], "m").unwrap(),
+            pack(&[str_val("hello world")], "m").unwrap().0,
             b"aGVsbG8gd29ybGQ=\n"
         );
-        assert_eq!(strs(&unpack(b"aGVsbG8=\n", "m").unwrap()), ["hello"]);
+        assert_eq!(strs(&unpack(b"aGVsbG8=\n", "m", None).unwrap()), ["hello"]);
     }
 
     #[test]
     fn utf8_codepoints() {
-        assert_eq!(pack(&ints(&[0x3042]), "U").unwrap(), "\u{3042}".as_bytes());
+        assert_eq!(pack(&ints(&[0x3042]), "U").unwrap().0, "\u{3042}".as_bytes());
         assert_eq!(
-            i64s(&unpack("\u{3042}".as_bytes(), "U*").unwrap()),
+            i64s(&unpack("\u{3042}".as_bytes(), "U*", None).unwrap()),
             [0x3042]
         );
     }
@@ -1039,20 +1156,20 @@ mod tests {
     fn float_directives_endianness_and_width() {
         // `1.5` little-endian double vs `G` big-endian double.
         assert_eq!(
-            pack(&floats(&[1.5]), "D").unwrap(),
+            pack(&floats(&[1.5]), "D").unwrap().0,
             vec![0, 0, 0, 0, 0, 0, 248, 63]
         );
         assert_eq!(
-            pack(&floats(&[1.5]), "G").unwrap(),
+            pack(&floats(&[1.5]), "G").unwrap().0,
             vec![63, 248, 0, 0, 0, 0, 0, 0]
         );
-        assert_eq!(pack(&floats(&[1.5]), "F").unwrap(), vec![0, 0, 192, 63]);
+        assert_eq!(pack(&floats(&[1.5]), "F").unwrap().0, vec![0, 0, 192, 63]);
         assert_eq!(
-            f64s(&unpack(&pack(&floats(&[3.5]), "d").unwrap(), "d").unwrap()),
+            f64s(&unpack(&pack(&floats(&[3.5]), "d").unwrap().0, "d", None).unwrap()),
             [3.5]
         );
         assert_eq!(
-            f64s(&unpack(&pack(&floats(&[2.0, 3.0]), "E*").unwrap(), "E*").unwrap()),
+            f64s(&unpack(&pack(&floats(&[2.0, 3.0]), "E*").unwrap().0, "E*", None).unwrap()),
             [2.0, 3.0]
         );
     }
@@ -1060,56 +1177,56 @@ mod tests {
     #[test]
     fn base64_m0_has_no_wrapping_or_trailing_newline() {
         // `m0` (RFC 4648): one unbroken run, `=` padding, no newline.
-        assert_eq!(pack(&[str_val("hi")], "m0").unwrap(), b"aGk=");
-        assert_eq!(pack(&[str_val("")], "m0").unwrap(), b"");
+        assert_eq!(pack(&[str_val("hi")], "m0").unwrap().0, b"aGk=");
+        assert_eq!(pack(&[str_val("")], "m0").unwrap().0, b"");
         // Bare `m`: 45 bytes/line, each ending in `\n`; empty stays empty.
-        assert_eq!(pack(&[str_val("hi")], "m").unwrap(), b"aGk=\n");
-        assert_eq!(pack(&[str_val("")], "m").unwrap(), b"");
+        assert_eq!(pack(&[str_val("hi")], "m").unwrap().0, b"aGk=\n");
+        assert_eq!(pack(&[str_val("")], "m").unwrap().0, b"");
         // A NUL byte survives (byte length, not C strlen).
-        assert_eq!(pack(&[str_val("a\0b")], "m0").unwrap(), b"YQBi");
+        assert_eq!(pack(&[str_val("a\0b")], "m0").unwrap().0, b"YQBi");
     }
 
     #[test]
     fn integer_directive_truncates_and_wraps_a_float() {
         // Truncate toward zero for the small case.
-        assert_eq!(pack(&floats(&[1.5]), "C*").unwrap(), vec![1]);
-        assert_eq!(pack(&floats(&[-3.75]), "c").unwrap(), vec![253]); // -3 as u8
+        assert_eq!(pack(&floats(&[1.5]), "C*").unwrap().0, vec![1]);
+        assert_eq!(pack(&floats(&[-3.75]), "c").unwrap().0, vec![253]); // -3 as u8
         // A value past i64 wraps modulo 2**64 (coerced through an exact Integer).
         assert_eq!(
-            pack(&floats(&[2.0e19]), "Q").unwrap(),
+            pack(&floats(&[2.0e19]), "Q").unwrap().0,
             1553255926290448384u64.to_le_bytes()
         );
         // 1e300 is a multiple of 2**64, so its low 64 bits are zero.
-        assert_eq!(pack(&floats(&[1.0e300]), "Q").unwrap(), vec![0; 8]);
+        assert_eq!(pack(&floats(&[1.0e300]), "Q").unwrap().0, vec![0; 8]);
         // (NaN/Infinity raising FloatDomainError needs the runtime exception
         // machinery, so that path is exercised by the e2e test, not here.)
     }
 
     #[test]
     fn native_size_modifiers() {
-        assert_eq!(pack(&ints(&[1]), "l!").unwrap().len(), 8);
-        assert_eq!(pack(&ints(&[1]), "l_").unwrap().len(), 8);
-        assert_eq!(pack(&ints(&[1]), "i").unwrap().len(), 4);
-        assert_eq!(pack(&ints(&[1]), "j").unwrap().len(), 8);
-        assert_eq!(pack(&ints(&[1]), "s!").unwrap().len(), 2);
+        assert_eq!(pack(&ints(&[1]), "l!").unwrap().0.len(), 8);
+        assert_eq!(pack(&ints(&[1]), "l_").unwrap().0.len(), 8);
+        assert_eq!(pack(&ints(&[1]), "i").unwrap().0.len(), 4);
+        assert_eq!(pack(&ints(&[1]), "j").unwrap().0.len(), 8);
+        assert_eq!(pack(&ints(&[1]), "s!").unwrap().0.len(), 2);
     }
 
     #[test]
     fn quoted_printable_and_uuencode() {
         assert_eq!(
-            pack(&[str_val("hello world")], "M").unwrap(),
+            pack(&[str_val("hello world")], "M").unwrap().0,
             b"hello world=\n"
         );
-        assert_eq!(pack(&[str_val("a=b c")], "M").unwrap(), b"a=3Db c=\n");
-        let decoded = unpack(b"caf=C3=A9=\n", "M").unwrap();
+        assert_eq!(pack(&[str_val("a=b c")], "M").unwrap().0, b"a=3Db c=\n");
+        let decoded = unpack(b"caf=C3=A9=\n", "M", None).unwrap();
         let RubyValue::Str(s) = &decoded[0] else {
             panic!("expected Str")
         };
         assert_eq!(s.lock().bytes(), &[99, 97, 102, 0xC3, 0xA9]);
         // uuencode round-trips over arbitrary bytes, including a partial line.
         for s in ["", "x", "ab", "abc", "hello world foo bar"] {
-            let packed = pack(&[str_val(s)], "u").unwrap();
-            assert_eq!(strs(&unpack(&packed, "u").unwrap())[0], s);
+            let packed = pack(&[str_val(s)], "u").unwrap().0;
+            assert_eq!(strs(&unpack(&packed, "u", None).unwrap())[0], s);
         }
     }
 }

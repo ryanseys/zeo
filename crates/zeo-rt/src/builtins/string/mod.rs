@@ -879,14 +879,16 @@ ruby_class! {
         let template = unpack_template(fmt)?;
         let bytes = rstr.lock().bytes().to_vec();
         let start = kw_unpack_offset(opts, bytes.len())?;
-        let vals = crate::builtins::pack::unpack(&bytes[start..], &template)?;
+        let assoc = pack_associated(recv);
+        let vals = crate::builtins::pack::unpack(&bytes[start..], &template, assoc.as_deref())?;
         Ok(RubyValue::Array(crate::array_new(vals)))
     }
     def "unpack1" params "fmt, offset: nil"(recv, fmt, **opts) {
         let template = unpack_template(fmt)?;
         let bytes = rstr.lock().bytes().to_vec();
         let start = kw_unpack_offset(opts, bytes.len())?;
-        let vals = crate::builtins::pack::unpack(&bytes[start..], &template)?;
+        let assoc = pack_associated(recv);
+        let vals = crate::builtins::pack::unpack(&bytes[start..], &template, assoc.as_deref())?;
         Ok(vals.into_iter().next().unwrap_or(RubyValue::Nil))
     }
     def "scrub"(recv, arg?, &block) {

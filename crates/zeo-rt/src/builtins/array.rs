@@ -1322,11 +1322,23 @@ ruby_class! {
         let t = crate::builtins::arg_str!(arg);
         let template = t.lock().to_utf8_lossy().into_owned();
         let elems = rary.lock().clone();
-        let bytes = crate::builtins::pack::pack(&elems, &template)?;
-        Ok(RubyValue::Str(crate::string_from_bytes(
+        let (bytes, associated) = crate::builtins::pack::pack(&elems, &template)?;
+        let out = RubyValue::Str(crate::string_from_bytes(
             bytes,
             crate::builtins::pack::result_encoding(&template),
-        )))
+        ));
+        // `p`/`P` wrote pointers, so the result carries the strings they name.
+        // The slot is hidden from `instance_variables`, as CRuby's internal id
+        // is, and `dup` copies it with every other ivar -- which is why a dup
+        // still unpacks.
+        if let Some(list) = associated {
+            crate::value::value_ivars::set(
+                &out,
+                crate::builtins::pack::ASSOCIATED,
+                RubyValue::Array(crate::array_new(list)),
+            );
+        }
+        Ok(out)
     }
     // With a block, each element is MAPPED to its pair first -- an Array
     // yields one value per element, so the block sees the element itself

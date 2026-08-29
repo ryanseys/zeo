@@ -21,6 +21,9 @@ use zeo_macros::ruby_class;
 ruby_class! {
     Pointer = zeo_abi::FFI_POINTER_CLASS < zeo_abi::FFI_ABSTRACT_MEMORY_CLASS;
 
+    // The gem's NULL pointer: address 0, no size.
+    const NULL = RubyValue::Object(Arc::new(RPointer::raw(0, FFI_POINTER_CLASS)));
+
     // `FFI::Pointer.new(address)` or `FFI::Pointer.new(type, address)` (the
     // type governs `[]` element size, which we don't model -- the address is
     // what matters). A Pointer argument copies its address.
@@ -54,24 +57,24 @@ ruby_class! {
     def "get_uint64" | "get_ulong" | "get_ulong_long"(r, offset) { read_int_m(r, off_arg(Some(offset))?, 8, false) }
 
     // -- integer writes (offset 0) --
-    def "write_int8" | "write_char"(r, value) { write_int_m(r, 0, value, 1) }
-    def "write_uint8" | "write_uchar"(r, value) { write_int_m(r, 0, value, 1) }
-    def "write_int16" | "write_short"(r, value) { write_int_m(r, 0, value, 2) }
-    def "write_uint16" | "write_ushort"(r, value) { write_int_m(r, 0, value, 2) }
-    def "write_int32" | "write_int"(r, value) { write_int_m(r, 0, value, 4) }
-    def "write_uint32" | "write_uint"(r, value) { write_int_m(r, 0, value, 4) }
-    def "write_int64" | "write_long" | "write_long_long"(r, value) { write_int_m(r, 0, value, 8) }
-    def "write_uint64" | "write_ulong" | "write_ulong_long"(r, value) { write_int_m(r, 0, value, 8) }
+    def "write_int8" | "write_char"(r, value) { write_int_m(r, 0, value, 1, true) }
+    def "write_uint8" | "write_uchar"(r, value) { write_int_m(r, 0, value, 1, false) }
+    def "write_int16" | "write_short"(r, value) { write_int_m(r, 0, value, 2, true) }
+    def "write_uint16" | "write_ushort"(r, value) { write_int_m(r, 0, value, 2, false) }
+    def "write_int32" | "write_int"(r, value) { write_int_m(r, 0, value, 4, true) }
+    def "write_uint32" | "write_uint"(r, value) { write_int_m(r, 0, value, 4, false) }
+    def "write_int64" | "write_long" | "write_long_long"(r, value) { write_int_m(r, 0, value, 8, true) }
+    def "write_uint64" | "write_ulong" | "write_ulong_long"(r, value) { write_int_m(r, 0, value, 8, false) }
 
     // -- integer writes at an offset --
-    def "put_int8" | "put_char"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 1) }
-    def "put_uint8" | "put_uchar"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 1) }
-    def "put_int16" | "put_short"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 2) }
-    def "put_uint16" | "put_ushort"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 2) }
-    def "put_int32" | "put_int"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 4) }
-    def "put_uint32" | "put_uint"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 4) }
-    def "put_int64" | "put_long" | "put_long_long"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 8) }
-    def "put_uint64" | "put_ulong" | "put_ulong_long"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 8) }
+    def "put_int8" | "put_char"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 1, true) }
+    def "put_uint8" | "put_uchar"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 1, false) }
+    def "put_int16" | "put_short"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 2, true) }
+    def "put_uint16" | "put_ushort"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 2, false) }
+    def "put_int32" | "put_int"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 4, true) }
+    def "put_uint32" | "put_uint"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 4, false) }
+    def "put_int64" | "put_long" | "put_long_long"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 8, true) }
+    def "put_uint64" | "put_ulong" | "put_ulong_long"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 8, false) }
 
     // -- floats --
     def "read_float"(r) { read_float_m(r, 0, 4) }
@@ -212,14 +215,14 @@ ruby_class! {
     def "read_array_of_uint32" | "read_array_of_uint"(r, count) { read_int_array(r, 0, count, 4, false) }
     def "read_array_of_int64" | "read_array_of_long" | "read_array_of_long_long"(r, count) { read_int_array(r, 0, count, 8, true) }
     def "read_array_of_uint64" | "read_array_of_ulong" | "read_array_of_ulong_long"(r, count) { read_int_array(r, 0, count, 8, false) }
-    def "write_array_of_int8" | "write_array_of_char"(r, ary) { write_int_array(r, 0, ary, 1) }
-    def "write_array_of_uint8" | "write_array_of_uchar"(r, ary) { write_int_array(r, 0, ary, 1) }
-    def "write_array_of_int16" | "write_array_of_short"(r, ary) { write_int_array(r, 0, ary, 2) }
-    def "write_array_of_uint16" | "write_array_of_ushort"(r, ary) { write_int_array(r, 0, ary, 2) }
-    def "write_array_of_int32" | "write_array_of_int"(r, ary) { write_int_array(r, 0, ary, 4) }
-    def "write_array_of_uint32" | "write_array_of_uint"(r, ary) { write_int_array(r, 0, ary, 4) }
-    def "write_array_of_int64" | "write_array_of_long" | "write_array_of_long_long"(r, ary) { write_int_array(r, 0, ary, 8) }
-    def "write_array_of_uint64" | "write_array_of_ulong" | "write_array_of_ulong_long"(r, ary) { write_int_array(r, 0, ary, 8) }
+    def "write_array_of_int8" | "write_array_of_char"(r, ary) { write_int_array(r, 0, ary, 1, true) }
+    def "write_array_of_uint8" | "write_array_of_uchar"(r, ary) { write_int_array(r, 0, ary, 1, false) }
+    def "write_array_of_int16" | "write_array_of_short"(r, ary) { write_int_array(r, 0, ary, 2, true) }
+    def "write_array_of_uint16" | "write_array_of_ushort"(r, ary) { write_int_array(r, 0, ary, 2, false) }
+    def "write_array_of_int32" | "write_array_of_int"(r, ary) { write_int_array(r, 0, ary, 4, true) }
+    def "write_array_of_uint32" | "write_array_of_uint"(r, ary) { write_int_array(r, 0, ary, 4, false) }
+    def "write_array_of_int64" | "write_array_of_long" | "write_array_of_long_long"(r, ary) { write_int_array(r, 0, ary, 8, true) }
+    def "write_array_of_uint64" | "write_array_of_ulong" | "write_array_of_ulong_long"(r, ary) { write_int_array(r, 0, ary, 8, false) }
     def "read_array_of_double"(r, count) { read_float_array(r, 0, count, 8) }
     def "read_array_of_float"(r, count) { read_float_array(r, 0, count, 4) }
     def "write_array_of_double"(r, ary) { write_float_array(r, 0, ary, 8) }
@@ -236,14 +239,14 @@ ruby_class! {
     def "get_array_of_uint32" | "get_array_of_uint"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 4, false) }
     def "get_array_of_int64" | "get_array_of_long" | "get_array_of_long_long"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 8, true) }
     def "get_array_of_uint64" | "get_array_of_ulong" | "get_array_of_ulong_long"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 8, false) }
-    def "put_array_of_int8" | "put_array_of_char"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 1) }
-    def "put_array_of_uint8" | "put_array_of_uchar"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 1) }
-    def "put_array_of_int16" | "put_array_of_short"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 2) }
-    def "put_array_of_uint16" | "put_array_of_ushort"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 2) }
-    def "put_array_of_int32" | "put_array_of_int"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 4) }
-    def "put_array_of_uint32" | "put_array_of_uint"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 4) }
-    def "put_array_of_int64" | "put_array_of_long" | "put_array_of_long_long"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 8) }
-    def "put_array_of_uint64" | "put_array_of_ulong" | "put_array_of_ulong_long"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 8) }
+    def "put_array_of_int8" | "put_array_of_char"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 1, true) }
+    def "put_array_of_uint8" | "put_array_of_uchar"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 1, false) }
+    def "put_array_of_int16" | "put_array_of_short"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 2, true) }
+    def "put_array_of_uint16" | "put_array_of_ushort"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 2, false) }
+    def "put_array_of_int32" | "put_array_of_int"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 4, true) }
+    def "put_array_of_uint32" | "put_array_of_uint"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 4, false) }
+    def "put_array_of_int64" | "put_array_of_long" | "put_array_of_long_long"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 8, true) }
+    def "put_array_of_uint64" | "put_array_of_ulong" | "put_array_of_ulong_long"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 8, false) }
     def "get_array_of_float64" | "get_array_of_double"(r, off, count) { read_float_array(r, off_arg(Some(off))?, count, 8) }
     def "get_array_of_float32" | "get_array_of_float"(r, off, count) { read_float_array(r, off_arg(Some(off))?, count, 4) }
     def "put_array_of_float64" | "put_array_of_double"(r, off, ary) { write_float_array(r, off_arg(Some(off))?, ary, 8) }
@@ -348,6 +351,20 @@ ruby_class! {
     }
     def "size" | "total"(recv) {
         Ok(RubyValue::Int(ptr_of(recv).size.unwrap_or(0) as i64))
+    }
+    // `#<FFI::MemoryPointer address=0x0000000104e08000 size=16>`. The gem
+    // names the size only when it knows one, so a pointer minted from a raw
+    // address prints the address alone. `to_s` is the same string.
+    def "inspect" | "to_s"(recv) {
+        let p = ptr_of(recv);
+        let name = crate::dispatch::class_name(
+            crate::dispatch::RubyObject::class_id(p),
+        ).unwrap_or_default();
+        let size = p.size.map(|n| format!(" size={n}")).unwrap_or_default();
+        Ok(RubyValue::Str(crate::string_new(format!(
+            "#<{name} address=0x{:016x}{size}>",
+            p.address()
+        ))))
     }
     def "+"(recv, other) {
         let delta = crate::ffi::to_i64(other)? as usize;

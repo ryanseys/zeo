@@ -808,6 +808,16 @@ pub(super) fn unpack_template(v: &RubyValue) -> Result<String, Signal> {
     Ok(convert::to_rstr(v)?.lock().to_utf8_lossy().into_owned())
 }
 
+/// The strings a `p`/`P` pack hung off this one, for `unpack` to resolve a
+/// pointer back to. `None` when the string never came out of such a pack --
+/// which is what makes CRuby's "no associated pointer" reachable.
+pub(super) fn pack_associated(v: &RubyValue) -> Option<Vec<RubyValue>> {
+    match crate::value::value_ivars::get(v, crate::builtins::pack::ASSOCIATED) {
+        Some(RubyValue::Array(a)) => Some(a.lock().to_vec()),
+        _ => None,
+    }
+}
+
 /// The byte offset of the `char_idx`-th character (the string's byte length
 /// when past the end) -- bridges this runtime's char-indexed string API to
 /// Rust's byte-indexed slicing.
