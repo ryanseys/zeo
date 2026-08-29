@@ -692,10 +692,10 @@ pub(crate) fn eql_key_set(items: &[RubyValue]) -> crate::FSet<HashKey> {
     items.iter().map(hash_key).collect()
 }
 
-/// The container pointers on the current projection path. Empty (and so
-/// allocation-free) for every non-recursive value, which is all of them
-/// outside a deliberately cyclic structure.
-type Seen = Vec<usize>;
+/// The container pointers on the current projection path -- the shared
+/// traversal stack. Empty (and so allocation-free) for every non-recursive
+/// value, which is all of them outside a deliberately cyclic structure.
+type Seen = super::recursion::Visited;
 
 /// Projects a value to its `IndexMap` key. `by_identity` (a hash's
 /// `compare_by_identity` flag) makes the heap value-like kinds -- `Str`,
@@ -705,7 +705,7 @@ type Seen = Vec<usize>;
 /// value in Ruby, so they stay structural; the reference kinds (`Hash`/`Proc`/
 /// `Regexp`/...) already key by identity in the structural path below.
 pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
-    hash_key_rec(v, by_identity, &mut Seen::new())
+    hash_key_rec(v, by_identity, &mut Seen::default())
 }
 
 fn hash_key_rec(v: &RubyValue, by_identity: bool, seen: &mut Seen) -> HashKey {
@@ -749,17 +749,16 @@ fn hash_key_rec(v: &RubyValue, by_identity: bool, seen: &mut Seen) -> HashKey {
         }
         RubyValue::Class(cid) => HashKey::Class(cid.0),
         RubyValue::Array(a) => {
-            let ptr = Arc::as_ptr(a) as *const () as usize;
-            if seen.contains(&ptr) {
-                return HashKey::Recursive;
+            let parts = seen.with(v, |seen| {
+                // A SNAPSHOT, as for Hash below: projecting an element can
+                // dispatch a user `hash` that reads this very array.
+                let items = array_snapshot(a);
+                items.iter().map(|e| hash_key_rec(e, false, seen)).collect()
+            });
+            match parts {
+                Some(parts) => HashKey::Array(parts),
+                None => HashKey::Recursive,
             }
-            seen.push(ptr);
-            // A SNAPSHOT, as for Hash below: projecting an element can
-            // dispatch a user `hash` that reads this very array.
-            let items = array_snapshot(a);
-            let parts = items.iter().map(|e| hash_key_rec(e, false, seen)).collect();
-            seen.pop();
-            HashKey::Array(parts)
         }
         RubyValue::Range(__rg) => HashKey::Range(
             __rg.start
@@ -771,21 +770,21 @@ fn hash_key_rec(v: &RubyValue, by_identity: bool, seen: &mut Seen) -> HashKey {
             __rg.exclusive,
         ),
         RubyValue::Hash(h) => {
-            let ptr = Arc::as_ptr(h) as *const () as usize;
-            if seen.contains(&ptr) {
-                return HashKey::Recursive;
+            let pairs = seen.with(v, |seen| {
+                // A SNAPSHOT, not the live map: projecting a value can
+                // dispatch a user `hash`, which may read the very hash being
+                // projected, and the payload lock is not reentrant.
+                let mut pairs: Vec<(HashKey, HashKey)> = hash_pairs_snapshot(h)
+                    .iter()
+                    .map(|(k, v)| (hash_key_rec(k, false, seen), hash_key_rec(v, false, seen)))
+                    .collect();
+                pairs.sort();
+                pairs
+            });
+            match pairs {
+                Some(pairs) => HashKey::Hash(pairs),
+                None => HashKey::Recursive,
             }
-            seen.push(ptr);
-            // A SNAPSHOT, not the live map: projecting a value can dispatch a
-            // user `hash`, which may read the very hash being projected, and
-            // the payload lock is not reentrant.
-            let mut pairs: Vec<(HashKey, HashKey)> = hash_pairs_snapshot(h)
-                .iter()
-                .map(|(k, v)| (hash_key_rec(k, false, seen), hash_key_rec(v, false, seen)))
-                .collect();
-            seen.pop();
-            pairs.sort();
-            HashKey::Hash(pairs)
         }
         // `Arc<dyn Trait>`'s pointer is a FAT pointer (data + vtable) -- cast
         // through `*const ()` first to get a plain, `usize`-castable thin

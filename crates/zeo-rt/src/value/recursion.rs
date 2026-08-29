@@ -41,9 +41,16 @@ impl Visited {
     /// and the caller raises or substitutes CRuby's marker. A value with no
     /// container identity can never recurse, so it simply runs.
     pub(crate) fn with<T>(&mut self, v: &RubyValue, f: impl FnOnce(&mut Self) -> T) -> Option<T> {
-        let Some(id) = container_identity(v) else {
-            return Some(f(self));
-        };
+        match container_identity(v) {
+            Some(id) => self.with_id(id, f),
+            None => Some(f(self)),
+        }
+    }
+
+    /// [`Visited::with`] over an identity the caller already has. The object
+    /// renderer needs the raw address anyway -- it PRINTS it -- so taking it
+    /// here saves rebuilding a `RubyValue` just to hand the identity back.
+    pub(crate) fn with_id<T>(&mut self, id: usize, f: impl FnOnce(&mut Self) -> T) -> Option<T> {
         if self.0.contains(&id) {
             return None;
         }

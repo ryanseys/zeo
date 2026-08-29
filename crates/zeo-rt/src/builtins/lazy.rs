@@ -777,7 +777,7 @@ pub(crate) fn lazy_to_s(recv: &RubyValue) -> Result<RubyValue, Signal> {
         unreachable!("is_lazy gated this branch");
     };
     Ok(RubyValue::Str(crate::string_new(
-        crate::value::default_object_repr(o, false, &mut Vec::new())?,
+        crate::value::default_object_repr(o, false, &mut Default::default())?,
     )))
 }
 

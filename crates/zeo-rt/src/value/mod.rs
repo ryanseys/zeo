@@ -275,7 +275,7 @@ pub(crate) fn default_inspect(v: &RubyValue) -> Result<String, crate::Signal> {
     let RubyValue::Object(o) = v else {
         return v.try_inspect_string();
     };
-    let seen = &mut Vec::new();
+    let seen = &mut recursion::Visited::default();
     match o.builtin_payload() {
         Some(p) => p.inspect_with(seen),
         None if crate::builtins::rstruct::meta_of(o.class_id()).is_some() => {
@@ -290,7 +290,7 @@ pub(crate) fn default_to_s(v: &RubyValue) -> Result<String, crate::Signal> {
     let RubyValue::Object(o) = v else {
         return v.try_display_string();
     };
-    let seen = &mut Vec::new();
+    let seen = &mut recursion::Visited::default();
     match o.builtin_payload() {
         Some(p) => p.display_with(seen),
         None => default_object_repr(o, false, seen),
@@ -310,7 +310,7 @@ pub(crate) fn default_to_s(v: &RubyValue) -> Result<String, crate::Signal> {
 pub(crate) fn default_object_repr(
     o: &crate::RObj,
     with_ivars: bool,
-    seen: &mut Vec<usize>,
+    seen: &mut recursion::Visited,
 ) -> Result<String, crate::Signal> {
     // The top-level `self` renders as `main`, never as an address -- see
     // `dispatch::is_main_object`. Both spellings, since ruby's singletons
@@ -323,23 +323,22 @@ pub(crate) fn default_object_repr(
     if !with_ivars {
         return Ok(format!("#<{name}:0x{addr:016x}>"));
     }
-    if seen.contains(&addr) {
-        return Ok(format!("#<{name}:0x{addr:016x} ...>"));
-    }
-    let mut pairs = o.ivar_pairs();
-    if let Some(keep) = ivars_to_inspect_filter(o)? {
-        pairs.retain(|(n, _)| keep.contains(n.as_str()));
-    }
-    if pairs.is_empty() {
-        return Ok(format!("#<{name}:0x{addr:016x}>"));
-    }
-    seen.push(addr);
-    let body = pairs
-        .iter()
-        .map(|(n, v)| Ok(format!("{n}={}", v.inspect_with(seen)?)))
-        .collect::<Result<Vec<_>, crate::Signal>>();
-    seen.pop();
-    Ok(format!("#<{name}:0x{addr:016x} {}>", body?.join(", ")))
+    let rendered = seen.with_id(addr, |seen| {
+        let mut pairs = o.ivar_pairs();
+        if let Some(keep) = ivars_to_inspect_filter(o)? {
+            pairs.retain(|(n, _)| keep.contains(n.as_str()));
+        }
+        if pairs.is_empty() {
+            return Ok(format!("#<{name}:0x{addr:016x}>"));
+        }
+        let body = pairs
+            .iter()
+            .map(|(n, v)| Ok(format!("{n}={}", v.inspect_with(seen)?)))
+            .collect::<Result<Vec<_>, crate::Signal>>()?;
+        Ok(format!("#<{name}:0x{addr:016x} {}>", body.join(", ")))
+    });
+    // `None` = its own ancestor, which is CRuby's `...` marker.
+    rendered.unwrap_or_else(|| Ok(format!("#<{name}:0x{addr:016x} ...>")))
 }
 
 /// The `#instance_variables_to_inspect` hook: `None` = show every ivar
@@ -403,7 +402,7 @@ impl RubyValue {
     /// nested element's `inspect`) that raises propagates as its `Signal`,
     /// exactly like CRuby's own `rb_obj_as_string` call chain.
     pub fn try_display_string(&self) -> Result<String, crate::Signal> {
-        self.display_with(&mut Vec::new())
+        self.display_with(&mut recursion::Visited::default())
     }
 
     /// The builtin-reopen probe `display_with`/`inspect_with` share: a
@@ -417,7 +416,7 @@ impl RubyValue {
     fn reopen_render(
         &self,
         name: Symbol,
-        seen: &mut Vec<usize>,
+        seen: &mut recursion::Visited,
     ) -> Option<Result<String, crate::Signal>> {
         if matches!(self, RubyValue::Object(_))
             || !crate::dispatch::has_display_reopen(self.class_id())
@@ -440,24 +439,23 @@ impl RubyValue {
     fn render_array_inspect(
         &self,
         a: &RArray,
-        seen: &mut Vec<usize>,
+        seen: &mut recursion::Visited,
     ) -> Result<String, crate::Signal> {
-        let ptr = container_identity(self).expect("Array is a container");
-        if seen.contains(&ptr) {
-            return Ok("[...]".to_string());
+        let body = seen.with(self, |seen| {
+            // Snapshot first: `seen` guards a container that contains
+            // ITSELF, but not an element whose `inspect` reaches back into
+            // this array. Holding the payload guard across that dispatch
+            // deadlocks a non-reentrant Mutex.
+            let items = crate::collections::array_snapshot(a);
+            items
+                .iter()
+                .map(|e| e.inspect_with(seen))
+                .collect::<Result<Vec<_>, _>>()
+        });
+        match body {
+            Some(body) => Ok(format!("[{}]", body?.join(", "))),
+            None => Ok("[...]".to_string()),
         }
-        // Snapshot first: `seen` guards a container that contains ITSELF,
-        // but not an element whose `inspect` reaches back into this array.
-        // Holding the payload guard across that dispatch deadlocks a
-        // non-reentrant Mutex.
-        let items = crate::collections::array_snapshot(a);
-        seen.push(ptr);
-        let body = items
-            .iter()
-            .map(|e| e.inspect_with(seen))
-            .collect::<Result<Vec<_>, _>>();
-        seen.pop();
-        Ok(format!("[{}]", body?.join(", ")))
     }
 
     /// [`Self::render_array_inspect`]'s Hash twin -- ruby 3.4+ format:
@@ -466,30 +464,29 @@ impl RubyValue {
     fn render_hash_inspect(
         &self,
         h: &RHash,
-        seen: &mut Vec<usize>,
+        seen: &mut recursion::Visited,
     ) -> Result<String, crate::Signal> {
-        let ptr = container_identity(self).expect("Hash is a container");
-        if seen.contains(&ptr) {
-            return Ok("{...}".to_string());
-        }
-        // Snapshot for the same reason as the Array twin.
-        let pairs = crate::collections::hash_pairs_snapshot(h);
-        seen.push(ptr);
-        let body = pairs
-            .iter()
-            .map(|(k, v)| {
-                Ok(match k {
-                    RubyValue::Symbol(s) => format!(
-                        "{}: {}",
-                        crate::builtins::symbol::hash_key(&s.name()),
-                        v.inspect_with(seen)?
-                    ),
-                    _ => format!("{} => {}", k.inspect_with(seen)?, v.inspect_with(seen)?),
+        let body = seen.with(self, |seen| {
+            // Snapshot for the same reason as the Array twin.
+            let pairs = crate::collections::hash_pairs_snapshot(h);
+            pairs
+                .iter()
+                .map(|(k, v)| {
+                    Ok(match k {
+                        RubyValue::Symbol(s) => format!(
+                            "{}: {}",
+                            crate::builtins::symbol::hash_key(&s.name()),
+                            v.inspect_with(seen)?
+                        ),
+                        _ => format!("{} => {}", k.inspect_with(seen)?, v.inspect_with(seen)?),
+                    })
                 })
-            })
-            .collect::<Result<Vec<_>, crate::Signal>>();
-        seen.pop();
-        Ok(format!("{{{}}}", body?.join(", ")))
+                .collect::<Result<Vec<_>, crate::Signal>>()
+        });
+        match body {
+            Some(body) => Ok(format!("{{{}}}", body?.join(", "))),
+            None => Ok("{...}".to_string()),
+        }
     }
 
     /// `to_display_string`'s recursive worker: `seen` is the traversal
@@ -499,7 +496,7 @@ impl RubyValue {
     /// the guard). A self-referential `Array`/`Hash` prints CRuby's own
     /// recursion markers (`[...]`/`{...}`) instead of deadlocking on its
     /// own non-reentrant payload `Mutex` (the pre-15.2 behavior).
-    fn display_with(&self, seen: &mut Vec<usize>) -> Result<String, crate::Signal> {
+    fn display_with(&self, seen: &mut recursion::Visited) -> Result<String, crate::Signal> {
         // A builtin-reopen `to_s` override wins -- real Ruby's
         // behavior for `puts`/interpolation, oracle-verified (`class
         // Integer; def to_s; "int"; end` makes `puts 5`/`"v=#{5}"` print
@@ -627,7 +624,7 @@ impl RubyValue {
     /// `inspect_string`'s fallible form -- a raising user `inspect`
     /// propagates as its `Signal` (CRuby's `rb_inspect` behavior).
     pub fn try_inspect_string(&self) -> Result<String, crate::Signal> {
-        self.inspect_with(&mut Vec::new())
+        self.inspect_with(&mut recursion::Visited::default())
     }
 
     /// `inspect_string`'s recursive worker -- same visited-STACK discipline
@@ -635,7 +632,7 @@ impl RubyValue {
     /// is chosen by the RECURRING container's own kind, so a cycle that
     /// enters through a Hash back into an outer Array prints `[...]` at the
     /// Array's re-entry point (`[1, {x: [...]}]`, oracle-verified).
-    fn inspect_with(&self, seen: &mut Vec<usize>) -> Result<String, crate::Signal> {
+    fn inspect_with(&self, seen: &mut recursion::Visited) -> Result<String, crate::Signal> {
         // A builtin-reopen `inspect` override wins -- and it
         // propagates into CONTAINER rendering too (`[5].inspect` ->
         // `[I<5>]` with an `Integer#inspect` override -- real Ruby's
@@ -1052,7 +1049,7 @@ impl RubyValue {
     /// inside a container is [`RubyValue::rb_equal_guarded`], which takes
     /// that step -- see its docs for why the two must stay apart.
     pub fn rb_eq(&self, other: &RubyValue) -> bool {
-        self.rb_eq_guarded(other, &mut Vec::new())
+        self.rb_eq_guarded(other, &mut recursion::VisitedPair::default())
     }
 
     /// CRuby's `rb_equal` -- the rule an ELEMENT inside a container compares
@@ -1066,7 +1063,7 @@ impl RubyValue {
     /// The dispatching sibling in `basic_object::rb_equal` is the one a
     /// SEARCH row uses; this one is the infallible worker the structural
     /// walk below recurses through.
-    fn rb_equal_guarded(&self, other: &RubyValue, seen: &mut Vec<(usize, usize)>) -> bool {
+    fn rb_equal_guarded(&self, other: &RubyValue, seen: &mut recursion::VisitedPair) -> bool {
         crate::builtins::basic_object::value_identity(self, other)
             || self.rb_eq_guarded(other, seen)
     }
@@ -1078,7 +1075,7 @@ impl RubyValue {
     /// in real Ruby). Collection payloads are cloned before recursing
     /// (element clones are cheap handle bumps) so no lock is held across a
     /// nested comparison.
-    fn rb_eq_guarded(&self, other: &RubyValue, seen: &mut Vec<(usize, usize)>) -> bool {
+    fn rb_eq_guarded(&self, other: &RubyValue, seen: &mut recursion::VisitedPair) -> bool {
         // Real Ruby: `1 == 1.0`, `Rational(2,1) == 2`, `Complex(2,0) == 2`
         // -- every numeric pair compares through the ONE tower matrix,
         // including the Bignum/Rational/Complex lanes. The
@@ -1145,7 +1142,7 @@ impl RubyValue {
                 let bounds_eq =
                     |x: &Option<RubyValue>,
                      y: &Option<RubyValue>,
-                     seen: &mut Vec<(usize, usize)>| match (x, y) {
+                     seen: &mut recursion::VisitedPair| match (x, y) {
                         (None, None) => true,
                         (Some(x), Some(y)) => x.rb_equal_guarded(y, seen),
                         _ => false,
@@ -1158,32 +1155,27 @@ impl RubyValue {
                 if std::sync::Arc::ptr_eq(a, b) {
                     return true;
                 }
-                let pair = (
-                    container_identity(self).expect("Array is a container"),
-                    container_identity(other).expect("Array is a container"),
-                );
-                if seen.contains(&pair) {
-                    return true;
-                }
-                seen.push(pair);
-                // Length first, then per-element lock ROUND-TRIPS (the
-                // `array_include` rule): an element's `==` can run user
-                // code, which must not hold either lock -- and the old
-                // whole-Vec snapshots allocated two Vecs per comparison.
-                let n = a.lock().len();
-                let eq = n == b.lock().len()
-                    && (0..n).all(|i| {
-                        let x = a.lock().get(i).cloned();
-                        let y = b.lock().get(i).cloned();
-                        match (x, y) {
-                            (Some(x), Some(y)) => x.rb_equal_guarded(&y, seen),
-                            // Shrunk mid-walk by another thread: the pair
-                            // no longer has this index on both sides.
-                            _ => false,
-                        }
-                    });
-                seen.pop();
-                eq
+                // `None` = this exact comparison is already in progress, and
+                // CRuby's `rb_exec_recursive_paired` calls such a pair EQUAL.
+                seen.with(self, other, |seen| {
+                    // Length first, then per-element lock ROUND-TRIPS (the
+                    // `array_include` rule): an element's `==` can run user
+                    // code, which must not hold either lock -- and the old
+                    // whole-Vec snapshots allocated two Vecs per comparison.
+                    let n = a.lock().len();
+                    n == b.lock().len()
+                        && (0..n).all(|i| {
+                            let x = a.lock().get(i).cloned();
+                            let y = b.lock().get(i).cloned();
+                            match (x, y) {
+                                (Some(x), Some(y)) => x.rb_equal_guarded(&y, seen),
+                                // Shrunk mid-walk by another thread: the pair
+                                // no longer has this index on both sides.
+                                _ => false,
+                            }
+                        })
+                })
+                .unwrap_or(true)
             }
             // `Hash#==`: same size, same KEYS (by the key table's own
             // `eql?`-style projection -- see `collections::HashKey`), each
@@ -1192,22 +1184,15 @@ impl RubyValue {
                 if std::sync::Arc::ptr_eq(a, b) {
                     return true;
                 }
-                let pair = (
-                    container_identity(self).expect("Hash is a container"),
-                    container_identity(other).expect("Hash is a container"),
-                );
-                if seen.contains(&pair) {
-                    return true;
-                }
-                seen.push(pair);
-                let pairs: Vec<(RubyValue, RubyValue)> = a.lock().values().cloned().collect();
-                let eq = crate::hash_len(a) == crate::hash_len(b)
-                    && pairs.iter().all(|(k, va)| {
-                        crate::hash_has_key(b, k)
-                            && va.rb_equal_guarded(&crate::hash_get(b, k), seen)
-                    });
-                seen.pop();
-                eq
+                seen.with(self, other, |seen| {
+                    let pairs: Vec<(RubyValue, RubyValue)> = a.lock().values().cloned().collect();
+                    crate::hash_len(a) == crate::hash_len(b)
+                        && pairs.iter().all(|(k, va)| {
+                            crate::hash_has_key(b, k)
+                                && va.rb_equal_guarded(&crate::hash_get(b, k), seen)
+                        })
+                })
+                .unwrap_or(true)
             }
             // An `Object` receiver, real Ruby's resolution order: its
             // user-defined `==` (dispatched through the registry -- a
