@@ -84,7 +84,10 @@ fn close_quietly(io: &RubyValue) {
 fn spawn_under_pty(args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
-    crate::builtins::check_arity(args.len(), 0, Some(3))?;
+    // UNBOUNDED, like `Kernel#spawn`: an optional env Hash, any number of
+    // command words, an optional options Hash. Capping it at three refused
+    // `PTY.spawn(env, prog, "-e", src)`.
+    crate::builtins::check_arity(args.len(), 0, None)?;
 
     let (master, slave, name) = open_pair()?;
     // `PTY.spawn` with no command runs a login shell, `$SHELL` or `/bin/sh`.
