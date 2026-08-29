@@ -1,2 +1,2 @@
-spinel/regexp_unsupported_escapes.rb:32: warning: invalid Unicode Property \p: /\p/
-spinel/regexp_unsupported_escapes.rb:33: warning: invalid Unicode Property \p: /\pL/
+gaps/regexp_unsupported_escapes.rb:11: warning: invalid Unicode Property \p: /\p/
+gaps/regexp_unsupported_escapes.rb:12: warning: invalid Unicode Property \p: /\pL/

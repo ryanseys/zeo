@@ -417,12 +417,23 @@ fn needs_onig(source: &str) -> bool {
     while i < bytes.len() {
         let c = bytes[i];
         if c == b'\\' {
+            // `\b`/`\B` read the WORD definition of the pattern's encoding, so
+            // in UTF-8 they see a boundary either side of a Japanese word. The
+            // Rust engines have no such rule and the ASCII-scoped stand-in the
+            // translation used got it backwards.
+            if matches!(bytes.get(i + 1), Some(b'b' | b'B')) && !in_class {
+                return true;
+            }
             i += 2; // an escaped char is never an anchor / group opener
             continue;
         }
         if in_class {
             match c {
                 b']' if !class_start => in_class = false,
+                // A POSIX bracket class is encoding-aware in ways the
+                // property-set expansion is not: `/[[:lower:]]/i` does NOT
+                // case-fold in ruby, and `\p{Lowercase}` under `/i` does.
+                b'[' if bytes.get(i + 1) == Some(&b':') => return true,
                 _ => class_start = false,
             }
             i += 1;
