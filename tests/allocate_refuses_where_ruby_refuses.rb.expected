@@ -1,0 +1,16 @@
+BigDecimal	TypeError: allocator undefined for BigDecimal
+Symbol	TypeError: allocator undefined for Symbol
+Integer	TypeError: allocator undefined for Integer
+Float	TypeError: allocator undefined for Float
+Struct	TypeError: allocator undefined for Struct
+Data	TypeError: allocator undefined for Data
+Encoding	TypeError: allocator undefined for Encoding
+Proc	TypeError: allocator undefined for Proc
+Binding	TypeError: allocator undefined for Binding
+Thread	TypeError: allocator undefined for Thread
+Plain	Plain
+Object	Object
+String	""
+Array	[]
+Hash	{}
+Sub	Sub

@@ -602,6 +602,24 @@ impl Hir {
         self.activated_features.insert(feature.to_string());
     }
 
+    /// The program writes a `require` whose target is not a literal, so which
+    /// feature it names is only knowable when it RUNS.
+    ///
+    /// Every gated builtin is registered for such a program -- concealed, as
+    /// `Compiler::constant_is_positional` already arranges for an activated
+    /// one, so the constant still does not resolve until a require reveals
+    /// it. Without this the classes are not registered at all, and
+    /// `f = "stringio"; require f` loaded the feature and left `StringIO` a
+    /// `NameError`.
+    ///
+    /// It costs registration rows in a program that has a computed require,
+    /// and nothing at all in one that does not.
+    pub fn activate_every_gated_feature(&mut self) {
+        for feature in zeo_abi::ext_feature_names() {
+            self.activated_features.insert(feature.to_string());
+        }
+    }
+
     /// Every node in the arena, for whole-program SYNTACTIC scans -- e.g.
     /// `analyze`'s "is this name ever assigned as a constant anywhere"
     /// check, which needs no tree structure, just the full node set.

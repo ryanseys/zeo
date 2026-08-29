@@ -1,0 +1,14 @@
+before
+  StringIO	absent
+  StringScanner	absent
+  BigDecimal	absent
+  Etc	absent
+after
+  StringIO	StringIO
+  StringScanner	StringScanner
+  BigDecimal	BigDecimal
+  Etc	Etc
+hello
+ab
+0.15e1
+true

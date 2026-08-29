@@ -1483,6 +1483,18 @@ fn lower_require_call(
                 // callable units, and let the runtime require resolve
                 // the string the program actually builds.
                 hir.demand_feature_units();
+                // ...and it can name a BUILTIN just as easily -- `%w[date
+                // set].each { |f| require f }` is the same idiom over
+                // stdlib names, and RubyGems, Bundler and Rails all write
+                // it. A gated builtin nothing requires literally registers
+                // no class at all, so the run-time require loaded the
+                // feature and left the constant a `NameError`. Registering
+                // them all here leaves each CONCEALED, exactly as an
+                // activated one already is, so the constant still starts
+                // absent and the require reveals it.
+                if name == "require" {
+                    hir.activate_every_gated_feature();
+                }
             }
         }
         // `load`, or the computed `require` above: whole-program AOT

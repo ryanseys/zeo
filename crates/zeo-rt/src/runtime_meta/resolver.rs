@@ -485,16 +485,29 @@ pub fn overlay_constructor(id: ClassId) -> Option<ConstructorFn> {
 /// `Class#allocate` -- a name-keyed `DynObject` with no `initialize` run.
 /// `None` if `id` is not a known runtime class.
 pub fn runtime_allocate(id: ClassId) -> Option<RubyValue> {
-    let known = maps().classes.read().unwrap().contains_key(&id.0);
-    known.then(|| {
-        // Mirror of `runtime_class_new`'s constructor pick: a runtime
-        // subclass of a compiled class allocates the ancestor's struct under
-        // its own id.
-        match crate::dispatch::ancestor_allocator_of(id) {
-            Some(alloc) => RubyValue::Object(alloc(id)),
-            None => RubyValue::Object(super::dyn_object::dyn_alloc(id)),
-        }
-    })
+    if !maps().classes.read().unwrap().contains_key(&id.0) {
+        return None;
+    }
+    // Mirror of `runtime_class_new`'s constructor pick: a runtime
+    // subclass of a compiled class allocates the ancestor's struct under
+    // its own id.
+    if let Some(alloc) = crate::dispatch::ancestor_allocator_of(id) {
+        return Some(RubyValue::Object(alloc(id)));
+    }
+    // A NATIVE class with no allocator gets nothing. Its rows downcast to
+    // their own payload, so a name-keyed `DynObject` is a landmine: it
+    // allocates fine and the next method call panics on the downcast, which
+    // takes the process rather than raising. `BigDecimal.allocate` did
+    // exactly that, and `Marshal.load` of a BigDecimal walked into it.
+    //
+    // `None` here is what `Class#allocate` reports as ruby's `TypeError:
+    // allocator undefined for X` -- which is also ruby's own answer for a
+    // class whose allocator is undefined. A native class that SHOULD be
+    // allocatable says so with `allocate` in its `ruby_class!` header.
+    if crate::builtins::registered_table(id).is_some() {
+        return None;
+    }
+    Some(RubyValue::Object(super::dyn_object::dyn_alloc(id)))
 }
 
 /// Coerce a `define_method`/`define_singleton_method` NAME argument (a Symbol
@@ -549,5 +562,50 @@ pub(super) fn immediate_kind(v: &RubyValue) -> &'static str {
         RubyValue::Float(_) => "Float",
         RubyValue::Symbol(_) => "Symbol",
         _ => "this value",
+    }
+}
+
+#[cfg(test)]
+mod allocate_tests {
+    use crate::ClassId;
+
+    /// A NATIVE class with no allocator of its own gets NOTHING from
+    /// `runtime_allocate`, and `Class#allocate` turns that `None` into ruby's
+    /// `TypeError: allocator undefined for X`.
+    ///
+    /// The regression this guards is not a wrong answer but an ABORT: the
+    /// generic blank is a name-keyed `DynObject`, a native class's rows
+    /// downcast to their own payload, and the downcast panics. `BigDecimal`
+    /// was the case, reached through `Marshal.load`.
+    #[test]
+    fn a_native_class_with_no_allocator_is_refused() {
+        let mut refused = 0;
+        for b in zeo_abi::BUILTINS.iter() {
+            let id = ClassId(b.id.0);
+            if crate::builtins::registered_table(id).is_none() {
+                continue;
+            }
+            if crate::dispatch::ancestor_allocator_of(id).is_some() {
+                continue;
+            }
+            assert!(
+                super::runtime_allocate(id).is_none(),
+                "{} would hand out a generic blank, which its own method \
+                 table cannot downcast",
+                b.name
+            );
+            refused += 1;
+        }
+        assert!(
+            refused > 0,
+            "no native class was examined, so this test proves nothing"
+        );
+    }
+
+    /// A class the runtime map does not know is not this entry's business at
+    /// all -- the caller's other arms answer.
+    #[test]
+    fn an_unknown_class_is_declined() {
+        assert!(super::runtime_allocate(ClassId(u32::MAX)).is_none());
     }
 }

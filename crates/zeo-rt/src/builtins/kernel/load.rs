@@ -20,6 +20,16 @@ pub(crate) fn dynamic_require(arg1: &RubyValue) -> Result<RubyValue, crate::Sign
     if let Some(result) = crate::features::load_feature(&path) {
         return result.map(RubyValue::Bool);
     }
+    // A library the RUNTIME already carries. `require "date"` written as a
+    // literal folds at compile time to nothing but a `FeatureLoaded` marker,
+    // because the native half is linked in and registered before line 1 --
+    // so the run-time answer is that same marker, and no file loads here
+    // either. Without this, `f = "date"; require f` raised `LoadError` for
+    // every library zeo bundles, which is the `%w[...].each { |g| require g }`
+    // idiom RubyGems, Bundler and Rails all use.
+    if let Some(result) = crate::features::load_builtin_feature(&path, 0) {
+        return Ok(RubyValue::Bool(result));
+    }
     // ...and, failing that, the file on DISK: a target under no compile-time
     // root at all (`$LOAD_PATH.unshift(dir); require "x"`, or an absolute
     // path). Compiled where it is found, by the same compiler an `eval`

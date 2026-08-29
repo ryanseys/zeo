@@ -180,6 +180,59 @@ pub fn is_ext_feature(name: &str) -> bool {
     BUILTINS.iter().any(|b| b.feature == Some(name))
 }
 
+/// The stdlib features the runtime compiles in that name no GATED class, so
+/// requiring one is a pure no-op. `zeo::lower::features::is_builtin_feature`
+/// carries the per-name reasoning; this is the list itself.
+///
+/// It lives here rather than in the compiler because the RUNTIME needs it
+/// too: a `require` the compiler could not fold -- `f = "date"; require f` --
+/// reaches `Kernel#require` at run time, and answering it needs the same
+/// list. Two copies would drift, and the drift reads as a `LoadError` for a
+/// library the binary is carrying.
+pub const NATIVE_FEATURES: &[&str] = &[
+    "tmpdir",
+    "set",
+    "time",
+    "io/console",
+    "io/wait",
+    "io/nonblock",
+    "objspace",
+    "fiber",
+    "thread",
+    "rational",
+    "complex",
+    "random/formatter",
+    "pathname",
+];
+
+/// Features CRuby has ALREADY loaded before the program's first line, so
+/// requiring one answers `false` even the first time. Verified by running
+/// `p require "<f>"` under ruby 4.0.6 for every feature
+/// [`is_builtin_feature`] accepts.
+pub const PRELOADED_AT_BOOT: &[&str] = &["set", "monitor", "rational", "complex", "thread"];
+
+/// A `require` spelling mapped to its canonical in-tree `ext/` feature name.
+/// Sub-path and alias spellings of one extension collapse to a single
+/// feature: `cgi`/`cgi/util` -> `cgi/escape`, `digest/sha2` -> `digest`, and
+/// `yaml` -> `psych` (Ruby's `yaml.rb` is just `YAML = Psych`).
+#[must_use]
+pub fn canonical_ext_feature(feature: &str) -> &str {
+    match feature {
+        "cgi" | "cgi/util" | "cgi/escape" => "cgi/escape",
+        "yaml" => "psych",
+        f if f == "digest" || f.starts_with("digest/") => "digest",
+        other => other,
+    }
+}
+
+/// Whether `feature` names a stdlib feature the runtime compiles in, so
+/// requiring it loads no file. Either a gated `ext/` module from the table
+/// above, or one of [`NATIVE_FEATURES`].
+#[must_use]
+pub fn is_builtin_feature(feature: &str) -> bool {
+    NATIVE_FEATURES.contains(&feature) || is_ext_feature(canonical_ext_feature(feature))
+}
+
 /// Every distinct extension feature name, for a caller that needs the LIST
 /// rather than the predicate -- the loader probes each once to find which
 /// are also backed by a vendored gem.

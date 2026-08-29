@@ -434,6 +434,31 @@ pub fn decline_reason(feature: &str) -> Option<&'static str> {
 /// the file it names) and `feature`, when non-empty, activates a
 /// statically linked extension: its require-gated rows become answerable and
 /// its gated constants become visible from here on, not from line 1.
+/// `require "<a library the runtime carries>"`, answered at RUN time.
+///
+/// `None` for a feature zeo does not compile in; the caller goes on to the
+/// disk search and then to its `LoadError`.
+///
+/// This is the same answer the front end folds a LITERAL require of a builtin
+/// into (`lower::calls` emits a `FeatureLoaded` marker and a boolean, and
+/// nothing else), which is what keeps the two spellings agreeing. It has to
+/// exist separately because a computed require names no feature the compiler
+/// could see: `f = "date"; require f` reaches here instead.
+///
+/// The boolean is ruby's: `true` the first time, `false` for a feature
+/// already recorded -- and `false` even on the first require of one CRuby
+/// loads before line 1.
+pub fn load_builtin_feature(feature: &str, box_id: u32) -> Option<bool> {
+    if !zeo_abi::is_builtin_feature(feature) {
+        return None;
+    }
+    let canonical = zeo_abi::canonical_ext_feature(feature);
+    let entry = format!("<zeo-builtin>/{canonical}.rb");
+    let first = !crate::globals::loaded_feature_recorded(box_id, &entry);
+    feature_loaded(box_id, &entry, canonical);
+    Some(first && !zeo_abi::PRELOADED_AT_BOOT.contains(&feature))
+}
+
 pub fn feature_loaded(box_id: u32, entry: &str, feature: &str) {
     // Idempotent: a second `require` of a feature records nothing. The
     // compiler splices a file once, but a require written twice under two
@@ -445,5 +470,65 @@ pub fn feature_loaded(box_id: u32, entry: &str, feature: &str) {
     if !feature.is_empty() {
         crate::builtins::gate::activate(feature);
         crate::constants::reveal_feature_classes(feature);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The predicate `load_builtin_feature` gates on. It lives in `zeo_abi`
+    /// so the compiler's fold and this run-time answer read ONE list --
+    /// a second copy would drift, and the drift reads as a `LoadError` for a
+    /// library the binary is carrying.
+    #[test]
+    fn the_builtin_feature_list_has_one_owner() {
+        for f in zeo_abi::NATIVE_FEATURES {
+            assert!(
+                zeo_abi::is_builtin_feature(f),
+                "{f} is in NATIVE_FEATURES and the predicate refuses it"
+            );
+        }
+        for f in zeo_abi::ext_feature_names() {
+            assert!(
+                zeo_abi::is_builtin_feature(f),
+                "{f} is an ext feature and the predicate refuses it"
+            );
+        }
+        assert!(!zeo_abi::is_builtin_feature("no_such_library_anywhere"));
+    }
+
+    /// The alias spellings a `require` may write all collapse to one feature,
+    /// so requiring `yaml` and `psych` is requiring one thing.
+    #[test]
+    fn an_alias_spelling_canonicalizes_to_its_feature() {
+        for (spelling, canonical) in [
+            ("cgi", "cgi/escape"),
+            ("cgi/util", "cgi/escape"),
+            ("yaml", "psych"),
+            ("digest/sha2", "digest"),
+            ("digest", "digest"),
+            ("stringio", "stringio"),
+        ] {
+            assert_eq!(zeo_abi::canonical_ext_feature(spelling), canonical);
+        }
+    }
+
+    /// A feature ruby loads before line 1 answers `false` even the first
+    /// time, which is what makes `require "set"` agree with the oracle.
+    #[test]
+    fn a_preloaded_feature_is_a_builtin_that_answers_false() {
+        for f in zeo_abi::PRELOADED_AT_BOOT {
+            assert!(
+                zeo_abi::is_builtin_feature(f),
+                "{f} is preloaded but not a builtin, so nothing would load it"
+            );
+        }
+    }
+
+    /// A feature zeo does not carry is not this entry's business: `None`
+    /// sends the caller on to the disk search and then to its `LoadError`.
+    #[test]
+    fn a_feature_zeo_does_not_carry_is_declined() {
+        assert_eq!(super::load_builtin_feature("no_such_library_anywhere", 0), None);
+        assert_eq!(super::load_builtin_feature("./a/relative/path", 0), None);
     }
 }

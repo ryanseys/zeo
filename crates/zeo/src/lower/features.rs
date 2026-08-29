@@ -10,12 +10,7 @@
 /// `digest/sha2` -> `digest`, and `yaml` -> `psych` (Ruby's `yaml.rb` is just
 /// `YAML = Psych`). Everything else maps to itself.
 pub fn canonical_ext_feature(feature: &str) -> &str {
-    match feature {
-        "cgi" | "cgi/util" | "cgi/escape" => "cgi/escape",
-        "yaml" => "psych",
-        f if f == "digest" || f.starts_with("digest/") => "digest",
-        other => other,
-    }
+    zeo_abi::canonical_ext_feature(feature)
 }
 
 /// Features CRuby has ALREADY loaded before the program's first line, so
@@ -33,7 +28,7 @@ pub fn is_preloaded_at_boot(feature: &str) -> bool {
 
 /// [`is_preloaded_at_boot`]'s list, as data: the `$LOADED_FEATURES` seed
 /// needs to ENUMERATE it, not just ask about one name.
-pub const PRELOADED_AT_BOOT: &[&str] = &["set", "monitor", "rational", "complex", "thread"];
+pub const PRELOADED_AT_BOOT: &[&str] = zeo_abi::PRELOADED_AT_BOOT;
 
 /// Whether `feature` names a stdlib feature the runtime compiles in, so
 /// `require`ing it is a no-op (nothing to splice). `tmpdir` (`Dir.mktmpdir`)
@@ -80,22 +75,7 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // whole classes rather than methods, so it carries all of them from the
     // start and the require is ceremony -- it answers where ruby would raise
     // NoMethodError, never the reverse.
-    matches!(
-        feature,
-        "tmpdir"
-            | "set"
-            | "time"
-            | "io/console"
-            | "io/wait"
-            | "io/nonblock"
-            | "objspace"
-            | "fiber"
-            | "thread"
-            | "rational"
-            | "complex"
-            | "random/formatter"
-            | "pathname"
-    ) || zeo_abi::is_ext_feature(canonical_ext_feature(feature))
+    zeo_abi::is_builtin_feature(feature)
 }
 
 /// Every feature `is_builtin_feature` answers true for that also NAMES a
@@ -105,20 +85,8 @@ pub fn is_builtin_feature(feature: &str) -> bool {
 /// the list: it probes each name once at startup and records the ones that
 /// really resolve, because only those need their `require` call kept.
 pub fn builtin_feature_names() -> impl Iterator<Item = &'static str> {
-    const NAMED: &[&str] = &[
-        "tmpdir",
-        "set",
-        "time",
-        "io/console",
-        "io/wait",
-        "io/nonblock",
-        "objspace",
-        "fiber",
-        "thread",
-        "rational",
-        "complex",
-        "random/formatter",
-        "pathname",
-    ];
-    NAMED.iter().copied().chain(zeo_abi::ext_feature_names())
+    zeo_abi::NATIVE_FEATURES
+        .iter()
+        .copied()
+        .chain(zeo_abi::ext_feature_names())
 }
