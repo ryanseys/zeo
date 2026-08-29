@@ -90,6 +90,11 @@ struct Args {
     /// debugger or profiler renders a compiled frame as `file.rb:line`.
     /// `ZEO_DEBUGINFO=1` is the env spelling.
     debuginfo: bool,
+    /// `--log-level <level|directive>`: the compiler's own `tracing` output.
+    /// A bare level widens to every zeo crate; anything with a `=` or a `,`
+    /// is passed to `EnvFilter` as written. Wins over `ZEO_LOG`/`RUST_LOG`,
+    /// because a flag is more specific than an ambient variable.
+    log_level: Option<String>,
 }
 
 /// A `--dump` kind the FRONT END answers: no emission, no artifact, no
@@ -281,6 +286,11 @@ options:
   -g                    put DWARF line tables in the compiled program, so
                         lldb, perf and Instruments name a Ruby frame by its
                         file and line (ZEO_DEBUGINFO=1 is the env spelling)
+  --log-level <level>   narrate the compiler's own work on stderr: a bare
+                        level (error, warn, info, debug, trace) covers the
+                        whole compiler, and a `tracing` directive
+                        (`zeo::analyze=debug`) narrows it. Beats ZEO_LOG and
+                        RUST_LOG, which take the directive form only
   -I <dir>              add a `require` search root, like ruby's -I
                         (repeatable; `-I<dir>` and `-I=<dir>` also accepted)
   -r <library>          require a library before the program's first line,
@@ -339,7 +349,8 @@ environment:
                         for immediate runs, aot for -o/--compile)
   ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for the compiler's
                         internal logs, e.g. `zeo=debug` or
-                        `zeo::analyze=debug,zeo::lower=trace`
+                        `zeo::analyze=debug,zeo::lower=trace`. --log-level is
+                        the flag spelling, and it wins
   ZEO_MEMORY_LIMIT      bytes of resident memory this compile may use before it
                         gives up (default: half the machine's RAM, capped at
                         8 GiB; 0 compiles unbounded, which can exhaust the
@@ -371,6 +382,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     // The env spelling is read once here so the flag and the variable can
     // never disagree downstream.
     let mut debuginfo = std::env::var_os("ZEO_DEBUGINFO").is_some_and(|v| v != "0");
+    let mut log_level: Option<String> = None;
     let mut load_roots = Vec::new();
     let mut package_dirs = Vec::new();
     let mut embed_sources = Vec::new();
@@ -453,6 +465,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "embed-sources" => {
                     embed_sources.push(PathBuf::from(value("--embed-sources")?));
                 }
+                "log-level" => log_level = Some(value("--log-level")?),
                 "strict-static-require" => strict_static_require = true,
                 "root-gem" => root_gem = Some(value("--root-gem")?),
                 "gem-path" => gem_paths.push(PathBuf::from(value("--gem-path")?)),
@@ -785,6 +798,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         dump_front_end,
         debuginfo,
         backend,
+        log_level,
     })))
 }
 
@@ -880,7 +894,7 @@ fn run() -> Result<(), MainError> {
             std::process::exit(1);
         }
     };
-    init_tracing();
+    init_tracing(args.log_level.as_deref());
     // Pre-flight: a broken install (payload missing next to the executable)
     // reports here as an ordinary error instead of panicking mid-compile.
     zeo::home::ensure_resolved()?;
@@ -1121,16 +1135,19 @@ fn exec(bin: &std::path::Path, program_name: &str, program_args: &[String]) {
     tracing::warn!("could not run the cached program {}: {e}", bin.display());
 }
 
-/// Install a `tracing` subscriber (stderr) for the compiler pipeline: `ZEO_LOG`
-/// first, then `RUST_LOG` -- both full `EnvFilter` directives (`zeo=debug`,
-/// `zeo::analyze=trace`). With neither set, no subscriber is installed, so
-/// every `trace!`/`debug!`/`instrument` in the pipeline compiles to a cheap
-/// disabled check -- a normal compile stays silent and never interleaves with
-/// the miette diagnostics.
-fn init_tracing() {
-    let Some(directive) = std::env::var("ZEO_LOG")
-        .ok()
-        .filter(|s| !s.is_empty())
+/// Install a `tracing` subscriber (stderr) for the compiler pipeline:
+/// `--log-level` first, then `ZEO_LOG`, then `RUST_LOG` -- a flag is more
+/// specific than an ambient variable, so it wins. All three take a full
+/// `EnvFilter` directive (`zeo=debug`, `zeo::analyze=trace`); `--log-level`
+/// additionally accepts a bare level, which widens to the whole compiler.
+/// With none of them set, no subscriber is installed, so every
+/// `trace!`/`debug!`/`instrument` in the pipeline compiles to a cheap disabled
+/// check -- a normal compile stays silent and never interleaves with the
+/// miette diagnostics.
+fn init_tracing(flag: Option<&str>) {
+    let Some(directive) = flag
+        .map(widen_bare_level)
+        .or_else(|| std::env::var("ZEO_LOG").ok().filter(|s| !s.is_empty()))
         .or_else(|| std::env::var("RUST_LOG").ok().filter(|s| !s.is_empty()))
     else {
         return;
@@ -1140,6 +1157,17 @@ fn init_tracing() {
         .with_writer(std::io::stderr)
         .without_time()
         .init();
+}
+
+/// `--log-level debug` means the whole compiler at debug, which is what the
+/// six code comments naming this flag describe. A directive -- anything
+/// carrying a `=` or a `,` -- is passed to `EnvFilter` untouched, so
+/// `--log-level zeo::analyze=trace` still narrows to one module.
+fn widen_bare_level(v: &str) -> String {
+    match v.contains(['=', ',']) {
+        true => v.to_string(),
+        false => format!("zeo={v},zeo_rt={v}"),
+    }
 }
 
 fn main() -> ExitCode {
@@ -1456,6 +1484,19 @@ mod tests {
         assert!(matches!(parse(&["--version"]).unwrap(), Parsed::Version));
         assert!(matches!(parse(&["-v"]).unwrap(), Parsed::Version));
         assert!(matches!(parse(&[]).unwrap(), Parsed::NoInput));
+    }
+
+    #[test]
+    fn log_level_takes_a_bare_level_or_a_directive() {
+        assert_eq!(ok(&["--log-level", "debug", "t.rb"]).log_level.as_deref(), Some("debug"));
+        assert_eq!(ok(&["--log-level=info", "t.rb"]).log_level.as_deref(), Some("info"));
+        assert_eq!(ok(&["t.rb"]).log_level, None);
+        assert!(err(&["--log-level"]).contains("requires a value"));
+        // A bare level widens to the whole compiler; a directive is passed
+        // through, so one module can still be singled out.
+        assert_eq!(widen_bare_level("debug"), "zeo=debug,zeo_rt=debug");
+        assert_eq!(widen_bare_level("zeo::analyze=trace"), "zeo::analyze=trace");
+        assert_eq!(widen_bare_level("zeo=info,zeo_rt=warn"), "zeo=info,zeo_rt=warn");
     }
 
     #[test]
