@@ -13,7 +13,7 @@
 //! fields every accessor reads come from `RDate::local`, which folds `of` in.
 //!
 //! `sg` is the calendar-reform start day (`Date::ITALY` by default), so dates
-//! before 1582-10-15 render on the Julian calendar -- `Date.new(1,1,1).jd` is
+//! before 1582-10-15 render on the Julian calendar -- `Date.new(1,1,1).jd()` is
 //! 1721424, not the proleptic-Gregorian 1721426.
 
 mod datetime;
@@ -41,7 +41,11 @@ const NS_PER_DAY: i128 = 86_400 * NS_PER_SEC;
 /// JDN of the Unix epoch (1970-01-01).
 const EPOCH_JD: i64 = 2_440_588;
 
-pub struct RDate {
+/// The six scalars a Date IS. Held together, and `Copy`, so a read hands back
+/// a value rather than a borrow and `#marshal_load` can replace the whole
+/// date in ONE write.
+#[derive(Clone, Copy)]
+struct DateCore {
     /// Julian Day Number, **as UTC**.
     jd: i64,
     /// Seconds into the day, **as UTC** (0..86399).
@@ -55,11 +59,47 @@ pub struct RDate {
     sg: f64,
     /// CRuby's `ComplexDateData` tag -- carries a time of day and an offset.
     complex: bool,
+}
+
+pub struct RDate {
+    /// Behind a lock ONLY so `#marshal_load` can fill a blank in place, which
+    /// is what ruby's returns-self contract needs. Every other write builds a
+    /// fresh `RDate`, so the lock is uncontended on every real path.
+    core: parking_lot::Mutex<DateCore>,
     class_id: ClassId,
     frozen: AtomicBool,
 }
 
 impl RDate {
+    fn core(&self) -> DateCore {
+        *self.core.lock()
+    }
+    fn jd(&self) -> i64 {
+        self.core().jd
+    }
+    fn df(&self) -> i32 {
+        self.core().df
+    }
+    fn sf(&self) -> i32 {
+        self.core().sf
+    }
+    fn of(&self) -> i32 {
+        self.core().of
+    }
+    fn sg(&self) -> f64 {
+        self.core().sg
+    }
+    fn complex(&self) -> bool {
+        self.core().complex
+    }
+
+    /// `#marshal_load`'s write: replace the whole date in place, so the
+    /// receiver ruby hands back IS the loaded one. A cycle through a Date
+    /// would load wrong if this answered a fresh object instead.
+    fn fill(&self, core: DateCore) {
+        *self.core.lock() = core;
+    }
+
     fn simple(jd: i64, sg: f64, class_id: ClassId) -> Arc<RDate> {
         RDate::raw(jd, 0, 0, 0, sg, false, class_id)
     }
@@ -74,12 +114,14 @@ impl RDate {
         class_id: ClassId,
     ) -> Arc<RDate> {
         Arc::new(RDate {
-            jd,
-            df,
-            sf,
-            of,
-            sg,
-            complex,
+            core: parking_lot::Mutex::new(DateCore {
+                jd,
+                df,
+                sf,
+                of,
+                sg,
+                complex,
+            }),
             class_id,
             frozen: AtomicBool::new(false),
         })
@@ -88,9 +130,9 @@ impl RDate {
     /// The `(jd, seconds-into-day)` pair every field accessor reads: UTC
     /// shifted by the offset (`date_core.c:jd_utc_to_local`).
     fn local(&self) -> (i64, i32) {
-        let t = self.df as i64 + self.of as i64;
+        let t = self.df() as i64 + self.of() as i64;
         (
-            self.jd + t.div_euclid(SECS_PER_DAY),
+            self.jd() + t.div_euclid(SECS_PER_DAY),
             t.rem_euclid(SECS_PER_DAY) as i32,
         )
     }
@@ -100,7 +142,7 @@ impl RDate {
     }
 
     fn civil(&self) -> (i64, i64, i64) {
-        jd_to_civil(self.local_jd(), self.sg)
+        jd_to_civil(self.local_jd(), self.sg())
     }
 
     /// Local `(hour, min, sec)`.
@@ -112,12 +154,12 @@ impl RDate {
     /// The instant as a count of nanoseconds since JDN 0, in UTC -- the one
     /// exact scale `+`, `-`, `<=>`, `ajd` and `amjd` all work on.
     fn total_ns(&self) -> i128 {
-        self.jd as i128 * NS_PER_DAY + self.df as i128 * NS_PER_SEC + self.sf as i128
+        self.jd() as i128 * NS_PER_DAY + self.df() as i128 * NS_PER_SEC + self.sf() as i128
     }
 
     /// Epoch seconds (UTC), for `%s`/`%Q`.
     fn epoch(&self) -> i64 {
-        (self.jd - EPOCH_JD) * SECS_PER_DAY + self.df as i64
+        (self.jd() - EPOCH_JD) * SECS_PER_DAY + self.df() as i64
     }
 
     /// The same instant rebuilt from an exact nanosecond count, keeping this
@@ -128,8 +170,8 @@ impl RDate {
         let rem = ns.rem_euclid(NS_PER_DAY);
         let df = (rem / NS_PER_SEC) as i32;
         let sf = (rem % NS_PER_SEC) as i32;
-        let complex = self.complex || df != 0 || sf != 0;
-        RDate::raw(jd as i64, df, sf, self.of, self.sg, complex, self.class_id)
+        let complex = self.complex() || df != 0 || sf != 0;
+        RDate::raw(jd as i64, df, sf, self.of(), self.sg(), complex, self.class_id)
     }
 }
 
@@ -154,12 +196,12 @@ impl RubyObject for RDate {
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         let d = RDate::raw(
-            self.jd,
-            self.df,
-            self.sf,
-            self.of,
-            self.sg,
-            self.complex,
+            self.jd(),
+            self.df(),
+            self.sf(),
+            self.of(),
+            self.sg(),
+            self.complex(),
             self.class_id,
         );
         if copy_frozen && self.is_frozen() {
@@ -323,6 +365,41 @@ fn is_leap(y: i64) -> bool {
     y.rem_euclid(4) == 0 && (y.rem_euclid(100) != 0 || y.rem_euclid(400) == 0)
 }
 
+/// A blank `Date`/`DateTime` -- JDN 0 under `Date::ITALY`, which is what
+/// ruby's `allocate` answers and prints as `-4712-01-01`. It is a REAL date,
+/// not an uninitialized one: every row reads it happily, exactly as ruby's
+/// does, and `#marshal_load` replaces it in place.
+fn date_allocate() -> RubyValue {
+    RubyValue::Object(RDate::simple(0, ITALY, DATE_CLASS))
+}
+
+fn datetime_allocate() -> RubyValue {
+    RubyValue::Object(RDate::simple(0, ITALY, DATETIME_CLASS))
+}
+
+/// One `#marshal_load` element as an Integer, refusing what ruby refuses.
+fn int_of(v: &RubyValue) -> Result<i64, Signal> {
+    match v {
+        RubyValue::Int(n) => Ok(*n),
+        other => Err(type_error!(
+            "expected an Integer, got {}",
+            crate::builtins::class_name_of(other)
+        )),
+    }
+}
+
+/// The reform start, which ruby dumps as a Float but can hold an Integer.
+fn float_of(v: &RubyValue) -> Result<f64, Signal> {
+    match v {
+        RubyValue::Float(f) => Ok(*f),
+        RubyValue::Int(n) => Ok(*n as f64),
+        other => Err(type_error!(
+            "expected a Float, got {}",
+            crate::builtins::class_name_of(other)
+        )),
+    }
+}
+
 fn date_of(recv: &RubyValue) -> &RDate {
     match recv {
         RubyValue::Object(o) => o
@@ -385,10 +462,10 @@ fn broken(d: &RDate) -> crate::builtins::time::Broken {
         mi,
         s,
         jd_wday(local_jd) as i32,
-        (jd_yday(local_jd, d.sg) - 1) as i32,
-        d.of,
+        (jd_yday(local_jd, d.sg()) - 1) as i32,
+        d.of(),
         d.epoch(),
-        d.sf as u32,
+        d.sf() as u32,
     )
 }
 
@@ -438,15 +515,15 @@ fn inspect_date(recv: &RubyValue) -> Result<RubyValue, Signal> {
     let d = date_of(recv);
     let body = crate::dispatch::send_value(recv, crate::Symbol::intern("to_s"), &[], None)?;
     let body = body.to_display_string();
-    let sg = if d.sg.is_infinite() {
-        (if d.sg > 0.0 { "Inf" } else { "-Inf" }).to_string()
+    let sg = if d.sg().is_infinite() {
+        (if d.sg() > 0.0 { "Inf" } else { "-Inf" }).to_string()
     } else {
-        format!("{}", d.sg as i64)
+        format!("{}", d.sg() as i64)
     };
     let name = crate::dispatch::class_name(d.class_id).unwrap_or_else(|| "Date".into());
     Ok(RubyValue::Str(string_new(format!(
         "#<{name}: {body} (({}j,{}s,{}n),{:+}s,{sg}j)>",
-        d.jd, d.df, d.sf, d.of
+        d.jd(), d.df(), d.sf(), d.of()
     ))))
 }
 
@@ -531,7 +608,7 @@ fn today_jd() -> i64 {
 /// The class a `Date`-family constructor allocates through: the RECEIVER's own
 /// id, which is CRuby's rule (`rb_class_new_instance`-style, `klass` threaded
 /// into the allocation) and the whole reason a `class DateTimeWithOffset <
-/// DateTime` works -- `DateTimeWithOffset.jd(n)` has to answer a
+/// DateTime` works -- `DateTimeWithOffset.jd()(n)` has to answer a
 /// `DateTimeWithOffset`, not a `Date`. Naming only `Date`/`DateTime` here
 /// silently demoted every subclass to `Date`.
 fn class_of(recv: &RubyValue) -> ClassId {
@@ -555,8 +632,8 @@ fn month_shift(d: &RDate, n: i64) -> Arc<RDate> {
     let (ny, nm) = (t.div_euclid(12), t.rem_euclid(12) + 1);
     let mut day = mday;
     let jd = loop {
-        let jd = civil_to_jd(ny, nm, day, d.sg);
-        if jd_to_civil(jd, d.sg) == (ny, nm, day) {
+        let jd = civil_to_jd(ny, nm, day, d.sg());
+        if jd_to_civil(jd, d.sg()) == (ny, nm, day) {
             break jd;
         }
         day -= 1;
@@ -698,6 +775,8 @@ ruby_class! {
     Date = zeo_abi::DATE_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::COMPARABLE_CLASS;
 
+    allocate date_allocate;
+
     const ITALY = RubyValue::Int(2299161);
     const ENGLAND = RubyValue::Int(2361222);
     const JULIAN = RubyValue::Float(f64::INFINITY);
@@ -722,7 +801,7 @@ ruby_class! {
     def "wday" (recv) { Ok(RubyValue::Int(jd_wday(date_of(recv).local_jd()))) }
     def "yday" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Int(jd_yday(d.local_jd(), d.sg)))
+        Ok(RubyValue::Int(jd_yday(d.local_jd(), d.sg())))
     }
     def "jd" (recv) { Ok(RubyValue::Int(date_of(recv).local_jd())) }
     def "mjd" (recv) { Ok(RubyValue::Int(date_of(recv).local_jd() - 2_400_001)) }
@@ -737,58 +816,58 @@ ruby_class! {
     }
     def "day_fraction" (recv) {
         let d = date_of(recv);
-        if !d.complex {
+        if !d.complex() {
             return Ok(RubyValue::Int(0));
         }
         let (_, secs) = d.local();
-        ns_to_day_rational(secs as i128 * NS_PER_SEC + d.sf as i128)
+        ns_to_day_rational(secs as i128 * NS_PER_SEC + d.sf() as i128)
     }
     def "cwday" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Int(jd_to_commercial(d.local_jd(), d.sg).2))
+        Ok(RubyValue::Int(jd_to_commercial(d.local_jd(), d.sg()).2))
     }
     def "cweek" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Int(jd_to_commercial(d.local_jd(), d.sg).1))
+        Ok(RubyValue::Int(jd_to_commercial(d.local_jd(), d.sg()).1))
     }
     def "cwyear" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Int(jd_to_commercial(d.local_jd(), d.sg).0))
+        Ok(RubyValue::Int(jd_to_commercial(d.local_jd(), d.sg()).0))
     }
     def "leap?" (recv) { Ok(RubyValue::Bool(is_leap(date_of(recv).civil().0))) }
     def "infinite?" (_recv) { Ok(RubyValue::Bool(false)) }
 
     def "julian?" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Bool((d.local_jd() as f64) < d.sg))
+        Ok(RubyValue::Bool((d.local_jd() as f64) < d.sg()))
     }
     def "gregorian?" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Bool((d.local_jd() as f64) >= d.sg))
+        Ok(RubyValue::Bool((d.local_jd() as f64) >= d.sg()))
     }
-    def "start" (recv) { Ok(RubyValue::Float(date_of(recv).sg)) }
+    def "start" (recv) { Ok(RubyValue::Float(date_of(recv).sg())) }
     // `new_start` keeps the INSTANT and re-renders it: the jd is unchanged,
     // only the calendar the civil fields come from moves.
     def "new_start" (recv, arg?) {
         let d = date_of(recv);
         let sg = start_arg(std::slice::from_ref(&arg.cloned().unwrap_or(RubyValue::Nil)), 0)?;
-        Ok(RubyValue::Object(RDate::raw(d.jd, d.df, d.sf, d.of, sg, d.complex, d.class_id)))
+        Ok(RubyValue::Object(RDate::raw(d.jd(), d.df(), d.sf(), d.of(), sg, d.complex(), d.class_id)))
     }
     def "julian" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Object(RDate::raw(d.jd, d.df, d.sf, d.of, f64::INFINITY, d.complex, d.class_id)))
+        Ok(RubyValue::Object(RDate::raw(d.jd(), d.df(), d.sf(), d.of(), f64::INFINITY, d.complex(), d.class_id)))
     }
     def "gregorian" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Object(RDate::raw(d.jd, d.df, d.sf, d.of, f64::NEG_INFINITY, d.complex, d.class_id)))
+        Ok(RubyValue::Object(RDate::raw(d.jd(), d.df(), d.sf(), d.of(), f64::NEG_INFINITY, d.complex(), d.class_id)))
     }
     def "england" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Object(RDate::raw(d.jd, d.df, d.sf, d.of, ENGLAND, d.complex, d.class_id)))
+        Ok(RubyValue::Object(RDate::raw(d.jd(), d.df(), d.sf(), d.of(), ENGLAND, d.complex(), d.class_id)))
     }
     def "italy" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Object(RDate::raw(d.jd, d.df, d.sf, d.of, ITALY, d.complex, d.class_id)))
+        Ok(RubyValue::Object(RDate::raw(d.jd(), d.df(), d.sf(), d.of(), ITALY, d.complex(), d.class_id)))
     }
 
     def "to_s" | "iso8601" | "xmlschema" (recv) { str_val(date_of(recv), "%Y-%m-%d") }
@@ -803,7 +882,7 @@ ruby_class! {
     // `httpdate` is always GMT: CRuby re-offsets a copy to zero first.
     def "httpdate" (recv) {
         let d = date_of(recv);
-        let utc = RDate::raw(d.jd, d.df, d.sf, 0, d.sg, d.complex, d.class_id);
+        let utc = RDate::raw(d.jd(), d.df(), d.sf(), 0, d.sg(), d.complex(), d.class_id);
         str_val(&utc, "%a, %d %b %Y %T GMT")
     }
     def "jisx0301" (recv) { Ok(RubyValue::Str(string_new(jisx0301(date_of(recv))))) }
@@ -914,16 +993,16 @@ ruby_class! {
 
     def "to_date" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Object(RDate::simple(d.local_jd(), d.sg, DATE_CLASS)))
+        Ok(RubyValue::Object(RDate::simple(d.local_jd(), d.sg(), DATE_CLASS)))
     }
     // CRuby copies the SIMPLE half straight through, so a plain Date answers a
     // simple DateTime -- one whose `day_fraction` is the Integer 0.
     def "to_datetime" (recv) {
         let d = date_of(recv);
-        Ok(RubyValue::Object(if d.complex {
-            RDate::raw(d.jd, d.df, d.sf, d.of, d.sg, true, DATETIME_CLASS)
+        Ok(RubyValue::Object(if d.complex() {
+            RDate::raw(d.jd(), d.df(), d.sf(), d.of(), d.sg(), true, DATETIME_CLASS)
         } else {
-            RDate::simple(d.local_jd(), d.sg, DATETIME_CLASS)
+            RDate::simple(d.local_jd(), d.sg(), DATETIME_CLASS)
         }))
     }
     def "to_time" (recv) {
@@ -944,7 +1023,7 @@ ruby_class! {
             (RubyValue::Symbol(crate::Symbol::intern("year")), RubyValue::Int(y)),
             (RubyValue::Symbol(crate::Symbol::intern("month")), RubyValue::Int(m)),
             (RubyValue::Symbol(crate::Symbol::intern("day")), RubyValue::Int(day)),
-            (RubyValue::Symbol(crate::Symbol::intern("yday")), RubyValue::Int(jd_yday(local_jd, d.sg))),
+            (RubyValue::Symbol(crate::Symbol::intern("yday")), RubyValue::Int(jd_yday(local_jd, d.sg()))),
             (RubyValue::Symbol(crate::Symbol::intern("wday")), RubyValue::Int(jd_wday(local_jd))),
         ])))
     }
@@ -952,12 +1031,38 @@ ruby_class! {
         let d = date_of(recv);
         Ok(RubyValue::Array(crate::array_new(vec![
             RubyValue::Int(0),
-            RubyValue::Int(d.jd),
-            RubyValue::Int(d.df as i64),
-            RubyValue::Int(d.sf as i64),
-            RubyValue::Int(d.of as i64),
-            RubyValue::Float(d.sg),
+            RubyValue::Int(d.jd()),
+            RubyValue::Int(d.df() as i64),
+            RubyValue::Int(d.sf() as i64),
+            RubyValue::Int(d.of() as i64),
+            RubyValue::Float(d.sg()),
         ])))
+    }
+    // Fills the RECEIVER and answers it, which is ruby's contract: `Marshal`
+    // registers the allocated object in its link table BEFORE calling this,
+    // so answering a fresh Date would make a second reference to one date
+    // load as the blank.
+    def "marshal_load" (recv, arg) {
+        let RubyValue::Array(a) = arg else {
+            return Err(type_error!("expected an Array"));
+        };
+        let parts = a.lock().to_vec();
+        // Ruby's own `[0, jd, df, sf, of, sg]`. The leading 0 is a format tag
+        // it writes and ignores.
+        let [_, jd, df, sf, of, sg] = parts.as_slice() else {
+            return Err(type_error!("invalid marshal data for {}", crate::builtins::class_name_of(recv)));
+        };
+        date_of(recv).fill(DateCore {
+            jd: int_of(jd)?,
+            df: int_of(df)? as i32,
+            sf: int_of(sf)? as i32,
+            of: int_of(of)? as i32,
+            sg: float_of(sg)?,
+            // A time of day or an offset makes it complex, exactly as every
+            // other constructor decides it.
+            complex: int_of(df)? != 0 || int_of(sf)? != 0 || int_of(of)? != 0,
+        });
+        Ok(recv.clone())
     }
 
     def "sunday?" (recv) { Ok(RubyValue::Bool(jd_wday(date_of(recv).local_jd()) == 0)) }
@@ -1162,6 +1267,47 @@ mod tests {
             RubyValue::Int(i) => *i,
             other => panic!("expected Int, got {other:?}"),
         }
+    }
+
+    /// `#marshal_load` fills the RECEIVER and answers it. Answering a fresh
+    /// Date instead would load a second reference to one date as the blank,
+    /// because Marshal registers the allocated object in its link table
+    /// before it calls this.
+    #[test]
+    fn marshal_load_fills_the_receiver_in_place() {
+        let blank = date_allocate();
+        let RubyValue::Object(o) = &blank else {
+            panic!("a Date is an Object")
+        };
+        let before = std::sync::Arc::as_ptr(o) as *const () as usize;
+        assert_eq!(s(&im("to_s")(&blank, &[], None).unwrap()), "-4712-01-01");
+
+        let dumped = im("marshal_dump")(&date(2026, 8, 29), &[], None).unwrap();
+        let answered = im("marshal_load")(&blank, &[dumped], None).unwrap();
+
+        assert_eq!(s(&im("to_s")(&blank, &[], None).unwrap()), "2026-08-29");
+        let RubyValue::Object(back) = &answered else {
+            panic!("marshal_load answers the receiver")
+        };
+        assert_eq!(std::sync::Arc::as_ptr(back) as *const () as usize, before);
+    }
+
+    /// A date whose dump carries a time of day comes back COMPLEX, which is
+    /// what decides `DateTime`'s clock accessors and its `to_s` format.
+    #[test]
+    fn marshal_load_restores_the_complex_flag() {
+        let blank = date_allocate();
+        let parts = vec![
+            RubyValue::Int(0),
+            RubyValue::Int(2_461_282),
+            RubyValue::Int(3723),
+            RubyValue::Int(0),
+            RubyValue::Int(0),
+            RubyValue::Float(ITALY),
+        ];
+        im("marshal_load")(&blank, &[RubyValue::Array(crate::array_new(parts))], None).unwrap();
+        assert!(date_of(&blank).complex());
+        assert_eq!(date_of(&blank).df(), 3723);
     }
     fn s(v: &RubyValue) -> String {
         match v {

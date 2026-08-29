@@ -176,6 +176,19 @@ pub(crate) fn make_lazy(source: &RubyValue) -> RubyValue {
     }))
 }
 
+/// `Enumerator::Lazy.allocate` -- a chain over NOTHING. `nil` is the marker
+/// because it is the one source no `Enumerable#lazy` can produce: every real
+/// one answers `each`, and `nil` does not.
+fn lazy_allocate() -> RubyValue {
+    make_lazy(&RubyValue::Nil)
+}
+
+/// Whether `core` is the blank [`lazy_allocate`] builds -- a nil source and
+/// no links yet. A link ON a blank is still blank; ruby refuses at the walk.
+fn is_uninitialized(core: &LazyCore) -> bool {
+    matches!(core.source, RubyValue::Nil)
+}
+
 fn lazy_of(recv: &RubyValue) -> &RLazy {
     match recv {
         RubyValue::Object(o) => o
@@ -604,6 +617,9 @@ fn flush(links: &[Link], st: &mut [OpState], sink: &mut Sink) -> Result<(), Sign
 /// asked for.
 fn drive(lazy: &RLazy, sink: &mut Sink) -> Result<(), Signal> {
     let core = snapshot(lazy);
+    if is_uninitialized(&core) {
+        return Err(crate::builtins::arg_error!("uninitialized enumerator"));
+    }
     let src = enumerator_for(&core.source, "each", &[]);
     let RubyValue::Enumerator(e) = &src else {
         unreachable!("enumerator_for always builds an Enumerator");
@@ -646,6 +662,9 @@ fn link_label(link: &Link) -> String {
 /// link IS a lazy holding the previous one.
 fn chain_inspect(lazy: &RLazy) -> Result<String, Signal> {
     let core = snapshot(lazy);
+    if is_uninitialized(&core) {
+        return Ok("#<Enumerator::Lazy: uninitialized>".to_string());
+    }
     let mut s = format!("#<Enumerator::Lazy: {}>", core.source.try_inspect_string()?);
     for link in &core.links {
         s = format!("#<Enumerator::Lazy: {s}:{}>", link_label(link));
@@ -822,6 +841,8 @@ fn collect(lazy: &RLazy, limit: Option<usize>) -> Result<Vec<RubyValue>, Signal>
 
 ruby_class! {
     Lazy = zeo_abi::LAZY_CLASS < zeo_abi::ENUMERATOR_CLASS;
+
+    allocate lazy_allocate;
 
     // `Enumerator::Lazy.new(source, size = nil) { |yielder, *values| ... }`
     // -- a lazy over `source` with an explicit per-element body: what the

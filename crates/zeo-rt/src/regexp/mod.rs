@@ -29,6 +29,11 @@ pub use translate::{RegexpSite, regexp_new, regexp_new_enc};
 pub struct RegexpData {
     pub engine: Engine,
     pub source: String,
+    /// True only for the blank `Regexp.allocate` answers. Ruby keeps an
+    /// uninitialized pattern distinct from an EMPTY one: every reading row
+    /// raises `TypeError: uninitialized Regexp` where `//` answers happily,
+    /// and a source of `""` cannot tell the two apart.
+    pub uninitialized: bool,
     pub ignore_case: bool,
     pub extended: bool,
     pub multiline: bool,
@@ -109,6 +114,7 @@ impl RegexpData {
         Arc::new(RegexpData {
             engine: self.engine.clone(),
             source: self.source.clone(),
+            uninitialized: self.uninitialized,
             ignore_case: self.ignore_case,
             extended: self.extended,
             multiline: self.multiline,
@@ -818,6 +824,14 @@ pub fn regexp_to_s(re: &RRegexp) -> RubyValue {
 /// learn. `/e`, `/s` and `/u` print bare (`/x/e.inspect` is `"/x/"`), since the
 /// encoding rides on the object rather than on its source (oracle-verified).
 pub fn regexp_inspect(re: &RRegexp) -> RubyValue {
+    // A blank has no source to print between the slashes, so ruby names it by
+    // address instead -- the one row on an uninitialized Regexp that answers.
+    if re.uninitialized {
+        return RubyValue::Str(string_new(format!(
+            "#<Regexp:0x{:016x}>",
+            Arc::as_ptr(re) as *const () as usize
+        )));
+    }
     let mut flags = String::new();
     if re.multiline {
         flags.push('m');

@@ -1045,6 +1045,7 @@ pub fn regexp_new_enc(
         return Ok(Arc::new(RegexpData {
             engine: Engine::Onig(onig),
             source: written.to_string(),
+            uninitialized: false,
             ignore_case,
             extended,
             multiline,
@@ -1081,6 +1082,7 @@ pub fn regexp_new_enc(
     Ok(Arc::new(RegexpData {
         engine,
         source: written.to_string(),
+        uninitialized: false,
         ignore_case,
         extended,
         multiline,

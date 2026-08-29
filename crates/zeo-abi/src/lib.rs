@@ -918,6 +918,20 @@ pub const REFINEMENT_CLASS: ClassId = ClassId(145);
 /// which `BasicSocket#getsockopt` answers.
 pub const SOCKET_OPTION_CLASS: ClassId = ClassId(142);
 
+/// Builtins whose `allocate` singleton method CRuby `undef`s outright
+/// (`rb_undef_method(CLASS_OF(x), "allocate")`), rather than merely leaving
+/// them without an allocator. The two refusals differ in class and in
+/// message: an undef'd name is `NoMethodError: undefined method 'allocate'
+/// for class X`, where a missing allocator is `TypeError: allocator undefined
+/// for X`. Inherited, so a subclass of one of these refuses the same way.
+pub const ALLOCATE_UNDEFINED: &[ClassId] = &[
+    RATIONAL_CLASS,
+    COMPLEX_CLASS,
+    MATCH_DATA_CLASS,
+    MODULE_CLASS,
+    REFINEMENT_CLASS,
+];
+
 /// Builtins whose SINGLETON class mixes a module in -- CRuby's `extend`, which
 /// no [`BuiltinClass`] field can express (`includes` is the instance side, and
 /// the two are independent: `CGI` does both with the same module).

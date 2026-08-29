@@ -11,6 +11,13 @@ use crate::builtins::inherited_row;
 use crate::thread::{queue_max, queue_set_max, sized_queue_new};
 use zeo_macros::ruby_class;
 
+/// A blank `SizedQueue` -- bound zero, which is what ruby's `allocate`
+/// reports from `#max`, and UNSEEDED, so `push` refuses instead of blocking
+/// forever on room a bound of zero can never give.
+fn sized_queue_allocate() -> RubyValue {
+    crate::thread::queue_uninit(true)
+}
+
 /// A bound of zero or less has no meaning -- nothing could ever be pushed --
 /// and CRuby refuses it at both entry points rather than minting a queue
 /// that deadlocks on its first push.
@@ -24,6 +31,8 @@ fn positive_size(n: i64) -> Result<i64, crate::Signal> {
 ruby_class! {
     SizedQueue = zeo_abi::SIZED_QUEUE_CLASS < zeo_abi::QUEUE_CLASS;
 
+    allocate sized_queue_allocate;
+
     // `SizedQueue.new(n)` -- the bounded constructor.
     def self."new" cfunc (_recv, arg) {
         Ok(sized_queue_new(positive_size(arg_int!(arg))?))
@@ -33,6 +42,7 @@ ruby_class! {
     // `Queue.new.max` is the NoMethodError CRuby raises.
     // Re-init resets the bound (oracle: `q.send(:initialize, 5)` -> max 5).
     private def "initialize"(recv, arg) {
+        crate::thread::queue_mark_initialized(&recv.as_queue_unchecked());
         inherited_row!(sized_queue, "max=", recv, std::slice::from_ref(arg), None)?;
         Ok(recv.clone())
     }
@@ -49,7 +59,7 @@ ruby_class! {
     // CRuby defines `clear` and `num_waiting` on BOTH Queue and SizedQueue,
     // so each is listed by its own class; the bodies are Queue's.
     def "clear"(recv) {
-        let q = recv.as_queue_unchecked();
+        let q = crate::builtins::queue::live_queue(recv)?;
         crate::thread::queue_clear(&q);
         Ok(RubyValue::Queue(q))
     }

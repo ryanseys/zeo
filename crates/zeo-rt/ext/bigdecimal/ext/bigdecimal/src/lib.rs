@@ -819,6 +819,44 @@ ruby_class! {
             _ => Err(crate::builtins::float_domain_error!("{}", value::to_s(recv_bd(recv), "").to_string())),
         }
     }
+    // Marshal's hook pair. `BigDecimal` has no allocator (ruby refuses
+    // `BigDecimal.allocate`), so `_dump`/`_load` on the CLASS is the only way
+    // a dumped one can come back -- without them a dumped BigDecimal loaded
+    // as `allocator undefined`.
+    //
+    // The format is `"<precision>:<to_s>"`. Ruby's own precision word is an
+    // ALLOCATION artifact, not a property of the value -- `BigDecimal("1")`
+    // writes 9 and `BigDecimal("1.25")` writes 18 for the same one-limb
+    // magnitude, because `VpAlloc` sizes from the input STRING's length. Both
+    // loaders ignore the word, so zeo writes the value's own significant-digit
+    // count rounded up to a multiple of 9. See
+    // `tests/divergences/a_marshalled_bigdecimal_carries_its_own_precision.rb`.
+    def "_dump" cfunc (recv, *_args) {
+        let bd = recv_bd(recv);
+        let digits = bd.precision().max(1) as u64;
+        let word = digits.div_ceil(9) * 9;
+        // ASCII-8BIT, so Marshal writes a bare `u` block: any other encoding
+        // carries an `E` ivar and wraps the whole thing in `I`, which ruby's
+        // BigDecimal dump does not (its `Encoding` sibling DOES -- the two
+        // genuinely differ).
+        Ok(RubyValue::Str(crate::collections::string_from_bytes(
+            format!("{word}:{}", value::to_s(bd, "")).into_bytes(),
+            crate::encoding::ASCII_8BIT,
+        )))
+    }
+    def self."_load" (_recv, arg) {
+        let text = convert::to_rstr(arg)?.lock().to_utf8_lossy().into_owned();
+        // Everything after the FIRST colon; the precision word is advisory.
+        let body = match text.split_once(':') {
+            Some((_, rest)) => rest,
+            None => text.as_str(),
+        };
+        match value::parse(body, false) {
+            Some(bd) => Ok(wrap(bd)),
+            None => Err(type_error!("load failed: invalid character in the marshaled string")),
+        }
+    }
+
     def "to_s" (recv, arg?) {
         let fmt = match arg {
             None => String::new(),

@@ -15,6 +15,8 @@ static TIMEOUT: std::sync::LazyLock<parking_lot::Mutex<Option<RubyValue>>> =
 ruby_class! {
     Regexp = zeo_abi::REGEXP_CLASS < zeo_abi::OBJECT_CLASS;
 
+    allocate regexp_allocate;
+
     seed seed_regexp_constants;
 
     // `Regexp.timeout` -- the process-wide default match timeout. zeo enforces
@@ -184,6 +186,13 @@ ruby_class! {
         let RubyValue::Regexp(re) = recv else {
             unreachable!("the Regexp table only dispatches on Regexp receivers")
         };
+        // A blank has no source to compute an encoding FROM, and ruby answers
+        // the binary one rather than deriving US-ASCII from nothing.
+        if re.uninitialized {
+            return Ok(crate::builtins::encoding::encoding_value(
+                crate::encoding::ASCII_8BIT,
+            ));
+        }
         let id = match re.encoding {
             zeo_abi::RegexpEncoding::EucJp => crate::encoding::EUC_JP,
             zeo_abi::RegexpEncoding::Windows31j => crate::encoding::WINDOWS_31J,
@@ -204,13 +213,13 @@ ruby_class! {
         Err(regexp_reinit_refusal(recv))
     }
     def "source" (recv) {
-        Ok(crate::regexp_source(re_of(recv)))
+        Ok(crate::regexp_source(live_re(recv)?))
     }
     // `#match?` tests for a match without building a `MatchData` or touching
     // `$~`; `#match` and `#=~` do build one (and set `$~`) via the runtime
     // helpers String's own rows share.
     def "match?" cfunc (recv, arg1, arg2?) {
-        let Some(h) = subject_arg(re_of(recv), arg1)? else { return Ok(RubyValue::Bool(false)) };
+        let Some(h) = subject_arg(live_re(recv)?, arg1)? else { return Ok(RubyValue::Bool(false)) };
         // An optional start position (char offset, end-relative when negative)
         // anchors the search; a position past the end is simply no match.
         let Some(at) = crate::builtins::string::match_haystack(&h, arg2)? else {
@@ -223,7 +232,7 @@ ruby_class! {
         )))
     }
     def "match" cfunc (recv, arg1, _arg2?, &block) {
-        let Some(h) = subject_arg(re_of(recv), arg1)? else { return Ok(RubyValue::Nil) };
+        let Some(h) = subject_arg(live_re(recv)?, arg1)? else { return Ok(RubyValue::Nil) };
         let m = crate::regexp_match(re_of(recv), &h);
         // With a block, ruby YIELDS the MatchData on a hit and the call
         // evaluates to the BLOCK's value; a miss answers nil without running
@@ -235,12 +244,12 @@ ruby_class! {
         Ok(m)
     }
     def "=~" (recv, other) {
-        let Some(h) = subject_arg(re_of(recv), other)? else { return Ok(RubyValue::Nil) };
+        let Some(h) = subject_arg(live_re(recv)?, other)? else { return Ok(RubyValue::Nil) };
         Ok(crate::regexp_match_index(re_of(recv), &h))
     }
     // `casefold?` reports the `/i` flag.
     def "casefold?" (recv) {
-        Ok(RubyValue::Bool(re_of(recv).ignore_case))
+        Ok(RubyValue::Bool(live_re(recv)?.ignore_case))
     }
     // A regexp is fixed-encoding when it is tied to a specific encoding rather
     // than the ASCII-agnostic default. Two ways to get there: a flag PINNED one
@@ -248,7 +257,7 @@ ruby_class! {
     // source itself carries a non-ASCII character, so `computed_encoding_of`
     // resolves past US-ASCII (`/café/` -> UTF-8 -> true; `/abc/` -> false).
     def "fixed_encoding?" (recv) {
-        let re = re_of(recv);
+        let re = live_re(recv)?;
         if re.encoding.is_fixed() {
             return Ok(RubyValue::Bool(true));
         }
@@ -262,7 +271,7 @@ ruby_class! {
         // several groups -- `/(?<a>x)(?<a>z)/` -- lists once, as CRuby does).
         // Parsed from the source, since the engine collapses repeated names.
         let mut seen: Vec<String> = Vec::new();
-        for (n, _) in crate::regexp::named_group_positions(&re_of(recv).source) {
+        for (n, _) in crate::regexp::named_group_positions(&live_re(recv)?.source) {
             if !seen.contains(&n) {
                 seen.push(n);
             }
@@ -277,7 +286,7 @@ ruby_class! {
         // just the last -- CRuby's `named_captures`.
         let mut order: Vec<String> = Vec::new();
         let mut indices: std::collections::HashMap<String, Vec<RubyValue>> = std::collections::HashMap::new();
-        for (n, i) in crate::regexp::named_group_positions(&re_of(recv).source) {
+        for (n, i) in crate::regexp::named_group_positions(&live_re(recv)?.source) {
             indices
                 .entry(n.clone())
                 .or_insert_with(|| {
@@ -298,12 +307,12 @@ ruby_class! {
     // `#timeout` -- this pattern's per-match timeout; zeo sets none, so
     // it reports the global default (`nil`, "no timeout").
     def "timeout" (recv) {
-        let _ = re_of(recv);
+        let _ = live_re(recv)?;
         Ok(RubyValue::Nil)
     }
     // `#options` -- the `Regexp::` flag bitmask this pattern was built with.
     def "options" (recv) {
-        let re = re_of(recv);
+        let re = live_re(recv)?;
         let bits = (re.ignore_case as i64) * IGNORECASE
             + (re.extended as i64) * EXTENDED
             + (re.multiline as i64) * MULTILINE
@@ -318,11 +327,19 @@ ruby_class! {
     // and `instance_methods(false)` agree and there is still only one body.
     def "=="(recv, _other) { inherited_row!(basic_object, "==", recv, __args, None) }
     def "eql?"(recv, _other) { inherited_row!(kernel, "eql?", recv, __args, None) }
-    def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
+    // `hash` and `to_s` read the pattern; `==`, `eql?` and `inspect` do not,
+    // so a blank still compares and still prints.
+    def "hash"(recv) {
+        live_re(recv)?;
+        inherited_row!(kernel, "hash", recv, __args, None)
+    }
     def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
     // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
     // spell the two differently, so each goes to its own Kernel row.
-    def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
+    def "to_s"(recv) {
+        live_re(recv)?;
+        inherited_row!(kernel, "to_s", recv, __args, None)
+    }
 }
 
 /// True if `source` contains a backreference (`\1`..`\9` or `\k<name>`/
@@ -395,6 +412,34 @@ fn re_of(recv: &RubyValue) -> &crate::RRegexp {
         unreachable!("the Regexp table only dispatches on Regexp receivers")
     };
     re
+}
+
+/// [`re_of`] for the rows that need a real PATTERN, which is every row but
+/// `#encoding` and object identity. `Regexp.allocate` hands back a receiver
+/// with no pattern behind it, and ruby refuses to read one.
+fn live_re(recv: &RubyValue) -> Result<&crate::RRegexp, crate::Signal> {
+    let re = re_of(recv);
+    match re.uninitialized {
+        true => Err(crate::builtins::type_error!("uninitialized Regexp")),
+        false => Ok(re),
+    }
+}
+
+/// A blank `Regexp` -- the one value whose `uninitialized` flag is set. Its
+/// engine never runs: every row that would reach it goes through [`live_re`].
+fn regexp_allocate() -> RubyValue {
+    let blank = crate::regexp::regexp_new("", false, false, false)
+        .expect("the empty pattern always compiles");
+    RubyValue::Regexp(std::sync::Arc::new(crate::regexp::RegexpData {
+        engine: blank.engine.clone(),
+        source: String::new(),
+        uninitialized: true,
+        ignore_case: false,
+        extended: false,
+        multiline: false,
+        encoding: zeo_abi::RegexpEncoding::None,
+        frozen: std::sync::atomic::AtomicBool::new(false),
+    }))
 }
 
 /// The subject of `Regexp#=~`/`#match`/`#match?`: a String matches, `nil`

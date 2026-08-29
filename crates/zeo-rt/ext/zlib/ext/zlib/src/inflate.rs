@@ -9,8 +9,15 @@ use flate2::FlushDecompress;
 use std::sync::Arc;
 use zeo_macros::ruby_class;
 
+/// A blank `Zlib::Inflate` -- see `deflate::deflate_allocate`.
+fn inflate_allocate() -> RubyValue {
+    super::codec::closed_stream(zeo_abi::ZLIB_INFLATE_CLASS)
+}
+
 ruby_class! {
     Inflate = zeo_abi::ZLIB_INFLATE_CLASS < zeo_abi::ZLIB_ZSTREAM_CLASS;
+
+    allocate inflate_allocate;
 
     // `Inflate.new(window_bits)`. Unlike `Deflate`, this accepts the +32
     // auto-detect form -- which is how `Net::HTTP` decodes a response body

@@ -8,6 +8,10 @@ Encoding	TypeError: allocator undefined for Encoding
 Proc	TypeError: allocator undefined for Proc
 Binding	TypeError: allocator undefined for Binding
 Thread	TypeError: allocator undefined for Thread
+Rational	NoMethodError: undefined method 'allocate' for class Rational
+Complex	NoMethodError: undefined method 'allocate' for class Complex
+MatchData	NoMethodError: undefined method 'allocate' for class MatchData
+Module	NoMethodError: undefined method 'allocate' for class Module
 Plain	Plain
 Object	Object
 String	""

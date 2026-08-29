@@ -24,6 +24,11 @@ pub enum StdStream {
 /// handles (nothing to own); a File owns its open descriptor.
 pub enum IoBackend {
     Std(StdStream),
+    /// `IO.allocate` -- a handle that has never been opened. Distinct from a
+    /// CLOSED one: ruby says `uninitialized stream` here and `closed stream`
+    /// there, and names an uninitialized handle by address rather than by the
+    /// path it has not got.
+    Uninit,
     /// An open file. `None` after `close` -- a closed IO is not a dangling
     /// one: every operation on it raises IOError, which is what real Ruby
     /// does and what a plain `Option::take` gives us for free.
@@ -61,7 +66,7 @@ impl IoBackend {
                     _ => Err(std::io::Error::last_os_error()),
                 }
             }
-            IoBackend::Std(_) => Ok(()),
+            IoBackend::Std(_) | IoBackend::Uninit => Ok(()),
         }
     }
 
@@ -76,7 +81,7 @@ impl IoBackend {
                     let _ = f.into_raw_fd();
                 }
             }
-            IoBackend::Std(_) => {}
+            IoBackend::Std(_) | IoBackend::Uninit => {}
         }
     }
 }
@@ -221,7 +226,7 @@ impl RubyObject for RIo {
         }
         match &*self.backend.lock() {
             IoBackend::File(_) => zeo_abi::FILE_CLASS,
-            IoBackend::Std(_) | IoBackend::Pipe(_) => IO_CLASS,
+            IoBackend::Std(_) | IoBackend::Pipe(_) | IoBackend::Uninit => IO_CLASS,
         }
     }
     fn as_any(&self) -> &dyn std::any::Any {
@@ -249,7 +254,7 @@ impl RubyObject for RIo {
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
         let stream = match &*self.backend.lock() {
             IoBackend::Std(s) => *s,
-            IoBackend::File(_) | IoBackend::Pipe(_) => StdStream::Stdout,
+            IoBackend::File(_) | IoBackend::Pipe(_) | IoBackend::Uninit => StdStream::Stdout,
         };
         Arc::new(RIo::new(IoBackend::Std(stream), self.path.lock().clone()))
     }
@@ -262,7 +267,7 @@ impl RIo {
         use std::os::fd::AsRawFd;
         match &*self.backend.lock() {
             IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => Some(f.as_raw_fd()),
-            IoBackend::File(None) | IoBackend::Pipe(None) => None,
+            IoBackend::File(None) | IoBackend::Pipe(None) | IoBackend::Uninit => None,
             IoBackend::Std(StdStream::Stdin) => Some(0),
             IoBackend::Std(StdStream::Stdout) => Some(1),
             IoBackend::Std(StdStream::Stderr) => Some(2),
@@ -388,6 +393,21 @@ pub(crate) fn socket_value(f: std::fs::File, class_id: ClassId) -> RubyValue {
 pub(crate) unsafe fn socket_from_raw_fd(fd: std::os::fd::RawFd, class_id: ClassId) -> RubyValue {
     use std::os::fd::FromRawFd;
     socket_value(unsafe { std::fs::File::from_raw_fd(fd) }, class_id)
+}
+
+/// A handle that was never opened, tagged as `class_id` -- what `allocate`
+/// answers for `IO`, `File` and every socket class. `class_id` is carried
+/// explicitly because [`IoBackend::Uninit`] names no descriptor to derive it
+/// from, and a blank `File` must still report `File`.
+pub(crate) fn uninit_io(class_id: ClassId) -> RubyValue {
+    let io = RIo::new(IoBackend::Uninit, None);
+    io.class_override
+        .store(class_id.0, std::sync::atomic::Ordering::Relaxed);
+    RubyValue::Object(Arc::new(io))
+}
+
+fn io_allocate() -> RubyValue {
+    uninit_io(IO_CLASS)
 }
 
 /// The raw descriptor behind a socket-backed IO value (a `TCPSocket`/`Socket`/
@@ -674,7 +694,7 @@ pub(crate) fn dup_fd_file(v: &RubyValue) -> Option<std::fs::File> {
         IoBackend::Std(StdStream::Stdin) => 0,
         IoBackend::Std(StdStream::Stdout) => 1,
         IoBackend::Std(StdStream::Stderr) => 2,
-        IoBackend::Pipe(None) | IoBackend::File(None) => return None,
+        IoBackend::Pipe(None) | IoBackend::File(None) | IoBackend::Uninit => return None,
     };
     // SAFETY: `fd` is open (borrowed from the live backend above); `dup(2)`
     // hands back a fresh descriptor this File then owns.
@@ -785,6 +805,7 @@ fn write_rio(io: &RIo, bytes: &[u8]) -> Result<(), Signal> {
         }
         IoBackend::Std(StdStream::Stdin) => Err(io_error!("not opened for writing")),
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
+        IoBackend::Uninit => Err(io_error!("uninitialized stream")),
         IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => blocking_write_all(f, bytes)
             .map_err(|e| {
                 crate::builtins::file::raise_errno(
@@ -1030,8 +1051,12 @@ fn fileno_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
     use std::os::fd::AsRawFd;
     if let Some(io) = as_rio(recv) {
         // A pipe end and a socket carry a real descriptor too, not just a file.
-        if let IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) = &*io.backend.lock() {
-            return Ok(RubyValue::Int(f.as_raw_fd() as i64));
+        match &*io.backend.lock() {
+            IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => {
+                return Ok(RubyValue::Int(f.as_raw_fd() as i64));
+            }
+            IoBackend::Uninit => return Err(io_error!("uninitialized stream")),
+            _ => {}
         }
     }
     Ok(RubyValue::Int(match stream_of(recv) {
@@ -1091,7 +1116,7 @@ pub(crate) fn stream_label(recv: &RubyValue) -> String {
 fn stream_of(recv: &RubyValue) -> Option<StdStream> {
     match &*as_rio(recv)?.backend.lock() {
         IoBackend::Std(s) => Some(*s),
-        IoBackend::File(_) | IoBackend::Pipe(_) => None,
+        IoBackend::File(_) | IoBackend::Pipe(_) | IoBackend::Uninit => None,
     }
 }
 
@@ -1273,6 +1298,7 @@ pub(crate) fn with_file<T>(
             f(file, &path)
         }
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
+        IoBackend::Uninit => Err(io_error!("uninitialized stream")),
         IoBackend::Std(_) => Err(io_error!("not a file")),
     })
 }
@@ -1296,6 +1322,7 @@ fn with_buffered_file<T>(
     crate::gvl::without_gvl(|| match &mut *io.backend.lock() {
         IoBackend::File(Some(file)) | IoBackend::Pipe(Some(file)) => f(io, file, &path),
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
+        IoBackend::Uninit => Err(io_error!("uninitialized stream")),
         IoBackend::Std(_) => Err(io_error!("not a file")),
     })
 }
@@ -2077,6 +2104,8 @@ fn file_class_row(
 
 ruby_class! {
     IO = zeo_abi::IO_CLASS < zeo_abi::OBJECT_CLASS;
+
+    allocate io_allocate;
     include zeo_abi::ENUMERABLE_CLASS;
 
     seed seed_io_constants;
@@ -2360,6 +2389,18 @@ ruby_class! {
             None => match as_rio(recv) {
                 // A handle names its path when it has one, its descriptor when it
                 // does not (a pipe end, a socket), and neither once it is closed.
+                // A handle that was never opened has no path and no
+                // descriptor to name, so ruby falls back to the address.
+                Some(io) if matches!(&*io.backend.lock(), IoBackend::Uninit) => {
+                    let class = crate::builtins::class_name_of(recv);
+                    match recv {
+                        RubyValue::Object(o) => format!(
+                            "#<{class}:0x{:016x}>",
+                            Arc::as_ptr(o) as *const () as usize
+                        ),
+                        _ => format!("#<{class}>"),
+                    }
+                }
                 Some(io) => {
                     let class = crate::builtins::class_name_of(recv);
                     let closed = matches!(
@@ -2945,6 +2986,13 @@ ruby_class! {
     }
 
     def "closed?" (recv, &_blk) {
+        // A handle that was never opened is neither open nor closed, and ruby
+        // refuses the question rather than guessing an answer.
+        if let Some(io) = as_rio(recv)
+            && matches!(&*io.backend.lock(), IoBackend::Uninit)
+        {
+            return Err(io_error!("uninitialized stream"));
+        }
         let closed = match as_rio(recv) {
             Some(io) => matches!(
                 &*io.backend.lock(),
@@ -3743,6 +3791,7 @@ ruby_class! {
             IoBackend::Std(s) => IoBackend::Std(*s),
             IoBackend::File(slot) => IoBackend::File(dup_slot(slot)?),
             IoBackend::Pipe(slot) => IoBackend::Pipe(dup_slot(slot)?),
+            IoBackend::Uninit => IoBackend::Uninit,
         };
         {
             let mut b = io.backend.lock();

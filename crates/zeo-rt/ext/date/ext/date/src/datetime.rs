@@ -59,6 +59,8 @@ fn digits(arg: Option<&RubyValue>) -> Result<i64, Signal> {
 ruby_class! {
     DateTime = zeo_abi::DATETIME_CLASS < zeo_abi::DATE_CLASS;
 
+    allocate super::datetime_allocate;
+
     def "to_s" (recv) { str_val(date_of(recv), "%Y-%m-%dT%H:%M:%S%:z") }
     def "strftime" cfunc (recv, arg?) {
         let fmt = match arg { Some(v) => fmt_arg(v)?, None => "%Y-%m-%dT%H:%M:%S%:z".to_string() };
@@ -82,19 +84,19 @@ ruby_class! {
     def "sec" | "second" (recv) { Ok(RubyValue::Int(date_of(recv).hms().2 as i64)) }
     def "sec_fraction" | "second_fraction" (recv) {
         crate::builtins::rational::rational_new(
-            BigInt::from(date_of(recv).sf), BigInt::from(NS_PER_SEC))
+            BigInt::from(date_of(recv).sf()), BigInt::from(NS_PER_SEC))
     }
     def "offset" (recv) {
         crate::builtins::rational::rational_new(
-            BigInt::from(date_of(recv).of), BigInt::from(86_400))
+            BigInt::from(date_of(recv).of()), BigInt::from(86_400))
     }
-    def "zone" (recv) { Ok(RubyValue::Str(string_new(offset_string(date_of(recv).of)))) }
+    def "zone" (recv) { Ok(RubyValue::Str(string_new(offset_string(date_of(recv).of())))) }
     // The same INSTANT rendered against another offset: `jd`/`df` are UTC, so
     // only `of` moves.
     def "new_offset" (recv, arg?) {
         let d = date_of(recv);
         let of = offset_arg(arg)?;
-        Ok(RubyValue::Object(RDate::raw(d.jd, d.df, d.sf, of, d.sg, true, d.class_id)))
+        Ok(RubyValue::Object(RDate::raw(d.jd(), d.df(), d.sf(), of, d.sg(), true, d.class_id)))
     }
     def "to_time" (recv) {
         let d = date_of(recv);
@@ -106,7 +108,7 @@ ruby_class! {
             &[
                 RubyValue::Int(y), RubyValue::Int(m), RubyValue::Int(day),
                 RubyValue::Int(h as i64), RubyValue::Int(mi as i64), RubyValue::Int(s as i64),
-                RubyValue::Str(string_new(offset_string(d.of))),
+                RubyValue::Str(string_new(offset_string(d.of()))),
             ],
             None,
         )
@@ -121,13 +123,13 @@ ruby_class! {
             (sym("year"), RubyValue::Int(y)),
             (sym("month"), RubyValue::Int(m)),
             (sym("day"), RubyValue::Int(day)),
-            (sym("yday"), RubyValue::Int(jd_yday(local_jd, d.sg))),
+            (sym("yday"), RubyValue::Int(jd_yday(local_jd, d.sg()))),
             (sym("wday"), RubyValue::Int(jd_wday(local_jd))),
             (sym("hour"), RubyValue::Int(h as i64)),
             (sym("min"), RubyValue::Int(mi as i64)),
             (sym("sec"), RubyValue::Int(s as i64)),
-            (sym("sec_fraction"), ns_to_day_rational(d.sf as i128)?),
-            (sym("zone"), RubyValue::Str(string_new(offset_string(d.of)))),
+            (sym("sec_fraction"), ns_to_day_rational(d.sf() as i128)?),
+            (sym("zone"), RubyValue::Str(string_new(offset_string(d.of())))),
         ])))
     }
 

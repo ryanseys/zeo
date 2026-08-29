@@ -119,8 +119,16 @@ fn do_recvfrom(fd: RawFd, maxlen: usize, flags: libc::c_int) -> Result<RubyValue
     ])))
 }
 
+/// A blank `Socket` -- an unopened handle tagged with its class, so every row
+/// reports `IOError: uninitialized stream` from `fd_of`.
+fn socket_allocate() -> RubyValue {
+    crate::builtins::io::uninit_io(zeo_abi::SOCKET_CLASS)
+}
+
 ruby_class! {
     Socket = zeo_abi::SOCKET_CLASS < zeo_abi::BASIC_SOCKET_CLASS;
+
+    allocate socket_allocate;
 
     // `Socket.new(domain, type, protocol = 0)` -- a raw socket descriptor.
     def self."new" | "open" cfunc (_recv, arg1, arg2, arg3?) {

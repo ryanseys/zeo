@@ -54,6 +54,13 @@ pub fn default_group() -> RubyValue {
         .clone()
 }
 
+/// A fresh, unenclosed group -- what `ThreadGroup.allocate` answers. NOT
+/// [`default_group`], whose whole point is being the one shared instance:
+/// `ThreadGroup.allocate.equal?(ThreadGroup::Default)` is false in ruby.
+fn thread_group_allocate() -> RubyValue {
+    RubyValue::Object(Arc::new(RThreadGroup::default()))
+}
+
 /// The payload behind a `ThreadGroup` receiver -- the table only dispatches on
 /// one, so the downcast cannot fail.
 fn group_of(recv: &RubyValue) -> Result<&RThreadGroup, crate::Signal> {
@@ -68,6 +75,8 @@ fn group_of(recv: &RubyValue) -> Result<&RThreadGroup, crate::Signal> {
 
 ruby_class! {
     ThreadGroup = zeo_abi::THREAD_GROUP_CLASS < zeo_abi::OBJECT_CLASS;
+
+    allocate thread_group_allocate;
 
     // `ThreadGroup::Default` -- the one shared group every thread reports.
     const Default = default_group();
@@ -103,8 +112,18 @@ ruby_class! {
         }
         Ok(recv.clone())
     }
-    def "list"(_recv) {
-        Ok(RubyValue::Array(crate::array_new(crate::thread::thread_list())))
+    // Every thread belongs to `Default` (zeo never moves one), so any OTHER
+    // group is empty. Answering the whole thread list for every receiver
+    // reported a member for `ThreadGroup.new` and for `.allocate`, where ruby
+    // answers `[]`.
+    def "list"(recv) {
+        let is_default = matches!((recv, &default_group()),
+            (RubyValue::Object(a), RubyValue::Object(b)) if Arc::ptr_eq(a, b));
+        let members = match is_default {
+            true => crate::thread::thread_list(),
+            false => Vec::new(),
+        };
+        Ok(RubyValue::Array(crate::array_new(members)))
     }
 }
 

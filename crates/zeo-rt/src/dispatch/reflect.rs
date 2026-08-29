@@ -44,6 +44,15 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     {
         return false;
     }
+    // The same rule for the undefs ruby itself writes, which no program has to
+    // be running metaprogramming to see: `Rational.respond_to?(:allocate)` is
+    // false, not merely a call that raises.
+    if let RubyValue::Class(cid) = recv
+        && name.name() == "allocate"
+        && crate::builtins::rclass::allocate_is_undefined(*cid)
+    {
+        return false;
+    }
     // The per-object twin of the class-method undef just above: `g.singleton_
     // class.undef_method(:close)` has to make `g.respond_to?(:close)` false
     // while `Foo.new.respond_to?(:close)` stays true, and the class walk below

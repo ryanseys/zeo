@@ -23,6 +23,17 @@ use zeo_macros::ruby_class;
 /// without building one. A class with no blank form keeps its fused `new`
 /// (`tests/gaps/allocate_on_a_value_class`): diverting to `Class#new` there
 /// would trade a working construction for `allocator undefined`.
+/// Whether `allocate` is `undef`'d on this class rather than merely
+/// unallocatable -- see [`zeo_abi::ALLOCATE_UNDEFINED`]. Asked over the
+/// ancestors because CRuby's undef sits on the singleton chain, so a subclass
+/// of `MatchData` refuses too.
+pub(crate) fn allocate_is_undefined(cid: crate::ClassId) -> bool {
+    zeo_abi::ALLOCATE_UNDEFINED.contains(&cid)
+        || crate::dispatch::ancestors_of_value(cid)
+            .iter()
+            .any(|a| zeo_abi::ALLOCATE_UNDEFINED.contains(a))
+}
+
 pub(crate) fn can_builtin_allocate(cid: crate::ClassId) -> bool {
     crate::builtins::allocator_of(cid).is_some()
         || matches!(
@@ -225,6 +236,18 @@ ruby_class! {
         if crate::runtime_meta::class_is_uninitialized(cid) {
             return Err(type_error!("can't instantiate uninitialized class"));
         }
+        // Ruby UNDEFINES the name on these, so the refusal is a missing METHOD
+        // rather than a missing allocator -- a different class and a different
+        // message, and `rescue TypeError` around `MatchData.allocate` catches
+        // nothing in ruby.
+        if allocate_is_undefined(cid) {
+            return Err(crate::dispatch::raise_method_missing(
+                recv,
+                "allocate",
+                &[],
+                crate::dispatch::MissingReason::NoEntry,
+            ));
+        }
         if let Some(v) = builtin_allocate(cid) {
             return Ok(v);
         }
@@ -319,6 +342,67 @@ mod tests {
         assert!(matches!(&s, RubyValue::Str(s) if s.lock().bytesize() == 0));
         let a = call(&RubyValue::Class(zeo_abi::ARRAY_CLASS), "allocate", &[]).unwrap();
         assert!(matches!(&a, RubyValue::Array(a) if a.lock().to_vec().is_empty()));
+    }
+
+    /// Every class that DECLARES a blank answers one, and the value reports
+    /// the declaring class.
+    ///
+    /// The class id is the trap this guards. Several blanks share a payload
+    /// whose own `class_id` names a different class -- a blank `File` and a
+    /// blank socket are both `RIo`, which says `IO` unless the allocator
+    /// stamps the override -- so a slot that compiles can still hand back an
+    /// instance of the wrong class.
+    #[test]
+    fn every_declared_blank_reports_its_own_class() {
+        install_core();
+        let mut checked = 0;
+        for b in zeo_abi::BUILTINS.iter() {
+            let cid = crate::ClassId(b.id.0);
+            let Some(f) = crate::builtins::allocator_of(cid) else {
+                continue;
+            };
+            let v = f();
+            assert_eq!(
+                v.class_id(),
+                cid,
+                "{}.allocate answers an instance of {:?}",
+                b.name,
+                crate::dispatch::class_name(v.class_id())
+            );
+            checked += 1;
+        }
+        // The count is a floor, not a pin: a new `allocate` slot should join
+        // this sweep without editing it. Zero would mean the sweep found
+        // nothing and proved nothing.
+        assert!(
+            checked >= 20,
+            "only {checked} classes declare a blank; the sweep is not reaching them"
+        );
+    }
+
+    /// The five classes ruby `undef`s `allocate` on refuse with a
+    /// NoMethodError rather than the TypeError a missing allocator gives, and
+    /// the refusal is INHERITED -- ruby's undef sits on the singleton chain.
+    #[test]
+    fn an_undefined_allocate_refuses_as_a_missing_method() {
+        install_core();
+        for &cid in zeo_abi::ALLOCATE_UNDEFINED {
+            assert!(
+                allocate_is_undefined(cid),
+                "{:?} is listed but not recognised",
+                crate::dispatch::class_name(cid)
+            );
+            let err = call(&RubyValue::Class(cid), "allocate", &[]).unwrap_err();
+            let Signal::Raise(exc) = err else {
+                panic!("allocate raises");
+            };
+            assert_eq!(
+                crate::dispatch::class_name(exc.class_id()).as_deref(),
+                Some("NoMethodError")
+            );
+        }
+        // A class NOT on the list keeps the other refusal.
+        assert!(!allocate_is_undefined(zeo_abi::STRING_CLASS));
     }
 
     #[test]

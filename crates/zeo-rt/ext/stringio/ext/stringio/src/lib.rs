@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use zeo_abi::STRINGIO_CLASS;
 use zeo_macros::ruby_class;
 
+#[derive(Clone)]
 struct State {
     bytes: Vec<u8>,
     /// The buffer's encoding, which every read but `read(len)` is tagged with.
@@ -50,6 +51,11 @@ struct State {
     readable: bool,
     writable: bool,
     append: bool,
+    /// False for the blank `StringIO.allocate` answers. Ruby keeps an
+    /// unopened buffer distinct from an EMPTY one -- every row raises
+    /// `IOError: uninitialized stream` there, where a `StringIO.new("")`
+    /// reads happily -- and no other field can tell the two apart.
+    initialized: bool,
 }
 
 /// A mode string's three answers. CRuby reads the first character and then
@@ -84,6 +90,7 @@ impl RStringIO {
                 readable: true,
                 writable: true,
                 append: false,
+                initialized: true,
             }),
             frozen: AtomicBool::new(false),
         }
@@ -117,6 +124,24 @@ impl RubyObject for RStringIO {
             io.set_frozen();
         }
         Arc::new(io)
+    }
+}
+
+/// A blank `StringIO` -- an unopened buffer. Every row goes through
+/// [`live_io`], which refuses it the way ruby does.
+fn stringio_allocate() -> RubyValue {
+    let io = RStringIO::with_bytes(Vec::new(), crate::encoding::UTF_8);
+    io.state.lock().initialized = false;
+    RubyValue::Object(std::sync::Arc::new(io))
+}
+
+/// [`io_of`] with ruby's uninitialized guard, which every row needs.
+fn live_io(recv: &RubyValue) -> Result<&RStringIO, crate::Signal> {
+    let io = io_of(recv);
+    let ok = io.state.lock().initialized;
+    match ok {
+        true => Ok(io),
+        false => Err(crate::builtins::io_error!("uninitialized stream")),
     }
 }
 
@@ -177,7 +202,7 @@ fn partial_read(
     };
     let n = n as usize;
 
-    let mut s = io_of(recv).state.lock();
+    let mut s = live_io(recv)?.state.lock();
     if s.pos >= s.bytes.len() && n > 0 {
         // CRuby empties the buffer before reporting EOF, so a rescued end
         // leaves no stale bytes from the previous read.
@@ -215,7 +240,7 @@ fn partial_read(
 /// Only the I/O surface is guarded. `string`, `pos` and `size` keep answering
 /// on a fully closed StringIO, because they read the OBJECT, not the stream.
 fn check_readable(recv: &RubyValue) -> Result<(), crate::Signal> {
-    let st = io_of(recv).state.lock();
+    let st = live_io(recv)?.state.lock();
     if st.closed_read || !st.readable {
         return Err(crate::builtins::io_error!("not opened for reading"));
     }
@@ -223,7 +248,7 @@ fn check_readable(recv: &RubyValue) -> Result<(), crate::Signal> {
 }
 
 fn check_writable(recv: &RubyValue) -> Result<(), crate::Signal> {
-    let st = io_of(recv).state.lock();
+    let st = live_io(recv)?.state.lock();
     if st.closed_write || !st.writable {
         return Err(crate::builtins::io_error!("not opened for writing"));
     }
@@ -276,7 +301,7 @@ fn unget_bytes(
     arg: &RubyValue,
     byte_form: bool,
 ) -> Result<RubyValue, crate::Signal> {
-    let mut s = io_of(recv).state.lock();
+    let mut s = live_io(recv)?.state.lock();
     let bytes: Vec<u8> = match arg {
         RubyValue::Nil => return Ok(RubyValue::Nil),
         RubyValue::Str(buf) => buf.lock().bytes().to_vec(),
@@ -308,9 +333,11 @@ ruby_class! {
     StringIO = zeo_abi::STRINGIO_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
 
+    allocate stringio_allocate;
+
     // The whole buffer as a String, independent of position.
     def "string" (recv) {
-        let s = io_of(recv).state.lock();
+        let s = live_io(recv)?.state.lock();
         Ok(bytes_to_str(&s.bytes, s.enc))
     }
     // The IO encoding pair, as `IO` answers it: the buffer's own encoding
@@ -318,7 +345,7 @@ ruby_class! {
     // decide whether it must convert what it is about to emit.
     def "external_encoding" (recv) {
         crate::dispatch::send_value(
-            &{ let s = io_of(recv).state.lock(); bytes_to_str(&s.bytes, s.enc) },
+            &{ let s = live_io(recv)?.state.lock(); bytes_to_str(&s.bytes, s.enc) },
             crate::Symbol::intern("encoding"),
             &[],
             None,
@@ -329,7 +356,7 @@ ruby_class! {
     }
     def "read" (recv, arg?) {
         check_readable(recv)?;
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         match arg {
             None | Some(RubyValue::Nil) => {
                 let out = s.bytes[s.pos.min(s.bytes.len())..].to_vec();
@@ -371,7 +398,7 @@ ruby_class! {
     def "write" (recv, *args, &_block) {
         check_writable(recv)?;
         let mut written = 0usize;
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         for a in args {
             let b = arg_bytes(a);
             written += b.len();
@@ -381,7 +408,7 @@ ruby_class! {
     }
     def "<<" (recv, other) {
         check_writable(recv)?;
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         write_at(&mut s, &arg_bytes(other));
         Ok(recv.clone())
     }
@@ -391,7 +418,7 @@ ruby_class! {
     def "print" (recv, *args, &_block) {
         check_writable(recv)?;
         let field_sep = crate::builtins::kernel::output_separator("$,");
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         for (i, a) in args.iter().enumerate() {
             if i > 0 && let Some(sep) = &field_sep {
                 write_at(&mut s, sep.bytes());
@@ -405,7 +432,7 @@ ruby_class! {
     }
     def "puts" (recv, *args, &_block) {
         check_writable(recv)?;
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         if args.is_empty() {
             write_at(&mut s, b"\n");
         }
@@ -421,7 +448,7 @@ ruby_class! {
     def "gets" as gets (recv, _sep?, _limit?, **_opts, &_blk) {
         check_readable(recv)?;
         let opts = crate::builtins::io::line_opts(__args);
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         if s.pos >= s.bytes.len() {
             return Ok(RubyValue::Nil);
         }
@@ -468,7 +495,7 @@ ruby_class! {
         let p = crate::builtins::block_or_enum!(recv, __args, block);
         loop {
             let ch = {
-                let mut s = io_of(recv).state.lock();
+                let mut s = live_io(recv)?.state.lock();
                 if s.pos >= s.bytes.len() {
                     break;
                 }
@@ -487,52 +514,52 @@ ruby_class! {
     def "printf" cfunc (recv, fmt, *args, &_blk) {
         check_writable(recv)?;
         let s = crate::builtins::format::sprintf(&fmt.try_display_string()?, args)?;
-        write_at(&mut io_of(recv).state.lock(), s.as_bytes());
+        write_at(&mut live_io(recv)?.state.lock(), s.as_bytes());
         Ok(RubyValue::Nil)
     }
     def "eof?" | "eof" (recv) {
         check_readable(recv)?;
-        let s = io_of(recv).state.lock();
+        let s = live_io(recv)?.state.lock();
         Ok(RubyValue::Bool(s.pos >= s.bytes.len()))
     }
     def "rewind" (recv) {
-        io_of(recv).state.lock().pos = 0;
+        live_io(recv)?.state.lock().pos = 0;
         Ok(RubyValue::Int(0))
     }
     def "pos" | "tell" (recv) {
-        Ok(RubyValue::Int(io_of(recv).state.lock().pos as i64))
+        Ok(RubyValue::Int(live_io(recv)?.state.lock().pos as i64))
     }
     def "pos=" (recv, arg) {
         let n = &crate::builtins::convert::to_index(arg)?;
-        io_of(recv).state.lock().pos = (*n).max(0) as usize;
+        live_io(recv)?.state.lock().pos = (*n).max(0) as usize;
         Ok((*arg).clone())
     }
     def "size" | "length" (recv) {
-        Ok(RubyValue::Int(io_of(recv).state.lock().bytes.len() as i64))
+        Ok(RubyValue::Int(live_io(recv)?.state.lock().bytes.len() as i64))
     }
     def "close" (recv) {
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         s.closed_read = true;
         s.closed_write = true;
         Ok(RubyValue::Nil)
     }
     def "closed?" (recv) {
-        let s = io_of(recv).state.lock();
+        let s = live_io(recv)?.state.lock();
         Ok(RubyValue::Bool(s.closed_read && s.closed_write))
     }
     def "close_read" (recv) {
-        io_of(recv).state.lock().closed_read = true;
+        live_io(recv)?.state.lock().closed_read = true;
         Ok(RubyValue::Nil)
     }
     def "close_write" (recv) {
-        io_of(recv).state.lock().closed_write = true;
+        live_io(recv)?.state.lock().closed_write = true;
         Ok(RubyValue::Nil)
     }
     def "closed_read?" (recv) {
-        Ok(RubyValue::Bool(io_of(recv).state.lock().closed_read))
+        Ok(RubyValue::Bool(live_io(recv)?.state.lock().closed_read))
     }
     def "closed_write?" (recv) {
-        Ok(RubyValue::Bool(io_of(recv).state.lock().closed_write))
+        Ok(RubyValue::Bool(live_io(recv)?.state.lock().closed_write))
     }
 
     // The stream methods a StringIO answers WITHOUT a stream behind it.
@@ -551,7 +578,7 @@ ruby_class! {
     // ASCII-8BIT, which is the whole point of asking for it -- a caller
     // binmodes a stream precisely so nothing interprets the bytes.
     def "binmode" (recv) {
-        io_of(recv).state.lock().enc = crate::encoding::ASCII_8BIT;
+        live_io(recv)?.state.lock().enc = crate::encoding::ASCII_8BIT;
         Ok(recv.clone())
     }
     def "fsync" (_recv) {
@@ -587,11 +614,11 @@ ruby_class! {
     // from the position -- `seek`/`rewind` leave it alone, which is why it
     // has to be stored rather than computed.
     def "lineno" (recv) {
-        Ok(RubyValue::Int(io_of(recv).state.lock().lineno))
+        Ok(RubyValue::Int(live_io(recv)?.state.lock().lineno))
     }
     def "lineno=" (recv, arg) {
         let n = crate::builtins::convert::to_index(arg)?;
-        io_of(recv).state.lock().lineno = n;
+        live_io(recv)?.state.lock().lineno = n;
         Ok((*arg).clone())
     }
 
@@ -602,7 +629,7 @@ ruby_class! {
         let p = crate::builtins::block_or_enum!(recv, __args, block);
         loop {
             let b = {
-                let mut s = io_of(recv).state.lock();
+                let mut s = live_io(recv)?.state.lock();
                 if s.pos >= s.bytes.len() {
                     break;
                 }
@@ -619,7 +646,7 @@ ruby_class! {
         let p = crate::builtins::block_or_enum!(recv, __args, block);
         loop {
             let cp = {
-                let mut s = io_of(recv).state.lock();
+                let mut s = live_io(recv)?.state.lock();
                 if s.pos >= s.bytes.len() {
                     break;
                 }
@@ -652,12 +679,12 @@ ruby_class! {
                 if b.is_empty() {
                     return Ok((*arg).clone());
                 }
-                let len = { let s = io_of(recv).state.lock(); char_len(s.enc, b[0]).min(b.len()) };
+                let len = { let s = live_io(recv)?.state.lock(); char_len(s.enc, b[0]).min(b.len()) };
                 b[..len].to_vec()
             }
             other => vec![(crate::builtins::convert::to_index(other)? & 0xff) as u8],
         };
-        write_at(&mut io_of(recv).state.lock(), &byte);
+        write_at(&mut live_io(recv)?.state.lock(), &byte);
         Ok((*arg).clone())
     }
 
@@ -669,7 +696,7 @@ ruby_class! {
         check_readable(recv)?;
         let len = crate::builtins::convert::to_index(len)?.max(0) as usize;
         let off = crate::builtins::convert::to_index(offset)?.max(0) as usize;
-        let s = io_of(recv).state.lock();
+        let s = live_io(recv)?.state.lock();
         // A zero-length read never reaches for a byte, so it answers "" even
         // at the very end; any other read starting AT or past the end is EOF.
         if len > 0 && off >= s.bytes.len() {
@@ -699,23 +726,44 @@ ruby_class! {
         Ok((*arg).clone())
     }
     def "reopen" cfunc (recv, arg?, *_rest) {
+        live_io(recv)?;
         if let Some(arg) = arg {
             set_buffer(recv, arg);
         }
         Ok(recv.clone())
     }
 
+    // The row that SEEDS a blank, so `StringIO.allocate` is a legal receiver
+    // rather than a dead end. `reopen` above deliberately does NOT: ruby
+    // refuses it on an unopened buffer and accepts it on an opened one, and
+    // `initialize` is the difference.
+    private def "initialize" cfunc (recv, string?, mode?) {
+        let fresh = new_stringio(string, mode)?;
+        let RubyValue::Object(o) = &fresh else {
+            unreachable!("new_stringio answers an Object")
+        };
+        let seeded = o
+            .as_any()
+            .downcast_ref::<RStringIO>()
+            .expect("new_stringio answers a StringIO")
+            .state
+            .lock()
+            .clone();
+        *io_of(recv).state.lock() = seeded;
+        Ok(RubyValue::Nil)
+    }
+
     // `set_encoding(enc)` retags the buffer WITHOUT converting the bytes --
     // it declares what they already mean. It answers the receiver.
     def "set_encoding" cfunc (recv, enc, *_rest) {
-        io_of(recv).state.lock().enc = crate::builtins::encoding::arg_encoding(enc)?;
+        live_io(recv)?.state.lock().enc = crate::builtins::encoding::arg_encoding(enc)?;
         Ok(recv.clone())
     }
     // A leading byte-order mark NAMES the encoding; CRuby consumes it, retags
     // the buffer, and answers the Encoding. No mark means no answer (nil) and
     // nothing consumed.
     def "set_encoding_by_bom" (recv) {
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         let (id, len) = match s.bytes.as_slice() {
             [0xEF, 0xBB, 0xBF, ..] => (crate::encoding::UTF_8, 3usize),
             [0xFF, 0xFE, 0x00, 0x00, ..] => (crate::encoding::UTF_32LE, 4),
@@ -738,7 +786,7 @@ ruby_class! {
             None => 0,
             Some(w) => crate::builtins::convert::to_index(w)?,
         };
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         let base = match whence {
             0 => 0i64,
             1 => s.pos as i64,
@@ -755,7 +803,7 @@ ruby_class! {
     // `getc` -- one character (the next whole UTF-8 char), or nil at EOF.
     def "getc" (recv) {
         check_readable(recv)?;
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         if s.pos >= s.bytes.len() {
             return Ok(RubyValue::Nil);
         }
@@ -784,7 +832,7 @@ ruby_class! {
     // way, and a multi-byte encoding must not make it skip.
     def "getbyte" (recv) {
         check_readable(recv)?;
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         if s.pos >= s.bytes.len() {
             return Ok(RubyValue::Nil);
         }
@@ -796,7 +844,7 @@ ruby_class! {
     // answering nil (the same pairing `getc`/`readchar` have).
     def "readbyte" (recv) {
         check_readable(recv)?;
-        let mut s = io_of(recv).state.lock();
+        let mut s = live_io(recv)?.state.lock();
         if s.pos >= s.bytes.len() {
             return Err(eof_error!("end of file reached"));
         }
@@ -830,7 +878,7 @@ ruby_class! {
         if *len < 0 {
             return Err(raise_error("Errno::EINVAL", "Invalid argument".to_string()));
         }
-        io_of(recv).state.lock().bytes.resize(*len as usize, 0);
+        live_io(recv)?.state.lock().bytes.resize(*len as usize, 0);
         Ok(RubyValue::Int(0))
     }
 

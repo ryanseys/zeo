@@ -357,6 +357,23 @@ pub fn fiber_new(block: RubyValue) -> RubyValue {
     }))
 }
 
+/// `Fiber.allocate` -- a handle with no coroutine and no body, which is the
+/// state `dup_uninitialized` already models. Every `resume`/`transfer`
+/// answers `FiberError: uninitialized fiber` from there.
+pub fn fiber_allocate() -> RubyValue {
+    RubyValue::Fiber(Arc::new(FiberHandle {
+        id: NEXT_FIBER_ID.fetch_add(1, Ordering::Relaxed),
+        owner: std::thread::current().id(),
+        finished: AtomicBool::new(false),
+        saved_ec: parking_lot::Mutex::new(crate::ec::Ec::default()),
+        storage: parking_lot::Mutex::new(None),
+        entered_by_transfer: AtomicBool::new(false),
+        frozen: AtomicBool::new(false),
+        uninitialized: true,
+        origin: None,
+    }))
+}
+
 /// `Fiber#dup`/`#clone`'s payload: a fresh handle with NO coroutine behind
 /// it -- see [`FiberHandle::uninitialized`]. Storage is copied (`dup`'s
 /// shallow ivar rule); the frozen flag is the caller's business

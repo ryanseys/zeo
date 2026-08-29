@@ -1,0 +1,21 @@
+Date	#<Date: 2026-08-29 ((2461282j,0s,0n),+0s,2299161j)>	true	Date
+DateTime	#<DateTime: 2026-08-29T01:02:03+00:00 ((2461282j,3723s,0n),+0s,2299161j)>	true	DateTime
+Set	Set[1, 2, 3]	true	Set
+Pathname	#<Pathname:/tmp/x>	true	Pathname
+BigDecimal	0.125e1	true	BigDecimal
+Regexp	/ab+c/i	true	Regexp
+Rational	(3/4)	true	Rational
+Complex	(1+2i)	true	Complex
+Range	1..5	true	Range
+Symbol	:hello	true	Symbol
+Encoding	#<Encoding:UTF-8>	true	Encoding
+Exception	#<RuntimeError: boom>	true	RuntimeError
+Errno	#<Errno::ENOENT: No such file or directory - nope>	true	Errno::ENOENT
+pathname ivars	[:@path]
+shared date	2026-08-29	true
+encoding identity	true
+bytes Date	"\x04\bU:\tDate[\vi\x00i\x03b\x8E%i\x00i\x00i\x00f\f2299161"
+bytes Set	"\x04\bo:\bSet\x06:\n@hash}\x06i\x06TF"
+bytes Pathname	"\x04\bo:\rPathname\x06:\n@pathI\"\v/tmp/x\x06:\x06ET"
+bytes Encoding	"\x04\bIu:\rEncoding\nUTF-8\x06:\x06EF"
+queue	TypeError: can't dump Thread::Queue

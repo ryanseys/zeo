@@ -1154,11 +1154,20 @@ pub(crate) fn open_path(
     }
 }
 
+/// A blank `File` -- an unopened handle tagged `File`, so `#class` answers
+/// `File` where `IoBackend::Uninit` alone would say `IO`.
+fn file_allocate() -> crate::RubyValue {
+    crate::builtins::io::uninit_io(zeo_abi::FILE_CLASS)
+}
+
 ruby_class! {
     File = zeo_abi::FILE_CLASS < zeo_abi::IO_CLASS;
 
-    // Every reachable zeo File is open (there is no `File.allocate` blank),
-    // and CRuby refuses to re-run initialize on one.
+    allocate file_allocate;
+
+    // CRuby refuses to re-run initialize on a File, `allocate`'s blank
+    // included -- so the blank is a legal RECEIVER and still not openable
+    // through this row.
     private def "initialize" cfunc (_recv, *_args, &_block) {
         Err(crate::builtins::runtime_error!("reinitializing File"))
     }

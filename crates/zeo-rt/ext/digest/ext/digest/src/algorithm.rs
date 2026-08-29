@@ -18,9 +18,19 @@ fn class_raw(recv: &RubyValue, arg: &RubyValue) -> Result<Vec<u8>, crate::Signal
     Ok(algo_of_class(recv).raw(&in_bytes(arg)?))
 }
 
+/// A blank `Digest::MD5` -- an empty MD5 buffer, which is a working digest
+/// of the empty string. Ruby allocates the same. Only MD5 gets the slot: the
+/// SHA classes reach this table through `alias_table`, which owns no
+/// allocator of its own.
+fn digest_allocate() -> RubyValue {
+    super::new_digest(super::Algo::Md5)
+}
+
 ruby_class! {
     // Registered under Digest::MD5; SHA1/SHA256/SHA512 alias this same table.
     Digest = zeo_abi::DIGEST_MD5_CLASS < zeo_abi::OBJECT_CLASS;
+
+    allocate digest_allocate;
 
     // -- class methods (Digest::SHA256.hexdigest(str), .new, ...) --
     // `Digest::SHA2.new(bits)` picks the width; every other class takes no

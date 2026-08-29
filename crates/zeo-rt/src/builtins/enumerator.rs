@@ -59,6 +59,11 @@ use zeo_macros::ruby_class;
 /// (everything inside is `Arc`-backed or small).
 #[derive(Clone)]
 enum EnumSource {
+    /// `Enumerator.allocate` -- no receiver, no block, nothing to iterate.
+    /// Every row that would walk it answers `ArgumentError: uninitialized
+    /// enumerator`, and `#inspect` names the state. The private `initialize`
+    /// replaces it, which is what makes a blank a legal receiver.
+    Uninitialized,
     Method {
         recv: RubyValue,
         meth: String,
@@ -474,8 +479,24 @@ fn ended_by_stop_iteration(sig: Signal) -> Result<RubyValue, Signal> {
 /// `block`, or hand the generator a fresh Yielder wrapping it. Returns
 /// the underlying call's return value (what `StopIteration#result`
 /// carries at exhaustion).
+/// `Enumerator.allocate` -- an enumerator with nothing to iterate.
+fn enumerator_allocate() -> RubyValue {
+    RubyValue::Enumerator(Arc::new(EnumeratorData::new(EnumSource::Uninitialized, None)))
+}
+
+/// The receiver of a row that needs something to ITERATE. `#inspect` and the
+/// identity rows read a blank happily; every walk refuses it.
+fn live_enum(recv: &RubyValue) -> Result<&REnumerator, Signal> {
+    let e = recv_enum(recv);
+    match e.source() {
+        EnumSource::Uninitialized => Err(crate::builtins::arg_error!("uninitialized enumerator")),
+        _ => Ok(e),
+    }
+}
+
 fn internal_each(source: &EnumSource, block: RubyValue) -> Result<RubyValue, Signal> {
     match source {
+        EnumSource::Uninitialized => Err(crate::builtins::arg_error!("uninitialized enumerator")),
         EnumSource::Method {
             recv, meth, args, ..
         } => send_value(recv, Symbol::intern(meth), args, Some(block)),
@@ -821,6 +842,10 @@ pub(crate) fn enum_to_s(e: &REnumerator) -> String {
 
 pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
     match &e.source() {
+        // The one row an uninitialized enumerator answers, and it names the
+        // state rather than an address. `Enumerator::Lazy` has its own
+        // payload, so this arm is only ever a plain `Enumerator`.
+        EnumSource::Uninitialized => "#<Enumerator: uninitialized>".to_string(),
         // A generator/producer is an object in its own right, and CRuby
         // prints it with its address (the conformance test normalizes that to
         // `0xADDR`). The enumerator WRAPPING one renders through the `Method`
@@ -943,7 +968,10 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
         };
     }
     match &core.source {
-        EnumSource::Generator { .. } => RubyValue::Nil,
+        // `#size` is one of the rows ruby refuses on a blank, but this helper
+        // answers a VALUE rather than a Result. The `size` row guards ahead of
+        // it; `nil` here keeps every other caller total.
+        EnumSource::Uninitialized | EnumSource::Generator { .. } => RubyValue::Nil,
         // A produced sequence is endless -> Float::INFINITY (CRuby's rule).
         EnumSource::Produce { .. } => RubyValue::Float(f64::INFINITY),
         EnumSource::Method {
@@ -1120,6 +1148,8 @@ fn drive_with_object(
 ruby_class! {
     Enumerator = zeo_abi::ENUMERATOR_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
+
+    allocate enumerator_allocate;
 
     // `Enumerator.new([size]) { |y| ... }`. `Class#new` intercepts this for
     // `Enumerator` itself (`builtins::rclass`), so the row exists for the
@@ -1317,6 +1347,7 @@ ruby_class! {
         if crate::builtins::lazy::is_lazy(recv) {
             return crate::builtins::lazy::lazy_size(recv);
         }
+        live_enum(recv)?;
         Ok(enum_size(recv_enum(recv)))
     }
 

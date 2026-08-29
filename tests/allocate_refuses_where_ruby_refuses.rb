@@ -34,6 +34,20 @@ end
   end
 end
 
+# The OTHER refusal, which is a different exception class. Ruby `undef`s
+# `allocate` outright on these five, so the name is absent rather than
+# raising: `rescue TypeError` catches nothing here.
+[Rational, Complex, MatchData, Module].each do |k|
+  begin
+    k.allocate
+    puts "#{k}\tallocated"
+  rescue TypeError => e
+    puts "#{k}\tTypeError: #{e.message}"
+  rescue NoMethodError => e
+    puts "#{k}\t#{e.class}: #{e.message}"
+  end
+end
+
 # A plain runtime class still allocates: the refusal is for NATIVE classes
 # with no blank value, not for everything.
 Plain = Class.new

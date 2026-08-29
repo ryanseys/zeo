@@ -1065,6 +1065,11 @@ pub fn mutex_owned(m: &RMutex) -> bool {
 struct QueueInner {
     items: VecDeque<RubyValue>,
     closed: bool,
+    /// False for the blank `Queue.allocate` answers. Ruby refuses `push`,
+    /// `pop`, `size` and `clear` on one; a `SizedQueue` blank additionally
+    /// has a bound of 0, so letting `push` through does not answer wrongly --
+    /// it BLOCKS forever waiting for room that cannot arrive.
+    initialized: bool,
     /// `Some(n)` for a `SizedQueue` -- `push` back-pressures at `n` items.
     /// `None` for an unbounded `Queue`. Mutable via `SizedQueue#max=`.
     max: Option<usize>,
@@ -1098,6 +1103,7 @@ fn queue_with(max: Option<usize>, is_sized: bool) -> RubyValue {
         inner: PlMutex::new(QueueInner {
             items: VecDeque::new(),
             closed: false,
+            initialized: true,
             max,
         }),
         not_empty: parking_lot::Condvar::new(),
@@ -1109,6 +1115,27 @@ fn queue_with(max: Option<usize>, is_sized: bool) -> RubyValue {
 
 pub fn queue_new() -> RubyValue {
     queue_with(None, false)
+}
+
+/// `Queue.allocate` / `SizedQueue.allocate` -- a queue no `initialize` has
+/// seeded. `queue_is_initialized` is the read side.
+pub fn queue_uninit(is_sized: bool) -> RubyValue {
+    let q = queue_with(is_sized.then_some(0), is_sized);
+    if let RubyValue::Queue(inner) = &q {
+        inner.inner.lock().initialized = false;
+    }
+    q
+}
+
+/// Whether an `initialize` has seeded this queue -- false only for the blank
+/// `allocate` answers.
+pub fn queue_is_initialized(q: &RQueue) -> bool {
+    q.inner.lock().initialized
+}
+
+/// `Queue#initialize`'s half of the seed, so a blank becomes usable.
+pub fn queue_mark_initialized(q: &RQueue) {
+    q.inner.lock().initialized = true;
 }
 
 /// `SizedQueue.new(n)` -- a bounded queue whose `push` blocks once `n`

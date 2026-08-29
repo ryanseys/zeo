@@ -432,8 +432,18 @@ fn weakmap_construct(
     Ok(RubyValue::Object(WeakMap::new(class)))
 }
 
+/// A blank `ObjectSpace::WeakMap` -- an empty map, which is exactly what
+/// ruby's `allocate` answers and a legal receiver for every row. A SUBCLASS
+/// still allocates through `weakmap_construct`, which is the only path that
+/// can carry its class id.
+fn weakmap_allocate() -> RubyValue {
+    RubyValue::Object(WeakMap::new(zeo_abi::WEAKMAP_CLASS))
+}
+
 ruby_class! {
     WeakMap = zeo_abi::WEAKMAP_CLASS < zeo_abi::OBJECT_CLASS;
+
+    allocate weakmap_allocate;
 
     def "[]"(recv, key) {
         Ok(as_weakmap(recv)?.get(key).unwrap_or(RubyValue::Nil))

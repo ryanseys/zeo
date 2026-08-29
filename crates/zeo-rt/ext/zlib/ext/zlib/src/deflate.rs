@@ -10,8 +10,17 @@ use flate2::FlushCompress;
 use std::sync::Arc;
 use zeo_macros::ruby_class;
 
+/// A blank `Zlib::Deflate` -- a stream that was never opened. Ruby reports
+/// `closed?` true and `Zlib::Error: stream is not ready` from every reading
+/// row, which `codec::ready` already does for a closed stream.
+fn deflate_allocate() -> RubyValue {
+    super::codec::closed_stream(zeo_abi::ZLIB_DEFLATE_CLASS)
+}
+
 ruby_class! {
     Deflate = zeo_abi::ZLIB_DEFLATE_CLASS < zeo_abi::ZLIB_ZSTREAM_CLASS;
+
+    allocate deflate_allocate;
 
     // `Deflate.new(level, window_bits, mem_level, strategy)`. `mem_level` is
     // accepted and ignored -- it sizes zlib's internal tables, which the

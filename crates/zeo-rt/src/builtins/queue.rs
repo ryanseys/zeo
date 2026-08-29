@@ -71,8 +71,35 @@ fn pop_with_options(
     }
 }
 
+fn queue_allocate() -> RubyValue {
+    crate::thread::queue_uninit(false)
+}
+
+/// The receiver of a row that MOVES elements, or ruby's refusal for a queue
+/// `allocate` built and no `initialize` has seeded. `closed?`, `close` and
+/// `num_waiting` answer on a blank, so they take `as_queue_unchecked`.
+///
+/// Not cosmetic: `SizedQueue.allocate`'s bound is 0, so an unguarded `push`
+/// back-pressures on room that can never arrive and the program deadlocks
+/// where ruby raises.
+pub(crate) fn live_queue(recv: &RubyValue) -> Result<crate::thread::RQueue, crate::Signal> {
+    let q = recv.as_queue_unchecked();
+    match crate::thread::queue_is_initialized(&q) {
+        true => Ok(q),
+        false => Err(crate::builtins::type_error!(
+            "{} not initialized",
+            recv.try_inspect_string()?
+        )),
+    }
+}
+
 ruby_class! {
     Queue = zeo_abi::QUEUE_CLASS < zeo_abi::OBJECT_CLASS;
+
+    // An empty, open, unbounded queue that no `initialize` has seeded. Ruby's
+    // blank refuses every one of them until `initialize` runs, and
+    // `live_queue` is that refusal.
+    allocate queue_allocate;
 
     def self."new" cfunc (_recv, *args) {
         // The optional Enumerable seeds the queue, and its type check lives
@@ -86,7 +113,12 @@ ruby_class! {
     // `push`/`<<`/`enq` enqueue one value and return self; pushing to a
     // closed queue is a `ClosedQueueError`.
     def "push" | "<<" | "enq" (recv, other) {
-        let q = recv.as_queue_unchecked();
+        // Closure is asked BEFORE seeding, which is ruby's order: pushing to a
+        // closed blank is `ClosedQueueError`, not `not initialized`.
+        let q = match queue_closed(&recv.as_queue_unchecked()) {
+            true => recv.as_queue_unchecked(),
+            false => live_queue(recv)?,
+        };
         // The signal is PROPAGATED, not re-labelled: `queue_push` can also
         // answer CRuby's `fatal` when a SizedQueue's back-pressure can never
         // be relieved, and swallowing that reported "queue closed" for a
@@ -99,7 +131,7 @@ ruby_class! {
     def "pop" params "non_block = nil, timeout: nil"
         | "shift" params "non_block = nil, timeout: nil"
         | "deq" params "non_block = nil, timeout: nil" cfunc (recv, *args) {
-        pop_with_options(&recv.as_queue_unchecked(), args)
+        pop_with_options(&live_queue(recv)?, args)
     }
     def "close"(recv) {
         let q = recv.as_queue_unchecked();
@@ -110,15 +142,15 @@ ruby_class! {
         Ok(RubyValue::Bool(queue_closed(&recv.as_queue_unchecked())))
     }
     def "length" | "size" (recv) {
-        Ok(RubyValue::Int(queue_len(&recv.as_queue_unchecked())))
+        Ok(RubyValue::Int(queue_len(&live_queue(recv)?)))
     }
     def "empty?"(recv) {
-        Ok(RubyValue::Bool(queue_len(&recv.as_queue_unchecked()) == 0))
+        Ok(RubyValue::Bool(queue_len(&live_queue(recv)?) == 0))
     }
     // `clear` drops every queued element and releases any back-pressured
     // pusher; it answers the queue, as every Ruby `clear` does.
     def "clear"(recv) {
-        let q = recv.as_queue_unchecked();
+        let q = live_queue(recv)?;
         crate::thread::queue_clear(&q);
         Ok(RubyValue::Queue(q))
     }
@@ -126,6 +158,7 @@ ruby_class! {
     // optional enumerable like `Queue.new(items)`.
     private def "initialize" cfunc (recv, *args) {
         let q = recv.as_queue_unchecked();
+        crate::thread::queue_mark_initialized(&q);
         crate::thread::queue_clear(&q);
         if let Some(src) = args.first()
             && !src.is_nil()

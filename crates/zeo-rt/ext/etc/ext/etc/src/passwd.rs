@@ -131,8 +131,16 @@ pub(crate) fn passwd_construct(args: &[RubyValue]) -> Result<RubyValue, crate::S
     })))
 }
 
+/// A blank `Etc::Passwd` -- every member nil, which is what ruby's own
+/// `allocate` answers for a Struct subclass.
+fn passwd_allocate() -> RubyValue {
+    passwd_construct(&[]).expect("no arguments is always within the member count")
+}
+
 ruby_class! {
     Passwd = zeo_abi::ETC_PASSWD_CLASS < zeo_abi::STRUCT_CLASS;
+
+    allocate passwd_allocate;
 
     // The class methods a `Struct` subclass carries in its OWN singleton --
     // `rb_struct_define` installs them there, so reflection reports them as

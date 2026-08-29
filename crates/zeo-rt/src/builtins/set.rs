@@ -82,7 +82,7 @@ impl RubyObject for RSet {
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         // A copy keeps the ORIGINAL's class: `MySet[1].dup` is a `MySet`.
         let dup = RSet {
-            hash: crate::hash_new(vec![]),
+            hash: backing_hash_new(),
             frozen: AtomicBool::new(copy_frozen),
             class: std::sync::atomic::AtomicU32::new(self.class_id().0),
         };
@@ -105,10 +105,18 @@ fn tagged_empty(recv: &RubyValue) -> RubyValue {
     out
 }
 
+/// The Hash a Set stores its elements in. Its DEFAULT is `false`, which is
+/// what ruby's own Set builds and what `Marshal.dump` writes: a hash with a
+/// default is tag `}` plus the default value, so a plain one made the dump
+/// differ from ruby's byte for byte.
+fn backing_hash_new() -> crate::RHash {
+    crate::collections::hash_new_with_default(RubyValue::Bool(false), None)
+}
+
 /// A fresh empty Set value.
 fn empty_set() -> RubyValue {
     RubyValue::Object(Arc::new(RSet {
-        hash: crate::hash_new(vec![]),
+        hash: backing_hash_new(),
         frozen: AtomicBool::new(false),
         class: std::sync::atomic::AtomicU32::new(SET_CLASS.0),
     }))
@@ -143,7 +151,7 @@ fn set_like(recv: &RubyValue, elements: impl IntoIterator<Item = RubyValue>) -> 
 
 pub(crate) fn set_from(elements: impl IntoIterator<Item = RubyValue>) -> RubyValue {
     let s = RSet {
-        hash: crate::hash_new(vec![]),
+        hash: backing_hash_new(),
         frozen: AtomicBool::new(false),
         class: std::sync::atomic::AtomicU32::new(SET_CLASS.0),
     };
@@ -318,6 +326,11 @@ fn strongly_connected_components(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
 ruby_class! {
     Set = zeo_abi::SET_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
+
+    // An empty Set is exactly what `Set.allocate` answers in ruby, and the
+    // private `initialize` MERGES rather than replaces, so a blank is a legal
+    // receiver for it.
+    allocate empty_set;
 
     // `Set.new` / `Set.new(enum)` / `Set.new(enum) { |o| transform(o) }`.
     // Allocate, then DISPATCH `initialize` -- never seed the value here. `Set`

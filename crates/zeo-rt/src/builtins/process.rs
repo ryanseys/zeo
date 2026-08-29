@@ -543,6 +543,8 @@ ruby_module! {
     // accessors read the raw wait-status word it carries. Nested here so the one
     // process.rs owns the whole `Process` namespace, Ruby-style.
     class Status = zeo_abi::PROCESS_STATUS_CLASS < zeo_abi::OBJECT_CLASS {
+        allocate status_allocate;
+
         def "exitstatus"(recv) {
             Ok(match recv_status(recv).exitstatus() {
                 Some(code) => RubyValue::Int(code as i64),
@@ -612,9 +614,15 @@ ruby_module! {
             Ok(RubyValue::Str(crate::string_new(status_describe(recv_status(recv)))))
         }
         def "inspect"(recv) {
+            let s = recv_status(recv);
+            let body = match s.initialized {
+                true => status_describe(s),
+                // `to_s` still answers "pid 0 exit 0" here; only `inspect`
+                // names the state, which is ruby's split too.
+                false => "uninitialized".to_string(),
+            };
             Ok(RubyValue::Str(crate::string_new(format!(
-                "#<Process::Status: {}>",
-                status_describe(recv_status(recv))
+                "#<Process::Status: {body}>"
             ))))
         }
     }
@@ -1215,6 +1223,11 @@ fn clock_arg(v: &RubyValue, verb: &str) -> Result<i64, crate::Signal> {
 pub struct RProcessStatus {
     pid: i64,
     raw: i32,
+    /// False for the blank `Process::Status.allocate` answers. Every accessor
+    /// still reads the zeros -- ruby's blank reports `to_i` 0 and `pid` 0 --
+    /// but `#inspect` names the state, which pid 0 alone cannot distinguish
+    /// from a real status word of 0.
+    initialized: bool,
 }
 
 impl RProcessStatus {
@@ -1252,12 +1265,26 @@ impl RubyObject for RProcessStatus {
         Arc::new(RProcessStatus {
             pid: self.pid,
             raw: self.raw,
+            initialized: self.initialized,
         })
     }
 }
 
 pub(crate) fn new_status(pid: i64, raw: i32) -> RubyValue {
-    RubyValue::Object(Arc::new(RProcessStatus { pid, raw }))
+    RubyValue::Object(Arc::new(RProcessStatus {
+        pid,
+        raw,
+        initialized: true,
+    }))
+}
+
+/// `Process::Status.allocate` -- pid 0, status word 0, and NOT initialized.
+fn status_allocate() -> RubyValue {
+    RubyValue::Object(Arc::new(RProcessStatus {
+        pid: 0,
+        raw: 0,
+        initialized: false,
+    }))
 }
 
 /// `Process::Status.wait(pid = -1, flags = 0)` -- reap a child and answer its

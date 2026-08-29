@@ -29,6 +29,12 @@ use zeo_macros::ruby_class;
 /// mutating-looking method still returns a fresh Pathname.
 pub(crate) struct RPathname {
     path: Mutex<String>,
+    /// Whether `@path` EXISTS, which is not the same as whether the path is
+    /// empty. Ruby keeps the path in that ivar, so `instance_variables` and
+    /// `Marshal.dump` both report it -- but only once something assigned it.
+    /// `Pathname.allocate` has not, and neither has a program that reopened
+    /// `#initialize` in Ruby and never called super.
+    has_path: AtomicBool,
     frozen: AtomicBool,
 }
 
@@ -51,9 +57,37 @@ impl RubyObject for RPathname {
     fn ivar_values(&self) -> Vec<RubyValue> {
         Vec::new()
     }
+    // Ruby's `Pathname` keeps its path in a plain `@path` ivar, so that is
+    // what `instance_variables` reports AND what `Marshal.dump` writes. zeo
+    // keeps it in the payload instead, and these three make the one field
+    // answer to its ruby name -- without them a dumped Pathname carried no
+    // ivars at all and loaded back EMPTY, which looked like it had worked.
+    fn ivar_pairs(&self) -> Vec<(String, RubyValue)> {
+        match self.has_path.load(Ordering::Acquire) {
+            true => vec![("@path".to_string(), str_val(self.path.lock().clone()))],
+            false => Vec::new(),
+        }
+    }
+    fn ivar_get_named(&self, name: &str) -> Option<RubyValue> {
+        match name == "path" && self.has_path.load(Ordering::Acquire) {
+            true => Some(str_val(self.path.lock().clone())),
+            false => None,
+        }
+    }
+    fn ivar_set_named(&self, name: &str, v: RubyValue) -> bool {
+        match (name, &v) {
+            ("path", RubyValue::Str(s)) => {
+                *self.path.lock() = s.lock().to_utf8_lossy().into_owned();
+                self.has_path.store(true, Ordering::Release);
+                true
+            }
+            _ => false,
+        }
+    }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         let d = Arc::new(RPathname {
             path: Mutex::new(self.path.lock().clone()),
+            has_path: AtomicBool::new(self.has_path.load(Ordering::Acquire)),
             frozen: AtomicBool::new(false),
         });
         if copy_frozen && self.is_frozen() {
@@ -71,6 +105,7 @@ fn str_val(s: String) -> RubyValue {
 fn pathname_val(path: String) -> RubyValue {
     RubyValue::Object(Arc::new(RPathname {
         path: Mutex::new(path),
+        has_path: AtomicBool::new(true),
         frozen: AtomicBool::new(false),
     }))
 }
@@ -643,7 +678,13 @@ fn pathname_construct(
 /// `#initialize` row re-seeds the path in place, so an allocated value is a
 /// legal receiver for it.
 fn pathname_allocate() -> RubyValue {
-    pathname_val(String::new())
+    let blank = pathname_val(String::new());
+    if let RubyValue::Object(o) = &blank
+        && let Some(p) = o.as_any().downcast_ref::<RPathname>()
+    {
+        p.has_path.store(false, Ordering::Release);
+    }
+    blank
 }
 
 pub fn register_pathname(registry: &mut crate::dispatch::ClassRegistry) {
@@ -700,6 +741,9 @@ ruby_class! {
         let new_path = construct_path(path)?;
         if let Some(p) = as_pathname(recv) {
             *p.path.lock() = new_path;
+            // The assignment ruby's own `initialize` makes, which is what
+            // brings `@path` into existence.
+            p.has_path.store(true, Ordering::Release);
         }
         Ok(recv.clone())
     }

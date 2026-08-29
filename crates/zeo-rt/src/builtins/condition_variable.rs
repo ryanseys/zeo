@@ -85,6 +85,10 @@ fn cv_of(recv: &RubyValue) -> &RConditionVariable {
 ruby_class! {
     ConditionVariable = zeo_abi::CONDITION_VARIABLE_CLASS < zeo_abi::OBJECT_CLASS;
 
+    // Nothing to initialize: a condition variable with no waiters IS the
+    // blank, which is why ruby lets `allocate` answer a usable one.
+    allocate new_cv;
+
     def self."new" cfunc (_recv) {
         Ok(new_cv())
     }

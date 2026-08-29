@@ -68,8 +68,15 @@ fn connect_bound(local: SocketAddr, remote: SocketAddr) -> Result<TcpStream, Sig
     Ok(stream)
 }
 
+/// A blank `TCPSocket` -- see `socket::socket_allocate`.
+fn tcp_socket_allocate() -> RubyValue {
+    crate::builtins::io::uninit_io(zeo_abi::TCPSOCKET_CLASS)
+}
+
 ruby_class! {
     TCPSocket = zeo_abi::TCPSOCKET_CLASS < zeo_abi::IP_SOCKET_CLASS;
+
+    allocate tcp_socket_allocate;
 
     // `TCPSocket.new(host, port, local_host = nil, local_port = nil,
     // connect_timeout: nil, open_timeout: nil)` -- connect; the result

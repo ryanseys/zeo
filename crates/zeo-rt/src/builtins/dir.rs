@@ -449,6 +449,21 @@ fn dir_value(path: Option<String>, mut entries: Vec<String>, fd: libc::c_int) ->
     }))
 }
 
+/// A blank `Dir` -- no path, no descriptor, not open. Ruby's `allocate`
+/// answers exactly that: `#path` is nil and every reading row raises `IOError:
+/// closed directory`, which [`live_dir`] already reports. The private
+/// `#initialize` re-seeds it in place.
+fn dir_allocate() -> RubyValue {
+    RubyValue::Object(Arc::new(RDir {
+        path: Mutex::new(None),
+        entries: Mutex::new(Vec::new()),
+        pos: AtomicUsize::new(0),
+        open: AtomicBool::new(false),
+        fd: std::sync::atomic::AtomicI32::new(-1),
+        frozen: AtomicBool::new(false),
+    }))
+}
+
 /// Open `path` as a `Dir` handle value -- the shared body of `Dir.new`/`.open`.
 fn open_dir(path: &str) -> Result<RubyValue, Signal> {
     // `read_names` raises ENOENT for a missing path (the `dir_initialize`
@@ -571,6 +586,8 @@ fn glob_matches(args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValu
 ruby_class! {
     Dir = zeo_abi::DIR_CLASS < zeo_abi::OBJECT_CLASS;
     include zeo_abi::ENUMERABLE_CLASS;
+
+    allocate dir_allocate;
 
     // `Dir.new(path)` / `Dir.open(path)` -- a handle over the directory's
     // entries. The block form of `open` yields the handle and closes it after.
@@ -915,10 +932,18 @@ ruby_class! {
     def "fileno"(recv) {
         Ok(RubyValue::Int(live_dir(recv)?.fd.load(Ordering::Relaxed) as i64))
     }
+    // A pathless handle is the one `Dir.allocate` answers, and ruby names it
+    // by ADDRESS there rather than by a path it has not got.
     def "inspect" | "to_s"(recv) {
-        Ok(str_val(match &*recv_dir(recv)?.path.lock() {
+        let d = recv_dir(recv)?;
+        Ok(str_val(match &*d.path.lock() {
             Some(p) => format!("#<Dir:{p}>"),
-            None => "#<Dir>".to_string(),
+            None => match recv {
+                RubyValue::Object(o) => {
+                    format!("#<Dir:0x{:016x}>", std::sync::Arc::as_ptr(o) as *const () as usize)
+                }
+                _ => "#<Dir>".to_string(),
+            },
         }))
     }
 }

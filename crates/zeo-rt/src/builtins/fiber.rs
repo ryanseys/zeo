@@ -105,6 +105,8 @@ ruby_class! {
 
     receiver f = crate::RubyValue::Fiber;
 
+    allocate fiber::fiber_allocate;
+
     // Codegen intercepts the literal `Fiber.new { ... }`; this row serves a
     // `send`, and is what a `class F < Fiber` reaches through `super`. The
     // block IS the fiber's body, so a blockless call is the same

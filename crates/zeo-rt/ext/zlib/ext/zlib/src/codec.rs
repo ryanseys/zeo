@@ -260,6 +260,19 @@ pub(super) fn zs_of(recv: &RubyValue) -> &RZStream {
     }
 }
 
+/// A stream that was never opened -- what `Zlib::Deflate.allocate` and
+/// `Zlib::Inflate.allocate` answer. It carries a codec so the payload stays
+/// one shape, and is marked CLOSED, which is the state ruby's own blank
+/// reports (`closed?` true, every reading row `stream is not ready`).
+pub(super) fn closed_stream(class: ClassId) -> RubyValue {
+    let zs = match class == zeo_abi::ZLIB_DEFLATE_CLASS {
+        true => RZStream::deflating(Wrap::Zlib, flate2::Compression::default(), 0),
+        false => RZStream::inflating(Wrap::Zlib),
+    };
+    zs.state.lock().closed = true;
+    RubyValue::Object(Arc::new(zs))
+}
+
 /// A live stream's state, or CRuby's error for one that has been closed.
 pub(super) fn ready(recv: &RubyValue) -> Result<parking_lot::MutexGuard<'_, State>, Signal> {
     let st = zs_of(recv).state.lock();

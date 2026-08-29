@@ -232,14 +232,23 @@ ruby_class! {
             encoding::default_external().name().to_string(),
         )))
     }
-    // Marshal's hook pair. `_dump` answers the encoding's NAME; `_load`
-    // answers what it was handed, which is CRuby's own behavior -- the name
-    // round-trips as a String, not back into the singleton.
+    // Marshal's hook pair. `_dump` answers the encoding's NAME, and `_load`
+    // answers that name UNCHANGED -- `Encoding._load("UTF-8")` really is the
+    // String "UTF-8" in ruby, oracle-checked.
+    //
+    // `Marshal.load` still answers an Encoding, because it never reaches this
+    // row: it resolves the name itself (`marshal::read_userdef`), the way it
+    // special-cases `Time`. Routing the resolution through `_load` instead
+    // would answer an Encoding here and break the direct call.
     def self."_load"(_recv, name) {
         Ok(name.clone())
     }
+    // US-ASCII, so Marshal writes ruby's `E:false` rather than `E:true`.
     def "_dump" cfunc (recv, *_args) {
-        Ok(RubyValue::Str(crate::string_new(recv_encoding(recv).name().to_string())))
+        Ok(RubyValue::Str(crate::collections::string_from_bytes(
+            recv_encoding(recv).name().as_bytes().to_vec(),
+            encoding::US_ASCII,
+        )))
     }
     def self."default_external"(_recv) {
         Ok(encoding_value(encoding::default_external()))

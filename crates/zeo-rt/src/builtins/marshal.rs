@@ -246,6 +246,11 @@ impl Writer {
         {
             return Err(arg_error!("exceed depth limit"));
         }
+        // Asked for EVERY value kind, not only for a heap object. A Queue, a
+        // Mutex and a Fiber are their own `RubyValue` variants, so a check
+        // that lived inside the object writer never saw them and they fell
+        // through to a generic refusal naming the wrong reason.
+        Self::refuse_undumpable(v, v.class_id())?;
         self.depth += 1;
         let out = self.write_inner(v);
         self.depth -= 1;
@@ -452,19 +457,50 @@ fn refuse_undumpable(v: &RubyValue, cid: crate::ClassId) -> Result<(), Signal> {
     {
         return Err(type_error!("singleton can't be dumped"));
     }
-    const UNDUMPABLE: &[zeo_abi::ClassId] = &[
+    // Ruby refuses these by TYPE, in `w_object` itself, before it looks for
+    // any dump hook.
+    const CANT_DUMP: &[zeo_abi::ClassId] = &[
         zeo_abi::IO_CLASS,
         zeo_abi::FILE_CLASS,
+        zeo_abi::MATCH_DATA_CLASS,
+        zeo_abi::QUEUE_CLASS,
+        zeo_abi::CONDITION_VARIABLE_CLASS,
+    ];
+    // Ruby reaches these as a `T_DATA` and refuses for the missing hook
+    // instead, which is a DIFFERENT message for the same impossibility. The
+    // split is ruby's, not a distinction zeo draws.
+    const NO_DUMP_DATA: &[zeo_abi::ClassId] = &[
         zeo_abi::DIR_CLASS,
         zeo_abi::METHOD_CLASS,
         zeo_abi::UNBOUND_METHOD_CLASS,
         zeo_abi::BINDING_CLASS,
+        zeo_abi::PROC_CLASS,
+        zeo_abi::THREAD_CLASS,
+        zeo_abi::FIBER_CLASS,
+        zeo_abi::MUTEX_CLASS,
+        zeo_abi::THREAD_GROUP_CLASS,
+        zeo_abi::WEAKMAP_CLASS,
+        zeo_abi::ENUMERATOR_CLASS,
+        zeo_abi::STRINGIO_CLASS,
+        zeo_abi::STRING_SCANNER_CLASS,
+        zeo_abi::ZLIB_DEFLATE_CLASS,
+        zeo_abi::ZLIB_INFLATE_CLASS,
+        zeo_abi::DIGEST_MD5_CLASS,
+        zeo_abi::DIGEST_SHA1_CLASS,
+        zeo_abi::DIGEST_SHA2_CLASS,
+        zeo_abi::DIGEST_SHA256_CLASS,
+        zeo_abi::DIGEST_SHA384_CLASS,
+        zeo_abi::DIGEST_SHA512_CLASS,
     ];
     let chain = crate::dispatch::ancestors_of_value(cid);
-    if chain.iter().any(|a| UNDUMPABLE.contains(a)) {
+    let named = || crate::dispatch::class_name(cid).unwrap_or_default();
+    if chain.iter().any(|a| CANT_DUMP.contains(a)) {
+        return Err(type_error!("can't dump {}", named()));
+    }
+    if chain.iter().any(|a| NO_DUMP_DATA.contains(a)) {
         return Err(type_error!(
-            "can't dump {}",
-            crate::dispatch::class_name(cid).unwrap_or_default()
+            "no _dump_data is defined for class {}",
+            named()
         ));
     }
     Ok(())
@@ -1175,6 +1211,20 @@ impl Reader<'_> {
         // to the VALUE, not to the byte string `_load` would receive.
         if cls == "Time" {
             let v = crate::builtins::time::time_mload(&bytes, &named)?;
+            self.objects[idx] = v.clone();
+            return Ok(v);
+        }
+        // `Encoding` rebuilds natively too, and for a sharper reason: ruby's
+        // `Encoding._load` answers the NAME STRING it was handed
+        // (oracle-checked), so routing this through the row would load an
+        // Encoding back as a String. Marshal resolves the name itself, and
+        // the answer is the interned singleton -- identity is the class's
+        // contract, so an equal-but-other object would be wrong too.
+        if cls == "Encoding" {
+            let name = String::from_utf8_lossy(&bytes).into_owned();
+            let id = crate::encoding::find(&name)
+                .ok_or_else(|| arg_error!("undefined encoding name - {name}"))?;
+            let v = crate::builtins::encoding::encoding_value(id);
             self.objects[idx] = v.clone();
             return Ok(v);
         }
