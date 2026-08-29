@@ -1035,6 +1035,30 @@ fn fileno_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
     }))
 }
 
+/// One `IO.select` operand's descriptor: the object's own when it is an IO,
+/// otherwise its `to_io`'s.
+///
+/// The conversion is what makes a WRAPPER selectable (`rb_io_get_io`), and the
+/// refusal is load-bearing: `raw_fd` answers 0 for anything it does not
+/// recognise, so a plain object silently watched STDIN and a select that
+/// should have raised TypeError reported whatever the terminal was doing.
+fn select_fd(v: &RubyValue) -> Result<libc::c_int, Signal> {
+    if as_rio(v).is_some() {
+        return raw_fd(v);
+    }
+    let sym = crate::Symbol::intern("to_io");
+    if crate::dispatch::responds_to_value(v, sym, true) {
+        let io = crate::dispatch::send_value(v, sym, &[], None)?;
+        if as_rio(&io).is_some() {
+            return raw_fd(&io);
+        }
+    }
+    Err(crate::builtins::type_error!(
+        "no implicit conversion of {} into IO",
+        crate::builtins::convert_name_of(v)
+    ))
+}
+
 /// The receiver's fd -- `#fileno` without the `RubyValue` round trip, for the
 /// libc calls (`ioctl`, `poll`, `termios`) that need a raw descriptor.
 pub(crate) fn raw_fd(recv: &RubyValue) -> Result<libc::c_int, Signal> {
@@ -3540,7 +3564,7 @@ ruby_class! {
         let mut fds: [Vec<libc::c_int>; 3] = Default::default();
         for (i, (ios, _)) in sets.iter().enumerate() {
             for io in ios {
-                fds[i].push(raw_fd(io)?);
+                fds[i].push(select_fd(io)?);
             }
         }
         let (r, w, e) = select_ready(&fds[0], &fds[1], &fds[2], timeout_ms)?;
