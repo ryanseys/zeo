@@ -146,8 +146,19 @@ pub fn send_super_from(
     // A module the chain holds TWICE resumes past the copy that is actually
     // running -- see `super_resume`.
     let ancestors = ancestors_of_value(recv.class_id());
-    let start = super_resume(ancestors, defining_class).unwrap_or(0);
-    send_walking(recv, start, name, args, block)
+    if let Some(start) = super_resume(ancestors, defining_class) {
+        return send_walking(recv, start, name, args, block);
+    }
+    // A module `extend`ed onto THIS OBJECT is not in the class ancestry, so
+    // the resume above cannot find it. The object's singleton chain holds
+    // every such module, newest first, ahead of the class -- which is what
+    // lets `o.extend(A); o.extend(B)` run B's `super` into A rather than
+    // straight past it to the class.
+    let singleton = crate::runtime_meta::singleton_super_chain(recv);
+    match super_resume(&singleton, defining_class) {
+        Some(start) => send_walking_in(recv, &singleton, start, name, args, block),
+        None => send_walking(recv, 0, name, args, block),
+    }
 }
 
 /// [`send_as_defined_in`] with the runtime overlay skipped -- the body
@@ -275,6 +286,27 @@ pub(super) fn send_walking(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    send_walking_in(
+        recv,
+        ancestors_of_value(recv.class_id()),
+        start,
+        name,
+        args,
+        block,
+    )
+}
+
+/// [`send_walking`] over an explicit chain. Every position contributes its own
+/// rows and nothing reads the chain's provenance, so a per-object singleton
+/// chain walks exactly as a class ancestry does.
+pub(super) fn send_walking_in(
+    recv: &RubyValue,
+    ancestors: &[ClassId],
+    start: usize,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     // The two `MethodImpl` arms below take an `RObj`; a non-Object receiver
     // (an Integer, a String) never has one, and never reaches them either --
     // its definitions live in the value-method and builtin tables.
@@ -282,7 +314,6 @@ pub(super) fn send_walking(
         RubyValue::Object(o) => Some(o.clone()),
         _ => None,
     };
-    let ancestors = ancestors_of_value(recv.class_id());
     // The body this walk enters must know WHICH copy of `anc` it is running
     // as, or its own `super` restarts past the first one. Only a chain with a
     // repeat can disagree, so the publication is gated.

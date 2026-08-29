@@ -904,7 +904,7 @@ fn superclass_of(cid: ClassId) -> Option<ClassId> {
 /// chain -- minted the rest of the way here, as `ENSURE_EIGENCLASS` does --
 /// which makes a class method inherit. It ends at `BasicObject`, whose
 /// singleton's superclass is `Class` itself, where the ordinary chain resumes.
-fn singleton_super_chain(recv: &RubyValue) -> Vec<ClassId> {
+pub(crate) fn singleton_super_chain(recv: &RubyValue) -> Vec<ClassId> {
     let mut chain: Vec<ClassId> = Vec::new();
     fn push(id: ClassId, chain: &mut Vec<ClassId>) {
         if !chain.contains(&id) {
