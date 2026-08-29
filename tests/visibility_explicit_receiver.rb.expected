@@ -30,3 +30,11 @@ NoMethodError: private method 'mpriv' called for an instanc
 NoMethodError: protected method 'mprot' called for an insta
 :mpriv
 :mprot
+NoMethodError: protected method 'amount' called for an inst
+1
+NoMethodError: protected method 'amount' called for an inst
+1
+1
+1
+NoMethodError: protected method 'amount' called for an inst
+NoMethodError: protected method 'amount' called for an inst

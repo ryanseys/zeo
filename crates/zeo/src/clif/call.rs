@@ -632,7 +632,31 @@ pub(crate) fn static_caller(fx: &Fx, bypass: bool) -> Option<u32> {
     if fx.self_is_dynamic {
         return None;
     }
-    Some(fx.method_class.map_or(0, |c| c.0))
+    Some(lexical_caller(fx))
+}
+
+/// The caller identity a `protected` target is measured against: the CLASS OF
+/// `self`, which is CRuby's `rb_obj_is_kind_of(self, defined_class)`.
+///
+/// In an instance method that is the enclosing class. In a CLASS method it is
+/// `Class` (or `Module`), because `self` there IS the class object -- and a
+/// class object is no kind of the class whose instances the protected method
+/// belongs to. Answering `method_class` for both made `def self.peek(a);
+/// a.balance; end` reach a protected `balance` that ruby refuses.
+fn lexical_caller(fx: &Fx) -> u32 {
+    if !fx.self_is_class {
+        return fx.method_class.map_or(0, |c| c.0);
+    }
+    match fx.method_class.is_some_and(|c| {
+        fx.an
+            .compiler
+            .classes
+            .get(c.0 as usize)
+            .is_some_and(|ci| ci.is_module)
+    }) {
+        true => zeo_abi::MODULE_CLASS.0,
+        false => zeo_abi::CLASS_CLASS.0,
+    }
 }
 
 pub(crate) fn caller_class(fx: &mut Fx, bypass: bool) -> cranelift_codegen::ir::Value {
@@ -648,7 +672,7 @@ pub(crate) fn caller_class(fx: &mut Fx, bypass: bool) -> cranelift_codegen::ir::
         let slf = fx.self_ptr.expect("self_ptr is set in the prologue");
         return fx.call_status("zeo_rt_class_of", &[slf]);
     }
-    let cid = fx.method_class.map_or(0, |c| i64::from(c.0));
+    let cid = i64::from(lexical_caller(fx));
     fx.b.ins().iconst(types::I32, cid)
 }
 

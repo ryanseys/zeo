@@ -1,3 +1,13 @@
+# Ruby's THIRD call mode: an explicit receiver enforces visibility, where a
+# receiverless call does not. A `protected` method is reachable only when the
+# CALLER'S SELF is kind_of the method's owner.
+#
+# The class-method case is the asymmetry that was wrong: in `def self.peek(a);
+# a.balance; end`, `self` is the class object, and a class object is no kind
+# of the class whose instances hold `balance`. zeo measured the caller by its
+# lexical class instead, so the class method reached a protected method ruby
+# refuses.
+
 def t; yield; rescue NoMethodError => e; puts "NoMethodError: #{e.message[0, 44]}"; end
 
 class A
@@ -84,3 +94,29 @@ t { p h.mpriv }
 t { p h.mprot }
 t { p h.via_self }
 t { p h.peer(Host.new) }
+
+# The class-method asymmetry, stated on its own.
+class Vault
+  def initialize(n) = @n = n
+  def self.peek(v) = v.amount
+  def self.peek_send(v) = v.send(:amount)
+  def compare(other) = amount <=> other.amount
+  protected
+  def amount = @n
+end
+module Helper
+  def self.peek(v) = v.amount
+end
+class SubVault < Vault; end
+
+t { p Vault.peek(Vault.new(1)) }
+t { p Vault.peek_send(Vault.new(1)) }
+t { p Helper.peek(Vault.new(1)) }
+t { p Vault.new(2).compare(Vault.new(1)) }
+t { p SubVault.new(2).compare(Vault.new(1)) }
+t { p Vault.new(2).compare(SubVault.new(1)) }
+t { p Vault.new(1).amount }
+class << Vault
+  def peek_singleton(v) = v.amount
+end
+t { p Vault.peek_singleton(Vault.new(1)) }
