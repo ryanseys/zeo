@@ -943,6 +943,17 @@ fn walk_class_body(
                     }
                     compiler.class_body_sites[site_idx].stmts.push(stmt);
                 } else {
+                    // The compile-time half only reaches names a user `def
+                    // self.x` wrote: the walk it feeds skips SCOPES, and a
+                    // builtin class method has none. `undef_method :new` has
+                    // to retire `new` too, so the runtime tombstone rides
+                    // along -- the same row the reopen branch above writes,
+                    // and the one that already makes `class << Bar;
+                    // undef_method :new` work.
+                    for n in &names {
+                        compiler.runtime_patches.insert(n.clone());
+                    }
+                    compiler.class_body_sites[site_idx].stmts.push(stmt);
                     compiler.classes[class_id.0 as usize]
                         .class_undefined
                         .extend(names);
