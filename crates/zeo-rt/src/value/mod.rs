@@ -1686,15 +1686,27 @@ impl RubyValue {
         // and anything else CLEARS `$~` rather than leaving a stale match.
         if let RubyValue::Regexp(re) = self {
             return match subject {
-                RubyValue::Str(s) => crate::regexp::regexp_case_eq(re, &s.lock().to_utf8_lossy()),
-                RubyValue::Symbol(sym) => crate::regexp::regexp_case_eq(re, &sym.name()),
+                RubyValue::Str(s) => {
+                    let (text, enc) = {
+                        let g = s.lock();
+                        (g.to_utf8_lossy().into_owned(), g.encoding())
+                    };
+                    crate::regexp::regexp_case_eq(re, &text, enc)
+                }
+                RubyValue::Symbol(sym) => {
+                    crate::regexp::regexp_case_eq(re, &sym.name(), sym.encoding())
+                }
                 // A String SUBCLASS is a String to CRuby's `rb_reg_eqq`, and
                 // here it is an Object wrapping its payload. Missing that
                 // made `/re/ === BCrypt::Password.new(h)` false while
                 // `match?` on the same object was true.
                 RubyValue::Object(o) => match o.builtin_payload() {
                     Some(RubyValue::Str(s)) => {
-                        crate::regexp::regexp_case_eq(re, &s.lock().to_utf8_lossy())
+                        let (text, enc) = {
+                            let g = s.lock();
+                            (g.to_utf8_lossy().into_owned(), g.encoding())
+                        };
+                        crate::regexp::regexp_case_eq(re, &text, enc)
                     }
                     _ => {
                         crate::lastmatch::set_last_match(None);

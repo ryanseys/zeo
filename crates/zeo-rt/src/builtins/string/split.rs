@@ -12,6 +12,7 @@ use super::*;
 /// its boundaries.
 pub(super) fn str_partition(
     text: &str,
+    enc: crate::encoding::EncodingId,
     sep: &RubyValue,
     from_end: bool,
 ) -> Result<[RubyValue; 3], Signal> {
@@ -28,9 +29,9 @@ pub(super) fn str_partition(
         }
         RubyValue::Regexp(re) => {
             let idx = if from_end {
-                crate::regexp_rindex(re, text, None)
+                crate::regexp_rindex(re, text, None, enc)
             } else {
-                crate::regexp_match_index(re, text)
+                crate::regexp_match_index(re, text, enc)
             };
             match idx {
                 RubyValue::Int(ci) => {
@@ -40,7 +41,7 @@ pub(super) fn str_partition(
                         .char_indices()
                         .nth(ci as usize)
                         .map_or(text.len(), |(b, _)| b);
-                    match crate::regexp_match(re, &text[byte_start..]) {
+                    match crate::regexp_match(re, &text[byte_start..], enc) {
                         RubyValue::MatchData(m) => {
                             let matched = crate::matchdata_group(&m, 0);
                             let len = match &matched {
@@ -62,22 +63,13 @@ pub(super) fn str_partition(
             ));
         }
     };
+    // Every part is a slice of the RECEIVER, so it comes back in the
+    // receiver's own encoding rather than the engine's decoded UTF-8.
+    let part = |s: &str| crate::builtins::string::str_value_in_enc(enc, s);
     Ok(match span {
-        Some((start, end)) => [
-            str_value(text[..start].to_string()),
-            str_value(text[start..end].to_string()),
-            str_value(text[end..].to_string()),
-        ],
-        None if from_end => [
-            str_value(String::new()),
-            str_value(String::new()),
-            str_value(text.to_string()),
-        ],
-        None => [
-            str_value(text.to_string()),
-            str_value(String::new()),
-            str_value(String::new()),
-        ],
+        Some((start, end)) => [part(&text[..start]), part(&text[start..end]), part(&text[end..])],
+        None if from_end => [part(""), part(""), part(text)],
+        None => [part(text), part(""), part("")],
     })
 }
 

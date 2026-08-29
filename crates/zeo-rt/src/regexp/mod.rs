@@ -404,14 +404,14 @@ pub fn regexp_is_match_at(re: &RRegexp, haystack: &str, byte_start: usize) -> bo
     re.engine.captures_at(haystack, byte_start).is_some()
 }
 
-/// [`regexp_match_in`] starting at a BYTE offset, over the whole haystack.
+/// [`regexp_match`] starting at a BYTE offset, over the whole haystack.
 ///
 /// `String#match(pattern, pos)` cannot slice: the MatchData built from a
 /// slice reports offsets relative to it, so `.begin(0)` answered 1 where
 /// ruby says 4, and `pre_match` lost everything before `pos`. The engine
 /// already takes a start offset -- this is CRuby's `rb_reg_search(str, re,
 /// pos, 0)`, which is anchored the same way.
-pub fn regexp_match_in_at(
+pub fn regexp_match_at(
     re: &RRegexp,
     haystack: &str,
     byte_start: usize,
@@ -505,14 +505,14 @@ pub fn matchdata_regexp(md: &RMatchData) -> RubyValue {
 
 /// `Regexp#match`/`String#match` -- a real `MatchData`, or `nil` if the
 /// pattern doesn't match at all.
-pub fn regexp_match(re: &RRegexp, haystack: &str) -> RubyValue {
-    regexp_match_in(re, haystack, crate::encoding::UTF_8)
-}
-
-/// [`regexp_match`] told what encoding the haystack was decoded FROM, so the
-/// groups can be handed back in it. `String#match` knows this; a bare
-/// `Regexp#match` against an already-decoded haystack does not.
-pub fn regexp_match_in(
+///
+/// `enc` is what the haystack was decoded FROM. It is a REQUIRED argument
+/// rather than a UTF-8 default: every string sliced out of the match
+/// (`[0]`, a group, `pre_match`, `post_match`, `#string`) has to come back
+/// in the subject's own encoding, and a default silently answered UTF-8 for
+/// a binary or Latin-1 subject. Every match builder here takes it for the
+/// same reason.
+pub fn regexp_match(
     re: &RRegexp,
     haystack: &str,
     enc: crate::encoding::EncodingId,
@@ -635,15 +635,10 @@ pub fn scanner_match(
 /// reach. Unlike `match?` it RECORDS the outcome in `$~`: a hit stores the
 /// match data, a miss clears it, so `$1` after a matched `when` arm reads the
 /// arm's own captures.
-pub fn regexp_case_eq(re: &RRegexp, haystack: &str) -> bool {
+pub fn regexp_case_eq(re: &RRegexp, haystack: &str, enc: crate::encoding::EncodingId) -> bool {
     match re.engine.captures_first(haystack) {
         Some(caps) => {
-            crate::lastmatch::set_last_match(Some(build_match_data(
-                re,
-                haystack,
-                &caps,
-                crate::encoding::UTF_8,
-            )));
+            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, enc)));
             true
         }
         None => {
@@ -664,16 +659,15 @@ fn char_index(haystack: &str, byte_idx: usize) -> i64 {
 /// Runs `captures`, not the cheaper `find`, because `=~` must ALSO record
 /// `$~`/`$1`/... -- the whole point of `if s =~ /(\d+)/ then $1 end`, and
 /// the groups don't exist without capturing them.
-pub fn regexp_match_index(re: &RRegexp, haystack: &str) -> RubyValue {
+pub fn regexp_match_index(
+    re: &RRegexp,
+    haystack: &str,
+    enc: crate::encoding::EncodingId,
+) -> RubyValue {
     match re.engine.captures_first(haystack) {
         Some(caps) => {
             let start = caps.get(0).expect("group 0 always exists on a match").0;
-            crate::lastmatch::set_last_match(Some(build_match_data(
-                re,
-                haystack,
-                &caps,
-                crate::encoding::UTF_8,
-            )));
+            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, enc)));
             RubyValue::Int(char_index(haystack, start))
         }
         None => {
@@ -686,7 +680,12 @@ pub fn regexp_match_index(re: &RRegexp, haystack: &str) -> RubyValue {
 /// `String#rindex(regexp[, pos])` -- the CHAR index of the RIGHTMOST match
 /// whose start is at or before `before` (a char index; `None` searches the
 /// whole string), or `nil`. Records `$~` like the leftward probes.
-pub fn regexp_rindex(re: &RRegexp, haystack: &str, before: Option<usize>) -> RubyValue {
+pub fn regexp_rindex(
+    re: &RRegexp,
+    haystack: &str,
+    before: Option<usize>,
+    enc: crate::encoding::EncodingId,
+) -> RubyValue {
     // CRuby's `rindex(regexp)` is the LARGEST start position (char index, at or
     // before `before`) where the pattern matches ANCHORED -- it tries every
     // start from the end, so /\d+/ on "hello123world" answers 7 ("3"), not the
@@ -702,12 +701,7 @@ pub fn regexp_rindex(re: &RRegexp, haystack: &str, before: Option<usize>) -> Rub
     match regexp_byterindex(re, haystack, byte_limit) {
         Some(byte_start) => {
             if let Some(caps) = anchored_caps_at(re, haystack, byte_start) {
-                crate::lastmatch::set_last_match(Some(build_match_data(
-                    re,
-                    haystack,
-                    &caps,
-                    crate::encoding::UTF_8,
-                )));
+                crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, enc)));
             }
             RubyValue::Int(char_index(haystack, byte_start))
         }
@@ -855,7 +849,7 @@ pub fn regexp_inspect(re: &RRegexp) -> RubyValue {
 /// (the whole match) if the pattern has no capture groups, or as an `Array`
 /// of the captured groups (nil for a non-participating optional group) if it
 /// does -- matches real Ruby's own shape-switching behavior exactly.
-pub fn regexp_scan(re: &RRegexp, haystack: &str) -> RubyValue {
+pub fn regexp_scan(re: &RRegexp, haystack: &str, enc: crate::encoding::EncodingId) -> RubyValue {
     let has_groups = re.engine.captures_len() > 1;
     let mut results = Vec::new();
     // `$~` ends up on the LAST match -- CRuby's `scan` writes the backref per
@@ -863,12 +857,7 @@ pub fn regexp_scan(re: &RRegexp, haystack: &str) -> RubyValue {
     // matched, same as any failed match).
     let mut last_md = None;
     for caps in re.engine.captures_all(haystack) {
-        last_md = Some(build_match_data(
-            re,
-            haystack,
-            &caps,
-            crate::encoding::UTF_8,
-        ));
+        last_md = Some(build_match_data(re, haystack, &caps, enc));
         if has_groups {
             let group_vals: Vec<RubyValue> = (1..caps.len())
                 .map(|i| match caps.str(i, haystack) {
@@ -917,12 +906,7 @@ pub fn regexp_scan_block(
         };
         // `$~` tracks the CURRENT match inside the block, as it does in
         // `sub`/`gsub`'s block form.
-        crate::lastmatch::set_last_match(Some(build_match_data(
-            re,
-            haystack,
-            &caps,
-            crate::encoding::UTF_8,
-        )));
+        crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, enc)));
         blk.call(&[crate::builtins::string::reencode_strs(&yielded, enc)])?;
     }
     Ok(())
@@ -1132,12 +1116,7 @@ pub fn regexp_gsub_block(
         out.push_str(&haystack[last_end..m_start]);
         // Each iteration sets `$~`/`$1..` so the block can read the capture
         // groups of the CURRENT match (CRuby updates the frame's backref).
-        crate::lastmatch::set_last_match(Some(build_match_data(
-            re,
-            haystack,
-            &caps,
-            crate::encoding::UTF_8,
-        )));
+        crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, enc)));
         let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
         let replaced = blk.call(&[crate::builtins::string::reencode_strs(&matched, enc)])?;
         out.push_str(&replaced.to_display_string());
@@ -1158,12 +1137,7 @@ pub fn regexp_sub_block(
     match re.engine.captures_first(haystack) {
         Some(caps) => {
             let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
-            crate::lastmatch::set_last_match(Some(build_match_data(
-                re,
-                haystack,
-                &caps,
-                crate::encoding::UTF_8,
-            )));
+            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, enc)));
             let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
             let replaced = blk.call(&[crate::builtins::string::reencode_strs(&matched, enc)])?;
             let mut out = String::new();
@@ -1428,10 +1402,10 @@ mod tests {
     #[test]
     fn scan_switches_shape_based_on_capture_groups() {
         let word = regexp_new(r"\w+", false, false, false).unwrap();
-        assert_eq!(strs(&regexp_scan(&word, "one two")), ["one", "two"]);
+        assert_eq!(strs(&regexp_scan(&word, "one two", crate::encoding::UTF_8)), ["one", "two"]);
 
         let pair = regexp_new(r"([a-z])(\d)", false, false, false).unwrap();
-        let RubyValue::Array(a) = regexp_scan(&pair, "a1b2") else {
+        let RubyValue::Array(a) = regexp_scan(&pair, "a1b2", crate::encoding::UTF_8) else {
             panic!("expected an Array")
         };
         let groups = a.lock();

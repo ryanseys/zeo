@@ -10,9 +10,10 @@ use super::*;
 pub(super) fn regexp_index(
     re: &crate::RRegexp,
     text: &str,
+    enc: crate::encoding::EncodingId,
     group: Option<&RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let RubyValue::MatchData(m) = crate::regexp_match(re, text) else {
+    let RubyValue::MatchData(m) = crate::regexp_match(re, text, enc) else {
         return Ok(RubyValue::Nil);
     };
     match group {
@@ -92,7 +93,8 @@ pub(super) fn slice_bang_impl(
         // whole match (or the named/numbered capture group).
         (RubyValue::Regexp(re), cap) => {
             let text: String = chars.iter().collect();
-            let RubyValue::MatchData(m) = crate::regexp_match(re, &text) else {
+            let enc = handle.lock().encoding();
+            let RubyValue::MatchData(m) = crate::regexp_match(re, &text, enc) else {
                 return Ok(RubyValue::Nil);
             };
             let key = cap.cloned().unwrap_or(RubyValue::Int(0));
@@ -176,8 +178,11 @@ pub(super) fn index_set_impl(
 
     // Resolve the [start, end) character span to overwrite.
     let (start, end) = if let RubyValue::Regexp(re) = index {
-        let text: String = handle.lock().to_utf8_lossy().into_owned();
-        let RubyValue::MatchData(m) = crate::regexp_match(re, &text) else {
+        let (text, enc) = {
+            let g = handle.lock();
+            (g.to_utf8_lossy().into_owned(), g.encoding())
+        };
+        let RubyValue::MatchData(m) = crate::regexp_match(re, &text, enc) else {
             return Err(index_err("regexp not matched".to_string()));
         };
         let span = if third.is_some() {

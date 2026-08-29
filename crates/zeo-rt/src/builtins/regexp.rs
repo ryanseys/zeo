@@ -219,7 +219,7 @@ ruby_class! {
     // `$~`; `#match` and `#=~` do build one (and set `$~`) via the runtime
     // helpers String's own rows share.
     def "match?" cfunc (recv, arg1, arg2?) {
-        let Some(h) = subject_arg(live_re(recv)?, arg1)? else { return Ok(RubyValue::Bool(false)) };
+        let Some((h, _enc)) = subject_arg(live_re(recv)?, arg1)? else { return Ok(RubyValue::Bool(false)) };
         // An optional start position (char offset, end-relative when negative)
         // anchors the search; a position past the end is simply no match.
         let Some(at) = crate::builtins::string::match_haystack(&h, arg2)? else {
@@ -232,8 +232,8 @@ ruby_class! {
         )))
     }
     def "match" cfunc (recv, arg1, _arg2?, &block) {
-        let Some(h) = subject_arg(live_re(recv)?, arg1)? else { return Ok(RubyValue::Nil) };
-        let m = crate::regexp_match(re_of(recv), &h);
+        let Some((h, enc)) = subject_arg(live_re(recv)?, arg1)? else { return Ok(RubyValue::Nil) };
+        let m = crate::regexp_match(re_of(recv), &h, enc);
         // With a block, ruby YIELDS the MatchData on a hit and the call
         // evaluates to the BLOCK's value; a miss answers nil without running
         // it. Only the String-receiver form had this arm, so with a Regexp
@@ -244,8 +244,8 @@ ruby_class! {
         Ok(m)
     }
     def "=~" (recv, other) {
-        let Some(h) = subject_arg(live_re(recv)?, other)? else { return Ok(RubyValue::Nil) };
-        Ok(crate::regexp_match_index(re_of(recv), &h))
+        let Some((h, enc)) = subject_arg(live_re(recv)?, other)? else { return Ok(RubyValue::Nil) };
+        Ok(crate::regexp_match_index(re_of(recv), &h, enc))
     }
     // `casefold?` reports the `/i` flag.
     def "casefold?" (recv) {
@@ -445,13 +445,18 @@ fn regexp_allocate() -> RubyValue {
 /// The subject of `Regexp#=~`/`#match`/`#match?`: a String matches, `nil`
 /// answers "no match" (never raises), and any other type raises TypeError --
 /// CRuby's rule (`/p/ =~ 5` -> TypeError, not a silent non-match).
-fn subject_arg(re: &crate::RRegexp, v: &RubyValue) -> Result<Option<String>, crate::Signal> {
+/// The decoded subject, WITH the encoding it was decoded from -- every group
+/// the match hands back has to come back in it, so the two travel together.
+type Subject = (String, crate::encoding::EncodingId);
+
+fn subject_arg(re: &crate::RRegexp, v: &RubyValue) -> Result<Option<Subject>, crate::Signal> {
     match v {
         RubyValue::Nil => Ok(None),
         // A Symbol matches as its name, which is not an implicit String
         // conversion but a case CRuby's regexp entry points special-case --
         // `delegate.rb` filters `private_instance_methods` with `/…/ =~ m`.
-        RubyValue::Symbol(s) => Ok(Some(s.name())),
+        // Its name is the subject, in the encoding the Symbol itself reports.
+        RubyValue::Symbol(s) => Ok(Some((s.name(), s.encoding()))),
         other => {
             let handle = crate::builtins::convert::to_rstr(other)?;
             let buf = handle.lock();
@@ -470,7 +475,7 @@ fn subject_arg(re: &crate::RRegexp, v: &RubyValue) -> Result<Option<String>, cra
             let text = buf.to_utf8_lossy().into_owned();
             drop(buf);
             crate::builtins::encoding::guard_regexp_haystack(re, enc, ascii_only)?;
-            Ok(Some(text))
+            Ok(Some((text, enc)))
         }
     }
 }
