@@ -1159,7 +1159,13 @@ impl ClassRegistry {
         let Some(e) = self.entries.get(&id.0) else {
             return false;
         };
-        e.own_methods.contains(&name) || e.own_value_names.contains(&name)
+        // A FOREIGN value row is one this class only inherited -- a `module
+        // Kernel` reopen flattens its rows onto every class in the chain, and
+        // each one registers a row of its own so dispatch is one probe. That
+        // makes the row present here but not OWNED, which is what `#owner`,
+        // `instance_methods(false)` and the `super` walk each ask.
+        (e.own_methods.contains(&name) || e.own_value_names.contains(&name))
+            && !e.foreign_value_names.contains(&name)
     }
 
     /// This class's registered instance-method names, each tagged private/not,
@@ -1200,8 +1206,14 @@ impl ClassRegistry {
         for &name in &e.own_methods {
             consider(name, &mut seen, &mut out);
         }
-        // Builtin-reopen methods are always own to the reopened class.
+        // A builtin reopen's rows are own to the reopened class -- except a
+        // FOREIGN one, which a `module Comparable` reopen flattened onto this
+        // class so dispatch is one probe. `instance_methods(false)` asks the
+        // same question `#owner` does, so both read the same mark.
         for (_, name) in e.value_methods.keys() {
+            if own_only && e.foreign_value_names.contains(name) {
+                continue;
+            }
             consider(*name, &mut seen, &mut out);
         }
         if !own_only {
