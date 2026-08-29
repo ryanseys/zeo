@@ -17,32 +17,37 @@ use std::path::PathBuf;
 /// the cache. In the dev tree, missing means the tree is half-built and the
 /// fix is `cargo build`.
 ///
-/// No mtime staleness check here: "archive older than the binary" is true of
-/// every fresh build, and a bin-only rebuild leaves an older archive that is
-/// still correct. `cargo build` emits the archive; a test run does NOT --
-/// only `cargo build` asks the lib target for every crate-type, and a test
-/// binary's dependency edge asks for the rlib alone. The suites build it
-/// themselves (`harness::paths::runtime_archive`).
+/// **In a dev tree the archive is brought up to date here, not assumed.**
+/// `cargo build -p zeo --bin zeo` builds the binary and NOT the staticlib, so
+/// an edited runtime would otherwise be compiled into the `zeo` you just built
+/// and left out of every program that `zeo` runs -- including the ones the
+/// compiled-program cache links. The failure is silent and reads exactly like
+/// an edit that never landed. [`dev_tree_archive`] is the rule; the suites
+/// call this function rather than carrying a second copy of it.
 pub fn runtime_archive() -> Result<PathBuf, String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the running zeo binary: {e}"))?;
     let dir = exe
         .parent()
         .ok_or_else(|| "the zeo binary has no parent directory".to_string())?;
+    // A cargo TEST binary lives one level deeper, in `<profile>/deps/`, while
+    // the archive stays in `<profile>/`.
+    let dir = match dir.file_name().is_some_and(|n| n == "deps") {
+        true => dir.parent().unwrap_or(dir),
+        false => dir,
+    };
+    // The dev tree's own build directory, and only that: a zeo STAGED into an
+    // install layout resolves to `DevTree` too whenever the source tree still
+    // exists on the machine, and cargo cannot build an archive into
+    // `<prefix>/bin`. Its missing-payload error has to survive.
+    if let crate::home::ZeoHome::DevTree { root } = crate::home::zeo_home()
+        && is_cargo_profile_dir(dir, root)
+    {
+        return dev_tree_archive(dir, root);
+    }
     let archive = dir.join("libzeo.a");
     if archive.is_file() {
         return Ok(archive);
-    }
-    // A cargo TEST binary lives one level deeper, in `<profile>/deps/`,
-    // while the archive stays in `<profile>/` -- the e2e harness links from
-    // there.
-    if dir.file_name().is_some_and(|n| n == "deps")
-        && let Some(up) = dir.parent()
-    {
-        let archive = up.join("libzeo.a");
-        if archive.is_file() {
-            return Ok(archive);
-        }
     }
     // A `cargo install`ed zeo: nothing put an archive anywhere, so build one
     // once into the cache. See `registry_archive`.
@@ -68,6 +73,115 @@ pub fn runtime_archive() -> Result<PathBuf, String> {
          `libzeo.a` is built beside the `zeo` binary)",
         archive.display()
     ))
+}
+
+/// Whether `dir` is cargo's own output directory for this tree --
+/// `<root>/target/<profile>` or `<root>/target/<triple>/<profile>`.
+///
+/// A zeo STAGED into an install layout still resolves to `DevTree` whenever
+/// the source tree exists on the machine, and one staged under `target/`
+/// passes a plain prefix test. Only cargo's own output directory may be built
+/// into: an install prefix has no profile to build for, and its
+/// missing-payload error is the answer a broken install needs.
+fn is_cargo_profile_dir(dir: &std::path::Path, root: &std::path::Path) -> bool {
+    let target = root.join("target");
+    dir.parent() == Some(target.as_path())
+        || dir.parent().and_then(std::path::Path::parent) == Some(target.as_path())
+}
+
+/// The four crates that land in `libzeo.a`. A `.rs` newer than the archive
+/// anywhere under their `src/` means the archive no longer holds this tree's
+/// runtime.
+const ARCHIVE_CRATES: &[&str] = &["zeo", "zeo-rt", "zeo-abi", "zeo-macros"];
+
+/// `libzeo.a` in a dev tree, BUILT when a runtime source is newer than it.
+///
+/// The staleness rule compares the archive against the sources, not against
+/// the `zeo` binary: an archive older than the binary is the normal state of
+/// every build, while an archive older than a source file is always wrong.
+///
+/// Building rather than refusing is what makes the failure impossible instead
+/// of merely reported. A dev tree has cargo by definition, cargo does nothing
+/// when the archive is already current, and concurrent zeo processes serialize
+/// on cargo's own build lock -- so the first builds and the rest find it fresh.
+fn dev_tree_archive(dir: &std::path::Path, root: &std::path::Path) -> Result<PathBuf, String> {
+    static ONCE: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
+    ONCE.get_or_init(|| {
+        let archive = dir.join("libzeo.a");
+        if let Some(newer) = source_newer_than(&archive, root) {
+            build_archive(dir, &newer)?;
+        }
+        archive.is_file().then_some(archive.clone()).ok_or_else(|| {
+            format!(
+                "runtime archive missing: {} (rerun `cargo build -p zeo` -- \
+                 `libzeo.a` is built beside the `zeo` binary)",
+                archive.display()
+            )
+        })
+    })
+    .clone()
+}
+
+/// The newest source under [`ARCHIVE_CRATES`] that is newer than `archive`, or
+/// `None` when the archive is up to date. A missing archive reports the newest
+/// source there is, so it builds too.
+fn source_newer_than(archive: &std::path::Path, root: &std::path::Path) -> Option<PathBuf> {
+    let archive_at = std::fs::metadata(archive).and_then(|m| m.modified()).ok();
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut stack: Vec<PathBuf> = ARCHIVE_CRATES
+        .iter()
+        .map(|c| root.join("crates").join(c).join("src"))
+        .collect();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.filter_map(Result::ok) {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs")
+                && let Ok(at) = e.metadata().and_then(|m| m.modified())
+                && newest.as_ref().is_none_or(|(n, _)| at > *n)
+            {
+                newest = Some((at, p));
+            }
+        }
+    }
+    let (at, path) = newest?;
+    match archive_at {
+        Some(archive_at) if archive_at >= at => None,
+        _ => Some(path),
+    }
+}
+
+/// `cargo build -p zeo --lib` for the profile this binary was built into.
+fn build_archive(dir: &std::path::Path, because: &std::path::Path) -> Result<(), String> {
+    // `debug` is the `dev` profile's OUTPUT directory, not its name.
+    let profile = match dir.file_name().and_then(|n| n.to_str()) {
+        Some("debug") | None => "dev",
+        Some(other) => other,
+    };
+    tracing::info!(
+        newer = %because.display(),
+        "libzeo.a is out of date; building it"
+    );
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let out = std::process::Command::new(cargo)
+        .args(["build", "-p", "zeo", "--lib", "--profile", profile])
+        .current_dir(match crate::home::zeo_home() {
+            crate::home::ZeoHome::DevTree { root } => root.clone(),
+            _ => PathBuf::from("."),
+        })
+        .output()
+        .map_err(|e| format!("spawning cargo to build libzeo.a: {e}"))?;
+    match out.status.success() {
+        true => Ok(()),
+        false => Err(format!(
+            "building libzeo.a failed:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        )),
+    }
 }
 
 /// `libzeo.a` for a `cargo install`ed zeo, built once into the per-user cache.
@@ -442,5 +556,79 @@ mod tests {
             .trim();
         let live: Vec<&str> = line.split_whitespace().collect();
         assert_eq!(live, natlibs_for(host_triple()).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod archive_freshness_tests {
+    use std::path::PathBuf;
+
+    /// A scratch tree named for this test, removed on the way in so a killed
+    /// run cannot leave one behind that the next run reads.
+    fn scratch(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("zeo-archive-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    /// The rule that makes a stale `libzeo.a` impossible: a runtime source
+    /// newer than the archive reports that file, and an archive newer than
+    /// every source reports nothing.
+    ///
+    /// The regression is silent and expensive. `cargo build -p zeo --bin zeo`
+    /// builds the binary and NOT the staticlib, so an edited runtime reached
+    /// the compiler and not the programs the compiler ran -- including every
+    /// one served from the compiled-program cache. It reads exactly like an
+    /// edit that never landed, and it cost a long session to diagnose once.
+    #[test]
+    fn a_source_newer_than_the_archive_is_reported() {
+        let root = scratch("newer");
+        let src = root.join("crates/zeo-rt/src/deep");
+        std::fs::create_dir_all(&src).expect("the crate tree");
+        let archive = root.join("libzeo.a");
+        std::fs::write(&archive, b"archive").expect("the archive");
+
+        // No sources at all: nothing can be newer.
+        assert!(super::source_newer_than(&archive, &root).is_none());
+
+        // A source written AFTER the archive is reported by name, and the
+        // walk reaches a nested directory rather than only the top one.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let newer = src.join("payload.rs");
+        std::fs::write(&newer, b"// edited").expect("the source");
+        assert_eq!(
+            super::source_newer_than(&archive, &root).as_deref(),
+            Some(newer.as_path())
+        );
+
+        // Rebuilding the archive clears it.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&archive, b"rebuilt").expect("the archive");
+        assert!(super::source_newer_than(&archive, &root).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A MISSING archive reports the newest source there is, so the caller
+    /// builds one rather than reporting it as up to date.
+    #[test]
+    fn a_missing_archive_asks_to_be_built() {
+        let root = scratch("missing");
+        let src = root.join("crates/zeo-abi/src");
+        std::fs::create_dir_all(&src).expect("the crate tree");
+        std::fs::write(src.join("lib.rs"), b"// a source").expect("the source");
+        let missing = root.join("libzeo.a");
+        assert!(super::source_newer_than(&missing, &root).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The four crates that land in the archive are the four the walk reads.
+    /// A fifth crate joining `libzeo.a` without joining this list would make
+    /// the staleness check blind to it.
+    #[test]
+    fn the_walk_covers_the_crates_the_archive_holds() {
+        assert_eq!(
+            super::ARCHIVE_CRATES,
+            &["zeo", "zeo-rt", "zeo-abi", "zeo-macros"]
+        );
     }
 }
