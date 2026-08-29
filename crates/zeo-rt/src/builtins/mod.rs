@@ -1217,6 +1217,7 @@ pub(crate) mod gate {
     /// mutable Ruby value a program may push anything into, and the question
     /// here is whether zeo's own loader activated the extension.
     static CONSOLE: AtomicU8 = AtomicU8::new(0);
+    static CONSOLE_SIZE: AtomicU8 = AtomicU8::new(0);
     static NONBLOCK: AtomicU8 = AtomicU8::new(0);
 
     fn required(cell: &AtomicU8) -> bool {
@@ -1229,6 +1230,12 @@ pub(crate) mod gate {
     pub(crate) fn activate(feature: &str) {
         match feature {
             "io/console" => CONSOLE.store(1, Ordering::Release),
+            // `size.rb` opens with `require 'io/console'`, so this one name
+            // arms both gates.
+            "io/console/size" => {
+                CONSOLE_SIZE.store(1, Ordering::Release);
+                CONSOLE.store(1, Ordering::Release);
+            }
             "io/nonblock" => NONBLOCK.store(1, Ordering::Release),
             _ => return,
         }
@@ -1245,6 +1252,7 @@ pub(crate) mod gate {
     fn armed(key: &str) -> bool {
         match key {
             "io/console" => required(&CONSOLE),
+            "io/console/size" => required(&CONSOLE_SIZE),
             "io/nonblock" => required(&NONBLOCK),
             "env:boxes" => crate::boxes::boxes_enabled(),
             _ => false,
@@ -1416,7 +1424,10 @@ pub(crate) mod gate {
             }
             keys.sort_unstable();
             keys.dedup();
-            assert_eq!(keys, ["env:boxes", "io/console", "io/nonblock"]);
+            assert_eq!(
+                keys,
+                ["env:boxes", "io/console", "io/console/size", "io/nonblock"]
+            );
         }
     }
 }

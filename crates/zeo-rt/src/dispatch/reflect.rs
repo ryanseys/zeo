@@ -535,6 +535,11 @@ fn is_notimplement_row(cid: ClassId, name: Symbol) -> bool {
         // `crates/zeo-rt/src/builtins/process.rs`
         (|| zeo_abi::PROCESS_SYS_MODULE, "setresuid"),
         (|| zeo_abi::PROCESS_SYS_MODULE, "setresgid"),
+        // `crates/zeo-rt/src/builtins/io_console.rs` -- both are Windows-only
+        // in io-console too, so on this platform they are `rb_f_notimplement`
+        // rows that raise whatever argument count they are given.
+        (|| zeo_abi::IO_CLASS, "pressed?"),
+        (|| zeo_abi::IO_CLASS, "check_winsize_changed"),
     ];
     let n = name.name_str();
     STUBS

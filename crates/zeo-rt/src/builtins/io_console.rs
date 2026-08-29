@@ -2,9 +2,10 @@
 //! and the cursor escapes, over `termios(3)`.
 //!
 //! CRuby ships this as `ext/io/console`, a require-gated extension; zeo's rows
-//! hang unconditionally off the IO table, so `require "io/console"` is
-//! recognized ceremony (`docs/EXTENSIONS.md`) -- the same shape `io/wait`
-//! already has. `IO#winsize` predates this module and stays in `io.rs`.
+//! sit in `IO`'s own table behind `gated "io/console"`, so `require
+//! "io/console"` opens them at its own document position. `io/console/size`
+//! is a second file in ruby and carries a second gate here.
+//! `IO#winsize` predates this module and stays in `io.rs`.
 //!
 //! Every mode change goes through `in_mode`, which saves the terminal's
 //! settings, applies a mutation, runs a body, and restores from a `Drop`
@@ -12,10 +13,12 @@
 //! can't leave the user's terminal in raw mode, which is the failure that
 //! makes a shell unusable.
 //!
-//! On a stream that isn't a terminal, everything here raises `Errno::ENOTTY`
-//! the way CRuby does, down to the message split: the direct methods name the
-//! stream (`"... - <STDIN>"`), the scoped ones don't, because CRuby reaches
-//! them through a helper that has no name to report.
+//! A failed syscall raises with the errno IT set, through `sys_fail`, down to
+//! CRuby's message split: the direct methods name the stream
+//! (`"... - <STDIN>"`), the scoped ones don't, because CRuby reaches them
+//! through a helper that has no name to report.
+//!
+//! Measured against io-console 0.8.2's own `console.c`, row by row.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -24,26 +27,41 @@ use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal, Symbol};
 use zeo_macros::ruby_class;
 
-/// CRuby's `Errno::ENOTTY`. `name` is the stream label the direct methods
-/// report and the scoped ones omit -- see the module docs. A nameless stream
-/// (a pipe) reports no suffix either, so an empty label reads as no label.
+/// io-console's `sys_fail`: the errno the failed call actually set, never a
+/// fixed one. A tty ioctl against `/dev/null` sets `ENODEV`, against a closed
+/// descriptor `EBADF`; reporting `ENOTTY` for all three told a caller the
+/// stream was a pipe when it was not.
+///
+/// `name` is the stream label the direct methods report (`rb_syserr_fail_str`)
+/// and the scoped ones omit (`rb_syserr_fail(error, 0)`) -- see the module
+/// docs. A nameless stream (a pipe) reports no suffix either, so an empty
+/// label reads as no label.
 ///
 /// `method` labels the synthetic frame the raise is captured inside, so an
 /// unrescued failure reads `in 'IO#raw!'` above `<main>` the way CRuby's does
 /// -- these rows are C functions with no Ruby line of their own.
-fn enotty(name: Option<&str>, method: &'static str) -> Signal {
+fn sys_fail(errno: i32, name: Option<&str>, method: &'static str) -> Signal {
     let _frame = crate::frames::synthetic_c_frame(method);
+    let (class, text) =
+        crate::builtins::file::errno_class_and_desc_of(&std::io::Error::from_raw_os_error(errno));
     let msg = match name.filter(|n| !n.is_empty()) {
-        Some(n) => format!("Inappropriate ioctl for device - {n}"),
-        None => "Inappropriate ioctl for device".to_string(),
+        Some(n) => format!("{text} - {n}"),
+        None => text,
     };
-    raise_error("Errno::ENOTTY", msg)
+    raise_error(class, msg)
+}
+
+/// The errno the last libc call set.
+fn last_errno() -> i32 {
+    std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(libc::ENOTTY)
 }
 
 /// The named form, for the direct methods -- `IO#winsize` (which lives in
 /// `io.rs`) raises through here too.
 pub(crate) fn not_a_terminal(recv: &RubyValue, method: &'static str) -> Signal {
-    enotty(Some(&io::stream_label(recv)), method)
+    sys_fail(last_errno(), Some(&io::stream_label(recv)), method)
 }
 
 fn get_attr(fd: libc::c_int) -> Option<libc::termios> {
@@ -53,11 +71,19 @@ fn get_attr(fd: libc::c_int) -> Option<libc::termios> {
     (unsafe { libc::tcgetattr(fd, &mut t) } == 0).then_some(t)
 }
 
-/// `TCSADRAIN` rather than `TCSANOW`, matching CRuby: pending output is
-/// written out before the mode flips, so a prompt already `print`ed isn't
-/// swallowed by the switch into raw mode.
+/// `TCSANOW` and a retry on `EINTR`, which is io-console's own `setattr`.
+///
+/// `TCSADRAIN` was wrong and it HUNG: it waits for the terminal's pending
+/// output to be transmitted, so `pty.raw { ... }` blocked forever whenever
+/// nobody was draining the other end.
 fn set_attr(fd: libc::c_int, t: &libc::termios) -> bool {
-    unsafe { libc::tcsetattr(fd, libc::TCSADRAIN, t) == 0 }
+    // SAFETY: `fd` came from `#fileno` and `t` is a live termios.
+    while unsafe { libc::tcsetattr(fd, libc::TCSANOW, t) } != 0 {
+        if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Restores the terminal mode however the body leaves -- returned value,
@@ -83,11 +109,11 @@ fn in_mode<T>(
     body: impl FnOnce() -> Result<T, Signal>,
 ) -> Result<T, Signal> {
     let fd = io::raw_fd(recv)?;
-    let saved = get_attr(fd).ok_or_else(|| enotty(None, method))?;
+    let saved = get_attr(fd).ok_or_else(|| sys_fail(last_errno(), None, method))?;
     let mut next = saved;
     apply(&mut next);
     if !set_attr(fd, &next) {
-        return Err(enotty(None, method));
+        return Err(sys_fail(last_errno(), None, method));
     }
     let _guard = ModeGuard { fd, saved };
     body()
@@ -115,10 +141,13 @@ fn raw_mode(t: &mut libc::termios, opts: RawOpts) {
     // SAFETY: `t` is a live termios; `cfmakeraw` only rewrites its fields.
     unsafe { libc::cfmakeraw(t) };
     t.c_lflag &= !(libc::ECHOE | libc::ECHOK);
-    if let Some(min) = opts.min {
+    // A NEGATIVE value is ignored, leaving `cfmakeraw`'s VMIN 1 / VTIME 0.
+    // Assigning it wrapped to 255 through the `cc_t` cast, which made
+    // `min: -1` a 255-byte read.
+    if let Some(min) = opts.min.filter(|&m| m >= 0) {
         t.c_cc[libc::VMIN] = min as libc::cc_t;
     }
-    if let Some(time) = opts.time {
+    if let Some(time) = opts.time.filter(|&s| s >= 0) {
         t.c_cc[libc::VTIME] = time as libc::cc_t;
     }
     if opts.intr {
@@ -162,12 +191,28 @@ struct RawOpts {
     intr: bool,
 }
 
-/// Read `min:`/`time:`/`intr:` out of a trailing keyword Hash. Anything else
-/// in the Hash is ignored, as CRuby's own option scan ignores unknown keys.
-fn raw_opts(args: &[RubyValue]) -> RawOpts {
+/// Read `min:`/`time:`/`intr:` out of a trailing keyword Hash, and refuse
+/// everything io-console's `rb_get_kwargs` refuses.
+///
+/// `min:` went through `num_to_f64_unchecked`, which PANICS on a String, so
+/// `io.raw!(min: "x")` aborted the process where ruby raises TypeError. An
+/// unknown key was silently dropped, and `intr:` accepted any value.
+///
+/// `method` names the ArgumentError's frame, as the other refusals here do.
+fn raw_opts(args: &[RubyValue], method: &'static str) -> Result<RawOpts, Signal> {
     let mut opts = RawOpts::default();
+    // `rb_check_arity(argc, 0, 0)` after the keywords come off: these rows
+    // take NO positional argument. Dropping one silently sent `getch(:nope)`
+    // into a blocking read where ruby refuses before touching the terminal.
+    let positional = args.len() - usize::from(matches!(args.last(), Some(RubyValue::Hash(_))));
+    if positional > 0 {
+        let _frame = crate::frames::synthetic_c_frame(method);
+        return Err(crate::builtins::arg_error!(
+            "wrong number of arguments (given {positional}, expected 0)"
+        ));
+    }
     let Some(RubyValue::Hash(h)) = args.last() else {
-        return opts;
+        return Ok(opts);
     };
     let get = |name: &str| {
         let key = RubyValue::Symbol(Symbol::intern(name));
@@ -176,11 +221,49 @@ fn raw_opts(args: &[RubyValue]) -> RawOpts {
             v => Some(v),
         }
     };
-    opts.min = get("min").map(|v| crate::builtins::numeric::num_to_f64_unchecked(&v) as i64);
-    opts.time =
-        get("time").map(|v| (crate::builtins::numeric::num_to_f64_unchecked(&v) * 10.0) as i64);
-    opts.intr = matches!(get("intr"), Some(RubyValue::Bool(true)));
-    opts
+    // `rb_get_kwargs` with a positive optional count refuses a key it does
+    // not name, reporting the FIRST one in the hash's own order.
+    let RubyValue::Array(keys) = crate::collections::hash_keys(h) else {
+        unreachable!("hash_keys answers an Array");
+    };
+    let unknown = keys.lock().iter().find(|k| {
+        !matches!(k, RubyValue::Symbol(s)
+            if matches!(s.name_str(), "min" | "time" | "intr"))
+    }).cloned();
+    if let Some(unknown) = unknown {
+        let _frame = crate::frames::synthetic_c_frame(method);
+        return Err(crate::builtins::arg_error!(
+            "unknown keyword: {}",
+            unknown.inspect_string()
+        ));
+    }
+    // NUM2INT / NUM2DBL: a non-numeric raises TypeError, it does not abort.
+    opts.min = get("min")
+        .map(|v| int_arg(&v))
+        .transpose()?;
+    opts.time = get("time")
+        .map(|v| {
+            // `NUM2INT(rb_funcall(vtime, '*', 1, INT2FIX(10)))` -- a real
+            // Ruby `*` send FIRST, so `time: "x"` multiplies the String and
+            // then fails the integer conversion, which is where its message
+            // comes from.
+            let tenths =
+                crate::dispatch::send_value(&v, Symbol::intern("*"), &[RubyValue::Int(10)], None)?;
+            int_arg(&tenths)
+        })
+        .transpose()?;
+    opts.intr = match get("intr") {
+        None | Some(RubyValue::Bool(false)) => false,
+        Some(RubyValue::Bool(true)) => true,
+        Some(other) => {
+            let _frame = crate::frames::synthetic_c_frame(method);
+            return Err(crate::builtins::arg_error!(
+                "true or false expected as intr: {}",
+                other.to_display_string()
+            ));
+        }
+    };
+    Ok(opts)
 }
 
 /// Yield the receiver to the method's block, or raise as a bare `yield` in a
@@ -189,7 +272,8 @@ fn raw_opts(args: &[RubyValue]) -> RawOpts {
 fn yield_self(recv: &RubyValue, block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     match block {
         Some(RubyValue::Proc(p)) => p.call(std::slice::from_ref(recv)),
-        _ => Err(local_jump_error!("no block given (yield)")),
+        // `rb_yield` with no block, which reports no `(yield)` suffix.
+        _ => Err(local_jump_error!("no block given")),
     }
 }
 
@@ -199,10 +283,13 @@ fn send0(recv: &RubyValue, name: &str) -> Result<RubyValue, Signal> {
 
 /// Write `s` to the stream -- how every cursor/erase escape reaches the
 /// terminal, and the reason they work on any IO rather than only a tty.
+///
+/// Answers the RECEIVER: every one of these rows ends `return io;` in
+/// io-console, so `io.goto(1, 1).cursor_up(2)` chains.
 fn write_str(recv: &RubyValue, s: String) -> Result<RubyValue, Signal> {
     let arg = RubyValue::Str(crate::collections::string_new(s));
     crate::dispatch::send_value(recv, Symbol::intern("write"), &[arg], None)?;
-    Ok(RubyValue::Nil)
+    Ok(recv.clone())
 }
 
 /// One `Integer` argument for the cursor/erase escapes.
@@ -217,7 +304,7 @@ pub fn raw(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let opts = raw_opts(args);
+    let opts = raw_opts(args, "IO#raw")?;
     in_mode(
         recv,
         "IO#raw",
@@ -231,7 +318,7 @@ pub fn raw_bang(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let opts = raw_opts(args);
+    let opts = raw_opts(args, "IO#raw!")?;
     set_mode(recv, "IO#raw!", |t| raw_mode(t, opts))
 }
 
@@ -295,7 +382,7 @@ pub fn getch(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let opts = raw_opts(args);
+    let opts = raw_opts(args, "IO#getch")?;
     in_mode(
         recv,
         "IO#getch",
@@ -305,30 +392,57 @@ pub fn getch(
 }
 
 /// `getpass(prompt = nil)` -- print the prompt, read a line with echo off,
-/// then print the newline the user's Return didn't echo. The answer is
-/// chomped, as CRuby's is.
+/// then print the newline the user's Return didn't echo.
+///
+/// Three rules the first draft missed. The prompt and the closing newline go
+/// to the WRITE half, and for `STDIN` that is `$stderr` -- writing them back
+/// into stdin put a prompt where nobody could see it. The newline is written
+/// from an `ensure`, so a failed read still ends the line. And the answer is
+/// `chomp!(rb_default_rs)`, which strips a trailing `"\n"` IN PLACE and
+/// leaves a `"\r"` alone; the old plain `chomp` made a new String and ate
+/// `"\r\n"` too.
 pub fn getpass(
     recv: &RubyValue,
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    if args.len() > 1 {
+        let _frame = crate::frames::synthetic_c_frame("IO#getpass");
+        return Err(crate::builtins::arg_error!(
+            "wrong number of arguments (given {}, expected 0..1)",
+            args.len()
+        ));
+    }
+    // `wio = rb_io_get_write_io(io); if (wio == io && io == rb_stdin) wio = rb_stderr;`
+    let wio = match io::stream_of(recv) {
+        Some(io::StdStream::Stdin) => io::stderr_value(),
+        _ => recv.clone(),
+    };
     if let Some(prompt) = args.first().filter(|v| !matches!(v, RubyValue::Nil)) {
         let s = crate::builtins::convert::to_rstr(prompt)?
             .lock()
             .to_utf8_lossy()
             .into_owned();
-        write_str(recv, s)?;
+        write_str(&wio, s)?;
     }
+    send0(&wio, "flush")?;
     let line = in_mode(
         recv,
         "IO#getpass",
         |t| echo_mode(t, false),
         || send0(recv, "gets"),
-    )?;
-    write_str(recv, "\n".to_string())?;
+    );
+    // The `rb_ensure`: the newline goes out however the read ended.
+    let newline = write_str(&wio, "\n".to_string());
+    let line = line?;
+    newline?;
     match line {
         RubyValue::Nil => Ok(RubyValue::Nil),
-        other => crate::dispatch::send_value(&other, Symbol::intern("chomp"), &[], None),
+        other => {
+            let rs = RubyValue::Str(crate::collections::string_new("\n".to_string()));
+            crate::dispatch::send_value(&other, Symbol::intern("chomp!"), &[rs], None)?;
+            Ok(other)
+        }
     }
 }
 
@@ -338,10 +452,13 @@ fn flush_queue(
     queue: libc::c_int,
 ) -> Result<RubyValue, Signal> {
     let fd = io::raw_fd(recv)?;
-    // A non-tty fails here exactly as `tcgetattr` would, so probe first for
-    // the message CRuby reports.
-    get_attr(fd).ok_or_else(|| not_a_terminal(recv, method))?;
-    unsafe { libc::tcflush(fd, queue) };
+    // `if (tcflush(fd, ...)) sys_fail(io);` -- the flush's OWN failure is the
+    // refusal. Discarding its result made a failed flush on a live terminal
+    // silent.
+    // SAFETY: a plain call on a descriptor this handle owns.
+    if unsafe { libc::tcflush(fd, queue) } != 0 {
+        return Err(not_a_terminal(recv, method));
+    }
     Ok(recv.clone())
 }
 
@@ -370,23 +487,38 @@ pub fn ioflush(
 }
 
 /// `ttyname` -- the device path behind the stream, or nil when it isn't a
-/// terminal (CRuby answers nil rather than raising here).
+/// terminal.
+///
+/// The `isatty` test comes FIRST and is the only nil: past it, a failure is a
+/// real one and raises with the errno and the call that set it. Reading a
+/// NULL as nil swallowed every one of those. The answer is frozen, as
+/// `rb_interned_str_cstr` makes it.
 pub fn ttyname(
     recv: &RubyValue,
     _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let fd = io::raw_fd(recv)?;
-    // SAFETY: `ttyname` answers a pointer into thread-local storage, valid
-    // until the next call on this thread -- copied out immediately below.
-    let p = unsafe { libc::ttyname(fd) };
-    if p.is_null() {
+    // SAFETY: a plain query on a descriptor this handle owns.
+    if unsafe { libc::isatty(fd) } != 1 {
         return Ok(RubyValue::Nil);
     }
-    let name = unsafe { std::ffi::CStr::from_ptr(p) }
+    // `ttyname_r` into a fixed 1024-byte buffer, which is what io-console
+    // starts with; the reentrant form is why this is not plain `ttyname`.
+    let mut buf = [0_i8; 1024];
+    // SAFETY: `buf` is a live, correctly-sized array for the call to fill.
+    let rc = unsafe { libc::ttyname_r(fd, buf.as_mut_ptr(), buf.len()) };
+    if rc != 0 {
+        return Err(sys_fail(rc, Some(&format!("ttyname_r({fd})")), "IO#ttyname"));
+    }
+    // SAFETY: `ttyname_r` answered 0, so `buf` holds a NUL-terminated path.
+    let name = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
         .to_string_lossy()
         .into_owned();
-    Ok(RubyValue::Str(crate::collections::string_new(name)))
+    let s = crate::collections::string_new(name);
+    let v = RubyValue::Str(s);
+    crate::dispatch::send_value(&v, Symbol::intern("freeze"), &[], None)?;
+    Ok(v)
 }
 
 /// `winsize = [rows, columns]`.
@@ -395,16 +527,37 @@ pub fn winsize_set(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let RubyValue::Array(dims) = &args[0] else {
-        return Err(crate::builtins::type_error!(
-            "expected an Array of [rows, columns]"
-        ));
+    // `rb_Array` first, then the length rule: io-console accepts only
+    // `[rows, cols]` or `[rows, cols, xpixel, ypixel]`, and reports the count
+    // it got. A String converts to a one-element Array and fails that rule,
+    // which is why a non-Array reads as an arity error rather than a TypeError.
+    let RubyValue::Array(dims) = crate::builtins::kernel::array_impl(&args[0..1])? else {
+        unreachable!("Kernel#Array answers an Array");
     };
     let dims = dims.lock().clone();
+    if dims.len() != 2 && dims.len() != 4 {
+        return Err(crate::builtins::arg_error!(
+            "wrong number of arguments (given {}, expected 2 or 4)",
+            dims.len()
+        ));
+    }
+    // `GetWriteFD` in io-console; zeo has no tied write half, so one fd
+    // answers both (`rb_io_set_write_io`, `io.rs`).
     let fd = io::raw_fd(recv)?;
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    ws.ws_row = dims.first().map(int_arg).transpose()?.unwrap_or(0) as libc::c_ushort;
-    ws.ws_col = dims.get(1).map(int_arg).transpose()?.unwrap_or(0) as libc::c_ushort;
+    // Each field is `NIL_P(m) ? 0 : NUM2UINT(m)`, truncated to the struct's
+    // unsigned short.
+    let field = |v: Option<&RubyValue>| -> Result<libc::c_ushort, Signal> {
+        match v {
+            None | Some(RubyValue::Nil) => Ok(0),
+            Some(v) => Ok(int_arg(v)? as libc::c_ushort),
+        }
+    };
+    ws.ws_row = field(dims.first())?;
+    ws.ws_col = field(dims.get(1))?;
+    ws.ws_xpixel = field(dims.get(2))?;
+    ws.ws_ypixel = field(dims.get(3))?;
+    // SAFETY: `fd` is this handle's descriptor and `ws` is a live winsize.
     if unsafe { libc::ioctl(fd, libc::TIOCSWINSZ, &ws) } != 0 {
         return Err(not_a_terminal(recv, "IO#winsize="));
     }
@@ -464,12 +617,23 @@ pub fn check_winsize_changed(
 // same as CRuby, where redirecting a program's output captures the escapes
 // rather than failing.
 
+/// `beep` -- a raw `write(2)` of the bell byte, not a buffered Ruby `write`.
+///
+/// io-console goes straight to the descriptor here, so the bell is not held
+/// behind buffered output and the failure is the syscall's own errno. Sending
+/// Ruby's `write` reported `IOError: not opened for writing` where ruby
+/// reports `Errno::EBADF`.
 pub fn beep(
     recv: &RubyValue,
     _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    write_str(recv, "\x07".to_string())
+    let fd = io::raw_fd(recv)?;
+    // SAFETY: one byte from a live local, to a descriptor this handle owns.
+    if unsafe { libc::write(fd, c"\x07".as_ptr().cast(), 1) } < 0 {
+        return Err(not_a_terminal(recv, "IO#beep"));
+    }
+    Ok(recv.clone())
 }
 
 pub fn clear_screen(
@@ -480,12 +644,28 @@ pub fn clear_screen(
     write_str(recv, "\x1b[2J\x1b[1;1H".to_string())
 }
 
+/// CRuby's `mode_in_range`: `nil` is 0, and anything that is not an Integer
+/// in `0..=high` is an ArgumentError naming the mode. Without this an
+/// out-of-range number went out as a malformed escape.
+fn mode_in_range(v: &RubyValue, high: i64, name: &str, method: &'static str) -> Result<i64, Signal> {
+    let refuse = || {
+        let _frame = crate::frames::synthetic_c_frame(method);
+        crate::builtins::arg_error!("wrong {name} mode: {}", v.to_display_string())
+    };
+    match v {
+        RubyValue::Nil => Ok(0),
+        RubyValue::Int(n) if (0..=high).contains(n) => Ok(*n),
+        _ => Err(refuse()),
+    }
+}
+
 pub fn erase_line(
     recv: &RubyValue,
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    write_str(recv, format!("\x1b[{}K", int_arg(&args[0])?))
+    let mode = mode_in_range(&args[0], 2, "line erase", "IO#erase_line")?;
+    write_str(recv, format!("\x1b[{mode}K"))
 }
 
 pub fn erase_screen(
@@ -493,7 +673,8 @@ pub fn erase_screen(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    write_str(recv, format!("\x1b[{}J", int_arg(&args[0])?))
+    let mode = mode_in_range(&args[0], 3, "screen erase", "IO#erase_screen")?;
+    write_str(recv, format!("\x1b[{mode}J"))
 }
 
 /// `goto(line, column)` -- both zero-based, as CRuby's are, over an escape
@@ -515,10 +696,25 @@ pub fn goto_column(
     write_str(recv, format!("\x1b[{}G", int_arg(&args[0])? + 1))
 }
 
-/// The four relative moves plus the two scrolls, which differ only in their
-/// final letter.
-fn move_by(recv: &RubyValue, args: &[RubyValue], letter: char) -> Result<RubyValue, Signal> {
-    write_str(recv, format!("\x1b[{}{letter}", int_arg(&args[0])?))
+/// The four relative moves, over CRuby's `console_move(io, y, x)`.
+///
+/// Two rules the plain `format!` got wrong: a ZERO distance writes NOTHING,
+/// and a NEGATIVE one flips the direction rather than emitting a negative
+/// number -- `cursor_up(-3)` moves three DOWN. `console_move` also flushes.
+fn move_by(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    negative: char,
+    positive: char,
+) -> Result<RubyValue, Signal> {
+    let n = int_arg(&args[0])?;
+    if n == 0 {
+        return Ok(recv.clone());
+    }
+    let letter = if n < 0 { negative } else { positive };
+    write_str(recv, format!("\x1b[{}{letter}", n.unsigned_abs()))?;
+    send0(recv, "flush")?;
+    Ok(recv.clone())
 }
 
 pub fn cursor_up(
@@ -526,7 +722,9 @@ pub fn cursor_up(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    move_by(recv, args, 'A')
+    // `console_move(io, -n, 0)`: the sign is negated before the letter is
+    // chosen, so a positive `n` goes UP.
+    move_by(recv, args, 'B', 'A')
 }
 
 pub fn cursor_down(
@@ -534,7 +732,7 @@ pub fn cursor_down(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    move_by(recv, args, 'B')
+    move_by(recv, args, 'A', 'B')
 }
 
 pub fn cursor_right(
@@ -542,7 +740,7 @@ pub fn cursor_right(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    move_by(recv, args, 'C')
+    move_by(recv, args, 'D', 'C')
 }
 
 pub fn cursor_left(
@@ -550,7 +748,23 @@ pub fn cursor_left(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    move_by(recv, args, 'D')
+    move_by(recv, args, 'C', 'D')
+}
+
+/// `console_scroll`: zero writes nothing, the sign picks the letter and the
+/// magnitude is the count. No flush, unlike the four moves above.
+fn scroll_by(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    negative: char,
+    positive: char,
+) -> Result<RubyValue, Signal> {
+    let n = int_arg(&args[0])?;
+    if n == 0 {
+        return Ok(recv.clone());
+    }
+    let letter = if n < 0 { negative } else { positive };
+    write_str(recv, format!("\x1b[{}{letter}", n.unsigned_abs()))
 }
 
 pub fn scroll_forward(
@@ -558,7 +772,7 @@ pub fn scroll_forward(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    move_by(recv, args, 'S')
+    scroll_by(recv, args, 'T', 'S')
 }
 
 pub fn scroll_backward(
@@ -566,7 +780,8 @@ pub fn scroll_backward(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    move_by(recv, args, 'T')
+    // `console_scroll(io, -n)`: negated first, so a positive `n` scrolls back.
+    scroll_by(recv, args, 'S', 'T')
 }
 
 /// `cursor` -- where the cursor is, as `[row, column]` zero-based. Asks the
@@ -589,27 +804,44 @@ pub fn cursor(
         || {
             write_str(recv, "\x1b[6n".to_string())?;
             send0(recv, "flush")?;
-            let mut reply = String::new();
-            // The reply ends at 'R'; a stream that answers nothing (not a real
-            // terminal, however it typed) ends the loop at EOF.
-            while let RubyValue::Str(s) = send0(recv, "getc")? {
-                let c = s.lock().to_utf8_lossy().into_owned();
-                let done = c == "R";
-                reply.push_str(&c);
-                if done {
-                    break;
+            // `read_vt_response`: exactly two prefix BYTES, then digits and
+            // `;` separators, ending at the first byte that is neither. A
+            // stream that does not answer the escape is nil, not a guess --
+            // the old parser reported `[0, 0]`, "cursor at home", for a pipe.
+            let byte = || -> Result<Option<u8>, Signal> {
+                Ok(match send0(recv, "getbyte")? {
+                    RubyValue::Int(b) => Some(b as u8),
+                    _ => None,
+                })
+            };
+            if byte()? != Some(0x1b) || byte()? != Some(b'[') {
+                return Ok(RubyValue::Nil);
+            }
+            let mut fields: Vec<i64> = Vec::new();
+            let mut num: i64 = 0;
+            let mut term = None;
+            while let Some(c) = byte()? {
+                match c {
+                    b';' => {
+                        fields.push(num);
+                        num = 0;
+                    }
+                    b'0'..=b'9' => num = num * 10 + i64::from(c - b'0'),
+                    _ => {
+                        fields.push(num);
+                        term = Some(c);
+                        break;
+                    }
                 }
             }
-            let digits: Vec<i64> = reply
-                .trim_start_matches(['\x1b', '['])
-                .trim_end_matches('R')
-                .split(';')
-                .filter_map(|p| p.parse::<i64>().ok())
-                .collect();
+            // Two coordinates and an `R` terminator, or nothing.
+            if fields.len() != 2 || term != Some(b'R') {
+                return Ok(RubyValue::Nil);
+            }
             // The escape's coordinates are one-based; Ruby's are not.
             Ok(RubyValue::Array(crate::collections::array_new(vec![
-                RubyValue::Int(digits.first().copied().unwrap_or(1) - 1),
-                RubyValue::Int(digits.get(1).copied().unwrap_or(1) - 1),
+                RubyValue::Int(fields[0] - 1),
+                RubyValue::Int(fields[1] - 1),
             ])))
         },
     )
@@ -621,37 +853,136 @@ pub fn cursor_set(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let RubyValue::Array(pos) = &args[0] else {
-        return Err(crate::builtins::type_error!(
-            "expected an Array of [row, column]"
-        ));
+    // `rb_convert_type(cpos, T_ARRAY, "Array", "to_ary")` -- any object with
+    // `to_ary` is a coordinate; a 1- or 3-element one is not.
+    let RubyValue::Array(pos) = crate::builtins::convert::to_ary(&args[0])? else {
+        unreachable!("to_ary answers an Array");
     };
     let pos = pos.lock().clone();
-    let row = pos.first().map(int_arg).transpose()?.unwrap_or(0);
-    let col = pos.get(1).map(int_arg).transpose()?.unwrap_or(0);
-    write_str(recv, format!("\x1b[{};{}H", row + 1, col + 1))?;
-    Ok(args[0].clone())
+    if pos.len() != 2 {
+        let _frame = crate::frames::synthetic_c_frame("IO#cursor=");
+        return Err(crate::builtins::arg_error!("expected 2D coordinate"));
+    }
+    let (row, col) = (int_arg(&pos[0])? + 1, int_arg(&pos[1])? + 1);
+    write_str(recv, format!("\x1b[{row};{col}H"))
 }
 
-/// `IO.console` -- the process's controlling terminal as a `File` on
-/// `/dev/tty`, or nil when none of the standard streams is a terminal (CRuby's
-/// own test, and what makes this answer nil under a test harness).
+/// The one open `/dev/tty`, which `IO.console` hands back on every call --
+/// io-console keeps it in `File::console` (or ractor-local storage) so
+/// `IO.console.equal?(IO.console)` is true and a mode set through one call is
+/// still there at the next.
+static CONSOLE_DEV: std::sync::Mutex<Option<RubyValue>> = std::sync::Mutex::new(None);
+
+/// `IO.console(*args)` -- the process's controlling terminal as a `File` on
+/// `/dev/tty`, or nil when `/dev/tty` cannot be opened.
+///
+/// Three forms, all of them `console_dev`'s:
+///   * `IO.console` answers the cached console, opening it on first use.
+///   * `IO.console(:close)` closes it, drops the cache and answers nil.
+///   * `IO.console(meth, *args)` sends `meth` to the console.
+///
+/// The old body opened a FRESH `/dev/tty` per call and refused unless one of
+/// the standard streams was a terminal. Neither is io-console's rule: it
+/// tests the open alone, so a program with piped stdio still reaches its
+/// terminal.
 pub fn io_class_console(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    // `Check_Type(argv[0], T_SYMBOL)` before anything else.
+    let sym = match args.first() {
+        None => None,
+        Some(RubyValue::Symbol(s)) => Some(*s),
+        Some(other) => {
+            let _frame = crate::frames::synthetic_c_frame("IO.console");
+            return Err(crate::builtins::type_error!(
+                "wrong argument type {} (expected Symbol)",
+                crate::builtins::convert_name_of(other)
+            ));
+        }
+    };
+
+    let mut slot = CONSOLE_DEV.lock().unwrap_or_else(|e| e.into_inner());
+    // A console someone closed is dropped and reopened, as `console_dev` does.
+    if slot.as_ref().is_some_and(io::io_is_closed) {
+        *slot = None;
+    }
+    if sym.is_some_and(|s| s.name_str() == "close") && args.len() == 1 {
+        if let Some(con) = slot.take() {
+            drop(slot);
+            crate::dispatch::send_value(&con, Symbol::intern("close"), &[], None)?;
+        }
+        return Ok(RubyValue::Nil);
+    }
+    if slot.is_none() {
+        let opened = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty");
+        let Ok(f) = opened else {
+            return Ok(RubyValue::Nil);
+        };
+        *slot = Some(io::file_value(f, Some("/dev/tty".to_string())));
+    }
+    let con = slot.clone().expect("opened just above");
+    drop(slot);
+    match sym {
+        // `rb_f_send(argc, argv, con)` -- `IO.console(:winsize)`.
+        Some(name) => crate::dispatch::send_value(&con, name, &args[1..], None),
+        None => Ok(con),
+    }
+}
+
+/// `IO.default_console_size` -- `io/console/size`'s fallback, straight out of
+/// the environment: `[ENV["LINES"].to_i.nonzero? || 25, ENV["COLUMNS"]... || 80]`.
+pub fn io_class_default_console_size(
     _recv: &RubyValue,
     _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    if (0..=2).all(|fd| unsafe { libc::isatty(fd) } != 1) {
-        return Ok(RubyValue::Nil);
+    // `String#to_i` stops at the first non-digit and answers 0 for junk, and
+    // `nonzero?` turns that 0 into the default.
+    // Read through the ENV object itself, so a program that assigned
+    // `ENV["COLUMNS"]` this run is answered from the same place ruby reads.
+    let from_env = |name: &str, fallback: i64| -> Result<i64, Signal> {
+        let key = RubyValue::Str(crate::collections::string_new(name.to_string()));
+        let got = crate::dispatch::send_value(
+            &crate::builtins::env::env_value(),
+            Symbol::intern("[]"),
+            &[key],
+            None,
+        )?;
+        let RubyValue::Str(s) = got else {
+            return Ok(fallback);
+        };
+        let text = s.lock().to_utf8_lossy().into_owned();
+        let digits: String = text
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        Ok(digits.parse::<i64>().ok().filter(|&n| n != 0).unwrap_or(fallback))
+    };
+    Ok(RubyValue::Array(crate::collections::array_new(vec![
+        RubyValue::Int(from_env("LINES", 25)?),
+        RubyValue::Int(from_env("COLUMNS", 80)?),
+    ])))
+}
+
+/// `IO.console_size` -- `console.winsize`, falling back to the environment
+/// when there is no console (`rescue NoMethodError`, which is what a nil
+/// console raises).
+pub fn io_class_console_size(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let con = io_class_console(recv, &[], None)?;
+    if matches!(con, RubyValue::Nil) {
+        return io_class_default_console_size(recv, args, blk);
     }
-    let opened = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/tty");
-    match opened {
-        Ok(f) => Ok(io::file_value(f, Some("/dev/tty".to_string()))),
-        Err(_) => Ok(RubyValue::Nil),
-    }
+    crate::dispatch::send_value(&con, Symbol::intern("winsize"), &[], None)
 }
 
 // -- IO::ConsoleMode ---------------------------------------------------
@@ -705,7 +1036,13 @@ fn mode_of(v: &RubyValue) -> Result<&ConsoleMode, Signal> {
         RubyValue::Object(o) => o.as_any().downcast_ref::<ConsoleMode>(),
         _ => None,
     }
-    .ok_or_else(|| crate::builtins::type_error!("not an IO::ConsoleMode"))
+    // `TypedData_Get_Struct`'s own wording, down to the wrap_struct_name.
+    .ok_or_else(|| {
+        crate::builtins::type_error!(
+            "wrong argument type {} (expected console-mode)",
+            crate::builtins::convert_name_of(v)
+        )
+    })
 }
 
 ruby_class! {
@@ -713,19 +1050,25 @@ ruby_class! {
 
     // The three editors CRuby gives a saved mode, so a caller can restore a
     // MODIFIED version of what it captured.
+    //
+    // `raw` and `raw!` are NOT the same row: `conmode_raw_new` applies the
+    // mutation to a COPY and answers a new ConsoleMode, leaving the receiver
+    // the mode it captured. Writing both as the in-place form destroyed the
+    // saved mode the caller meant to restore.
     def "raw" (recv, *args, &_block) {
-        let opts = raw_opts(args);
-        raw_mode(&mut mode_of(recv)?.mode.lock(), opts);
-        Ok(recv.clone())
+        let opts = raw_opts(args, "IO::ConsoleMode#raw")?;
+        let mut t = *mode_of(recv)?.mode.lock();
+        raw_mode(&mut t, opts);
+        Ok(RubyValue::Object(std::sync::Arc::new(ConsoleMode::new(t))))
     }
     def "raw!" (recv, *args, &_block) {
-        let opts = raw_opts(args);
+        let opts = raw_opts(args, "IO::ConsoleMode#raw!")?;
         raw_mode(&mut mode_of(recv)?.mode.lock(), opts);
         Ok(recv.clone())
     }
     def "echo=" (recv, arg) {
         echo_mode(&mut mode_of(recv)?.mode.lock(), (*arg).truthy());
-        Ok((*arg).clone())
+        Ok(recv.clone())
     }
 }
 
@@ -818,7 +1161,7 @@ mod tests {
                 RubyValue::Bool(true),
             ),
         ]));
-        let opts = raw_opts(&[h]);
+        let opts = raw_opts(&[h], "IO#raw").expect("every key is a known one");
         assert_eq!(opts.min, Some(2));
         assert_eq!(opts.time, Some(5), "half a second is five tenths");
         assert!(opts.intr);

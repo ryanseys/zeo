@@ -197,7 +197,8 @@ pub(super) struct ClassEntry {
     /// frozen registry and is consulted only while `runtime_meta` is dormant
     /// and the caller is box 0, so there is NOTHING to invalidate:
     /// post-install definitions all go through the overlay, whose `is_live`
-    /// gate is probed ahead of this on every tier.
+    /// gate is probed ahead of this on every tier. A GATED ancestry is the one
+    /// thing that could go stale here, and [`flattenable`] keeps it out.
     pub(super) flat_value: OnceLock<crate::FMap<Symbol, FlatHit>>,
     /// The class-receiver twin (`File.read`, `Math.sqrt`): the frozen
     /// `class_methods` rows over the builtin class-method table, flattened.
@@ -207,6 +208,18 @@ pub(super) struct ClassEntry {
     /// (`'File.read'` -- see [`FlatHit::frame_label`]); user `def self.x`
     /// rows push their own compiled frames and carry `None`.
     pub(super) flat_class: OnceLock<crate::FMap<Symbol, (ValueImpl, Option<&'static str>)>>,
+}
+
+/// Whether a chain may be flattened into a fill-once map.
+///
+/// A class with `gated` rows grows its table part-way through the program --
+/// `require "io/console"` adds 34 rows to `IO`. The flat map is a `OnceLock`
+/// filled by the first dynamic send, so a program that touched an IO before
+/// the require froze the pre-require row set and `echo?` stayed undefined for
+/// the rest of the run, at every call site. Those chains take the ordinary
+/// walk, which reads the gate on each send.
+fn flattenable(ancestors: &[ClassId]) -> bool {
+    !ancestors.iter().any(|&a| crate::builtins::gate::gated(a))
 }
 
 /// One flattened dispatch answer: the function, which ancestor supplied it,
@@ -460,8 +473,11 @@ impl ClassRegistry {
     /// `id`'s map on first use. Outer `None` means `id` has no registry
     /// entry at all -- the caller must run the ordinary walk; inner `None`
     /// is a genuine miss (proceed to the alias/method_missing tail).
+    ///
+    /// A gated ancestry never flattens -- see [`flattenable`].
     pub(super) fn flat_value_hit(&self, id: ClassId, name: Symbol) -> Option<Option<FlatHit>> {
         let entry = self.entries.get(&id.0)?;
+        flattenable(&entry.ancestors).then_some(())?;
         let map = entry.flat_value.get_or_init(|| {
             let mut map = crate::FMap::default();
             // A name `undef`'d part-way up the chain must not be flattened in
@@ -518,6 +534,7 @@ impl ClassRegistry {
         name: Symbol,
     ) -> Option<(ValueImpl, Option<&'static str>)> {
         let entry = self.entries.get(&id.0)?;
+        flattenable(std::slice::from_ref(&id)).then_some(())?;
         let map = entry.flat_class.get_or_init(|| {
             let mut map = crate::FMap::default();
             for (&sym, &f) in &entry.class_methods {

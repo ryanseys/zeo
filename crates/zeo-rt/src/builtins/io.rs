@@ -1056,6 +1056,12 @@ fn fileno_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
                 return Ok(RubyValue::Int(f.as_raw_fd() as i64));
             }
             IoBackend::Uninit => return Err(io_error!("uninitialized stream")),
+            // `rb_io_descriptor` runs `GetOpenFile` first, so every caller
+            // below -- the ioctls, the termios calls -- refuses a closed
+            // stream rather than reaching whatever now owns descriptor 0.
+            IoBackend::File(None) | IoBackend::Pipe(None) => {
+                return Err(io_error!("closed stream"));
+            }
             _ => {}
         }
     }
@@ -1113,7 +1119,7 @@ pub(crate) fn stream_label(recv: &RubyValue) -> String {
     }
 }
 
-fn stream_of(recv: &RubyValue) -> Option<StdStream> {
+pub(crate) fn stream_of(recv: &RubyValue) -> Option<StdStream> {
     match &*as_rio(recv)?.backend.lock() {
         IoBackend::Std(s) => Some(*s),
         IoBackend::File(_) | IoBackend::Pipe(_) | IoBackend::Uninit => None,
@@ -2270,14 +2276,12 @@ ruby_class! {
     }
 
     def "tty?" | "isatty" (recv, &_blk) {
-        use std::io::IsTerminal;
-        Ok(RubyValue::Bool(match stream_of(recv) {
-            Some(StdStream::Stdin) => std::io::stdin().is_terminal(),
-            Some(StdStream::Stdout) => std::io::stdout().is_terminal(),
-            Some(StdStream::Stderr) => std::io::stderr().is_terminal(),
-            // A regular file is never a tty.
-            None => false,
-        }))
+        // `rb_io_isatty` asks the descriptor, so a pty a gem opened answers
+        // true -- reading the std streams alone called every other terminal
+        // a file, and `io/console` reads this word before it goes raw.
+        let fd = raw_fd(recv)?;
+        // SAFETY: a plain query on a descriptor this handle owns.
+        Ok(RubyValue::Bool(unsafe { libc::isatty(fd) } == 1))
     }
 
     // `IO#winsize` (from `require "io/console"`) -- `[rows, columns]`, or
@@ -3883,11 +3887,15 @@ ruby_class! {
         super::io_console::console_mode_set(recv, __args, __block)
     }
 
-    def "pressed?" gated "io/console" (recv) {
+    // `rb_f_notimplement` raises before any arity check, so BOTH of these
+    // take whatever they are given and always refuse. Measured: `pressed?`
+    // with 0, 1 and 2 arguments is NotImplementedError every time, and
+    // `respond_to?` answers false for both (see `reflect::responds_to_value`).
+    def "pressed?" gated "io/console" (recv, *_args) {
         super::io_console::pressed_p(recv, __args, __block)
     }
 
-    def "check_winsize_changed" gated "io/console" (recv) {
+    def "check_winsize_changed" gated "io/console" (recv, *_args) {
         super::io_console::check_winsize_changed(recv, __args, __block)
     }
 
@@ -3948,9 +3956,20 @@ ruby_class! {
     }
 
 
-    // `IO.console` -- the controlling terminal, from `io/console`.
-    def self."console" cfunc gated "io/console" (recv) {
+    // `IO.console` -- the controlling terminal, from `io/console`. Variadic:
+    // `IO.console(:close)` and `IO.console(meth, *args)` are both real forms.
+    def self."console" cfunc gated "io/console" (recv, *_args) {
         super::io_console::io_class_console(recv, __args, __block)
+    }
+
+    // `io/console/size`'s two rows -- a separate require in ruby, so a
+    // separate gate here. irb, debug and power_assert all reach for them.
+    def self."console_size" cfunc gated "io/console/size" (recv) {
+        super::io_console::io_class_console_size(recv, __args, __block)
+    }
+
+    def self."default_console_size" cfunc gated "io/console/size" (recv) {
+        super::io_console::io_class_default_console_size(recv, __args, __block)
     }
 
     // The whole-file family is identical to `File`'s -- run File's own rows so

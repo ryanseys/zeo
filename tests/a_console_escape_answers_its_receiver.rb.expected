@@ -1,0 +1,24 @@
+false
+true
+"\e[4;6H"
+true
+"\e[8G"
+true
+true
+true
+true
+"\e[2A\e[2B\e[2D\e[2C"
+true
+true
+""
+true
+true
+true
+true
+"\e[3B\e[4C\e[2T\e[2S"
+true
+true
+true
+"\e[0K\e[2J\e[2J\e[1;1H"
+[3, 5]
+"\e[4;6H"
