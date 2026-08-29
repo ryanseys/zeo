@@ -227,6 +227,15 @@ pub struct Compiler {
     /// `def foo` is a private instance method of `Object`, and ruby announces
     /// it as `Object.method_added(:foo)`. `at` indexes `main_statements`.
     pub top_level_defs: Vec<SiteDef>,
+    /// The visibility a top-level `def` takes, which a bare `private`/`public`/
+    /// `protected` between statements moves. It starts PRIVATE: that is what a
+    /// top-level `def` is in ruby before anything says otherwise.
+    ///
+    /// Keyed by FILE, because that is ruby's scope for it. A required file
+    /// that opens with `public` leaves the requiring file's cursor alone, and
+    /// a spliced require puts both files' statements in one stream, so the
+    /// only thing that separates them is where each statement came from.
+    pub top_level_visibility: std::collections::HashMap<crate::hir::FileId, crate::hir::Visibility>,
     /// Whole-program map `(box_id, fully-qualified name) -> is_module`, built
     /// by `analyze` from a read-only scan of EVERY `class`/`module` definition
     /// (all `if` branches included -- it is only a lookup table). Lets
@@ -623,6 +632,7 @@ impl Compiler {
             pre_exec_spans: Vec::new(),
             def_seq: 0,
             top_level_defs: Vec::new(),
+            top_level_visibility: std::collections::HashMap::new(),
             shell_kinds: FMap::default(),
             assigned_const_names: FSet::default(),
             top_level_const_aliases: FMap::default(),

@@ -599,6 +599,12 @@ ruby_class! {
     // class, not the class itself).
     def "owner"(recv) {
         let m = recv_method(recv);
+        // `main`'s private singletons are ROUTED by dispatch rather than
+        // installed, so their home is Object. Ruby owns them on main's own
+        // singleton class, and reflection must not drift from dispatch.
+        if crate::dispatch::is_main_private_singleton(&m.recv, m.name) {
+            return crate::runtime_meta::runtime_singleton_class(&m.recv);
+        }
         // `chain()`, not `home`: after `#super_method` re-seats, `home` IS the
         // owner, and asking whether the OWNER extended the module answers no
         // for the module itself -- so a re-seated extend owner rendered as

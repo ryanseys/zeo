@@ -77,6 +77,30 @@ fn process_top_stmt_inner(
         main_statements.push(stmt);
         return Ok(());
     }
+    // A bare `private`/`public`/`protected` between top-level statements moves
+    // the visibility the NEXT `def` takes. It only OBSERVES: the statement
+    // still flows on, so a `def` the compiler could not register reaches the
+    // same directive at run time.
+    if let HirNode::Call {
+        receiver: None,
+        name,
+        args,
+        block: None,
+        ..
+    } = &compiler.hir[stmt]
+        && args.is_empty()
+    {
+        let moved = match name.as_str() {
+            "private" => Some(crate::hir::Visibility::Private),
+            "public" => Some(crate::hir::Visibility::Public),
+            "protected" => Some(crate::hir::Visibility::Protected),
+            _ => None,
+        };
+        if let Some(v) = moved {
+            let file = compiler.hir.span(stmt).unwrap_or(crate::hir::Span::SYNTH).file;
+            compiler.top_level_visibility.insert(file, v);
+        }
+    }
     // A `BEGIN { ... }` body's statements ARE top-level statements -- ruby
     // hoists them to run before the main program, in the same scope and the
     // same cref. They take the same walk, into the hoisted list instead of the
@@ -307,7 +331,11 @@ fn process_top_stmt_inner(
                 Some(stmt),
                 params,
                 body,
-                crate::hir::Visibility::Private,
+                compiler
+                    .top_level_visibility
+                    .get(&compiler.hir.span(stmt).unwrap_or(crate::hir::Span::SYNTH).file)
+                    .copied()
+                    .unwrap_or(crate::hir::Visibility::Private),
             )?;
             add_own_method(compiler, OBJECT_CLASS, sid, false);
         }
