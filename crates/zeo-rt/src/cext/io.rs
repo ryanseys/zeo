@@ -24,6 +24,7 @@
 //! in a C extension's wait still answers `Thread#kill`.
 
 use super::convert::{to_value, value_of};
+use super::layout as mri;
 use super::object::{args_of, cstr, send};
 use super::value::Value;
 use crate::builtins::wrong_arg_type;
@@ -626,12 +627,14 @@ fn wait_retry(fd: c_int, event: i16) -> Result<c_int, Signal> {
     }
 }
 
-/// The storage behind `GetOpenFile`. `csrc/cext_io.c` owns the LAYOUT of what
-/// goes in each block -- a `struct RFile` and the `struct rb_io` it points at
-/// -- because that layout is the header's, and a second copy of it here could
-/// drift. This owns only the block: one per IO, zeroed once, refilled by C on
-/// every reach, and kept for the process because the extension keeps the
+/// The storage behind `GetOpenFile`: one block per IO, zeroed once, refilled
+/// on every reach, and kept for the process because the extension keeps the
 /// pointer it was handed.
+///
+/// That last part is why this store outlives a scope where
+/// [`super::view`]'s does not. MRI's `rb_io_t` IS the IO's own struct and
+/// lives as long as the IO, so an extension holding an `fptr` across calls is
+/// doing something MRI supports.
 ///
 /// The key is the `RIo`'s address. An IO that is collected and whose address
 /// is later reused hands its block on to the new IO, which is harmless: every
@@ -639,57 +642,121 @@ fn wait_retry(fd: c_int, event: i16) -> Result<c_int, Signal> {
 static IO_SHIMS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<usize, usize>>> =
     std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
 
+/// `struct RFile` and the `struct rb_io` its `fptr` names, contiguous so one
+/// block serves both. The layout is the vendored header's, generated rather
+/// than retyped -- see [`super::layout`].
+#[repr(C)]
+struct IoShim {
+    file: mri::RFile,
+    io: mri::rb_io,
+}
+
 crate::cext_fn! {
-    /// One zeroed block per IO, at a stable address. See `IO_SHIMS`.
-    fn zeo_cext_io_shim(io: Value, size: usize) -> *mut std::ffi::c_void {
-        let target = unsafe { value_of(io) };
+    /// `RFILE(obj)`: the `struct RFile` view over a zeo IO.
+    ///
+    /// MRI's IO object IS a `struct RFile`, so `RFILE(io)->fptr` is a field
+    /// read. A zeo IO is a handle over a payload the runtime owns, so this
+    /// mints the two structs beside the object and refills them from the IO
+    /// on every reach.
+    ///
+    /// The view does not write back: `fp->fd = n` changes the view, and the
+    /// IO keeps its descriptor. The fields zeo has no answer for -- the read
+    /// and write buffers, the converters, the finalizer -- stay zero, so an
+    /// extension that reaches into one gets an empty buffer rather than a lie
+    /// about its content.
+    fn rb_zeo_rfile(obj: Value) -> *mut mri::RFile {
+        let target = unsafe { value_of(obj) };
         let Some(rio) = crate::builtins::io::as_rio(&target) else {
             return Err(wrong_arg_type(&target, "IO"));
         };
-        let key = std::ptr::from_ref(rio) as usize;
-        let mut shims = IO_SHIMS.lock();
-        let block = *shims.entry(key).or_insert_with(|| {
-            let layout = std::alloc::Layout::from_size_align(size, align_of::<usize>())
-                .expect("a shim layout");
-            unsafe { std::alloc::alloc_zeroed(layout) as usize }
-        });
-        Ok(block as *mut std::ffi::c_void)
-    }
-
-    /// `fptr->lineno`, which is `IO#lineno`.
-    fn zeo_cext_io_lineno(io: Value) -> c_int {
-        let target = unsafe { value_of(io) };
-        match send(&target, "lineno", &[])? {
-            RubyValue::Int(n) => Ok(n as c_int),
-            _ => Ok(0),
+        let block = shim_for(std::ptr::from_ref(rio) as usize);
+        // SAFETY: `shim_for` answers a zeroed block of exactly this layout,
+        // kept for the process, and the GVL admits one thread to C at a time.
+        unsafe {
+            (*block).file.basic = super::view::basic_of(obj);
+            (*block).file.fptr = &raw mut (*block).io;
+            (*block).io.self_ = obj as mri::VALUE;
+            (*block).io.fd = descriptor(&target)?;
+            (*block).io.mode = crate::builtins::io::fmode_bits(&target) as mri::rb_io_mode;
+            (*block).io.pid = int_reply(&target, "pid")?;
+            (*block).io.lineno = int_reply(&target, "lineno")?;
+            (*block).io.pathv = to_value(&send(&target, "path", &[])?)? as mri::VALUE;
+            (*block).io.tied_io_for_writing = obj as mri::VALUE;
+            (*block).io.timeout = to_value(&send(&target, "timeout", &[])?)? as mri::VALUE;
+            Ok(&raw mut (*block).file)
         }
     }
 
-    /// `fptr->pid`, which is `IO#pid` -- 0 where CRuby leaves it unset,
-    /// because only a `popen` handle has one.
-    fn zeo_cext_io_pid(io: Value) -> c_int {
-        let target = unsafe { value_of(io) };
-        match send(&target, "pid", &[])? {
-            RubyValue::Int(n) => Ok(n as c_int),
-            _ => Ok(0),
-        }
+    /// The three `rb_io_check_*` entries. Each asks the IO the view was made
+    /// from -- never the view's own copy, which an extension may have
+    /// overwritten.
+    fn rb_io_check_closed(fptr: *mut mri::rb_io) -> () {
+        io_check(fptr, Want::Open)
     }
 
-    /// The three `rb_io_check_*` entries, asked of the IO rather than of the
-    /// view an extension holds. `want` is 0 closed, 1 readable, 2 writable.
-    fn zeo_cext_io_check(io: Value, want: c_int) -> () {
-        const READABLE: i32 = 0x0000_0001;
-        const WRITABLE: i32 = 0x0000_0002;
-        let target = unsafe { value_of(io) };
-        if matches!(send(&target, "closed?", &[])?, RubyValue::Bool(true)) {
-            return Err(crate::builtins::io_error!("closed stream"));
+    fn rb_io_check_readable(fptr: *mut mri::rb_io) -> () {
+        io_check(fptr, Want::Readable)
+    }
+
+    fn rb_io_check_writable(fptr: *mut mri::rb_io) -> () {
+        io_check(fptr, Want::Writable)
+    }
+}
+
+/// One zeroed block per IO, at a stable address. See [`IO_SHIMS`].
+fn shim_for(key: usize) -> *mut IoShim {
+    let mut shims = IO_SHIMS.lock();
+    let block = *shims.entry(key).or_insert_with(|| {
+        let layout = std::alloc::Layout::new::<IoShim>();
+        // SAFETY: `IoShim` is plain data, and all-zero is a valid value of
+        // it -- null pointers and zero counts, which is what "zeo has no
+        // answer for this field" means.
+        unsafe { std::alloc::alloc_zeroed(layout) as usize }
+    });
+    block as *mut IoShim
+}
+
+/// What a `rb_io_check_*` is asking about.
+enum Want {
+    Open,
+    Readable,
+    Writable,
+}
+
+fn io_check(fptr: *mut mri::rb_io, want: Want) -> Result<(), Signal> {
+    const READABLE: i32 = 0x0000_0001;
+    const WRITABLE: i32 = 0x0000_0002;
+    // SAFETY: `fptr` came from `rb_zeo_rfile`, whose block carries the IO's
+    // own `VALUE` in `self`.
+    let target = unsafe { value_of((*fptr).self_ as Value) };
+    if matches!(send(&target, "closed?", &[])?, RubyValue::Bool(true)) {
+        return Err(crate::builtins::io_error!("closed stream"));
+    }
+    let mode = crate::builtins::io::fmode_bits(&target);
+    match want {
+        Want::Readable if mode & READABLE == 0 => {
+            Err(crate::builtins::io_error!("not opened for reading"))
         }
-        let mode = crate::builtins::io::fmode_bits(&target);
-        match want {
-            1 if mode & READABLE == 0 => Err(crate::builtins::io_error!("not opened for reading")),
-            2 if mode & WRITABLE == 0 => Err(crate::builtins::io_error!("not opened for writing")),
-            _ => Ok(()),
+        Want::Writable if mode & WRITABLE == 0 => {
+            Err(crate::builtins::io_error!("not opened for writing"))
         }
+        _ => Ok(()),
+    }
+}
+
+fn descriptor(io: &RubyValue) -> Result<c_int, Signal> {
+    match send(io, "fileno", &[])? {
+        RubyValue::Int(fd) => Ok(fd as c_int),
+        other => Err(wrong_arg_type(&other, "Integer")),
+    }
+}
+
+/// An `Integer` reply as the C field wants it, and 0 for anything else --
+/// which is where CRuby leaves `pid` for a handle that is not a `popen` one.
+fn int_reply(io: &RubyValue, meth: &str) -> Result<c_int, Signal> {
+    match send(io, meth, &[])? {
+        RubyValue::Int(n) => Ok(n as c_int),
+        _ => Ok(0),
     }
 }
 

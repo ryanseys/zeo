@@ -313,6 +313,17 @@ fn intern(t: &mut Table, v: &RubyValue, tag: usize) -> Addr {
     {
         flags |= FL_IS_TYPED_DATA;
     }
+    // The SHAPE flags, which decide which arm upstream's own accessors take.
+    // zeo's views fill `as.heap` for both -- there is no run of bytes or of
+    // ivars inside the object to embed -- so the object has to say so, or
+    // `RSTRING_PTR` reads `as.embed.ary` and `ROBJECT_FIELDS` reads
+    // `as.ary`. `RARRAY_EMBED_FLAG` needs no line: it is already clear, and
+    // clear is the heap arm.
+    flags |= match tag {
+        t::STRING => super::layout::RSTRING_NOEMBED,
+        t::OBJECT => super::layout::ROBJECT_HEAP,
+        _ => 0,
+    };
     // `klass` is the object's class as a `VALUE`. A class is itself a handle,
     // so this would recurse; the class handle is minted lazily on the first
     // `RBASIC_CLASS` instead, and the field starts as `Qnil`.

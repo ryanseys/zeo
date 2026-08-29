@@ -58,48 +58,63 @@ fn the_patched_headers_compile_a_c_extension() {
     );
 }
 
-/// The one rule the patch series exists to enforce: no macro an extension
-/// calls is left dereferencing a payload struct. The structs are declared and
-/// never defined, so a `RSTRING(v)->len` is a compile error rather than a
-/// wrong byte -- this test proves they stayed incomplete.
+/// Every payload struct the views fill, with the entry that answers one.
+const PAYLOADS: &[(&str, &str)] = &[
+    ("RString", "rstring"),
+    ("RArray", "rarray"),
+    ("RObject", "robject"),
+    ("RRegexp", "rregexp"),
+    ("RMatch", "rmatch"),
+    ("RFile", "rfile"),
+    ("RData", "rdata"),
+    ("RTypedData", "rtypeddata"),
+];
+
+/// The rule the patch series exists to enforce, in its two halves.
+///
+/// A payload struct keeps UPSTREAM'S LAYOUT, so an extension that reads one
+/// -- date's `RTYPEDDATA(self)->data = dat`, strscan's `RREGEXP(re)->usecnt`
+/// -- compiles. That is only sound because the cast macro stopped being a
+/// cast: it calls an entry that answers a view the runtime owns. The moment
+/// either half slips, the other becomes a read of bytes zeo does not own,
+/// which is why one test watches both.
 #[test]
-fn every_payload_struct_is_opaque() {
+fn every_payload_struct_is_upstream_and_reached_by_a_call() {
     let core = cext().join("include/ruby/internal/core");
-    for name in [
-        "RString",
-        "RArray",
-        "RRegexp",
-        "RObject",
-        "RMatch",
-        "RData",
-        "RTypedData",
-    ] {
+    for (name, entry) in PAYLOADS {
         let file = core.join(format!("{}.h", name.to_lowercase()));
         let text = std::fs::read_to_string(&file).expect("the vendored header is present");
         assert!(
-            !text.contains(&format!("struct {name} {{")),
-            "{name} is defined in {}; a `{}(v)->field` would read a byte zeo does not own",
-            file.display(),
+            text.contains(&format!("struct {name} {{")),
+            "{name} has no definition in {}; an extension reading one of its \
+             fields would fail to compile",
+            file.display()
+        );
+        assert!(
+            text.contains(&format!("rb_zeo_{entry}(RBIMPL_CAST((VALUE)(obj)))")),
+            "{} does not reach its view through rb_zeo_{entry}",
+            file.display()
+        );
+        assert!(
+            !text.contains(&format!("RBIMPL_CAST((struct {name} *)")),
+            "{}(obj) casts the object again; with `struct {name}` defined, \
+             that reads a byte zeo does not own",
             name.to_uppercase()
         );
     }
 }
 
-/// `RFile` is the one payload struct with a definition, and it is safe only
-/// because `RFILE(obj)` stopped being a cast: it calls `rb_zeo_rfile`, which
-/// answers a view the runtime owns rather than the object's own bytes. The
-/// moment that macro casts again, the definition becomes a wrong read.
+/// `zeo.h` is where the rule is stated and every entry declared, so it is the
+/// one file a reader has to find. A header that reaches a view without going
+/// through it would be a second, undocumented door.
 #[test]
-fn rfile_is_a_view_rather_than_a_cast() {
-    let text = std::fs::read_to_string(cext().join("include/ruby/internal/core/rfile.h"))
-        .expect("the vendored header is present");
-    assert!(
-        text.contains("struct RFile *rb_zeo_rfile(VALUE obj);"),
-        "rfile.h no longer declares the view entry"
-    );
-    assert!(
-        !text.contains("RBIMPL_CAST((struct RFile *)"),
-        "RFILE casts the object again; with `struct RFile` now defined, \
-         `RFILE(v)->fptr` would read a byte zeo does not own"
-    );
+fn every_view_entry_is_declared_in_one_place() {
+    let text = std::fs::read_to_string(cext().join("include/ruby/internal/zeo.h"))
+        .expect("zeo.h is present");
+    for (name, entry) in PAYLOADS {
+        assert!(
+            text.contains(&format!("struct {name} *rb_zeo_{entry}(VALUE obj);")),
+            "zeo.h does not declare rb_zeo_{entry}"
+        );
+    }
 }

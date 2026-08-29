@@ -2,13 +2,16 @@
  * Does an ordinary C extension still compile against the patched headers?
  *
  * Every macro here is one the patch series rewrote, so this file is the
- * executable half of `cext/patches/`. It is compiled with `-fsyntax-only`,
- * never linked: `rbimpl_zeo_*` has no body yet, and what is on trial is the
- * headers, not the runtime.
+ * executable half of `cext/patches/`. It is compiled with `-fsyntax-only`
+ * and never linked: what is on trial is the headers, not the runtime.
  *
  * Both lvalue idioms are here on purpose. `DATA_PTR(o) = p` and
  * `RTYPEDDATA_DATA(o) = p` are written that way in real gems, so the
  * accessors hand back a slot rather than a value.
+ *
+ * `direct_field_reads` is the other half of the rule. A payload struct keeps
+ * upstream's layout, so an extension may read one of its fields -- and three
+ * gems in the vendored set do. Each line there is one of those gems'.
  */
 /* The untyped Data API is deprecated upstream; probing it is the point. */
 #define RUBY_UNTYPED_DATA_WARNING 0
@@ -80,6 +83,29 @@ static VALUE box_walk(VALUE self, VALUE a, VALUE s, VALUE re, VALUE st)
     return LONG2NUM(total);
 }
 
+/*
+ * The direct field reads. A payload struct carries upstream's layout, so
+ * these compile -- and each one is a line a gem in the vendored set really
+ * writes:
+ *
+ *   date/date_core.c:7615        RTYPEDDATA(self)->data = dat;
+ *   io-console/console.c         rb_io_t *fptr = RFILE(io)->fptr;
+ *   strscan/strscan.c:629        if (!tmpreg) RREGEXP(re)->usecnt++;
+ *
+ * `RREGEXP(re)->ptr` is deliberately absent: it is the one field zeo will
+ * not hand out, and ::RREGEXP_PTR raises.
+ */
+static void direct_field_reads(VALUE o, VALUE io, VALUE re, VALUE s, VALUE a)
+{
+    RTYPEDDATA(o)->data = NULL;
+    (void)RDATA(o)->dfree;
+    (void)RFILE(io)->fptr;
+    RREGEXP(re)->usecnt++;
+    (void)RREGEXP(re)->src;
+    (void)RSTRING(s)->len;
+    (void)RARRAY(a)->basic;
+}
+
 void Init_layout(void)
 {
     VALUE k = rb_define_class("ZeoCextProbe", rb_cObject);
@@ -87,4 +113,7 @@ void Init_layout(void)
     rb_define_method(k, "held", box_held, 0);
     rb_define_method(k, "slots", box_slots, 0);
     rb_define_method(k, "walk", box_walk, 4);
+    /* Never reached: `k` is a class, not any of the five. The call is here
+     * so the compiler counts the function as used. */
+    if (0) direct_field_reads(k, k, k, k, k);
 }

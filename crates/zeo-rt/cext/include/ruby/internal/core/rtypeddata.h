@@ -93,7 +93,10 @@
  * @param   obj  An object, which is in fact an ::RTypedData.
  * @return  The passed object casted to ::RTypedData.
  */
-#define RTYPEDDATA(obj)              RBIMPL_CAST((struct RTypedData *)(obj))
+/* zeo: a call, not a cast. The cell it answers lives inside the object, so
+ * `RTYPEDDATA(o)->data = p` writes the object's own slot and cannot go
+ * stale. See `ruby/internal/zeo.h`. */
+#define RTYPEDDATA(obj)              rb_zeo_rtypeddata(RBIMPL_CAST((VALUE)(obj)))
 
 /**
  * Convenient getter macro.
@@ -101,7 +104,7 @@
  * @param   v  An object, which is in fact an ::RTypedData.
  * @return  The passed object's ::RTypedData::data field.
  */
-#define RTYPEDDATA_DATA(v)           (*rbimpl_zeo_data_slot(v))
+#define RTYPEDDATA_DATA(v)           (RTYPEDDATA(v)->data)
 
 /** @old{rb_check_typeddata} */
 #define Check_TypedStruct(v, t)      \
@@ -356,17 +359,32 @@ struct rb_data_type_struct {
  * }
  * ```
  */
-/* zeo: opaque. A zeo heap object is a handle whose first two words are a
- * real `struct RBasic` and whose payload the runtime owns, so there is no
- * layout here to read. Upstream already declares `struct RClass` this way.
- * A `RTypedData(v)->field` is a compile error naming the line, which is the
- * point: it would otherwise read a byte that means nothing. */
-struct RTypedData;
+struct RTypedData {
 
-/* zeo: upstream asserts here that `RData::data` and `RTypedData::data` sit at
- * the same offset. Both structs are opaque under zeo and neither carries the
- * slot, so there is no offset to compare. `rbimpl_zeo_data_slot` answers for
- * both. */
+    /** The part that all ruby objects have in common. */
+    struct RBasic basic;
+
+    /** Direct reference to the slots that holds instance variables, if any **/
+    VALUE fields_obj;
+
+    /**
+     * This is a `const rb_data_type_t *const` value, with the low bits set:
+     *
+     * 1: Set if object is embedded.
+     *
+     * This field  stores various  information about how  Ruby should  handle a
+     * data.   This roughly  resembles a  Ruby level  class (apart  from method
+     * definition etc.)
+     */
+    const VALUE type;
+
+    /** Pointer to the actual C level struct that you want to wrap. */
+    void *data;
+};
+
+#if !defined(__cplusplus) || __cplusplus >= 201103L
+RBIMPL_STATIC_ASSERT(data_in_rtypeddata, offsetof(struct RData, data) == offsetof(struct RTypedData, data));
+#endif
 
 RBIMPL_SYMBOL_EXPORT_BEGIN()
 RBIMPL_ATTR_NONNULL((3))
@@ -509,8 +527,7 @@ RTYPEDDATA_EMBEDDED_P(VALUE obj)
     }
 #endif
 
-    (void)obj;
-    return false;
+    return (RTYPEDDATA(obj)->type) & TYPED_DATA_EMBEDDED;
 }
 
 static inline void *
@@ -523,7 +540,10 @@ RTYPEDDATA_GET_DATA(VALUE obj)
     }
 #endif
 
-    return *rbimpl_zeo_data_slot(obj);
+    /* We reuse the data pointer in embedded TypedData. */
+    return RTYPEDDATA_EMBEDDED_P(obj) ?
+        RBIMPL_CAST((void *)&(RTYPEDDATA(obj)->data)) :
+        RTYPEDDATA(obj)->data;
 }
 
 RBIMPL_ATTR_PURE()
@@ -588,7 +608,7 @@ RTYPEDDATA_TYPE(VALUE obj)
     }
 #endif
 
-    return rbimpl_zeo_typeddata_type(obj);
+    return (const struct rb_data_type_struct *)(RTYPEDDATA(obj)->type & TYPED_DATA_PTR_MASK);
 }
 
 RBIMPL_ATTR_ARTIFICIAL()

@@ -253,6 +253,18 @@ pub unsafe extern "C" fn rbimpl_zeo_ary_const_ptr(v: Value) -> *const Value {
     }
 }
 
+/// What `RARRAY(v)->as.heap` carries: the projection and its length.
+///
+/// `capa` is the same number: the projection is exactly as long as the Array,
+/// and there is no spare room in it to promise.
+pub(super) fn ary_ptr_len(v: Value) -> Result<(*const Value, c_long), crate::Signal> {
+    let a = unsafe { as_ary(v)? };
+    let len = a.lock().len() as c_long;
+    // SAFETY: `as_ary` just proved `v` is a live Array.
+    let ptr = unsafe { rbimpl_zeo_ary_const_ptr(v) };
+    Ok((ptr, len))
+}
+
 /// `RARRAY_PTR`'s runtime half. The same projection, cast mutable because the
 /// macro's type says so; a store through it does not reach the Ruby array.
 ///

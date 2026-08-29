@@ -812,6 +812,22 @@ pub unsafe extern "C" fn rbimpl_zeo_str_ptr(v: Value) -> *mut c_char {
     }
 }
 
+/// What `RSTRING(v)->as.heap` carries: the pinned buffer and the length that
+/// goes with it.
+///
+/// One entry rather than two so the pair can never disagree -- the length
+/// belongs to the PIN, not to the object, for the reason
+/// [`rbimpl_zeo_str_len`] gives.
+pub(super) fn str_ptr_len(v: Value) -> Result<(*mut c_char, c_long), crate::Signal> {
+    let s = unsafe { as_str(v) }?;
+    let ptr = pin_bytes(&s);
+    let key = std::sync::Arc::as_ptr(&s) as *const () as usize;
+    let len = PINS
+        .with_borrow(|pins| pins.iter().find(|(k, _)| *k == key).map(|(_, pin)| pin.len))
+        .unwrap_or_else(|| s.lock().bytesize());
+    Ok((ptr, len as c_long))
+}
+
 /// `RSTRING_LEN`'s runtime half.
 ///
 /// A pinned string answers the PIN's length, not the object's: the extension

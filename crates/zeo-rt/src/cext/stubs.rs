@@ -26,7 +26,7 @@
 //! prototype mismatch; on both ABIs zeo targets it is safe. The caller passes
 //! arguments in registers and on a stack it cleans up itself, the callee
 //! reads none of them, and it never returns -- so there is no return value to
-//! disagree about and no frame to unwind. Writing 147 correct
+//! disagree about and no frame to unwind. Writing 137 correct
 //! signatures would buy nothing: not one of these functions runs. 33
 //! of them are refusals rather than gaps.
 //!

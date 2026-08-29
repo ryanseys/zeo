@@ -89,6 +89,7 @@ impl Drop for Scope {
         // handles that keep its owner alive are released.
         super::string::flush_pins();
         super::collection::flush_projections();
+        super::view::flush_views();
         super::format::flush_texts();
         super::gc::flush_tmp_buffers();
         let pinned = SCOPES.with_borrow_mut(|s| {
@@ -141,6 +142,7 @@ pub(super) fn unwind_to(depth: usize) {
         // extension had already made through `RSTRING_PTR`.
         super::string::flush_pins();
         super::collection::flush_projections();
+        super::view::flush_views();
         super::format::flush_texts();
         super::gc::flush_tmp_buffers();
     }

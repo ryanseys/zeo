@@ -35,7 +35,11 @@
  * @param   obj  An object, which is in fact an ::RMatch.
  * @return  The passed object casted to ::RMatch.
  */
-#define RMATCH(obj) RBIMPL_CAST((struct RMatch *)(obj))
+/* zeo: a call, not a cast -- a refilled view. The block it answers carries a
+ * `struct RMatch` followed by the `rb_matchext_t` ::RMATCH_EXT reaches by
+ * pointer arithmetic, and the registers come from the MatchData's own group
+ * offsets. See `ruby/internal/zeo.h`. */
+#define RMATCH(obj) rb_zeo_rmatch(RBIMPL_CAST((VALUE)(obj)))
 /** @cond INTERNAL_MACRO */
 #define RMATCH_REGS RMATCH_REGS
 /** @endcond */
@@ -94,14 +98,27 @@ typedef struct rb_matchext_struct rb_matchext_t;
  *        struct except by actually exercising the match operation of a regular
  *        expression.
  */
-/* zeo: opaque. A zeo heap object is a handle whose first two words are a
- * real `struct RBasic` and whose payload the runtime owns, so there is no
- * layout here to read. Upstream already declares `struct RClass` this way.
- * A `RMatch(v)->field` is a compile error naming the line, which is the
- * point: it would otherwise read a byte that means nothing. */
-struct RMatch;
+struct RMatch {
 
-#define RMATCH_EXT(m) ((rb_matchext_t *)((char *)(m) + sizeof(struct RMatch)))
+    /** Basic part, including flags and class. */
+    struct RBasic basic;
+
+    /**
+     * The target string that the match was made against.
+     */
+    VALUE str;
+
+    /**
+     * The expression of this match.
+     */
+    VALUE regexp;  /* RRegexp */
+};
+
+/* zeo: from the view rather than from the VALUE. Upstream's `m` IS the
+ * `struct RMatch`; zeo's is a handle, and the block ::RMATCH answers carries
+ * the `rb_matchext_t` right behind the struct, which is what this walks
+ * onto. */
+#define RMATCH_EXT(m) ((rb_matchext_t *)((char *)RMATCH(m) + sizeof(struct RMatch)))
 
 RBIMPL_ATTR_PURE_UNLESS_DEBUG()
 RBIMPL_ATTR_ARTIFICIAL()
@@ -130,7 +147,7 @@ static inline struct re_registers *
 RMATCH_REGS(VALUE match)
 {
     RBIMPL_ASSERT_TYPE(match, RUBY_T_MATCH);
-    return rbimpl_zeo_match_regs(match);
+    return &RMATCH_EXT(match)->regs;
 }
 
 #endif /* RBIMPL_RMATCH_H */

@@ -62,14 +62,66 @@ pub struct DataType {
     pub flags: usize,
 }
 
-/// A Ruby object whose state is a C struct.
+/// The C-visible half of a [`CData`], laid out as MRI's `struct RTypedData`
+/// and `struct RData` both.
 ///
-/// The `data` pointer is an `AtomicUsize` rather than a plain field because
-/// `DATA_PTR(obj) = p` is a real idiom: C assigns through the slot, and
-/// [`Self::slot`] is what it assigns through.
+/// `RTYPEDDATA(obj)` and `RDATA(obj)` answer a pointer to this, so C reads
+/// and writes the object's OWN cell rather than a copy beside it. That is
+/// what makes `RTYPEDDATA(o)->data = p` -- date's `d_lite_marshal_load` after
+/// a `ruby_xrealloc` -- land in the object, and it is why there is no
+/// staleness to reason about here.
+///
+/// The words are `AtomicUsize` for the reason MRI's `flags` is volatile: C
+/// assigns through them with a plain store while Rust may read them. The
+/// assertions below are what ties this hand-written layout to the generated
+/// one; a header bump that moves `data` fails the build here.
+#[repr(C)]
+pub struct Cell {
+    /// `RBasic`, refilled from the object's handle on every reach.
+    basic: [AtomicUsize; 2],
+    /// `RTypedData::fields_obj`, or `RData::dmark`.
+    w1: AtomicUsize,
+    /// `RTypedData::type`, or `RData::dfree`.
+    w2: AtomicUsize,
+    /// `RTypedData::data` and `RData::data`. MRI puts the slot at one offset
+    /// in both structs -- it static-asserts as much -- which is why one cell
+    /// serves them both.
+    data: AtomicUsize,
+}
+
+impl Cell {
+    /// A cell holding `data`, with the refilled half left zero until the
+    /// first reach from C.
+    fn new(data: *mut c_void) -> Cell {
+        Cell {
+            basic: [AtomicUsize::new(0), AtomicUsize::new(0)],
+            w1: AtomicUsize::new(0),
+            w2: AtomicUsize::new(0),
+            data: AtomicUsize::new(data as usize),
+        }
+    }
+}
+
+/// A `dmark`/`dfree` as the word MRI's `struct RData` keeps it in. `None` is
+/// a null function pointer, which is what MRI stores for "nothing to do".
+fn fn_word(f: DataFunc) -> usize {
+    f.map_or(0, |p| p as usize)
+}
+
+const _: () = {
+    use crate::cext::layout as mri;
+    assert!(size_of::<Cell>() == size_of::<mri::RTypedData>());
+    assert!(size_of::<Cell>() == size_of::<mri::RData>());
+    assert!(std::mem::offset_of!(Cell, data) == std::mem::offset_of!(mri::RTypedData, data));
+    assert!(std::mem::offset_of!(Cell, data) == std::mem::offset_of!(mri::RData, data));
+};
+
+/// A Ruby object whose state is a C struct.
 pub struct CData {
     class: ClassId,
-    data: AtomicUsize,
+    /// The C-visible cell, which owns the `data` slot. `DATA_PTR(obj) = p` is
+    /// a real idiom, and [`Self::slot`] is what C assigns through.
+    cell: Cell,
     /// Null for the untyped `Data_Wrap_Struct` form, which carries its own
     /// `dmark`/`dfree` instead.
     dtype: *const DataType,
@@ -91,7 +143,7 @@ impl CData {
     pub fn typed(class: ClassId, data: *mut c_void, dtype: *const DataType) -> RObj {
         Self::build(CData {
             class,
-            data: AtomicUsize::new(data as usize),
+            cell: Cell::new(data),
             dtype,
             untyped: (None, None),
             frozen: AtomicBool::new(false),
@@ -102,7 +154,7 @@ impl CData {
     pub fn untyped(class: ClassId, data: *mut c_void, mark: DataFunc, free: DataFunc) -> RObj {
         Self::build(CData {
             class,
-            data: AtomicUsize::new(data as usize),
+            cell: Cell::new(data),
             dtype: std::ptr::null(),
             untyped: (mark, free),
             frozen: AtomicBool::new(false),
@@ -121,7 +173,34 @@ impl CData {
     /// The slot `DATA_PTR` and `RTYPEDDATA_DATA` hand back. Valid while this
     /// object lives, which the handle holding it guarantees.
     pub fn slot(&self) -> *mut *mut c_void {
-        std::ptr::from_ref(&self.data).cast_mut().cast()
+        std::ptr::from_ref(&self.cell.data).cast_mut().cast()
+    }
+
+    /// Refill the cell's refilled half and answer it as `struct RTypedData`.
+    ///
+    /// Only `basic`, `fields_obj` and `type` are written: `data` is the
+    /// object's own slot, and rewriting it here would throw away the store an
+    /// extension made through `DATA_PTR` on the last reach.
+    ///
+    /// `RDATA(obj)` reads the same cell with `dmark` and `dfree` where the
+    /// typed form keeps `fields_obj` and `type`, which is why the untyped arm
+    /// writes the two function pointers into the same words. MRI's two
+    /// structs disagree about those words in exactly the same way.
+    pub fn refill_cell(&self, basic: crate::cext::layout::RBasic) -> *mut crate::cext::layout::RTypedData {
+        self.cell.basic[0].store(basic.flags as usize, Ordering::Relaxed);
+        self.cell.basic[1].store(basic.klass as usize, Ordering::Relaxed);
+        let (w1, w2) = match self.dtype.is_null() {
+            // `Data_Wrap_Struct`: RData's `dmark` and `dfree`.
+            true => (fn_word(self.untyped.0), fn_word(self.untyped.1)),
+            // `TypedData_Wrap_Struct`: RTypedData's `fields_obj` and `type`.
+            // zeo keeps no ivar slot object, and the descriptor pointer is
+            // untagged because zeo never embeds a payload -- which is the
+            // same thing `RTYPEDDATA_EMBEDDED_P` reads to answer false.
+            false => (super::value::Q_NIL, self.dtype as usize),
+        };
+        self.cell.w1.store(w1, Ordering::Relaxed);
+        self.cell.w2.store(w2, Ordering::Relaxed);
+        std::ptr::from_ref(&self.cell).cast_mut().cast()
     }
 
     pub fn data_type(&self) -> *const DataType {
@@ -158,7 +237,7 @@ impl Drop for CData {
     /// zeo gives it to every TypedData object: a refcount drop IS immediate,
     /// and there is no sweep phase to defer to.
     fn drop(&mut self) {
-        let p = self.data.swap(0, Ordering::Relaxed) as *mut c_void;
+        let p = self.cell.data.swap(0, Ordering::Relaxed) as *mut c_void;
         if p.is_null() {
             return;
         }
@@ -257,7 +336,7 @@ impl RubyObject for CData {
         let Some(mark) = self.mark_fn() else {
             return;
         };
-        let data = self.data.load(Ordering::Relaxed) as *mut c_void;
+        let data = self.cell.data.load(Ordering::Relaxed) as *mut c_void;
         if data.is_null() || mark as usize == usize::MAX {
             return;
         }
@@ -290,7 +369,7 @@ impl RubyObject for CData {
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         Arc::new(CData {
             class: self.class,
-            data: AtomicUsize::new(0),
+            cell: Cell::new(std::ptr::null_mut()),
             dtype: self.dtype,
             untyped: (self.untyped.0, None),
             frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
@@ -415,153 +494,3 @@ mod tests {
     }
 }
 
-/// The runtime halves of the macros `patches/0001` turned into calls.
-///
-/// These are `rbimpl_zeo_*` rather than `rb_*` because they are ZEO's, not
-/// MRI's: a gem never writes one, and `ruby/internal/zeo.h` is the only
-/// header that declares them. That is also why the census missed them at
-/// first -- it scanned for `rb_`/`ruby_`/`st_` and these are none of those,
-/// so `RTYPEDDATA_DATA` in msgpack linked against a symbol nothing defined.
-///
-/// It scans for `rbimpl_zeo_` now, and `every_patched_helper_is_defined`
-/// checks the headers against the runtime.
-mod patched {
-    use super::{CData, DataType};
-    use crate::RubyValue;
-    use crate::cext::value::Value;
-    use std::ffi::{c_char, c_void};
-
-    /// The `CData` a `VALUE` names, or the raise for a `VALUE` that is not
-    /// one. Every entry here is reached from a MACRO, so the receiver was
-    /// never type-checked by a function signature.
-    ///
-    /// # Safety
-    ///
-    /// `v` must be a live `VALUE`.
-    unsafe fn cdata<'a>(v: Value) -> Result<&'a CData, crate::Signal> {
-        let val = unsafe { crate::cext::convert::value_of(v) };
-        let RubyValue::Object(o) = &val else {
-            return Err(wrong(&val));
-        };
-        // SAFETY: the object outlives the handle that names it, and the
-        // handle is pinned by the caller's scope.
-        let d: &CData = o
-            .as_any()
-            .downcast_ref::<CData>()
-            .ok_or_else(|| wrong(&val))?;
-        Ok(unsafe { std::mem::transmute::<&CData, &'a CData>(d) })
-    }
-
-    fn wrong(v: &RubyValue) -> crate::Signal {
-        crate::builtins::wrong_arg_type(v, "T_DATA")
-    }
-
-    crate::cext_fn! {
-        /// `DATA_PTR(obj)` and `RTYPEDDATA_DATA(obj)`, which are both an
-        /// LVALUE -- `DATA_PTR(o) = p` is a real idiom -- so this answers the
-        /// ADDRESS of the slot and the macro dereferences it.
-        fn rbimpl_zeo_data_slot(v: Value) -> *mut *mut c_void {
-            Ok(unsafe { cdata(v)? }.slot())
-        }
-
-        /// `RTYPEDDATA_TYPE(obj)`. Null for the untyped `Data_Wrap_Struct`
-        /// form, which is what `RTYPEDDATA_P` tests.
-        fn rbimpl_zeo_typeddata_type(v: Value) -> *const DataType {
-            Ok(unsafe { cdata(v)? }.data_type())
-        }
-
-        /// `RREGEXP_SRC(re)`: the pattern String.
-        fn rbimpl_zeo_regexp_src(re: Value) -> Value {
-            let r = unsafe { crate::cext::convert::value_of(re) };
-            let src = crate::cext::object::send(&r, "source", &[])?;
-            crate::cext::convert::to_value(&src)
-        }
-
-        /// `RREGEXP_PTR(re)`: the compiled `regex_t` inside the Regexp.
-        ///
-        /// zeo's Regexp is an onig pattern its own engine owns, and handing
-        /// out that pointer would let an extension call onig against a
-        /// pattern zeo may recompile. `rb_reg_prepare_re` is MRI's supported
-        /// way to get one, and it is refused for the same reason -- so this
-        /// refuses rather than answering a pointer that looks usable.
-        fn rbimpl_zeo_regexp_ptr_slot(_re: Value) -> *mut *mut c_void {
-            Err(crate::builtins::not_impl_error!("RREGEXP_PTR reaches into the compiled pattern, which zeo's \
-                 regexp engine owns; use Regexp's own methods"))
-        }
-
-        /// `RMATCH_REGS(match)`: onig's `re_registers` for a MatchData.
-        /// Refused for the reason `RREGEXP_PTR` is -- `MatchData#offset` and
-        /// `#begin` answer the same numbers through the object.
-        fn rbimpl_zeo_match_regs(_m: Value) -> *mut c_void {
-            Err(crate::builtins::not_impl_error!("RMATCH_REGS reaches into onig's register array, which zeo's \
-                 MatchData does not expose; use MatchData#begin and #offset"))
-        }
-
-        /// Every other layout macro `patches/0001` could not answer. The
-        /// macro passes its own name, so the raise says which one -- a bare
-        /// "not implemented" would leave the caller reading the patch to
-        /// find out what it asked for.
-        fn rbimpl_zeo_unsupported_ptr(what: *const c_char) -> *mut c_void {
-            let name = unsafe { crate::cext::object::cstr(what) };
-            Err(crate::builtins::not_impl_error!("{name} reads an object layout zeo does not have"))
-        }
-    }
-}
-
-#[cfg(test)]
-mod patched_tests {
-    /// Every `rbimpl_zeo_*` the patched headers name must be a real symbol.
-    ///
-    /// This is the check that was missing. The census scans for
-    /// `rb_`/`ruby_`/`st_`, so a helper the PATCH introduced was invisible to
-    /// it -- `RTYPEDDATA_DATA` linked against nothing and msgpack failed at
-    /// load with a symbol name and no other clue.
-    #[test]
-    fn every_patched_helper_is_defined() {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/cext/include");
-        let mut wanted: Vec<String> = Vec::new();
-        collect(std::path::Path::new(root), &mut wanted);
-        wanted.sort();
-        wanted.dedup();
-        assert!(!wanted.is_empty(), "the patched headers name no helpers");
-
-        // The runtime's own list, from the files that define them.
-        let sources = [
-            include_str!("data.rs"),
-            include_str!("string.rs"),
-            include_str!("collection.rs"),
-        ];
-        for name in &wanted {
-            let defined = sources.iter().any(|s| s.contains(&format!("fn {name}(")));
-            assert!(
-                defined,
-                "{name} is declared in ruby/internal/zeo.h and defined nowhere"
-            );
-        }
-    }
-
-    fn collect(dir: &std::path::Path, out: &mut Vec<String>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                collect(&path, out);
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let mut rest = text.as_str();
-            while let Some(at) = rest.find("rbimpl_zeo_") {
-                let tail = &rest[at..];
-                let end = tail
-                    .find(|c: char| !c.is_alphanumeric() && c != '_')
-                    .unwrap_or(tail.len());
-                out.push(tail[..end].to_string());
-                rest = &tail[end..];
-            }
-        }
-    }
-}

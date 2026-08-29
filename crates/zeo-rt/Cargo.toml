@@ -160,6 +160,10 @@ ignored = ["md-5"]
 # the tree through onig and libffi, which vendor and build their own C
 # libraries.
 cc = "1"
+# `$OUT_DIR/cext_layout.rs` -- the Rust mirror of the MRI structs the C
+# extension views fill, read from the vendored headers. Already in the graph
+# through `ruby-prism-sys`, so libclang is not a new build requirement.
+bindgen = "0.72"
 
 [features]
 default = ["ext-all"]

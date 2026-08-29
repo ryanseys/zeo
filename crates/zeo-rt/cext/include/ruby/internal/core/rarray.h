@@ -42,7 +42,11 @@
  * @param   obj  An object, which is in fact an ::RArray.
  * @return  The passed object casted to ::RArray.
  */
-#define RARRAY(obj)            RBIMPL_CAST((struct RArray *)(obj))
+/* zeo: a call, not a cast -- a refilled view. A zeo Array element is a Rust
+ * enum rather than a tagged word, so `as.heap.ptr` names a PROJECTION built
+ * beside the object. zeo never sets ::RARRAY_EMBED_FLAG, so the arms below
+ * take `as.heap`. See `ruby/internal/zeo.h`. */
+#define RARRAY(obj)            rb_zeo_rarray(RBIMPL_CAST((VALUE)(obj)))
 /** @cond INTERNAL_MACRO */
 #define RARRAY_EMBED_FLAG      RARRAY_EMBED_FLAG
 #define RARRAY_EMBED_LEN_MASK  RARRAY_EMBED_LEN_MASK
@@ -126,12 +130,69 @@ enum ruby_rarray_consts {
 };
 
 /** Ruby's array. */
-/* zeo: opaque. A zeo heap object is a handle whose first two words are a
- * real `struct RBasic` and whose payload the runtime owns, so there is no
- * layout here to read. Upstream already declares `struct RClass` this way.
- * A `RArray(v)->field` is a compile error naming the line, which is the
- * point: it would otherwise read a byte that means nothing. */
-struct RArray;
+struct RArray {
+
+    /** Basic part, including flags and class. */
+    struct RBasic basic;
+
+    /** Array's specific fields. */
+    union {
+
+        /**
+         * Arrays  that  use separated  memory  region  for elements  use  this
+         * pattern.
+         */
+        struct {
+
+            /** Number of elements of the array. */
+            long len;
+
+            /** Auxiliary info. */
+            union {
+
+                /**
+                 * Capacity of `*ptr`.  A continuous  memory region of at least
+                 * `capa` elements is expected to exist at `*ptr`.  This can be
+                 * bigger than `len`.
+                 */
+                long capa;
+
+                /**
+                 * Parent  of  the  array.   Nowadays arrays  can  share  their
+                 * backend  memory regions  each  other, constructing  gigantic
+                 * nest  of objects.   This situation  is called  "shared", and
+                 * this is the field to control such properties.
+                 */
+#if defined(__clang__)      /* <- clang++ is sane */ || \
+    !defined(__cplusplus)   /* <- C99 is sane */     || \
+    (__cplusplus > 199711L) /* <- C++11 is sane */
+                const
+#endif
+                VALUE shared_root;
+            } aux;
+
+            /**
+             * Pointer to the C array that holds the elements of the array.  In
+             * the old days  each array had dedicated memory  regions.  That is
+             * no  longer  true today,  but  there  still  are arrays  of  such
+             * properties.  This field could be used to point such things.
+             */
+            const VALUE *ptr;
+        } heap;
+
+        /**
+         * Embedded elements.  When an array is short enough, it uses this area
+         * to store its elements.  In this  case the length is encoded into the
+         * flags.
+         */
+        /* This is a length 1 array because:
+         *   1. GCC has a bug that does not optimize C flexible array members
+         *      (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=102452)
+         *   2. Zero length arrays are not supported by all compilers
+         */
+        const VALUE ary[1];
+    } as;
+};
 
 RBIMPL_SYMBOL_EXPORT_BEGIN()
 /**
@@ -179,8 +240,12 @@ static inline long
 RARRAY_EMBED_LEN(VALUE ary)
 {
     RBIMPL_ASSERT_TYPE(ary, RUBY_T_ARRAY);
+    RBIMPL_ASSERT_OR_ASSUME(RB_FL_ANY_RAW(ary, RARRAY_EMBED_FLAG));
 
-    return rbimpl_zeo_ary_len(ary);
+    VALUE f = RBASIC(ary)->flags;
+    f &= RARRAY_EMBED_LEN_MASK;
+    f >>= RARRAY_EMBED_LEN_SHIFT;
+    return RBIMPL_CAST((long)f);
 }
 
 RBIMPL_ATTR_PURE_UNLESS_DEBUG()
@@ -196,7 +261,12 @@ rb_array_len(VALUE a)
 {
     RBIMPL_ASSERT_TYPE(a, RUBY_T_ARRAY);
 
-    return rbimpl_zeo_ary_len(a);
+    if (RB_FL_ANY_RAW(a, RARRAY_EMBED_FLAG)) {
+        return RARRAY_EMBED_LEN(a);
+    }
+    else {
+        return RARRAY(a)->as.heap.len;
+    }
 }
 
 RBIMPL_ATTR_ARTIFICIAL()
@@ -233,7 +303,12 @@ rb_array_const_ptr(VALUE a)
 {
     RBIMPL_ASSERT_TYPE(a, RUBY_T_ARRAY);
 
-    return FIX_CONST_VALUE_PTR(rbimpl_zeo_ary_const_ptr(a));
+    if (RB_FL_ANY_RAW(a, RARRAY_EMBED_FLAG)) {
+        return FIX_CONST_VALUE_PTR(RARRAY(a)->as.ary);
+    }
+    else {
+        return FIX_CONST_VALUE_PTR(RARRAY(a)->as.heap.ptr);
+    }
 }
 
 /**
@@ -297,7 +372,8 @@ RARRAY_PTR(VALUE ary)
 {
     RBIMPL_ASSERT_TYPE(ary, RUBY_T_ARRAY);
 
-    return rbimpl_zeo_ary_ptr(ary);
+    VALUE tmp = RB_OBJ_WB_UNPROTECT_FOR(ARRAY, ary);
+    return RBIMPL_CAST((VALUE *)RARRAY_CONST_PTR(tmp));
 }
 
 /**
@@ -314,7 +390,10 @@ RARRAY_PTR(VALUE ary)
 static inline void
 RARRAY_ASET(VALUE ary, long i, VALUE v)
 {
-    rbimpl_zeo_ary_aset(ary, i, v);
+    /* zeo: the pointer `RARRAY_PTR_USE` hands out is a projection built
+     * beside the object, so upstream's store through it would stay in the
+     * projection. This one reaches the Array. */
+    rb_zeo_ary_aset(ary, i, v);
 }
 
 /**
@@ -328,6 +407,6 @@ RARRAY_ASET(VALUE ary, long i, VALUE v)
  * remains as  it is due to  that.  If we could  warn such usages we  can set a
  * transition path, but currently no way is found to do so.
  */
-#define RARRAY_AREF(a, i) rbimpl_zeo_ary_aref((a), (i))
+#define RARRAY_AREF(a, i) RARRAY_CONST_PTR(a)[i]
 
 #endif /* RBIMPL_RARRAY_H */

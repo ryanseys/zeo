@@ -2345,6 +2345,7 @@ dependencies = [
 name = "zeo-rt"
 version = "0.1.0"
 dependencies = [
+ "bindgen",
  "cc",
  "corosensei",
  "digest",

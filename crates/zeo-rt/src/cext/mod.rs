@@ -32,6 +32,7 @@ pub mod globals;
 pub mod handles;
 pub mod io;
 pub mod jmp;
+pub mod layout;
 pub mod load;
 pub mod method;
 pub mod misc;
@@ -46,6 +47,7 @@ pub mod symbol;
 pub mod thread;
 pub mod util;
 pub mod value;
+pub mod view;
 
 #[cfg(test)]
 mod tests {

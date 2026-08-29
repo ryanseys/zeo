@@ -22,6 +22,7 @@
  */
 #include "ruby/internal/core/rbasic.h"
 #include "ruby/internal/cast.h"
+#include "ruby/internal/zeo.h"
 
 /* rb_io_t is in ruby/io.h.  The header file has historically not been included
  * into ruby/ruby.h.  We follow that tradition. */
@@ -33,24 +34,13 @@ struct rb_io;
  * using this struct.
  */
 struct RFile {
+
+    /** Basic part, including flags and class. */
     struct RBasic basic;
+
+    /** IO's specific fields. */
     struct rb_io *fptr;
 };
-
-/**
- * zeo: a VIEW of the IO, not the object itself.
- *
- * A zeo IO is a handle over a runtime-owned payload; it has no MRI layout, so
- * casting one to `struct RFile *` would read bytes that mean nothing. This
- * mints a `struct RFile` beside the object instead and fills it from the IO
- * on every reach, so `GetOpenFile(io, fp); fp->fd` answers the descriptor the
- * IO has right now.
- *
- * The view is READ-ONLY in effect: writing `fp->fd` changes the view, not the
- * IO. The fields zeo cannot honour -- the buffers, the converters -- stay
- * zero. Raises if the object is not an IO.
- */
-struct RFile *rb_zeo_rfile(VALUE obj);
 
 /**
  * Convenient casting macro.
@@ -58,5 +48,11 @@ struct RFile *rb_zeo_rfile(VALUE obj);
  * @param   obj  An object, which is in fact an ::RFile.
  * @return  The passed object casted to ::RFile.
  */
+/* zeo: a call, not a cast -- a refilled view. `fptr` names a `struct rb_io`
+ * minted beside the object and filled from the IO on every reach, so
+ * `GetOpenFile(io, fp); fp->fd` answers the descriptor the IO has right now.
+ * The fields zeo cannot honour -- the buffers, the converters -- stay zero,
+ * and a store to the view does not reach the IO. See
+ * `ruby/internal/zeo.h`. */
 #define RFILE(obj) rb_zeo_rfile(RBIMPL_CAST((VALUE)(obj)))
 #endif /* RBIMPL_RFILE_H */
