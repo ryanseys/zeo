@@ -135,6 +135,29 @@ impl Loader {
         &self,
         feature: &str,
     ) -> PResult<Option<(PathBuf, Option<String>)>> {
+        let resolved = self.probe_require(feature)?;
+        if let Some((_, Some(name))) = &resolved
+            && let Some(pkg) = self.packages.iter().find(|g| &g.name == name)
+        {
+            self.activate(pkg);
+        }
+        Ok(resolved)
+    }
+
+    /// The same search, asked as a QUESTION: no activation, so the answer
+    /// costs `$LOAD_PATH` nothing.
+    ///
+    /// `lower_main_file` asks, on every compile, which gated builtins also
+    /// have a vendored Ruby half. Through `resolve_require` that probe put 16
+    /// package roots on the `$LOAD_PATH` of a program that requires nothing --
+    /// measured, `puts $LOAD_PATH` printed tmpdir, json, psych, openssl and
+    /// twelve more. It also blocked memoizing the loop, because a memo hit
+    /// would have skipped the side effect and made `$:` depend on how many
+    /// compiles a process had already done.
+    pub(super) fn probe_require(
+        &self,
+        feature: &str,
+    ) -> PResult<Option<(PathBuf, Option<String>)>> {
         if let Some(hit) = self.require_memo.borrow().get(feature) {
             return Ok(hit.clone());
         }
@@ -198,7 +221,6 @@ impl Loader {
             0 => Ok(None),
             1 => {
                 let (path, pkg) = hits.remove(0);
-                self.activate(pkg);
                 Ok(Some((path, Some(pkg.name.clone()))))
             }
             // Multiple providers: the FIRST wins, because `packages` is in
@@ -225,7 +247,6 @@ impl Loader {
                     .borrow_mut()
                     .insert(feature.to_string(), providers);
                 let (path, pkg) = hits.remove(0);
-                self.activate(pkg);
                 Ok(Some((path, Some(pkg.name.clone()))))
             }
         }

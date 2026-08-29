@@ -29,12 +29,23 @@ fn goldens() -> impl Iterator<Item = PathBuf> {
     })
 }
 
+/// Every suffix the harness reads a recorded output from. The `.linux` pair is
+/// the per-platform record a golden carries when its answer is the PLATFORM's
+/// rather than ruby's -- a tie broken by libc's `qsort_r`, a last-ulp libm
+/// difference. See `sidecars` in the harness.
+const GOLDEN_SUFFIXES: &[&str] = &[
+    ".rb.expected",
+    ".rb.err.expected",
+    ".rb.linux.expected",
+    ".rb.linux.err.expected",
+];
+
 #[test]
 fn every_golden_uses_the_rb_sidecar_convention() {
     let misnamed: Vec<String> = goldens()
         .filter(|p| {
             let name = p.to_string_lossy();
-            !name.ends_with(".rb.expected") && !name.ends_with(".rb.err.expected")
+            !GOLDEN_SUFFIXES.iter().any(|s| name.ends_with(s))
         })
         .map(|p| p.display().to_string())
         .collect();
@@ -221,7 +232,11 @@ fn every_leg_skip_sidecar_is_acknowledged_here() {
         "process_identity_rows.rb",
         "socket_carries_its_exception_hierarchy.rb",
         "fiddle.rb",
-        "float_pow_negative_fractional.rb",
+        // `float_pow_negative_fractional.rb` was here, as a byte-identical
+        // copy of the spinel golden, because its last digit differs on glibc's
+        // libm. It answers on both platforms now, through a
+        // `.rb.linux.expected` -- which is the shape a program that RUNS
+        // everywhere and merely ANSWERS differently should take.
         "io_file_stat_rows.rb",
     ];
     const JIT_ONLY: &[&str] = &[

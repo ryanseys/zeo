@@ -326,6 +326,48 @@ fn faithful_files(root: &Path) -> Vec<PathBuf> {
     canonical
 }
 
+/// Which gated builtins ALSO have a vendored Ruby half, for this loader's
+/// search space.
+///
+/// ~30 features against every root is ~2,000 `stat` calls, and it ran on every
+/// compile -- 1.5 ms of the 3.7 ms a run-time `eval` costs, and RubyGems evals
+/// 66 gemspecs at boot. The answer is a property of the TREE, so it is
+/// memoized per search space.
+///
+/// The key has to be the search space itself, not "the process": the test
+/// harness compiles many programs in one process with different `-I` roots,
+/// and a bare `OnceLock` would hand the first one's answer to all of them.
+/// Building the key walks the root lists once; the probe it replaces walks
+/// them ~30 times and touches the filesystem doing it.
+///
+/// Memoizing was only safe once `probe_require` stopped ACTIVATING what it
+/// found -- a memo hit would have skipped the side effect, so `$LOAD_PATH`
+/// would have depended on how many compiles the process had already done.
+fn dual_homed_features(loader: &Loader) -> crate::compiler::FSet<String> {
+    static MEMO: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<String, crate::compiler::FSet<String>>>,
+    > = std::sync::OnceLock::new();
+    let mut key = String::new();
+    for root in loader.roots.iter().chain(loader.packages.iter().flat_map(|p| p.roots.iter())) {
+        key.push_str(&root.to_string_lossy());
+        key.push('\u{0}');
+    }
+    let memo = MEMO.get_or_init(Default::default);
+    if let Some(hit) = memo.lock().expect("no panicking prober").get(&key) {
+        return hit.clone();
+    }
+    let mut found = crate::compiler::FSet::default();
+    for feature in crate::lower::features::builtin_feature_names() {
+        if matches!(loader.probe_require(feature), Ok(Some(_))) {
+            found.insert(feature.to_string());
+        }
+    }
+    memo.lock()
+        .expect("no panicking prober")
+        .insert(key, found.clone());
+    found
+}
+
 pub(super) fn lower_main_file(
     hir: &mut Hir,
     source: &str,
@@ -392,11 +434,10 @@ pub(super) fn lower_main_file(
     // method body needs BOTH, and folding the call away left the second
     // half unloaded. A PURE builtin (`digest`) resolves to nothing and is
     // not here, so its require still folds.
-    for feature in crate::lower::features::builtin_feature_names() {
-        if matches!(loader.resolve_require(feature), Ok(Some(_))) {
-            hir.loader.dual_homed_requires.insert(feature.to_string());
-        }
-    }
+    //
+    // `probe_require`, not `resolve_require`: asking must not ACTIVATE. It
+    // used to, and a program requiring nothing carried 16 gem roots on `$:`.
+    hir.loader.dual_homed_requires = dual_homed_features(&loader);
     // The external gem store: store dirs (`--gem-path`/`GEM_PATH`) plus a
     // lockfile (via `--bundle-gemfile`/`BUNDLE_GEMFILE`) add the pure-Ruby
     // gems zeo can compile as extra roots, and record a disclosure for every
