@@ -10,6 +10,19 @@ One directory per library, each laid out the way a Rust-backed Ruby gem is
   ext/<name>/src/*.rs   zeo's Rust, where a Rust gem puts its Rust
 ```
 
+Two of these follow UPSTREAM's path rather than the template's, because
+upstream's is not `ext/<name>/`: `io-console` is `ext/io/console/src/lib.rs`,
+matching ruby's own `ext/io/console/console.c`. `build.rs` finds the one
+`src/lib.rs` under `ext/` whichever shape a directory uses, and a hyphen in a
+gem name becomes an underscore in the module and the cargo feature
+(`io-console` -> `io_console`, `ext-io-console`).
+
+`io-console` is also the one library whose METHOD ROWS are not in its own
+directory. It adds 34 methods to `IO` itself, and one class owns one
+`ruby_class!` table, so the declarations sit in `builtins/io.rs` marked
+`gated "io/console"` and forward here. Only `IO::ConsoleMode`, a class of its
+own, carries its table in this tree.
+
 `ext/<name>/src/` is the NATIVE half — what CRuby writes in C. `lib/` is the
 Ruby half, reached by `require "<name>"`, which pulls the native one in with
 `require "<name>.so"`. A directory can have either half alone: `base64` is

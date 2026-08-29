@@ -445,6 +445,29 @@ pub(crate) fn file_value_mode(
     RubyValue::Object(Arc::new(io))
 }
 
+/// A zeroed read buffer of `n` bytes, or `NoMemoryError`.
+///
+/// `f.read(10**18)` allocated eagerly with `vec![0u8; n]`, whose failure path
+/// is `handle_alloc_error` -- an ABORT, not a rescuable exception. Ruby raises
+/// `NoMemoryError: failed to allocate memory`, and so does this.
+fn read_buffer(n: usize) -> Result<Vec<u8>, Signal> {
+    let mut buf: Vec<u8> = Vec::new();
+    buf.try_reserve_exact(n)
+        .map_err(|_| crate::dispatch::raise_error("NoMemoryError", "failed to allocate memory".to_string()))?;
+    buf.resize(n, 0);
+    Ok(buf)
+}
+
+/// How many bytes an `ioctl` request number says its argument buffer holds.
+///
+/// The request encodes the size in bits 16..29 on every platform zeo builds
+/// for -- BSD's `IOCPARM_LEN` and Linux's `_IOC_SIZE` are the same field. A
+/// request that encodes nothing answers 0, and the caller's own String length
+/// stands.
+fn ioctl_param_len(request: libc::c_ulong) -> usize {
+    ((request >> 16) & 0x1fff) as usize
+}
+
 /// Wrap one end of an `IO.pipe` (from an owned fd) as a Ruby `IO` value.
 pub(crate) fn pipe_value(f: std::fs::File) -> RubyValue {
     RubyValue::Object(Arc::new(RIo::new(IoBackend::Pipe(Some(f)), None)))
@@ -1142,7 +1165,7 @@ fn io_wait_for(
     timeout: Option<&RubyValue>,
     events: libc::c_short,
 ) -> Result<RubyValue, Signal> {
-    let timeout_ms = wait_timeout_ms(timeout);
+    let timeout_ms = wait_timeout_ms(timeout)?;
     let mut pfd = libc::pollfd {
         fd: raw_fd(recv)?,
         events,
@@ -1161,18 +1184,32 @@ fn io_wait_for(
 /// error), but never PRIORITY-readable: only out-of-band data is that.
 /// A readiness timeout in seconds as milliseconds. Absent or nil blocks
 /// forever (`-1`); anything at or below zero polls and returns at once.
-fn wait_timeout_ms(timeout: Option<&RubyValue>) -> libc::c_int {
-    match timeout {
-        None | Some(RubyValue::Nil) => -1,
-        Some(v) => {
-            let secs = crate::builtins::numeric::num_to_f64_unchecked(v);
-            if secs <= 0.0 {
-                0
-            } else {
-                (secs * 1000.0) as libc::c_int
-            }
+///
+/// A non-numeric RAISES. It went through `num_to_f64_unchecked`, which is a
+/// `panic!` for anything that is not a number, so `io.wait(:read)` -- the
+/// documented spelling, where the Symbol lands in the timeout slot -- took
+/// the whole process down instead of reporting a TypeError.
+fn wait_timeout_ms(timeout: Option<&RubyValue>) -> Result<libc::c_int, Signal> {
+    let Some(v) = timeout.filter(|v| !v.is_nil()) else {
+        return Ok(-1);
+    };
+    // `rb_time_interval`'s own refusal, message included.
+    let secs = match v {
+        RubyValue::Int(_) | RubyValue::Float(_) | RubyValue::BigInt(_) | RubyValue::Rational(_) => {
+            crate::builtins::numeric::num_to_f64_unchecked(v)
         }
+        other => {
+            return Err(crate::builtins::type_error!(
+                "can't convert {} into time interval",
+                crate::builtins::convert_name_of(other)
+            ));
+        }
+    };
+    if secs <= 0.0 {
+        return Ok(0);
     }
+    // A timeout larger than `c_int` blocks rather than wrapping to a poll.
+    Ok(((secs * 1000.0).min(f64::from(libc::c_int::MAX))) as libc::c_int)
 }
 
 fn poll_ready(revents: libc::c_short, events: libc::c_short) -> bool {
@@ -1548,7 +1585,7 @@ fn io_read_val(
                 Ok(RubyValue::Str(crate::string_from_bytes(buf, read_enc)))
             }
             Some(n) => {
-                let mut buf = vec![0u8; n];
+                let mut buf = read_buffer(n)?;
                 let mut got = 0;
                 // `read` can answer short without being at EOF; loop until
                 // the request is filled or the file genuinely ends.
@@ -2194,10 +2231,23 @@ ruby_class! {
         let fd = fd as libc::c_int;
         let rc = match arg {
             Some(RubyValue::Str(s)) => {
+                // The buffer must be at least as big as the REQUEST NUMBER
+                // says, not as big as the String happens to be: the kernel
+                // writes `IOCPARM_LEN(request)` bytes whatever the caller
+                // passed, so `$stdout.ioctl(TIOCGWINSZ, "")` wrote eight
+                // bytes through a zero-capacity allocation. CRuby's
+                // `setup_narg` grows the String first, and so does this.
+                let want = ioctl_param_len(request);
                 let mut buf = s.lock().bytes().to_vec();
-                // SAFETY: `buf` is a live, writable allocation for the call.
+                let given = buf.len();
+                buf.resize(given.max(want), 0);
+                // SAFETY: `buf` now holds at least the byte count the request
+                // number encodes, so the call cannot write past it.
                 let rc = unsafe { libc::ioctl(fd, request, buf.as_mut_ptr()) };
                 if rc >= 0 {
+                    // The String keeps the length the caller gave it, as
+                    // CRuby's does when the request asked for no more.
+                    buf.truncate(given.max(want));
                     let mut g = s.lock();
                     let enc = g.encoding();
                     g.replace_bytes(buf, enc);
@@ -2297,7 +2347,7 @@ ruby_class! {
         let fd = raw_fd(recv)?;
         let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
         if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } != 0 {
-            return Err(super::io_console::not_a_terminal(recv, "IO#winsize"));
+            return Err(crate::ext::io_console::not_a_terminal(recv, "IO#winsize"));
         }
         Ok(RubyValue::Array(crate::collections::array_new(vec![
             RubyValue::Int(ws.ws_row as i64),
@@ -2358,7 +2408,7 @@ ruby_class! {
     // pipe carrying ordinary bytes answers nil. Goes through `select(2)`, not
     // `poll(2)`; see [`select_ready`].
     def "wait_priority" cfunc (recv, timeout?, &_blk) {
-        let (_, _, e) = select_ready(&[], &[], &[raw_fd(recv)?], wait_timeout_ms(timeout))?;
+        let (_, _, e) = select_ready(&[], &[], &[raw_fd(recv)?], wait_timeout_ms(timeout)?)?;
         Ok(if e.first() == Some(&true) {
             recv.clone()
         } else {
@@ -2366,26 +2416,33 @@ ruby_class! {
         })
     }
 
-    // `wait(timeout = nil, *modes)` -- the three `wait_*` methods behind one
-    // name. Each mode is a Symbol; several may be combined, and none means
-    // `:read`.
+    // `wait(*args)` -- the three `wait_*` methods behind one name. Arguments
+    // are sorted by TYPE, not by position: every Symbol is a mode (several may
+    // be combined), anything else is the timeout. `io.wait(:read, 0.1)` and
+    // `io.wait(0.1, :read)` are the same call.
+    //
+    // Reading the FIRST argument as the timeout made `io.wait(:read)` -- the
+    // spelling the docs lead with -- pass a Symbol into the timeout slot.
     def "wait" (recv, *args, &_blk) {
         let mut events: libc::c_short = 0;
-        for m in args.iter().skip(1) {
-            let RubyValue::Symbol(s) = m else {
-                return Err(arg_error!("unsupported mode: {}", m.inspect_string()));
-            };
-            events |= match s.name().as_str() {
-                "read" | "readable" => libc::POLLIN,
-                "write" | "writable" => libc::POLLOUT,
-                "priority" => libc::POLLPRI,
-                other => return Err(arg_error!("unsupported mode: {other}")),
-            };
+        let mut timeout: Option<&RubyValue> = None;
+        for a in args {
+            match a {
+                RubyValue::Symbol(s) => {
+                    events |= match s.name().as_str() {
+                        "read" | "readable" => libc::POLLIN,
+                        "write" | "writable" => libc::POLLOUT,
+                        "priority" => libc::POLLPRI,
+                        other => return Err(arg_error!("unsupported mode: {other}")),
+                    };
+                }
+                other => timeout = Some(other),
+            }
         }
         if events == 0 {
             events = libc::POLLIN;
         }
-        io_wait_for(recv, args.first(), events)
+        io_wait_for(recv, timeout, events)
     }
 
     // `IO#to_s` is NOT `#inspect`: CRuby leaves `to_s` as `Object`'s address
@@ -2417,7 +2474,13 @@ ruby_class! {
                         &*io.backend.lock(),
                         IoBackend::File(None) | IoBackend::Pipe(None)
                     );
-                    match (io.path.lock().as_deref(), closed) {
+                    // The path is COPIED out before the descriptor is asked
+                    // for. Reading it inside the `match` held the path lock
+                    // across `raw_fd`, which takes the backend lock -- while
+                    // `#path` takes them the other way round, so one thread
+                    // in `pipe.inspect` and one in `pipe.path` deadlocked.
+                    let path = io.path.lock().clone();
+                    match (path.as_deref(), closed) {
                         (Some(p), false) => format!("#<{class}:{p}>"),
                         (Some(p), true) => format!("#<{class}:{p} (closed)>"),
                         (None, false) => format!("#<{class}:fd {}>", raw_fd(recv)?),
@@ -2631,6 +2694,11 @@ ruby_class! {
             return Err(arg_error!("length must be an Integer"));
         };
         let max = *max;
+        // A negative length is refused, not clamped to zero: clamping made
+        // `f.readpartial(-1)` answer an empty String where ruby raises.
+        if max < 0 {
+            return Err(arg_error!("negative length {max} given"));
+        }
         // The original argument rides along: CRuby answers the very object the
         // caller passed, not the String its `to_str` gave.
         let outbuf = match outbuf {
@@ -2638,7 +2706,7 @@ ruby_class! {
             Some(v) => Some((v, crate::builtins::convert::to_rstr(v)?)),
         };
         let bytes = with_file(recv, |f, path| {
-            let mut buf = vec![0u8; max.max(0) as usize];
+            let mut buf = read_buffer(max.max(0) as usize)?;
             let got = peeked_read(as_rio(recv), f, &mut buf)
                 .map_err(|e| crate::builtins::file::raise_errno(&e, "read", path))?;
             buf.truncate(got);
@@ -2693,7 +2761,7 @@ ruby_class! {
         };
         set_fd_nonblock(raw_fd(recv)?, true)?;
         let read = with_file(recv, |f, _path| {
-            let mut buf = vec![0u8; max];
+            let mut buf = read_buffer(max)?;
             loop {
                 match std::io::Read::read(f, &mut buf) {
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -3198,7 +3266,7 @@ ruby_class! {
         let offset = offset_of(offset)?.max(0) as u64;
         let data = with_file(recv, |f, path| {
             use std::os::unix::fs::FileExt;
-            let mut buf = vec![0u8; count];
+            let mut buf = read_buffer(count)?;
             let n = f
                 .read_at(&mut buf, offset)
                 .map_err(|e| crate::builtins::file::raise_errno(&e, "pread", path))?;
@@ -3617,7 +3685,7 @@ ruby_class! {
             (list(write)?, libc::POLLOUT),
             (list(error)?, libc::POLLPRI),
         ];
-        let timeout_ms = wait_timeout_ms(timeout);
+        let timeout_ms = wait_timeout_ms(timeout)?;
 
         if sets.iter().all(|(ios, _)| ios.is_empty()) {
             // Nothing to watch: CRuby still honours the timeout, then answers nil.
@@ -3830,67 +3898,67 @@ ruby_class! {
     // stand on earns its own file. Unconditional -- the `require` is ceremony.
 
     def "winsize=" gated "io/console" (recv, _size) {
-        super::io_console::winsize_set(recv, __args, __block)
+        crate::ext::io_console::winsize_set(recv, __args, __block)
     }
 
     def "raw" gated "io/console" (recv, *_args) {
-        super::io_console::raw(recv, __args, __block)
+        crate::ext::io_console::raw(recv, __args, __block)
     }
 
     def "raw!" gated "io/console" (recv, *_args) {
-        super::io_console::raw_bang(recv, __args, __block)
+        crate::ext::io_console::raw_bang(recv, __args, __block)
     }
 
     def "cooked" gated "io/console" (recv) {
-        super::io_console::cooked(recv, __args, __block)
+        crate::ext::io_console::cooked(recv, __args, __block)
     }
 
     def "cooked!" gated "io/console" (recv) {
-        super::io_console::cooked_bang(recv, __args, __block)
+        crate::ext::io_console::cooked_bang(recv, __args, __block)
     }
 
     def "echo?" gated "io/console" (recv) {
-        super::io_console::echo_p(recv, __args, __block)
+        crate::ext::io_console::echo_p(recv, __args, __block)
     }
 
     def "echo=" gated "io/console" (recv, _echo) {
-        super::io_console::echo_set(recv, __args, __block)
+        crate::ext::io_console::echo_set(recv, __args, __block)
     }
 
     def "noecho" gated "io/console" (recv) {
-        super::io_console::noecho(recv, __args, __block)
+        crate::ext::io_console::noecho(recv, __args, __block)
     }
 
     def "getch" gated "io/console" (recv, *_args) {
-        super::io_console::getch(recv, __args, __block)
+        crate::ext::io_console::getch(recv, __args, __block)
     }
 
     def "getpass" gated "io/console" (recv, *_args) {
-        super::io_console::getpass(recv, __args, __block)
+        crate::ext::io_console::getpass(recv, __args, __block)
     }
 
     def "iflush" gated "io/console" (recv) {
-        super::io_console::iflush(recv, __args, __block)
+        crate::ext::io_console::iflush(recv, __args, __block)
     }
 
     def "oflush" gated "io/console" (recv) {
-        super::io_console::oflush(recv, __args, __block)
+        crate::ext::io_console::oflush(recv, __args, __block)
     }
 
     def "ioflush" gated "io/console" (recv) {
-        super::io_console::ioflush(recv, __args, __block)
+        crate::ext::io_console::ioflush(recv, __args, __block)
     }
 
     def "ttyname" gated "io/console" (recv) {
-        super::io_console::ttyname(recv, __args, __block)
+        crate::ext::io_console::ttyname(recv, __args, __block)
     }
 
     def "console_mode" gated "io/console" (recv) {
-        super::io_console::console_mode(recv, __args, __block)
+        crate::ext::io_console::console_mode(recv, __args, __block)
     }
 
     def "console_mode=" gated "io/console" (recv, _mode) {
-        super::io_console::console_mode_set(recv, __args, __block)
+        crate::ext::io_console::console_mode_set(recv, __args, __block)
     }
 
     // `rb_f_notimplement` raises before any arity check, so BOTH of these
@@ -3898,84 +3966,84 @@ ruby_class! {
     // with 0, 1 and 2 arguments is NotImplementedError every time, and
     // `respond_to?` answers false for both (see `reflect::responds_to_value`).
     def "pressed?" gated "io/console" (recv, *_args) {
-        super::io_console::pressed_p(recv, __args, __block)
+        crate::ext::io_console::pressed_p(recv, __args, __block)
     }
 
     def "check_winsize_changed" gated "io/console" (recv, *_args) {
-        super::io_console::check_winsize_changed(recv, __args, __block)
+        crate::ext::io_console::check_winsize_changed(recv, __args, __block)
     }
 
     def "beep" gated "io/console" (recv) {
-        super::io_console::beep(recv, __args, __block)
+        crate::ext::io_console::beep(recv, __args, __block)
     }
 
     def "clear_screen" gated "io/console" (recv) {
-        super::io_console::clear_screen(recv, __args, __block)
+        crate::ext::io_console::clear_screen(recv, __args, __block)
     }
 
     def "erase_line" gated "io/console" (recv, _mode) {
-        super::io_console::erase_line(recv, __args, __block)
+        crate::ext::io_console::erase_line(recv, __args, __block)
     }
 
     def "erase_screen" gated "io/console" (recv, _mode) {
-        super::io_console::erase_screen(recv, __args, __block)
+        crate::ext::io_console::erase_screen(recv, __args, __block)
     }
 
     def "goto" gated "io/console" (recv, _line, _column) {
-        super::io_console::goto(recv, __args, __block)
+        crate::ext::io_console::goto(recv, __args, __block)
     }
 
     def "goto_column" gated "io/console" (recv, _column) {
-        super::io_console::goto_column(recv, __args, __block)
+        crate::ext::io_console::goto_column(recv, __args, __block)
     }
 
     def "cursor" gated "io/console" (recv) {
-        super::io_console::cursor(recv, __args, __block)
+        crate::ext::io_console::cursor(recv, __args, __block)
     }
 
     def "cursor=" gated "io/console" (recv, _position) {
-        super::io_console::cursor_set(recv, __args, __block)
+        crate::ext::io_console::cursor_set(recv, __args, __block)
     }
 
     def "cursor_up" gated "io/console" (recv, _n) {
-        super::io_console::cursor_up(recv, __args, __block)
+        crate::ext::io_console::cursor_up(recv, __args, __block)
     }
 
     def "cursor_down" gated "io/console" (recv, _n) {
-        super::io_console::cursor_down(recv, __args, __block)
+        crate::ext::io_console::cursor_down(recv, __args, __block)
     }
 
     def "cursor_left" gated "io/console" (recv, _n) {
-        super::io_console::cursor_left(recv, __args, __block)
+        crate::ext::io_console::cursor_left(recv, __args, __block)
     }
 
     def "cursor_right" gated "io/console" (recv, _n) {
-        super::io_console::cursor_right(recv, __args, __block)
+        crate::ext::io_console::cursor_right(recv, __args, __block)
     }
 
     def "scroll_forward" gated "io/console" (recv, _n) {
-        super::io_console::scroll_forward(recv, __args, __block)
+        crate::ext::io_console::scroll_forward(recv, __args, __block)
     }
 
     def "scroll_backward" gated "io/console" (recv, _n) {
-        super::io_console::scroll_backward(recv, __args, __block)
+        crate::ext::io_console::scroll_backward(recv, __args, __block)
     }
 
 
     // `IO.console` -- the controlling terminal, from `io/console`. Variadic:
     // `IO.console(:close)` and `IO.console(meth, *args)` are both real forms.
     def self."console" cfunc gated "io/console" (recv, *_args) {
-        super::io_console::io_class_console(recv, __args, __block)
+        crate::ext::io_console::io_class_console(recv, __args, __block)
     }
 
     // `io/console/size`'s two rows -- a separate require in ruby, so a
     // separate gate here. irb, debug and power_assert all reach for them.
     def self."console_size" cfunc gated "io/console/size" (recv) {
-        super::io_console::io_class_console_size(recv, __args, __block)
+        crate::ext::io_console::io_class_console_size(recv, __args, __block)
     }
 
     def self."default_console_size" cfunc gated "io/console/size" (recv) {
-        super::io_console::io_class_default_console_size(recv, __args, __block)
+        crate::ext::io_console::io_class_default_console_size(recv, __args, __block)
     }
 
     // The whole-file family is identical to `File`'s -- run File's own rows so

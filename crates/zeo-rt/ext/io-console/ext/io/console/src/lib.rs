@@ -1,11 +1,16 @@
 //! `io/console` -- terminal modes (raw/cooked/echo), single-character reads,
 //! and the cursor escapes, over `termios(3)`.
 //!
-//! CRuby ships this as `ext/io/console`, a require-gated extension; zeo's rows
-//! sit in `IO`'s own table behind `gated "io/console"`, so `require
-//! "io/console"` opens them at its own document position. `io/console/size`
-//! is a second file in ruby and carries a second gate here.
-//! `IO#winsize` predates this module and stays in `io.rs`.
+//! CRuby ships this as `ext/io/console`, a require-gated extension, and this
+//! directory keeps that path: `console.c` there, `src/lib.rs` here.
+//!
+//! The ROWS, though, cannot live here. `io/console` adds 34 methods to `IO`
+//! itself, and one class owns one `ruby_class!` table -- so the declarations
+//! sit in `io.rs` beside every other IO row, each marked `gated
+//! "io/console"`, and forward to the bodies below. `require "io/console"`
+//! opens them at its own document position. `io/console/size` is a second
+//! file in ruby and carries a second gate. `IO#winsize` predates this module
+//! and stays in `io.rs` whole.
 //!
 //! Every mode change goes through `in_mode`, which saves the terminal's
 //! settings, applies a mutation, runs a body, and restores from a `Drop`
@@ -297,6 +302,36 @@ fn int_arg(v: &RubyValue) -> Result<i64, Signal> {
     crate::builtins::convert::to_index(v)
 }
 
+/// `NUM2UINT`: an Integer that fits an `unsigned int`, refusing anything
+/// outside `-2**31 ..= 2**32-1` the way io-console's coordinate rows do.
+///
+/// A plain `i64` arithmetic on the result panicked in debug and wrapped to a
+/// malformed escape in release for `io.goto(2**63 - 1, 0)`.
+fn num2uint(v: &RubyValue, method: &'static str) -> Result<u32, Signal> {
+    let n = int_arg(v)?;
+    let refuse = |side| {
+        let _frame = crate::frames::synthetic_c_frame(method);
+        crate::builtins::range_error!("integer {n} too {side} to convert to 'unsigned int'")
+    };
+    if n > i64::from(u32::MAX) {
+        return Err(refuse("big"));
+    }
+    if n < i64::from(i32::MIN) {
+        return Err(refuse("small"));
+    }
+    Ok(n as u32)
+}
+
+/// A ZERO-based coordinate as the escape's ONE-based one.
+///
+/// `NUM2UINT(y) + 1` in C, printed with `%d` -- so the sum wraps within
+/// `unsigned int` and is then read back as SIGNED. `goto(-1, -1)` writes
+/// `ESC[0;0H` and `cursor = [-2, -3]` writes `ESC[-1;-2H`, both of which this
+/// reproduces exactly.
+fn one_based(v: &RubyValue, method: &'static str) -> Result<i32, Signal> {
+    Ok(num2uint(v, method)?.wrapping_add(1) as i32)
+}
+
 // -- the IO rows -------------------------------------------------------
 
 pub fn raw(
@@ -505,7 +540,9 @@ pub fn ttyname(
     }
     // `ttyname_r` into a fixed 1024-byte buffer, which is what io-console
     // starts with; the reentrant form is why this is not plain `ttyname`.
-    let mut buf = [0_i8; 1024];
+    // `c_char` is signed on x86-64 and aarch64 macOS and on x86-64 Linux, and
+    // UNSIGNED on aarch64 Linux -- naming it explicitly keeps both building.
+    let mut buf = [0 as libc::c_char; 1024];
     // SAFETY: `buf` is a live, correctly-sized array for the call to fill.
     let rc = unsafe { libc::ttyname_r(fd, buf.as_mut_ptr(), buf.len()) };
     if rc != 0 {
@@ -550,7 +587,9 @@ pub fn winsize_set(
     let field = |v: Option<&RubyValue>| -> Result<libc::c_ushort, Signal> {
         match v {
             None | Some(RubyValue::Nil) => Ok(0),
-            Some(v) => Ok(int_arg(v)? as libc::c_ushort),
+            // The narrowing to `unsigned short` is C's, but the REFUSAL is
+            // `NUM2UINT`'s: `io.winsize = [2**33, 80]` silently set row 0.
+            Some(v) => Ok(num2uint(v, "IO#winsize=")? as libc::c_ushort),
         }
     };
     ws.ws_row = field(dims.first())?;
@@ -684,7 +723,10 @@ pub fn goto(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let (row, col) = (int_arg(&args[0])? + 1, int_arg(&args[1])? + 1);
+    let (row, col) = (
+        one_based(&args[0], "IO#goto")?,
+        one_based(&args[1], "IO#goto")?,
+    );
     write_str(recv, format!("\x1b[{row};{col}H"))
 }
 
@@ -693,7 +735,10 @@ pub fn goto_column(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    write_str(recv, format!("\x1b[{}G", int_arg(&args[0])? + 1))
+    write_str(
+        recv,
+        format!("\x1b[{}G", one_based(&args[0], "IO#goto_column")?),
+    )
 }
 
 /// The four relative moves, over CRuby's `console_move(io, y, x)`.
@@ -817,16 +862,21 @@ pub fn cursor(
             if byte()? != Some(0x1b) || byte()? != Some(b'[') {
                 return Ok(RubyValue::Nil);
             }
+            // The accumulator and the field list are BOUNDED. A Ruby program
+            // can be the far end of the pty it queries, so the reply is
+            // untrusted input: 20 digits overflowed the accumulator, and a
+            // reply of nothing but `;` grew the Vec without limit.
             let mut fields: Vec<i64> = Vec::new();
             let mut num: i64 = 0;
             let mut term = None;
             while let Some(c) = byte()? {
                 match c {
-                    b';' => {
+                    b';' if fields.len() < 8 => {
                         fields.push(num);
                         num = 0;
                     }
-                    b'0'..=b'9' => num = num * 10 + i64::from(c - b'0'),
+                    b';' => break,
+                    b'0'..=b'9' => num = num.saturating_mul(10) + i64::from(c - b'0'),
                     _ => {
                         fields.push(num);
                         term = Some(c);
@@ -863,7 +913,10 @@ pub fn cursor_set(
         let _frame = crate::frames::synthetic_c_frame("IO#cursor=");
         return Err(crate::builtins::arg_error!("expected 2D coordinate"));
     }
-    let (row, col) = (int_arg(&pos[0])? + 1, int_arg(&pos[1])? + 1);
+    let (row, col) = (
+        one_based(&pos[0], "IO#cursor=")?,
+        one_based(&pos[1], "IO#cursor=")?,
+    );
     write_str(recv, format!("\x1b[{row};{col}H"))
 }
 

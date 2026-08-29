@@ -50,7 +50,6 @@ pub(crate) mod hash;
 pub(crate) mod integer;
 pub(crate) mod io;
 pub(crate) mod io_buffer;
-pub(crate) mod io_console;
 pub(crate) mod kernel;
 pub(crate) mod lazy;
 pub(crate) mod marshal;

@@ -49,13 +49,19 @@ fn open_pair() -> Result<(std::fs::File, std::fs::File, String), Signal> {
     {
         return Err(errno("openpty"));
     }
-    // SAFETY: `ttyname` answers a static buffer for the live fd just made.
-    let name = match unsafe { libc::ttyname(slave) } {
-        p if p.is_null() => String::new(),
-        // SAFETY: non-null `ttyname` answers a NUL-terminated device path.
-        p => unsafe { std::ffi::CStr::from_ptr(p) }
+    // `ttyname_r`, not `ttyname`: the latter answers a per-PROCESS static
+    // buffer, so two threads in `PTY.open` raced and one pair's slave took
+    // the other's device name.
+    let mut buf = [0 as libc::c_char; 1024];
+    // SAFETY: `buf` is a live, correctly-sized array for the call to fill,
+    // and `slave` is the fd `openpty` just made.
+    let name = if unsafe { libc::ttyname_r(slave, buf.as_mut_ptr(), buf.len()) } == 0 {
+        // SAFETY: a 0 return means `buf` holds a NUL-terminated device path.
+        unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
             .to_string_lossy()
-            .into_owned(),
+            .into_owned()
+    } else {
+        String::new()
     };
     crate::builtins::io::set_fd_cloexec(master);
     crate::builtins::io::set_fd_cloexec(slave);
@@ -185,7 +191,15 @@ ruby_module! {
     // (`WUNTRACED`, as CRuby polls). With `raise`, a finished child raises
     // `PTY::ChildExited` instead.
     def self."check" arity -1 (_recv, arg1, arg2?) {
+        // `NUM2PIDT` first: an out-of-range pid TRUNCATED to `pid_t`, and
+        // `PTY.check(2**32)` became `waitpid(0, ...)` -- "any child in my
+        // process group" -- which reaped a child the caller never named and
+        // stole its status from a pending `Process.wait`.
         let pid = convert::to_index(arg1)?;
+        let pid = libc::pid_t::try_from(pid).map_err(|_| {
+            crate::builtins::range_error!("integer {pid} too big to convert to 'int'")
+        })?;
+        let pid = i64::from(pid);
         let do_raise = !matches!(arg2, None | Some(RubyValue::Nil) | Some(RubyValue::Bool(false)));
         // A pid that is not this process's child is nil, never an error:
         // `pty.c` calls `rb_waitpid` and answers Qnil on -1, so a stale or
@@ -206,7 +220,15 @@ ruby_module! {
                 // exception carries the status in `@status`, which is what
                 // `PTY::ChildExited#status` reads -- raising by name alone
                 // left it nil.
-                let state = if libc::WIFSTOPPED(raw) { "stopped" } else { "exited" };
+                // `raise_from_check` words THREE states; a killed child read
+                // as "exited".
+                let state = if libc::WIFSTOPPED(raw) {
+                    "stopped"
+                } else if libc::WIFSIGNALED(raw) {
+                    "signaled"
+                } else {
+                    "exited"
+                };
                 let signal = raise_error("PTY::ChildExited", format!("pty - {state}: {reaped}"));
                 if let Signal::Raise(exc) = &signal {
                     // `ivar_set_dyn` writes the `@` itself.

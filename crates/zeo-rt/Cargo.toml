@@ -31,6 +31,7 @@ features = [
     "ext-socket",
     "ext-etc",
     "ext-fcntl",
+    "ext-io-console",
     "ext-pty",
     "ext-syslog",
     "ext-readline",
@@ -183,6 +184,7 @@ ext-all = [
     "ext-ffi",
     "ext-etc",
     "ext-fcntl",
+    "ext-io-console",
     "ext-pty",
     "ext-syslog",
     "ext-readline",
@@ -207,6 +209,7 @@ ext-coverage = []
 ext-tracepoint = []
 ext-etc = []
 ext-fcntl = []
+ext-io-console = []
 ext-pty = []
 ext-syslog = []
 ext-readline = ["dep:rustyline"]
