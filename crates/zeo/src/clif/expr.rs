@@ -1701,6 +1701,18 @@ fn plain_call(
     {
         return super::consts::symbol_value(fx, &origin);
     }
+    // `__callee__`'s half. The frame label now carries the name the body was
+    // BORN as, which is what a backtrace shows -- so the runtime row's frame
+    // read answers `__method__` and can no longer answer this. The emitter
+    // knows the called name: an alias is emitted as its own body, whose
+    // `method_name` IS the alias.
+    if receiver.is_none()
+        && args.is_empty()
+        && name == "__callee__"
+        && let Some(called) = fx.method_name.clone()
+    {
+        return super::consts::symbol_value(fx, &called);
+    }
     if let Some(op) = method_capture_intrinsic(fx, receiver, &name, &args, &[], None, None)? {
         return Ok(op);
     }

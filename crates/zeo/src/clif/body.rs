@@ -303,10 +303,14 @@ pub(super) fn define_method_body(
         }
         _ => def.owner_name.to_string(),
     };
+    // The frame names the method it was BORN as, not the alias it was
+    // reached by: CRuby labels a frame from `me->def->original_id`, so a
+    // backtrace through `alias_method :kaboom, :boom` says `C#boom`.
+    // `__callee__` is the other half and keeps the called name.
     let (file, label, line, end_line) = method_frame(
         analyzed,
         &label_owner,
-        def.name,
+        def.origin_name.unwrap_or(def.name),
         def.node,
         def.self_is_class,
     );
