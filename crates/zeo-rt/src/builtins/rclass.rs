@@ -120,6 +120,7 @@ ruby_class! {
         // it). A literal `def` inside the block is a documented fast-follow
         // (use `define_method`).
         if cid == zeo_abi::CLASS_CLASS {
+            crate::builtins::check_arity(args.len(), 0, Some(1))?;
             let superclass = args.first().cloned();
             let body = match &block {
                 Some(RubyValue::Proc(p)) => Some(p.clone()),
@@ -130,6 +131,9 @@ ruby_class! {
         // `Module.new { body }` -- an anonymous module (no superclass, no
         // constructor); the block populates it just like a class body.
         if cid == zeo_abi::MODULE_CLASS {
+            // A module has no superclass to take, so `Module.new` takes
+            // nothing at all -- the block is its whole body.
+            crate::builtins::check_arity(args.len(), 0, Some(0))?;
             let body = match &block {
                 Some(RubyValue::Proc(p)) => Some(p.clone()),
                 _ => None,
