@@ -80,6 +80,7 @@ pub(crate) mod rubyvm_ast;
 pub(crate) mod set;
 pub(crate) mod signal;
 pub(crate) mod sized_queue;
+pub(crate) mod sort;
 pub(crate) mod stat;
 pub(crate) mod string;
 pub(crate) mod symbol;

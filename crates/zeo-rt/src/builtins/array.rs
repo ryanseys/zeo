@@ -2231,7 +2231,7 @@ pub(crate) fn sort_items(
 ) -> Result<(), crate::Signal> {
     let mut failure: Option<crate::Signal> = None;
     if let Some(RubyValue::Proc(p)) = block {
-        items.sort_by(|a, b| {
+        super::sort::ruby_qsort(items, |a, b| {
             if failure.is_some() {
                 return std::cmp::Ordering::Equal;
             }
@@ -2257,15 +2257,12 @@ pub(crate) fn sort_items(
             }
         });
     } else {
-        items.sort_by(|a, b| {
+        super::sort::ruby_qsort(items, |a, b| {
             if failure.is_some() {
                 return std::cmp::Ordering::Equal;
             }
-            // Compare in array order (`a[i] <=> a[j]`, not the reverse
-            // `sort_by` hands us) so an incomparable pair's ArgumentError
-            // names the operands in CRuby's left-to-right order.
-            match crate::value::cmp_or_raise(b, a) {
-                Ok(c) => c.cmp(&0).reverse(),
+            match crate::value::cmp_or_raise(a, b) {
+                Ok(c) => c.cmp(&0),
                 Err(e) => {
                     failure = Some(e);
                     std::cmp::Ordering::Equal

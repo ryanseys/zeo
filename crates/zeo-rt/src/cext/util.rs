@@ -12,7 +12,6 @@
 //! headers ([`super::alloc`]), and crossing them corrupts the heap.
 
 use super::object::cstr;
-use std::cmp::Ordering;
 use std::ffi::{c_char, c_int, c_void};
 
 crate::cext_fn! {
@@ -68,9 +67,10 @@ crate::cext_fn! {
         scan_radix(s, len, base.max(2) as u32, consumed, overflow)
     }
 
-    /// `ruby_qsort(base, n, size, cmp, arg)`: `qsort_r`, whose argument
-    /// order differs between glibc and BSD -- which is why MRI ships its
-    /// own and why this sorts by hand rather than calling either.
+    /// `ruby_qsort(base, n, size, cmp, arg)`: the system `qsort_r`, which is
+    /// what MRI's own `ruby_qsort` reduces to on every platform zeo ships.
+    /// An extension that sorts through this row must see the C library's
+    /// order for a tie, the same one `Array#sort` sees.
     fn ruby_qsort(
         base: *mut c_void,
         n: usize,
@@ -81,31 +81,15 @@ crate::cext_fn! {
         if base.is_null() || size == 0 || n < 2 {
             return Ok(());
         }
-        // The elements are opaque bytes, so the sort is over a permutation
-        // and the bytes are moved once at the end. Sorting in place would
-        // need a byte-swap per comparison.
-        let mut order: Vec<usize> = (0..n).collect();
-        order.sort_by(|a, b| {
-            // SAFETY: the caller promised `n` elements of `size` bytes.
-            let (pa, pb) = unsafe { (base.byte_add(a * size), base.byte_add(b * size)) };
-            // SAFETY: the caller's own comparator, on its own elements.
-            match unsafe { cmp(pa.cast_const(), pb.cast_const(), arg) } {
-                v if v < 0 => Ordering::Less,
-                0 => Ordering::Equal,
-                _ => Ordering::Greater,
-            }
-        });
-        // SAFETY: `n * size` bytes the caller owns.
-        let src = unsafe { std::slice::from_raw_parts(base.cast::<u8>(), n * size) }.to_vec();
-        for (to, from) in order.iter().enumerate() {
-            // SAFETY: both offsets are inside the caller's own buffer.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    src.as_ptr().add(from * size),
-                    base.cast::<u8>().add(to * size),
-                    size,
-                );
-            }
+        let mut args = BsdQsortArgs { cmp, arg };
+        let d: *mut c_void = std::ptr::from_mut(&mut args).cast();
+        // SAFETY: the caller promised `n` elements of `size` bytes at `base`,
+        // and `args` outlives the call.
+        unsafe {
+            #[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
+            libc::qsort_r(base, n, size, d, Some(bsd_qsort_cmp));
+            #[cfg(not(any(target_vendor = "apple", target_os = "freebsd")))]
+            libc::qsort_r(base, n, size, Some(bsd_qsort_cmp), d);
         }
         Ok(())
     }
@@ -267,6 +251,42 @@ fn scan_double(text: &str) -> (f64, usize) {
     }
     let value = text[start..i].parse::<f64>().unwrap_or(0.0);
     (value, i)
+}
+
+/// MRI's `bsd_qsort_r_args`: the extension's comparator carries its own
+/// `arg`, so the one libc passes is this pair.
+struct BsdQsortArgs {
+    cmp: unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int,
+    arg: *mut c_void,
+}
+
+/// MRI's `cmp_bsd_qsort`, on the argument order this platform's `qsort_r`
+/// uses. `extern "C"` makes a panic abort rather than unwind through libc.
+#[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
+unsafe extern "C" fn bsd_qsort_cmp(
+    d: *mut c_void,
+    a: *const c_void,
+    b: *const c_void,
+) -> c_int {
+    // SAFETY: `ruby_qsort` handed libc a `*mut BsdQsortArgs` and two pointers
+    // into the caller's own buffer; libc hands all three back unchanged.
+    unsafe {
+        let args = &*d.cast::<BsdQsortArgs>();
+        (args.cmp)(a, b, args.arg)
+    }
+}
+
+#[cfg(not(any(target_vendor = "apple", target_os = "freebsd")))]
+unsafe extern "C" fn bsd_qsort_cmp(
+    a: *const c_void,
+    b: *const c_void,
+    d: *mut c_void,
+) -> c_int {
+    // SAFETY: as above.
+    unsafe {
+        let args = &*d.cast::<BsdQsortArgs>();
+        (args.cmp)(a, b, args.arg)
+    }
 }
 
 #[cfg(test)]

@@ -118,7 +118,6 @@ these goldens machine-recorded like every other one.
 
 | file | why zeo answers differently |
 |---|---|
-| `sort_with_comparator`, `narrowed_element_local_pin` | ruby's `Array#sort` is unstable (`ruby_qsort`) and zeo's is stable, so equal comparator keys come out in a different order. Matching means porting `ruby_qsort` into a hot path to reproduce an order ruby does not promise. |
 | `ractor_move_traversal_accidents`, `ractor_move_io_and_range` | CRuby guts objects as it walks, so a refused move has already destroyed the source and a duplicated reference husks; zeo validates the whole graph first. Its IO handles are `Arc`-shared and its Range is an inline value, so neither can husk. |
 | `a_proc_isolation_message_lists_every_outer_variable` | the variable list's order is the enclosing iseq's local table, and its membership is what CRuby's peephole left behind. |
 | `kernel_scope_intrinsics_dynamic_send` | a method row cannot see its caller's block or locals, and widening `Frame` to carry them taxes every call. |

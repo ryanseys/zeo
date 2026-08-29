@@ -1615,29 +1615,34 @@ ruby_module! {
         reject_args(args)?;
         let blk = block_or_enum!(recv, args, block);
         let items = collect_elements(Src::sending(recv))?;
-        // Decorate-sort-undecorate, keys ordered by rb_cmp.
+        // Decorate-sort-undecorate, keys ordered by rb_cmp. `sort_by_i`
+        // watches the keys go by and picks the sort from what it saw, so the
+        // bits are collected here, one key at a time, the same way.
         let mut decorated: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
+        let mut uniform = 0b111u8;
         for e in items {
             let key = blk.call(e.raw())?;
+            uniform &= crate::builtins::sort::uniform_bits(&key);
             decorated.push((key, e.packed));
         }
-        // The OPERANDS are load-bearing, and so is their ORDER. Rust's
-        // insertion sort calls the comparator as `(v[i], v[i-1])`, so the
-        // pair is recorded as `(b, a)` -- naming them the other way round
-        // reports `comparison of Float with 1.0 failed` where ruby says
-        // `... with NaN failed`. Plain `sort` already went through
-        // `cmp_error`; these three said "comparison failed" with no
-        // operands at all.
-        let mut failed: Option<(RubyValue, RubyValue)> = None;
-        decorated.sort_by(|a, b| match a.0.rb_cmp(&b.0) {
-            Some(c) => c.cmp(&0),
-            None => {
-                failed.get_or_insert_with(|| (b.0.clone(), a.0.clone()));
-                std::cmp::Ordering::Equal
+        if uniform != 0 {
+            crate::builtins::sort::uniform_intro_sort(&mut decorated)?;
+        } else {
+            // The OPERANDS are load-bearing: CRuby's `sort_by_cmp` names the
+            // pair it was handed, and reaching it through the same
+            // `ruby_qsort` call order is what makes `comparison of Float with
+            // NaN failed` name the same two values ruby does.
+            let mut failed: Option<(RubyValue, RubyValue)> = None;
+            crate::builtins::sort::ruby_qsort(&mut decorated, |a, b| match a.0.rb_cmp(&b.0) {
+                Some(c) => c.cmp(&0),
+                None => {
+                    failed.get_or_insert_with(|| (a.0.clone(), b.0.clone()));
+                    std::cmp::Ordering::Equal
+                }
+            });
+            if let Some((x, y)) = failed {
+                return Err(crate::value::cmp_error(&x, &y));
             }
-        });
-        if let Some((x, y)) = failed {
-            return Err(crate::value::cmp_error(&x, &y));
         }
         Ok(RubyValue::Array(array_new(
             decorated.into_iter().map(|(_, e)| e).collect(),
