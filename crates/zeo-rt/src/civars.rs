@@ -100,6 +100,19 @@ impl CivarSlot {
         *self.value.lock() = Some(value);
     }
 
+    /// Clear the slot, answering what it held. The write stamp goes with the
+    /// value, so `class_ivar_names` stops reporting a removed name -- an
+    /// emptied slot is indistinguishable from one that was never assigned,
+    /// which is what ruby reports after `remove_instance_variable`.
+    fn take(&self) -> Option<RubyValue> {
+        let held = self.value.lock().take();
+        if held.is_some() {
+            self.first_write
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+        }
+        held
+    }
+
     /// The write stamp, or `None` for a slot interned by a READ and never
     /// assigned -- ruby reports only assigned names.
     fn write_seq(&self) -> Option<u64> {
@@ -197,6 +210,28 @@ pub fn class_ivar_set(class_id: u32, name: &str, value: RubyValue) -> Result<(),
     }
     intern(class_id, name).put(value);
     Ok(())
+}
+
+/// `remove_instance_variable`'s half: clear the slot and answer what it held,
+/// or `None` when it held nothing.
+///
+/// The slot itself stays interned (the intern table is append-only and an
+/// emitted site may still name it), but its stamp is cleared too, so
+/// [`class_ivar_names`] stops reporting it -- the two have to agree, and they
+/// did not: `instance_variables` listed `@sources` while
+/// `remove_instance_variable(:@sources)` said it was not defined, which is
+/// the pair `Bundler::Plugin.reset!` runs one after the other.
+pub fn class_ivar_remove(class_id: u32, name: &str) -> Result<Option<RubyValue>, crate::Signal> {
+    if crate::dispatch::class_frozen(crate::ClassId(class_id)) {
+        return Err(crate::dispatch::frozen_class_error(crate::ClassId(
+            class_id,
+        )));
+    }
+    Ok(CIVARS
+        .lock()
+        .get(&class_id)
+        .and_then(|m| m.get(name))
+        .and_then(|slot| slot.take()))
 }
 
 /// The class-level ivar names with a value, in FIRST-ASSIGNMENT order --

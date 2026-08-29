@@ -110,6 +110,12 @@ pub fn remove_instance_variable(
                 None => Err(name_error!("instance variable @{name} not defined")),
             }
         }
+        // A class or module keeps its ivars in `civars`, not in `value_ivars`,
+        // so this arm has to ask there. Without it `instance_variables` listed
+        // a name that `remove_instance_variable` then called undefined --
+        // `Bundler::Plugin.reset!` runs exactly that pair, one line apart.
+        RubyValue::Class(cid) => crate::civars::class_ivar_remove(cid.0, &name)?
+            .ok_or_else(|| name_error!("instance variable @{name} not defined")),
         _ => {
             crate::builtins::check_frozen(recv)?;
             crate::value_ivars::remove(recv, &name)
