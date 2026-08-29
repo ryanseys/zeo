@@ -19,6 +19,23 @@ use zeo_macros::ruby_class;
 /// `Object`/`BasicObject` land here rather than on a registered allocator
 /// because their instances have no payload to allocate -- CRuby's is a blank
 /// object, and so is this.
+/// Whether [`builtin_allocate`] has a blank instance for this class, asked
+/// without building one. A class with no blank form keeps its fused `new`
+/// (`tests/gaps/allocate_on_a_value_class`): diverting to `Class#new` there
+/// would trade a working construction for `allocator undefined`.
+pub(crate) fn can_builtin_allocate(cid: crate::ClassId) -> bool {
+    crate::builtins::allocator_of(cid).is_some()
+        || matches!(
+            cid,
+            zeo_abi::STRING_CLASS
+                | zeo_abi::ARRAY_CLASS
+                | zeo_abi::HASH_CLASS
+                | zeo_abi::RANGE_CLASS
+                | zeo_abi::OBJECT_CLASS
+                | zeo_abi::BASIC_OBJECT_CLASS
+        )
+}
+
 pub(crate) fn builtin_allocate(cid: crate::ClassId) -> Option<RubyValue> {
     // A class that declares `allocate <fn>;` in its `ruby_class!` header
     // answers through its own table. Asked FIRST so a class can state its own
@@ -71,19 +88,29 @@ fn user_initialize_construct(
     if !crate::dispatch::reopened_initialize_in_chain(cid, init) {
         return Ok(None);
     }
-    let recv = match builtin_allocate(cid) {
-        Some(RubyValue::Object(o)) => o,
+    let Some(recv) = builtin_allocate(cid) else {
         // A reopened `initialize` on a class with no way to make a blank
         // instance. Refuse LOUDLY: answering the constructor's value would be
         // the very bug this fixes, silently.
-        _ => {
-            let n =
-                crate::dispatch::class_name(cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0));
-            return Err(type_error!("allocator undefined for {n}"));
-        }
+        let n = crate::dispatch::class_name(cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0));
+        return Err(type_error!("allocator undefined for {n}"));
     };
-    crate::dispatch::run_initialize(cid, &recv, args, block.clone())?;
-    Ok(Some(RubyValue::Object(recv)))
+    match &recv {
+        RubyValue::Object(o) => crate::dispatch::run_initialize(cid, o, args, block.clone())?,
+        // A VALUE class -- String, Hash, Time -- allocates a blank value
+        // rather than a struct, so its `initialize` is sent like any other
+        // method. The user's body replaces the native construction whole,
+        // which is why `String.new("x")` answers `""` once one exists.
+        _ => {
+            crate::dispatch::send_value(
+                &recv,
+                crate::symbol::wk::initialize(),
+                args,
+                block.clone(),
+            )?;
+        }
+    }
+    Ok(Some(recv))
 }
 
 ruby_class! {

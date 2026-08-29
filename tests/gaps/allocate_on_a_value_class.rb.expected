@@ -1,0 +1,10 @@
+Regexp.allocate        Regexp
+Regexp source          TypeError: uninitialized Regexp
+Mutex.allocate         Thread::Mutex
+Queue.allocate         Thread::Queue
+Proc.allocate          TypeError: allocator undefined for Proc
+MatchData.allocate     NoMethodError: undefined method 'allocate' for class MatchData
+String.allocate        ""
+Array.allocate         []
+Hash.allocate          {}
+Time.allocate          Time

@@ -486,7 +486,9 @@ fn send_value_in_reason_inner(
         // answer, which is the whole difference from an `undef`.
         let class_removed_here = crate::runtime_meta::gates_live(g)
             && crate::runtime_meta::overlay_class_removed(*cid, name);
+        let fused_new = crate::dispatch::builtin_new_gave_way(*cid, name);
         if !class_removed_here
+            && !fused_new
             && let Some((f, label)) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name))
         {
             return with_c_frame(label, || f.call(recv, args, block));
@@ -581,7 +583,8 @@ fn send_value_in_reason_inner(
                 return with_c_frame_ids(*cid, name, '.', || f.call(recv, args, block));
             }
         }
-        if let Some(lookup) = crate::builtins::class_method_table(*cid)
+        if !fused_new
+            && let Some(lookup) = crate::builtins::class_method_table(*cid)
             && let Some(f) = lookup(name.name_str())
         {
             return with_c_frame_ids(*cid, name, '.', || f(recv, args, block));

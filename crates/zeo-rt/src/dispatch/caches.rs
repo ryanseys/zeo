@@ -355,9 +355,16 @@ pub fn send_class_cached(
             if let Some(reason) = explicit_call_barrier(recv, name, caller_class) {
                 return missing_or_raise(recv, name, args, block, reason);
             }
-            let target = REGISTRY
-                .get()
-                .and_then(|r| r.flat_class_hit(ClassId(cid), name));
+            // A builtin `new` whose class the program reopened with its own
+            // `initialize` belongs to `Class#new` -- see
+            // `builtin_new_gave_way`. Decided BEFORE the site fills, so the
+            // cache never remembers the fused row.
+            let target = match crate::dispatch::builtin_new_gave_way(ClassId(cid), name) {
+                true => None,
+                false => REGISTRY
+                    .get()
+                    .and_then(|r| r.flat_class_hit(ClassId(cid), name)),
+            };
             let _ = site.hit.set((caller_class, target));
             return match target {
                 Some((f, label)) => {

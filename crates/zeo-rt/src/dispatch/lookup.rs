@@ -131,6 +131,25 @@ pub(crate) fn value_method(id: ClassId, box_id: u32, name: Symbol) -> Option<Val
 /// Both channels are read, because a reopen can arrive either way -- a
 /// compile-time `class Pathname; def initialize` registers a value row, and a
 /// runtime `define_method` lands in the overlay.
+/// Whether a builtin's own `new` row must GIVE WAY to `Class#new`.
+///
+/// The row FUSES allocate and initialize, so it cannot run a body it does not
+/// know about. Once a program reopens the class with its own `initialize`,
+/// ruby's `new` is allocate plus THAT and the native construction is gone --
+/// which is why `String.new("x")` answers `""` from then on. `Class#new`
+/// unfuses; this is what stops the fused row from answering ahead of it.
+///
+/// A `def self.new` the program wrote at run time is a different thing and
+/// still wins.
+pub(crate) fn builtin_new_gave_way(id: ClassId, name: Symbol) -> bool {
+    name.name_str() == "new"
+        && crate::builtins::class_method_table(id).is_some_and(|t| t("new").is_some())
+        && crate::builtins::rclass::can_builtin_allocate(id)
+        && !(crate::runtime_meta::is_live()
+            && crate::runtime_meta::overlay_class_method(id, name).is_some())
+        && reopened_initialize_in_chain(id, crate::symbol::wk::initialize())
+}
+
 pub(crate) fn reopened_initialize_in_chain(id: ClassId, name: Symbol) -> bool {
     let live = crate::runtime_meta::is_live();
     for &anc in ancestors_of_value(id) {
