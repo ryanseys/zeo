@@ -51,17 +51,53 @@ A heap object is a `*const Handle`: 8-aligned and non-zero, so
 `RB_SPECIAL_CONST_P` is also right unpatched, and canonical per object, so
 `a == b` on two `VALUE`s is object identity as it is in MRI.
 
-What a handle does **not** have is a `struct RString` behind it. So every
-header that reads object layout -- `RSTRING_PTR`, `RARRAY_AREF`, `DATA_PTR`,
-`TypedData_Get_Struct` -- is patched to call the runtime instead. That is the
-TruffleRuby model. TruffleRuby patches 35 of 194 headers; zeo needs 9, because
-the `RBasic` prefix pays for `rbasic.h`, `fl_type.h` and `value_type.h`, and
-because `rstruct.h`, `rhash.h` and `rclass.h` were already all function calls
-upstream.
+What a handle does **not** have is a `struct RString` behind it. One rule
+answers that, and it covers all eight payload structs:
+
+> A payload struct carries **upstream's layout**. `X(obj)` is a **call**, not
+> a cast, and answers a **view** the runtime owns. The view **aliases** real
+> storage wherever zeo owns that storage as C-shaped memory, and is
+> **refilled** from the object on every reach wherever it does not. A field
+> zeo has no answer for is zero, and the accessor named for it raises.
+
+`ruby/internal/zeo.h` declares the eight entries and states the rule;
+`crates/zeo-rt/src/cext/view.rs` is the runtime half.
+
+**Aliased.** `RData` and `RTypedData` share one cell, which lives inside the
+`CData` itself -- MRI puts `data` at the same offset in both structs and
+static-asserts as much. So `RTYPEDDATA(o)->data = p` writes the object's one
+slot and cannot go stale, which is what date's `d_lite_marshal_load` needs
+after a `ruby_xrealloc`.
+
+**Refilled.** `RString`, `RArray`, `RObject`, `RMatch`, `RRegexp` and `RFile`
+are minted beside the object and refilled on every reach, then dropped at the
+scope pop. A pointer held across a call back into Ruby therefore reads what
+the object looked like at the reach -- MRI gives the same warning about its
+own `RSTRING_PTR`. `rb_io_t` is the exception and lives as long as the IO,
+because in MRI it IS the IO's own struct and an extension may hold one.
+
+Because the layouts stay upstream's, most accessors are unpatched code:
+`RSTRING_PTR/LEN/END`, `RARRAY_LEN/AREF/CONST_PTR/PTR`, `ROBJECT_FIELDS`,
+`RREGEXP_SRC`, `RMATCH_REGS`, `DATA_PTR`, `RTYPEDDATA_DATA/_TYPE/_GET_DATA/
+_EMBEDDED_P` and MRI's own `offsetof` static assert. Three macros change
+beyond the cast: `RARRAY_ASET` calls in (the pointer `RARRAY_PTR_USE` hands
+out is a projection, and a store through it would stay there), `RMATCH_EXT`
+walks off the view rather than off the `VALUE`, and `RREGEXP_PTR` raises.
+
+Three shape flags make that work: zeo sets `RSTRING_NOEMBED` and
+`ROBJECT_HEAP` on an object and never sets `RARRAY_EMBED_FLAG`, so upstream's
+own arms take the `as.heap` path a view fills.
 
 The patches are the delta the project maintains by hand. Keep each one to one
 subject, and keep the reason in the patch's own header rather than in a
-comment inside a vendored file.
+comment inside a vendored file. Keeping the struct bodies is what keeps the
+delta small: it is eight macro definitions and eight include lines, so an
+upstream bump has almost no context to conflict with.
+
+**The Rust mirrors are generated, not retyped.** `build.rs` runs bindgen over
+`cext/probe/mirror.h` into `$OUT_DIR/cext_layout.rs`, with `offset_of`
+assertions, so a header bump that moves a field fails the build by field
+name. A hand-written `#[repr(C)]` copy would be a second owner of one fact.
 
 ## What the tree is measured against
 
@@ -71,21 +107,23 @@ It also asserts the eight payload structs stayed incomplete.
 
 Beyond the probe, the 23 C-extension gems in the oracle's gemdir -- 165k lines
 of C -- were compiled with `-fsyntax-only` against this tree and against
-pristine MRI 4.0.6 headers, and the two results diffed. Four files differ, in
-eight places, and every one is a direct payload read that upstream's headers
-would have answered with a byte zeo does not own.
-`-fsyntax-only` compiles every branch, though, so the table counted three
-sites in a shim a working `have_func` compiles out; those are struck through
-below, and strscan builds:
+pristine MRI 4.0.6 headers, and the two results diffed. **The direct payload
+reads all compile now**, and each is a line in `probe/layout.c`:
 
-| Site | Reads |
-|---|---|
-| `date/date_core.c` | `RTYPEDDATA(v)->data` |
-| `nio4r/monitor.c`, `nio4r/bytebuffer.c` (×3) | `RFILE(v)->fptr` |
-| ~~`strscan/strscan.c` (×3)~~ | RETIRED: `RREGEXP(re)->usecnt`, inside a `#ifndef HAVE_RB_REG_ONIG_MATCH` shim. mkmf really does skip it now -- every `have_func` used to answer no, so the shim was always compiled; see `shims/mkmf_zeo.rb`. strscan builds. |
+| Site | Reads | State |
+|---|---|---|
+| `date/date_core.c:7615` | `RTYPEDDATA(self)->data = dat` | builds; the aliased cell takes the store |
+| `io-console/console.c` | `RFILE(io)->fptr` | builds; the `rb_io` view |
+| `strscan/strscan.c` (×3) | `RREGEXP(re)->usecnt` | builds -- and mkmf compiles the shim out now anyway (`shims/mkmf_zeo.rb`) |
 
-Each is a compile error naming its line. That is the design: loud at the call,
-never a wrong answer.
+`RREGEXP(re)->ptr` is the one field left out: `RREGEXP_PTR` raises rather
+than hand out a compiled pattern zeo's own engine may recompile.
+
+Measured end to end: `zeo gem install date` succeeds, native build included.
+What that does NOT yet prove is the `.bundle` running, because `require
+"date"` resolves to zeo's own Rust `date` extension by design, and the loader
+reaches a gem's C extension only through a store gem's `extensions` entry --
+not by an explicit path or a bare `-I`. Task #79 is the instrument for that.
 
 ## Known divergences
 
@@ -114,8 +152,8 @@ ones zeo means to keep answering differently.
 | `dup` on a `T_DATA` object gives a copy whose `DATA_PTR` is NULL | CRuby calls the class's allocator and copies into a fresh zeroed struct. zeo has no allocator table until `rb_define_alloc_func`. A shallow copy is not an option: two objects sharing one pointer means `dfree` runs twice on it. |
 | A cycle closed through a C struct is never reclaimed | A `dmark` enumerates edges and cannot clear one, so `CData::gc_visit` reports on the walk and nothing on the sweep. The asymmetry rule makes this the safe direction: an omitted edge leaks, a reported one that cannot be released can clear a live object. A cycle that merely passes THROUGH a `T_DATA` object is still reclaimed, at its Ruby links. |
 | `RB_FLONUM_P` is true for the same doubles as MRI, but an `Integer` outside the Fixnum range is a fresh handle each time | Which is what CRuby does with a Bignum too, so two equal ones are correctly not `equal?`. |
-| `ROBJECT_FIELDS` raises `NotImplementedError` | There is no ivar array to hand out. Nothing in the 23-gem census calls it. |
-| `RMATCH_EXT`, `RREGEXP(re)->usecnt`, `RFILE(v)->fptr` and `RTYPEDDATA(v)->data` are compile errors | The payload structs are opaque. Each is a direct layout read; see the table above. |
+| A store through a refilled view does not reach the object | `RSTRING(s)->len = 3`, `ROBJECT_FIELDS(o)[0] = v` and `fp->fd = n` all change the view alone. The one exception is the BYTES `RSTRING_PTR` answers: those are the String's own, and a write through them is written back at the scope pop. Nothing in the 23-gem census stores through any of the others. |
+| `RREGEXP_PTR` raises `NotImplementedError` | The compiled pattern belongs to zeo's regexp engine, which may recompile it, so handing the pointer out would let an extension call onig against a buffer zeo owns. `rb_reg_prepare_re` -- MRI's supported way to get one -- refuses for the same reason. `RREGEXP(re)->ptr` is zero in the view. |
 | `rb_scan_args` does not fill the `&block` slot | The block is not in `argv`, and zeo's C method frame carries it separately. The slot is set to `Qnil`; `rb_block_given_p` and `rb_yield` are the working spellings. |
 | `ST_DELETE` from an `rb_hash_foreach` callback is not honoured | Deleting under an iteration is a shape zeo's hash does not support, and answering "deleted" without deleting would be worse. `ST_CONTINUE` and `ST_STOP` both work, and the walk runs over a snapshot so the callback may touch the hash. |
 | `rb_str_resize` pads with NUL and truncates, and does not preserve capacity | zeo's strings have no separate capacity to preserve. |
