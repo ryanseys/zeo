@@ -83,6 +83,10 @@ ruby_class! {
                 .map_err(|e| regexp_error!("{e}"));
         }
         let s = &crate::builtins::convert::to_rstr(arg1)?;
+        // The SOURCE STRING's encoding decides how wide a character is, which
+        // is what `\M-a` (one byte past 0x7f) turns on: whole in binary,
+        // half a character in UTF-8.
+        let binary = s.lock().encoding() == crate::encoding::ASCII_8BIT;
         let source = s.lock().to_utf8_lossy().into_owned();
         let (ignore_case, extended, multiline) = match arg2 {
             None | Some(RubyValue::Nil) | Some(RubyValue::Bool(false)) => (false, false, false),
@@ -111,7 +115,11 @@ ruby_class! {
             }
             Some(other) => (other.truthy(), false, false),
         };
-        crate::regexp_new(&source, ignore_case, extended, multiline)
+        let enc = match binary {
+            true => zeo_abi::RegexpEncoding::None,
+            false => zeo_abi::RegexpEncoding::Source,
+        };
+        crate::regexp::regexp_new_enc(&source, ignore_case, extended, multiline, enc)
             .map(RubyValue::Regexp)
             .map_err(|e| regexp_error!("{e}"))
     }

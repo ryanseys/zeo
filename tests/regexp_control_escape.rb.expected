@@ -1,8 +1,22 @@
-lit-cA | nil
-new-cA | nil
-new-C-A | nil
-new-cA-no | nil
-new-c-esc | 0
-short-C | RegexpError
-short-c | RegexpError
-class-cA | nil
+M-a                    RegexpError: too short escaped multibyte character: /\M-a/
+M-C-a                  RegexpError: invalid multibyte escape: /\M-\C-a/
+in extended mode       RegexpError: too short escaped multibyte character: /\M-a/x
+in a class             RegexpError: too short escaped multibyte character: /[\M-a]/
+C-a matches            0
+cA matches             0
+C-a source             [92, 67, 45, 97]
+cA source              [92, 99, 65]
+C-a in a class         0
+M bare                 RegexpError: too short meta escape: /\M/
+M- bare                RegexpError: too short meta escape: /\M-/
+c bare                 RegexpError: too short control escape: /\c/
+C bare                 RegexpError: too short control escape: /\C/
+Ca, no dash            RegexpError: too short control escape: /\Ca/
+duplicate meta         RegexpError: duplicate meta escape: /\M-\M-a/
+duplicate control      RegexpError: duplicate control escape: /\C-\C-a/
+C- of an octal         0
+C- of a hex            0
+C- of a tab            0
+bad hex                RegexpError: invalid hex escape: /\C-\xZZ/
+unknown inner          RegexpError: unexpected escape sequence: /\C-\q/
+escaped backslash M    0

@@ -530,6 +530,200 @@ fn validate_posix_classes(source: &str) -> Result<(), String> {
 /// Rewrite a regex-engine compile error into CRuby's own `RegexpError` message
 /// shape (`<reason>: /<source>/`) for the common cases; otherwise keep the
 /// engine's text. CRuby names the offending construct and echoes the pattern.
+/// `read_escaped_byte`: one `\M-X` / `\C-X` / `\cX` run, as the BYTE it
+/// stands for. `pos` is left just past what was consumed.
+///
+/// The prefixes nest (`\M-\C-a`), each may be written at most once, and the
+/// inner escape may be any of the ordinary byte escapes -- so this is one
+/// loop with two sticky flags rather than three separate readers.
+fn read_escaped_byte(b: &[u8], pos: &mut usize) -> Result<u8, &'static str> {
+    if b.get(*pos) != Some(&b'\\') {
+        return Err("too short escaped multibyte character");
+    }
+    *pos += 1;
+    let (mut meta, mut ctrl) = (false, false);
+    let code: i32 = loop {
+        let Some(&c) = b.get(*pos) else {
+            return Err("too short escape sequence");
+        };
+        *pos += 1;
+        match c {
+            b'\\' => break i32::from(b'\\'),
+            b'n' => break 0x0a,
+            b't' => break 0x09,
+            b'r' => break 0x0d,
+            b'f' => break 0x0c,
+            b'v' => break 0x0b,
+            b'a' => break 0x07,
+            b'e' => break 0x1b,
+            b'0'..=b'7' => {
+                *pos -= 1;
+                let mut v = 0i32;
+                let mut n = 0;
+                while n < 3 && matches!(b.get(*pos), Some(&d) if d.is_ascii_digit() && d < b'8') {
+                    v = v * 8 + i32::from(b[*pos] - b'0');
+                    *pos += 1;
+                    n += 1;
+                }
+                break v;
+            }
+            b'x' => {
+                let mut v = 0i32;
+                let mut n = 0;
+                while n < 2 && matches!(b.get(*pos), Some(d) if d.is_ascii_hexdigit()) {
+                    let d = (b[*pos] as char).to_digit(16).expect("hex digit");
+                    v = v * 16 + d as i32;
+                    *pos += 1;
+                    n += 1;
+                }
+                if n < 1 {
+                    return Err("invalid hex escape");
+                }
+                break v;
+            }
+            b'M' => {
+                if meta {
+                    return Err("duplicate meta escape");
+                }
+                meta = true;
+                if b.get(*pos) == Some(&b'-')
+                    && let Some(&next) = b.get(*pos + 1)
+                    && next & 0x80 == 0
+                {
+                    *pos += 1;
+                    if next == b'\\' {
+                        *pos += 1;
+                        continue;
+                    }
+                    *pos += 1;
+                    break i32::from(next);
+                }
+                return Err("too short meta escape");
+            }
+            b'C' | b'c' => {
+                if c == b'C' {
+                    if b.get(*pos) != Some(&b'-') {
+                        return Err("too short control escape");
+                    }
+                    *pos += 1;
+                }
+                if ctrl {
+                    return Err("duplicate control escape");
+                }
+                ctrl = true;
+                if let Some(&next) = b.get(*pos)
+                    && next & 0x80 == 0
+                {
+                    if next == b'\\' {
+                        *pos += 1;
+                        continue;
+                    }
+                    *pos += 1;
+                    break i32::from(next);
+                }
+                return Err("too short control escape");
+            }
+            _ => return Err("unexpected escape sequence"),
+        }
+    };
+    if !(0..=0xff).contains(&code) {
+        return Err("invalid escape code");
+    }
+    let mut code = code as u8;
+    if ctrl {
+        code &= 0x1f;
+    }
+    if meta {
+        code |= 0x80;
+    }
+    Ok(code)
+}
+
+/// `unescape_escaped_nonascii`: the escape run at `pos`, decoded and spliced
+/// into `out` as the character it names.
+///
+/// A byte past 0x7f cannot stand alone in a multi-byte encoding, so CRuby
+/// keeps reading escapes until the bytes form a whole character -- which is
+/// why `\M-a` (one byte, 0xE1) is "too short" in UTF-8 and fine in binary.
+/// A byte the encoding can never start is "invalid" rather than "too short".
+fn splice_escaped_char(
+    b: &[u8],
+    pos: &mut usize,
+    binary: bool,
+    out: &mut Vec<u8>,
+) -> Result<(), &'static str> {
+    let mut bytes = vec![read_escaped_byte(b, pos)?];
+    if !binary {
+        while !bytes.is_empty() && bytes.len() < 4 {
+            match std::str::from_utf8(&bytes) {
+                Ok(_) => break,
+                Err(e) if e.error_len().is_some() => return Err("invalid multibyte escape"),
+                // Incomplete: the next escape has to supply the rest.
+                Err(_) => bytes.push(read_escaped_byte(b, pos)?),
+            }
+        }
+        if std::str::from_utf8(&bytes).is_err() {
+            return Err("invalid multibyte escape");
+        }
+    }
+    // A high byte (or a whole multi-byte character) goes in AS BYTES; an
+    // ASCII one is rewritten `\xNN`, so the engine reads a literal rather
+    // than a metacharacter.
+    match bytes.len() > 1 || bytes[0] & 0x80 != 0 {
+        true => out.extend_from_slice(&bytes),
+        false => out.extend_from_slice(format!("\\x{:02X}", bytes[0]).as_bytes()),
+    }
+    Ok(())
+}
+
+/// CRuby's `unescape_nonascii`, for the three escapes zeo used to hand
+/// straight to the engine. Onig has its own reading of `\M-`/`\C-`/`\c` and
+/// it is not ruby's: ruby DECODES them here, before the engine ever sees the
+/// pattern, and refuses a byte its encoding cannot hold.
+fn preprocess_control_escapes(
+    source: &str,
+    binary: bool,
+) -> Result<std::borrow::Cow<'_, str>, &'static str> {
+    if !source.contains('\\') {
+        return Ok(std::borrow::Cow::Borrowed(source));
+    }
+    let b = source.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    let mut touched = false;
+    while i < b.len() {
+        if b[i] != b'\\' || i + 1 >= b.len() {
+            out.push(b[i]);
+            i += 1;
+            continue;
+        }
+        match b[i + 1] {
+            b'M' | b'C' | b'c' => {
+                touched = true;
+                splice_escaped_char(b, &mut i, binary, &mut out)?;
+            }
+            // Any other escape passes through WHOLE, so a `\\M` is a literal
+            // backslash followed by an M rather than a meta escape.
+            other => {
+                out.push(b'\\');
+                out.push(other);
+                i += 2;
+            }
+        }
+    }
+    if !touched {
+        return Ok(std::borrow::Cow::Borrowed(source));
+    }
+    match String::from_utf8(out) {
+        Ok(s) => Ok(std::borrow::Cow::Owned(s)),
+        // Binary bytes the pattern now carries; the engine takes them as
+        // bytes, and a lossy rendering is the only way to hand them on.
+        Err(e) => Ok(std::borrow::Cow::Owned(
+            String::from_utf8_lossy(e.as_bytes()).into_owned(),
+        )),
+    }
+}
+
 fn cruby_regex_error(
     source: &str,
     raw: &str,
@@ -820,7 +1014,14 @@ pub fn regexp_new_enc(
     // keep the text as written.
     let preprocessed = preprocess_unicode(source).map_err(|e| format!("{e}: /{source}/"))?;
     let written = source;
-    let source = preprocessed.as_ref();
+    // `\M-`/`\C-`/`\c` are ruby's, not the engine's -- decoded here, with the
+    // pattern's own encoding deciding whether the byte they name is a whole
+    // character. A `/n` regexp holds any single byte; a UTF-8 one does not.
+    let binary = matches!(encoding, zeo_abi::RegexpEncoding::None);
+    let escaped = preprocess_control_escapes(preprocessed.as_ref(), binary).map_err(|e| {
+        cruby_regex_error(written, e, ignore_case, extended, multiline)
+    })?;
+    let source = escaped.as_ref();
     // ONIGURUMA DECIDES. It is ruby's own engine, so what it refuses ruby
     // refuses and what it accepts ruby accepts -- no Rust engine may overrule
     // it in either direction. Every pattern compiles here first, and the two
