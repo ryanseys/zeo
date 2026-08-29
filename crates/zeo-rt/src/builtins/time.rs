@@ -1706,7 +1706,9 @@ ruby_class! {
     // microseconds. With no offset given it is local time, like `Time.local`.
     // TODO(plan P-B): the `in:` keyword form isn't handled.
     // The `in:` keyword offset takes the place of the 7th positional argument.
-    def self."new" cfunc allocs (recv, year?, mon?, mday?, hour?, min?, sec?, zone?, **opts) {
+    // Ruby reaches this through `Class#new`, which is what `Time.method(:new)`
+    // reports owning -- `Time` declares only `initialize`.
+    def self."new" inherits cfunc allocs (recv, year?, mon?, mday?, hour?, min?, sec?, zone?, **opts) {
         // `Time.new("2021-12-25 10:00:00 +09:00")` parses a time string.
         if let Some(RubyValue::Str(s)) = year {
             return parse_time_string(&s.lock().to_utf8_lossy());

@@ -188,6 +188,18 @@ pub(crate) fn marshal_long_into(mut x: i64, out: &mut Vec<u8>) {
     out.extend_from_slice(&buf[..=len]);
 }
 
+/// The ivars a value carries in its own right, as `I`-wrapper entries. Ruby
+/// writes these for any container that has one, so a `[1]` with an `@meta`
+/// comes back with it.
+fn own_ivars(v: &RubyValue) -> Vec<Iv> {
+    crate::value::value_ivars::names(v)
+        .into_iter()
+        .filter_map(|n| {
+            crate::value::value_ivars::get(v, &n).map(|iv| Iv::Named(format!("@{n}"), iv))
+        })
+        .collect()
+}
+
 /// The `I`-wrapper ivar for a string/regexp of encoding `enc`, or `None` for
 /// ASCII-8BIT (which CRuby writes bare, with no wrapper).
 fn encoding_ivar(enc: EncodingId) -> Option<Iv> {
@@ -270,11 +282,7 @@ impl Writer {
                 // encoding lost them on every round trip -- and fixing the
                 // load side alone would not have helped, because they were
                 // never written.
-                for n in crate::value::value_ivars::names(v) {
-                    if let Some(iv) = crate::value::value_ivars::get(v, &n) {
-                        ivars.push(Iv::Named(format!("@{n}"), iv));
-                    }
-                }
+                ivars.extend(own_ivars(v));
                 if !ivars.is_empty() {
                     self.out.push(b'I');
                 }
@@ -310,6 +318,12 @@ impl Writer {
                 if self.check_link(ptr_of(v)) {
                     return Ok(());
                 }
+                // An Array's own ivars travel, in the `I` wrapper a String's
+                // do -- ruby writes them for any container that carries one.
+                let ivars = own_ivars(v);
+                if !ivars.is_empty() {
+                    self.out.push(b'I');
+                }
                 self.register_link(ptr_of(v));
                 self.out.push(b'[');
                 let len = array_len(a);
@@ -318,6 +332,7 @@ impl Writer {
                     let e = array_get(a, i);
                     self.write(&e)?;
                 }
+                self.write_ivars(&ivars)?;
             }
             RubyValue::Hash(h) => {
                 if self.check_link(ptr_of(v)) {
@@ -337,6 +352,10 @@ impl Writer {
                 if has_proc {
                     return Err(type_error!("can't dump hash with default proc"));
                 }
+                let ivars = own_ivars(v);
+                if !ivars.is_empty() {
+                    self.out.push(b'I');
+                }
                 let defaulted = !default.is_nil();
                 self.out.push(if defaulted { b'}' } else { b'{' });
                 let pairs = hash_pairs(h);
@@ -348,6 +367,7 @@ impl Writer {
                 if defaulted {
                     self.write(&default)?;
                 }
+                self.write_ivars(&ivars)?;
             }
             // Ruby marshals a Range as an ordinary object carrying three
             // ivars, through the generic `marshal_compat` hook `range.c`

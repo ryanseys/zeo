@@ -605,6 +605,16 @@ ruby_class! {
         if crate::dispatch::is_main_private_singleton(&m.recv, m.name) {
             return crate::runtime_meta::runtime_singleton_class(&m.recv);
         }
+        // A row marked `inherits` DISPATCHES on this class but is ruby's
+        // somewhere else: `Time.new` is `Class#new`, and Time declares only
+        // `initialize`. Every class-side one is `new`, and ruby names `Class`
+        // for each -- against the classes that write their own (Array,
+        // String) it names their singleton, which the walk below does.
+        if m.kind == MethodKind::Singleton
+            && crate::builtins::builtin_row_inherits(m.home, m.name.name_str(), true)
+        {
+            return Ok(RubyValue::Class(zeo_abi::CLASS_CLASS));
+        }
         // `chain()`, not `home`: after `#super_method` re-seats, `home` IS the
         // owner, and asking whether the OWNER extended the module answers no
         // for the module itself -- so a re-seated extend owner rendered as
