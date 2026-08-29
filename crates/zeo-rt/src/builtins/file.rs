@@ -1013,11 +1013,27 @@ pub(crate) fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
 /// A Hash in the POSITIONAL `mode` slot is not options -- keywords have
 /// already been peeled -- so it converts to a String and raises, which is
 /// where `File.open(path, {mode: "w"})`'s TypeError comes from.
+/// A mode argument that is an object offering `to_int` and NOT `to_str`, as
+/// the `O_*` bitmask it stands for. Ruby reads the mode slot either way
+/// (`rb_io_extract_modeenc`), trying the string spelling first, so a class
+/// with both is left to the String path.
+pub(crate) fn int_mode(v: &RubyValue) -> Option<Result<RubyValue, Signal>> {
+    if matches!(v, RubyValue::Str(_) | RubyValue::Int(_) | RubyValue::Nil) {
+        return None;
+    }
+    let int = crate::Symbol::intern("to_int");
+    let has = |n| crate::dispatch::responds_to_value(v, n, true);
+    (!has(crate::Symbol::intern("to_str")) && has(int))
+        .then(|| crate::builtins::convert::to_int(v))
+}
+
 pub(crate) fn open_options_for(
     mode: Option<&RubyValue>,
     perm: Option<&RubyValue>,
     opts: Option<&RubyValue>,
 ) -> Result<std::fs::OpenOptions, Signal> {
+    let converted = mode.and_then(int_mode).transpose()?;
+    let mode = converted.as_ref().or(mode);
     let mut o = match mode {
         None | Some(RubyValue::Nil) => open_options(kwarg_str(opts, "mode").as_deref().unwrap_or("r"))?,
         Some(RubyValue::Int(flags)) => open_options_int(*flags),

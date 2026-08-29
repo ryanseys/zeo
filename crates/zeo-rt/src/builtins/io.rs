@@ -461,6 +461,13 @@ fn open_opts(mode: Option<&RubyValue>, opts: Option<&RubyValue>) -> Result<OpenO
     // `**opts` has already peeled the keyword Hash, so the mode slot holds
     // only a real mode.
     let trailing = opts;
+    // The mode slot takes EITHER spelling from an object: `to_str` for a mode
+    // string, `to_int` for an `O_*` bitmask. Ruby tries the string first
+    // (`rb_io_extract_modeenc`), so a class offering both is read as one.
+    // Normalized up front, which leaves every rule below reading a real Str or
+    // Int -- and only a value with neither still reaches the TypeError.
+    let converted = mode.and_then(file::int_mode).transpose()?;
+    let mode = converted.as_ref().or(mode);
     // An Integer mode is an `O_*` bitmask and names no encoding; anything else
     // must convert to a String, which is where `IO.new(fd, Object.new)` gets
     // its TypeError -- and a BRACED Hash too, since the keyword peel above has
