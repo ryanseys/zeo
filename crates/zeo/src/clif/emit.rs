@@ -142,6 +142,17 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         collected.set_ancestors,
         collected.register_builtin,
     );
+    // Object's own table carries every module mixed in ABOVE it, a `module
+    // Kernel` reopen included. Those rows are PRESENT on Object but not
+    // OWNED by it, so they take the same foreign mark a builtin carrier's
+    // copies do. Without it `Object.instance_methods(false)` listed a Kernel
+    // method, and the owner scan stopped at Object on its way up the chain.
+    let mut foreign = foreign;
+    for d in &defs {
+        if d.defining_class != crate::compiler::OBJECT_CLASS {
+            foreign.push((crate::compiler::OBJECT_CLASS.0, d.name.clone()));
+        }
+    }
     // Populated BEFORE any body is defined: a class body's
     // `MethodRedefine` statement reads it while its own fn is built.
     for (i, m) in redefs.iter().enumerate() {
