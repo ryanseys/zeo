@@ -964,9 +964,15 @@ fn expand_replacement(
             continue;
         }
         match chars.next() {
+            // A NAMED group turns the NUMBERED spellings off: once a pattern
+            // names a group, ruby reads `\1` in a replacement as nothing at
+            // all, and only `\k<name>` reaches a capture. `\0` is the whole
+            // match, not a group, so it keeps working.
             Some(d) if d.is_ascii_digit() => {
                 let idx = d.to_digit(10).expect("guarded by is_ascii_digit") as usize;
-                if let Some(g) = caps.str(idx, haystack) {
+                if (idx == 0 || names.is_empty())
+                    && let Some(g) = caps.str(idx, haystack)
+                {
                     out.push_str(g);
                 }
             }

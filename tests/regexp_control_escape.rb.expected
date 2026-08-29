@@ -1,0 +1,8 @@
+lit-cA | nil
+new-cA | nil
+new-C-A | nil
+new-cA-no | nil
+new-c-esc | 0
+short-C | RegexpError
+short-c | RegexpError
+class-cA | nil
