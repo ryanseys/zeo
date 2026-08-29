@@ -158,25 +158,67 @@ pub fn is_main_object(o: &RObj) -> bool {
     matches!(main_slot(), RubyValue::Object(m) if Arc::ptr_eq(m, o))
 }
 
-/// `main.include(Mod)` and its two siblings: the mixin lands on `Object`,
-/// which is what makes the methods visible everywhere afterwards.
+/// The names `main` answers as PRIVATE singleton methods. One owner, so
+/// dispatch and reflection cannot drift: [`main_mixin`] routes exactly these,
+/// `respond_to?(name, true)` reports them, and `private_methods` lists them.
 ///
-/// `None` means the name is not one of the three, and the ordinary dispatch
+/// `to_s` and `inspect` are main's other two singletons and are PUBLIC, so
+/// they belong to `singleton_methods` instead (`builtins::kernel`).
+pub const MAIN_PRIVATE_SINGLETONS: &[&str] = &[
+    "define_method",
+    "include",
+    "private",
+    "public",
+    "ruby2_keywords",
+    "using",
+];
+
+/// Whether `recv` is `main` and `name` is one of [`MAIN_PRIVATE_SINGLETONS`].
+pub fn is_main_private_singleton(recv: &RubyValue, name: Symbol) -> bool {
+    let RubyValue::Object(o) = recv else {
+        return false;
+    };
+    o.class_id() == zeo_abi::OBJECT_CLASS
+        && is_main_object(o)
+        && MAIN_PRIVATE_SINGLETONS.iter().any(|n| *n == name.name_str())
+}
+
+/// `main`'s private singleton methods: each lands on `Object`, which is what
+/// makes what it does visible everywhere afterwards.
+///
+/// `None` means the name is not one of them, and the ordinary dispatch
 /// continues -- so this costs one symbol compare on a path that already
 /// checked object identity.
-pub(super) fn main_mixin(name: Symbol, args: &[RubyValue]) -> Option<Result<RubyValue, Signal>> {
-    // `include` and NOTHING ELSE. Oracle-checked: main's singletons are
-    // `define_method`, `include`, `inspect`, `private`, `public`,
-    // `ruby2_keywords`, `to_s` and `using` -- there is no `prepend` and no
-    // `extend`, so routing either would shadow a user's own top-level `def`.
-    // Adding `prepend` here broke `spinel::anon_double_splat_forward.rb`,
-    // whose `def prepend(**)` is an ordinary method that happens to share
-    // the name.
-    if name.name_str() != "include" {
-        return None;
-    }
+pub(super) fn main_mixin(
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Option<Result<RubyValue, Signal>> {
+    // Oracle-checked: main's singletons are `define_method`, `include`,
+    // `inspect`, `private`, `public`, `ruby2_keywords`, `to_s` and `using`.
+    // `to_s`/`inspect` answer "main" in `value::inspect`; `using` is
+    // `Kernel#using`, which zeo answers at compile time. The four routed
+    // here mix into `Object`, which is where CRuby's own singletons put
+    // them.
+    //
+    // The list is CLOSED on purpose. There is no `prepend` and no `extend`,
+    // so routing either would shadow a user's own top-level `def` --
+    // `spinel::anon_double_splat_forward.rb`'s `def prepend(**)` is an
+    // ordinary method that happens to share the name.
     let target = RubyValue::Class(zeo_abi::OBJECT_CLASS);
-    Some(crate::runtime_meta::runtime_include(&target, args))
+    match &*name.name_str() {
+        "include" => Some(crate::runtime_meta::runtime_include(&target, args)),
+        // `private`, `public` and `define_method` are `Module`'s own rows on
+        // Object. Without them a bare `private` at top level -- plain Ruby,
+        // and the shape rubygems' own files open with -- was a NoMethodError
+        // naming `main`.
+        "private" | "public" | "define_method" | "ruby2_keywords" => {
+            Some(crate::dispatch::send_value(&target, name, args, block))
+        }
+        // `using` is `Kernel#using`, which zeo answers at compile time; it
+        // reaches its own row through the ordinary walk.
+        _ => None,
+    }
 }
 
 /// Read `@name` off a receiver whose concrete class isn't statically known

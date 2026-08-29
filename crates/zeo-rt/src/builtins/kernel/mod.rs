@@ -85,6 +85,17 @@ fn singleton_names_where(
 }
 
 fn own_singleton_names(recv: &RubyValue) -> Vec<Symbol> {
+    // `main` carries eight singletons in CRuby, of which only `to_s` and
+    // `inspect` are PUBLIC -- the other six (`define_method`, `include`,
+    // `private`, `public`, `ruby2_keywords`, `using`) are private and so do
+    // not show here. zeo installs no singleton on main at all, because doing
+    // it at startup would mark the runtime-overlay maps live for every
+    // program, so the two public names are named here instead.
+    if let RubyValue::Object(o) = recv
+        && crate::dispatch::is_main_object(o)
+    {
+        return vec![Symbol::intern("inspect"), Symbol::intern("to_s")];
+    }
     match recv {
         RubyValue::Class(cid) => crate::dispatch::public_class_method_names(*cid, false),
         // Both report the PUBLIC surface. `def obj.x` is public as written, so
@@ -852,6 +863,15 @@ ruby_module! {
         let inherit = truthy_arg(arg);
         let mut names = singleton_names_where(
             recv, |v| v == crate::dispatch::MethodVisibility::Private);
+        // `main`'s private singletons are routed rather than installed, so
+        // no table holds them -- see `dispatch::MAIN_PRIVATE_SINGLETONS`.
+        if matches!(recv, RubyValue::Object(o) if crate::dispatch::is_main_object(o)) {
+            names.extend(
+                crate::dispatch::MAIN_PRIVATE_SINGLETONS
+                    .iter()
+                    .map(|n| Symbol::intern(n)),
+            );
+        }
         names.extend(crate::dispatch::instance_method_names(
             recv.class_id(),
             crate::dispatch::VisFilter::Private,

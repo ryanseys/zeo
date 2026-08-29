@@ -1,0 +1,7 @@
+plain def is private           true
+after public is public         true
+after public not private       false
+callable through self          "after_public"
+after private                  true
+second public run              true
+method owner                   true

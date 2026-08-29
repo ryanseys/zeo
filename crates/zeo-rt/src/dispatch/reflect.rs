@@ -20,6 +20,12 @@ pub fn has_notimplement_row(recv: &RubyValue, name: Symbol) -> bool {
 /// `respond_to?` fast path routes here, so a `def obj.foo` singleton answers
 /// true.
 pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> bool {
+    // `main`'s private singletons are routed by `main_mixin` rather than
+    // installed, so no table here knows them. Asked first, and only under
+    // `include_all`, because every one of them is private.
+    if include_all && crate::dispatch::is_main_private_singleton(recv, name) {
+        return true;
+    }
     // Asked HERE and not in `responds_to`, which doubles as an EXISTENCE
     // predicate -- `instance_method(:syscall)` must still build an
     // `UnboundMethod`, and report arity 0, for a row that exists but refuses.
