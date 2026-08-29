@@ -367,6 +367,9 @@ pub unsafe extern "C" fn zeo_rt_proc_new_shaped(
     if s.outer.len > 0 {
         b = b.outer_capture(unsafe { super::static_str(s.outer.ptr, s.outer.len) });
     }
+    if s.label.len > 0 {
+        b = b.frame_label(unsafe { super::static_str(s.label.ptr, s.label.len) });
+    }
     finish_proc(b, out);
 }
 

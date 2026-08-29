@@ -1,0 +1,18 @@
+block in <main>	<main>
+block in <main>	<main>
+block in <main>	<main>
+block (2 levels) in <main>	<main>
+block (3 levels) in <main>	<main>
+block (4 levels) in <main>	<main>
+block in m	m
+block (2 levels) in m	m
+block in <class:C>	<class:C>
+block in im	im
+block in cm	cm
+block (2 levels) in <class:C>	<class:C>
+block in <module:M>	<module:M>
+block (3 levels) in deep	deep
+block in <main>	<main>
+a_method	a_method
+a_method	a_method
+nil

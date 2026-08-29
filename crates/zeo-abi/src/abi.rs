@@ -307,9 +307,15 @@ pub struct ProcShapeC {
     pub file: Str,
     /// The Ractor outer-capture verdict ('' = isolable).
     pub outer: Str,
+    /// The frame label ruby gives this block -- `block in <main>`,
+    /// `block (2 levels) in Foo#m`. A compile-time fact (the nesting is
+    /// lexical), so it is stamped here rather than derived at run time;
+    /// `RubyVM::InstructionSequence#label` reads it back, and `#base_label`
+    /// strips the `block ... in ` prefix.
+    pub label: Str,
 }
 /// [`ProcShapeC`]'s size -- what the emitter offsets the table by.
-pub const PROC_SHAPE_SIZE: usize = 56;
+pub const PROC_SHAPE_SIZE: usize = 72;
 const _: () = assert!(size_of::<ProcShapeC>() == PROC_SHAPE_SIZE);
 
 /// `ParamDescC.rest`/`.kwrest` kinds: no `*` at all, an anonymous `*`

@@ -1,5 +1,5 @@
 ---
-source: crates/zeo/tests/clif.rs
+source: crates/zeo/tests/checks/clif.rs
 expression: "clif_of(\"class K\\n  attr_reader :v, :u\\n  def initialize\\n    @v = 1\\n    @u = 2\\n  end\\n  def read = v\\n  def read_plain = u\\nend\\nk = K.new\\nK.class_eval { define_method(:v) { 99 } }\\nputs k.read\\nputs k.read_plain\\n\",)"
 ---
 ;; K#initialize
@@ -1715,8 +1715,8 @@ block30:
     v131 = iconst.i64 0
     v132 = iconst.i64 0
     v133 = symbol_value.i64 gv5
-    v134 = iconst.i64 56
-    v135 = iadd v133, v134  ; v134 = 56
+    v134 = iconst.i64 72
+    v135 = iadd v133, v134  ; v134 = 72
     v136 = stack_addr.i64 ss6
     call fn14(v129, v130, v131, v28, v132, v132, v135, v136)  ; v130 = 0, v131 = 0, v132 = 0, v132 = 0
     v137 = stack_addr.i64 ss6

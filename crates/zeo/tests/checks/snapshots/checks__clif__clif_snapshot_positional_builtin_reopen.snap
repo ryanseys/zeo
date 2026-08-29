@@ -1,5 +1,5 @@
 ---
-source: crates/zeo/tests/clif.rs
+source: crates/zeo/tests/checks/clif.rs
 expression: "clif_of(\"p [1, 2].take_while { true }\\nclass Array\\n  def take_while\\n    :array_own\\n  end\\nend\\np [1, 2].take_while { true }\\n\",)"
 ---
 ;; Array#take_while
@@ -1086,8 +1086,8 @@ block35:
     v164 = iconst.i64 0
     v165 = iconst.i64 0
     v166 = symbol_value.i64 gv8
-    v167 = iconst.i64 56
-    v168 = iadd v166, v167  ; v167 = 56
+    v167 = iconst.i64 72
+    v168 = iadd v166, v167  ; v167 = 72
     v169 = stack_addr.i64 ss7
     call fn12(v162, v163, v164, v28, v165, v165, v168, v169)  ; v163 = 0, v164 = 0, v165 = 0, v165 = 0
     v170 = stack_addr.i64 ss7

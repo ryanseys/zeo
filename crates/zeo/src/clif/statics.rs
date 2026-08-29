@@ -143,6 +143,8 @@ pub(crate) struct ProcShapeSpec {
     pub line: u32,
     pub file: String,
     pub outer: String,
+    /// The frame label ruby gives this block -- see `ProcShapeC::label`.
+    pub label: String,
     pub params: Vec<(u8, String)>,
 }
 
@@ -158,6 +160,7 @@ pub(crate) fn define_proc_shapes(em: &mut Emitter) -> CResult<()> {
     struct Interned {
         file: u32,
         outer: u32,
+        label: u32,
         params: Vec<u32>,
     }
     let interned: Vec<Interned> = {
@@ -167,6 +170,7 @@ pub(crate) fn define_proc_shapes(em: &mut Emitter) -> CResult<()> {
             .map(|s| Interned {
                 file: em.intern_rodata(s.file.as_bytes()),
                 outer: em.intern_rodata(s.outer.as_bytes()),
+                label: em.intern_rodata(s.label.as_bytes()),
                 params: s
                     .params
                     .iter()
@@ -221,6 +225,11 @@ pub(crate) fn define_proc_shapes(em: &mut Emitter) -> CResult<()> {
             std::mem::offset_of!(ProcShapeC, outer),
             spec.outer.len(),
         );
+        str_len(
+            &mut bytes,
+            std::mem::offset_of!(ProcShapeC, label),
+            spec.label.len(),
+        );
         for (i, (kind, name)) in spec.params.iter().enumerate() {
             let row = base + PROC_SHAPE_SIZE + i * param_size;
             bytes[row + std::mem::offset_of!(ParamC, kind)] = *kind;
@@ -247,6 +256,11 @@ pub(crate) fn define_proc_shapes(em: &mut Emitter) -> CResult<()> {
             &mut data,
             std::mem::offset_of!(ProcShapeC, outer),
             row.outer,
+        );
+        str_ptr(
+            &mut data,
+            std::mem::offset_of!(ProcShapeC, label),
+            row.label,
         );
         for (i, off) in row.params.iter().enumerate() {
             let at = (base

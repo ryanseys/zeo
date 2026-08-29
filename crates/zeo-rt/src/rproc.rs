@@ -128,6 +128,12 @@ pub struct ProcData {
     /// documents). `None` for runtime-internal procs, which capture no Ruby
     /// locals by construction.
     outer_capture: Option<&'static str>,
+    /// The frame label ruby gives this block -- `block in <main>`,
+    /// `block (2 levels) in Foo#m`. Stamped by codegen, because the nesting
+    /// is a LEXICAL fact no run-time walk can recover; read back by
+    /// `RubyVM::InstructionSequence#label`. `None` for a proc the runtime
+    /// itself minted, which has no Ruby frame to name.
+    frame_label: Option<&'static str>,
     /// `.frozen?` state -- Procs are freezable ordinary objects in Ruby
     /// (freezing one changes nothing observable beyond the flag: no mutating
     /// methods exist), and `dup`/`clone` follow the standard flag rule via
@@ -179,6 +185,7 @@ impl ProcData {
             location: self.location,
             origin: self.origin,
             outer_capture: self.outer_capture,
+            frame_label: self.frame_label,
             frozen: std::sync::atomic::AtomicBool::new(false),
             // A copy is a NAMED handle, never the literal block a call site
             // wrote -- `dup`, `clone` and `#lambda` all mint one.
@@ -256,6 +263,7 @@ impl ProcBuilder {
             location: None,
             origin: None,
             outer_capture: None,
+            frame_label: None,
             frozen: std::sync::atomic::AtomicBool::new(false),
             env: None,
             literal_block: std::sync::atomic::AtomicBool::new(false),
@@ -340,6 +348,13 @@ impl ProcBuilder {
     /// [`ProcData::outer_capture`]) -- `Ractor.new`'s refusal evidence.
     pub fn outer_capture(mut self, name: &'static str) -> ProcBuilder {
         self.0.outer_capture = Some(name);
+        self
+    }
+
+    /// The frame label codegen stamped on this block (see
+    /// [`ProcData::frame_label`]).
+    pub fn frame_label(mut self, label: &'static str) -> ProcBuilder {
+        self.0.frame_label = Some(label);
         self
     }
 
@@ -511,6 +526,12 @@ impl RProc {
     /// one -- `Ractor.new`'s refusal evidence.
     pub fn outer_capture(&self) -> Option<&'static str> {
         self.0.outer_capture
+    }
+
+    /// The frame label ruby gives this block -- see
+    /// [`ProcData::frame_label`].
+    pub fn frame_label(&self) -> Option<&'static str> {
+        self.0.frame_label
     }
 
     /// The Symbol this proc was derived from, if any.

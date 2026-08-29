@@ -280,6 +280,19 @@ fn block_base(fx: &Fx, file: Option<&str>) -> String {
     fx.frame_label.clone()
 }
 
+/// The bare name an ISEQ label uses, from zeo's BACKTRACE label for the same
+/// scope. Ruby qualifies a method in a backtrace (`Object#m`, `C.cm`) but
+/// never in `RubyVM::InstructionSequence#label`, which reports `m` and `cm`.
+/// A `<...>` scope (`<main>`, `<class:C>`, `<module:M>`) is already bare, and
+/// the method name itself may hold neither `#` nor `.`, so the last one is
+/// always the qualifier's.
+fn iseq_base(label: &str) -> &str {
+    match label.starts_with('<') {
+        true => label,
+        false => label.rsplit_once(['#', '.']).map_or(label, |(_, n)| n),
+    }
+}
+
 fn block_label(base: &str, depth: usize) -> String {
     match depth {
         0 | 1 => format!("block in {base}"),
@@ -364,6 +377,18 @@ fn build_closure_with(
     // home (dead home -> LocalJumpError, the runtime's resolution). A
     // lambda folds its own returns and needs none.
     let wants_home = !is_lambda && body_contains_return(&fx.an.compiler.hir, body);
+    // The frame label ruby gives this block. It is the SAME string
+    // `define_block_fn` puts on the closure's backtrace frame, taken here as
+    // well because `RubyVM::InstructionSequence#label` asks the Proc VALUE,
+    // which carries only what its shape hands it.
+    let frame_label = match &frame {
+        FrameName::Method(name) => iseq_base(name).to_string(),
+        FrameName::Block => {
+            let here = fx.location(site).map(|(f, _)| f.to_string());
+            let base = block_base(fx, here.as_deref());
+            block_label(iseq_base(&base), fx.block_depth + 1)
+        }
+    };
     let f_id = define_block_fn(
         fx,
         site,
@@ -444,6 +469,7 @@ fn build_closure_with(
         line,
         file,
         outer,
+        label: frame_label,
         params: entries,
     });
     fx.em.proc_shapes_len = shape_off

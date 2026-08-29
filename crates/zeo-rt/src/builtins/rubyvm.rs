@@ -307,6 +307,32 @@ fn method_label(what: &RubyValue) -> String {
     }
 }
 
+/// `#label` -- the frame name, or CRuby's refusal for a handle that carries
+/// none (a proc the runtime itself minted, which has no Ruby frame).
+fn iseq_label(iseq: &Arc<RIseq>) -> Result<RubyValue, crate::Signal> {
+    if !iseq.has_label {
+        return Err(not_impl_error!(
+            "RubyVM::InstructionSequence#label is not available for this Proc: \
+             CRuby names the enclosing frame (`block in <main>`) and a proc the \
+             runtime minted has no Ruby frame to name"
+        ));
+    }
+    Ok(RubyValue::Str(crate::string_new(iseq.label.clone())))
+}
+
+/// `#base_label` from `#label`: the enclosing scope with the block prefix
+/// `block in ` / `block (N levels) in ` removed. Anything else is its own
+/// base, which is what a method handle reports.
+fn base_label(label: &str) -> &str {
+    if let Some(rest) = label.strip_prefix("block in ") {
+        return rest;
+    }
+    match label.strip_prefix("block (") {
+        Some(tail) => tail.split_once(") in ").map_or(label, |(_, base)| base),
+        None => label,
+    }
+}
+
 /// The handle `.of` answers. `label` is `None` for a Proc, whose frame name
 /// zeo does not record -- `#label` then refuses rather than inventing one.
 fn of_iseq_value(label: Option<String>, path: String, line: i64) -> RubyValue {
@@ -417,7 +443,10 @@ mod iseq {
                 return Ok(RubyValue::Nil);
             };
             let label = match what {
-                RubyValue::Proc(_) => None,
+                // A block's frame label is a LEXICAL fact, so codegen stamps
+                // it on the shape and the Proc carries it here. A proc the
+                // runtime itself minted has no Ruby frame to name.
+                RubyValue::Proc(p) => p.frame_label().map(str::to_string),
                 _ => Some(method_label(what)),
             };
             Ok(of_iseq_value(label, path, line))
@@ -433,16 +462,19 @@ mod iseq {
             let iseq = recv_iseq(recv);
             crate::eval_string(&iseq.src, crate::dispatch::main_object(), 0)
         }
-        def "label" | "base_label" (recv) {
+        def "label"(recv) {
             let iseq = recv_iseq(recv);
-            if !iseq.has_label {
-                return Err(not_impl_error!(
-                    "RubyVM::InstructionSequence#label is not available for a Proc: \
-                     CRuby names the enclosing frame (`block in <main>`) and zeo \
-                     records a Proc's location, not its frame label"
-                ));
-            }
-            Ok(RubyValue::Str(crate::string_new(iseq.label.clone())))
+            iseq_label(&iseq)
+        }
+        // The enclosing SCOPE's name: a block reports the method (or
+        // `<main>`) it was written in, however deeply it nests. Ruby builds
+        // both from one frame, so zeo strips what `block_label` added.
+        def "base_label"(recv) {
+            let iseq = recv_iseq(recv);
+            let full = iseq_label(&iseq)?;
+            let RubyValue::Str(s) = &full else { return Ok(full) };
+            let text = s.lock().to_utf8_lossy().into_owned();
+            Ok(RubyValue::Str(crate::string_new(base_label(&text).to_string())))
         }
         def "path"(recv) {
             Ok(RubyValue::Str(crate::string_new(recv_iseq(recv).path.clone())))
