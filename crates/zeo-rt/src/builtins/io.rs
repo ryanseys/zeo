@@ -207,12 +207,25 @@ struct ReadBuf {
     /// returned. `None` until probed once; a pipe, socket or std stream
     /// answers `false` and never buffers at all.
     seekable: Option<bool>,
+    /// How many of the unconsumed bytes were PUSHED BACK by `#ungetbyte`
+    /// rather than read from the descriptor.
+    ///
+    /// They sit at the front of `data[pos..]` and the descriptor was never
+    /// advanced past them, so [`unread`] must not seek back over them -- and
+    /// must keep them, since nothing else holds a copy.
+    unget: usize,
 }
 
 impl ReadBuf {
     /// Bytes read but not yet handed out -- how far the descriptor sits ahead.
     fn pending(&self) -> usize {
         self.data.len() - self.pos
+    }
+
+    /// `n` bytes have just been served out of `data[pos..]`; retire that many
+    /// pushed-back bytes first, since they are the ones at the front.
+    fn consumed(&mut self, n: usize) {
+        self.unget = self.unget.saturating_sub(n);
     }
 }
 
@@ -1386,19 +1399,32 @@ fn with_buffered_file<T>(
 /// nowhere to give them back to -- that is what makes it non-seekable --
 /// and `eof?` parks exactly one byte there to answer at all. Clearing it
 /// here consumed that byte and handed the next reader the one after.
+/// Throw away whatever `#ungetbyte` pushed back -- what a seek does to it.
+///
+/// `unread` hands the read-ahead back to the descriptor; a pushed-back byte
+/// has no descriptor to go back to, so a seek simply loses it, as ruby's does.
+fn drop_unget(recv: &RubyValue) {
+    if let Some(io) = as_rio(recv) {
+        let mut rb = io.rbuf.lock();
+        if rb.unget > 0 {
+            *rb = ReadBuf::default();
+        }
+    }
+}
+
 fn unread(io: &RIo, f: &mut std::fs::File) {
     let mut buf = io.rbuf.lock();
-    let pending = buf.pending();
-    if pending == 0 {
-        buf.data.clear();
-        buf.pos = 0;
-        return;
-    }
+    // Only the bytes that came FROM the descriptor can be given back to it.
+    // A pushed-back byte was never read, so seeking over it would rewind the
+    // file one byte too far -- and it has to survive, because the buffer is
+    // the only place it exists.
+    let ahead = buf.pending() - buf.unget;
     use std::io::Seek;
-    if f.seek(std::io::SeekFrom::Current(-(pending as i64))).is_err() {
+    if ahead > 0 && f.seek(std::io::SeekFrom::Current(-(ahead as i64))).is_err() {
         return;
     }
-    buf.data.clear();
+    let keep = buf.pos..buf.pos + buf.unget;
+    buf.data = buf.data[keep].to_vec();
     buf.pos = 0;
 }
 
@@ -1439,6 +1465,7 @@ fn buffered_byte(io: &RIo, f: &mut std::fs::File) -> std::io::Result<Option<u8>>
     }
     let b = buf.data[buf.pos];
     buf.pos += 1;
+    buf.consumed(1);
     Ok(Some(b))
 }
 
@@ -1465,6 +1492,7 @@ fn peeked_read(io: Option<&RIo>, f: &mut std::fs::File, buf: &mut [u8]) -> std::
             let n = pending.min(buf.len());
             buf[..n].copy_from_slice(&rb.data[rb.pos..rb.pos + n]);
             rb.pos += n;
+            rb.consumed(n);
             // A short answer is legal for every caller here -- `read(n)` loops
             // and the rest are arrival-shaped -- so the peek is handed back
             // on its own rather than topped up with a second syscall.
@@ -2067,12 +2095,8 @@ fn getc_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
 
 /// `#getbyte`'s value -- `#readbyte` is this plus an EOF raise.
 fn getbyte_value(recv: &RubyValue) -> Result<RubyValue, Signal> {
-    // A byte pushed back with `#ungetbyte` is returned before the stream.
-    if let Some(io) = as_rio(recv)
-        && let Some(byte) = io.unget.lock().pop()
-    {
-        return Ok(RubyValue::Int(byte as i64));
-    }
+    // A byte pushed back with `#ungetbyte` rides in the read buffer, so it
+    // arrives through the ordinary path below rather than a stack of its own.
     let b = with_buffered_file(recv, |io, f, path| {
         buffered_byte(io, f).map_err(|e| crate::builtins::file::raise_errno(&e, "getbyte", path))
     })?;
@@ -2707,8 +2731,28 @@ ruby_class! {
         };
         let bytes = with_file(recv, |f, path| {
             let mut buf = read_buffer(max.max(0) as usize)?;
-            let got = peeked_read(as_rio(recv), f, &mut buf)
+            let mut got = peeked_read(as_rio(recv), f, &mut buf)
                 .map_err(|e| crate::builtins::file::raise_errno(&e, "read", path))?;
+            // A SEEKABLE stream tops the answer up. CRuby's readpartial serves
+            // whatever the buffer holds, and on a file that is a whole 8 KiB
+            // of read-ahead -- so it short-reads only at EOF. zeo's buffer is
+            // handed back to the descriptor at every `with_file`, so without
+            // this a `getc; ungetc; readpartial(3)` answered ONE byte.
+            //
+            // A pipe or socket keeps the short read, which is the whole point
+            // of readpartial there: it must answer as soon as anything
+            // arrives rather than wait for the rest.
+            if got < buf.len() && got > 0 && {
+                use std::io::Seek;
+                f.stream_position().is_ok()
+            } {
+                while got < buf.len() {
+                    match peeked_read(as_rio(recv), f, &mut buf[got..]) {
+                        Ok(0) | Err(_) => break,
+                        Ok(k) => got += k,
+                    }
+                }
+            }
             buf.truncate(got);
             Ok(buf)
         })?;
@@ -2847,7 +2891,9 @@ ruby_class! {
             f.seek(pos)
                 .map_err(|e| crate::builtins::file::raise_errno(&e, "seek", path))?;
             Ok(RubyValue::Int(0))
-        })
+        })?;
+        drop_unget(recv);
+        Ok(RubyValue::Int(0))
     }
 
     // `sysseek(offset, whence = SEEK_SET)` -- seek, answering the new absolute
@@ -2874,12 +2920,17 @@ ruby_class! {
     }
 
     def "tell" | "pos" (recv, &_blk) {
+        // `fptr->pos` minus what has been pushed back but not handed out.
+        // `with_file` gives the ordinary read-ahead back to the descriptor on
+        // its way in, so only the `#ungetc` bytes are left to subtract -- and
+        // they are read AFTER that, not before, or they count twice.
         with_file(recv, |f, path| {
             use std::io::Seek;
             let p = f
                 .stream_position()
                 .map_err(|e| crate::builtins::file::raise_errno(&e, "tell", path))?;
-            Ok(RubyValue::Int(p as i64))
+            let pushed = as_rio(recv).map_or(0, |io| io.rbuf.lock().pending()) as i64;
+            Ok(RubyValue::Int((p as i64 - pushed).max(0)))
         })
     }
 
@@ -2900,7 +2951,12 @@ ruby_class! {
             f.rewind()
                 .map_err(|e| crate::builtins::file::raise_errno(&e, "rewind", path))?;
             Ok(RubyValue::Int(0))
-        })
+        })?;
+        // A seek DISCARDS anything pushed back: `unread` gave the read-ahead
+        // to the descriptor, but a pushed-back byte has no descriptor to go
+        // to, and ruby drops it here.
+        drop_unget(recv);
+        Ok(RubyValue::Int(0))
     }
 
     // Two implementations, because there are two kinds of descriptor.
@@ -3217,44 +3273,29 @@ ruby_class! {
         Ok(RubyValue::Nil)
     }
 
-    // `#ungetbyte(int_or_str)` -- push bytes back so the next read returns them
-    // first. Recorded on the IO's unget stack (see `getbyte_value`).
+    // `#ungetbyte(int_or_str)` / `#ungetc(str)` -- push bytes back so the next
+    // read returns them first.
+    //
+    // They go into the READ BUFFER, at the cursor, which is the one place
+    // every reader already looks (`peeked_read`). A stack of their own was
+    // drained only by `#getbyte`, so `f.ungetc("Z"); f.getc` answered the
+    // stream's next character and the pushed byte was simply lost -- the
+    // failure `peeked_read`'s own comment warns about.
     def "ungetbyte" | "ungetc" (recv, byte, &_blk) {
+        check_readable(recv)?;
         let Some(io) = as_rio(recv) else {
             return Err(io_error!("not a file"));
         };
-        let mut ug = io.unget.lock();
-        match byte {
-            RubyValue::Int(i) => ug.push((*i & 0xff) as u8),
-            // Push in reverse so the string's bytes read back in order (the stack
-            // is LIFO).
-            RubyValue::Str(s) => {
-                for b in s
-                    .lock()
-                    .to_utf8_lossy()
-                    .into_owned()
-                    .into_bytes()
-                    .into_iter()
-                    .rev()
-                {
-                    ug.push(b);
-                }
-            }
-            RubyValue::Nil => {}
-            other => {
-                let s = convert::to_rstr(other)?;
-                for b in s
-                    .lock()
-                    .to_utf8_lossy()
-                    .into_owned()
-                    .into_bytes()
-                    .into_iter()
-                    .rev()
-                {
-                    ug.push(b);
-                }
-            }
-        }
+        let bytes: Vec<u8> = match byte {
+            RubyValue::Nil => return Ok(RubyValue::Nil),
+            RubyValue::Int(i) => vec![(*i & 0xff) as u8],
+            RubyValue::Str(s) => s.lock().bytes().to_vec(),
+            other => convert::to_rstr(other)?.lock().bytes().to_vec(),
+        };
+        let mut rb = io.rbuf.lock();
+        let at = rb.pos;
+        rb.unget += bytes.len();
+        rb.data.splice(at..at, bytes);
         Ok(RubyValue::Nil)
     }
 
