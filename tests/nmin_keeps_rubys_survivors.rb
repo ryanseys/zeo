@@ -7,6 +7,10 @@
 #
 # The 4n buffer is why the count matters: at n=3 over 60 elements the filter
 # runs several times, at n=20 once, and each run moves the limit.
+#
+# The survivors are sorted through `ruby_qsort`, which IS the system
+# `qsort_r`, so two rows are libc's answer rather than ruby's. TWO goldens:
+# `.expected` is macOS, `.linux.expected` linux.
 
 def t(label)
   puts format("%-24s %s", label, (yield).inspect)

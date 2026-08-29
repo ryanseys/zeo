@@ -372,12 +372,29 @@ struct Sidecars {
     expected_err: Option<PathBuf>,
 }
 
+/// The tag a per-platform golden carries. Empty everywhere but linux, so the
+/// default `.expected` is macOS's answer and nothing else needs a file.
+const PLATFORM: &str = if cfg!(target_os = "linux") { ".linux" } else { "" };
+
 /// Resolve `<rb>.args` / `<rb>.stdin` / `<rb>.expected` / `<rb>.err.expected`
 /// (the corpus sidecar convention; a `.rb` file's siblings by suffix).
+///
+/// A handful of goldens answer differently per PLATFORM, and no zeo bug is
+/// involved: `ruby_qsort` IS the system `qsort_r`, so a tie's order is libc's,
+/// and glibc's qsort does not break ties where BSD's does. Such a golden
+/// carries `<rb>.linux.expected` beside its `<rb>.expected`, each recorded
+/// from the same pinned ruby on its own platform. The pair is read as a UNIT:
+/// when the platform file wins, its `.linux.err.expected` decides stderr too,
+/// so a missing one still asserts "stderr must be empty" rather than falling
+/// back to the other platform's.
 fn sidecars(rb: &Path) -> std::io::Result<Sidecars> {
     let side = |suffix: &str| -> Option<PathBuf> {
         let p = PathBuf::from(format!("{}{suffix}", rb.display()));
         p.exists().then_some(p)
+    };
+    let (expected_out, expected_err) = match side(&format!("{PLATFORM}.expected")) {
+        Some(p) if !PLATFORM.is_empty() => (Some(p), side(&format!("{PLATFORM}.err.expected"))),
+        _ => (side(".expected"), side(".err.expected")),
     };
     let args = match side(".args") {
         Some(p) => std::fs::read_to_string(p)?
@@ -393,8 +410,8 @@ fn sidecars(rb: &Path) -> std::io::Result<Sidecars> {
     Ok(Sidecars {
         args,
         stdin,
-        expected_out: side(".expected"),
-        expected_err: side(".err.expected"),
+        expected_out,
+        expected_err,
     })
 }
 

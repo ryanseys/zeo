@@ -57,7 +57,10 @@ probe("min_by mixed") { [1.0, Float::NAN, "a"].min_by { |x| x } }
 probe("max_by mixed") { [1.0, Float::NAN, "a"].max_by { |x| x } }
 probe("min mixed") { [1, "a"].min }
 probe("max mixed") { [1, "a"].max }
-probe("sort NaN") { [1.0, Float::NAN, 2.0].sort }
+# TWO elements, not three: with three, which pair the sort reaches first is
+# libc's `qsort_r` decision, so the message names a different operand on glibc
+# than on BSD. Two elements is one comparison, and both agree.
+probe("sort NaN") { [1.0, Float::NAN].sort }
 probe("<=> nil compare") { 1 < "a" }
 probe("Array#<=> mixed") { ([1] <=> ["a"]).inspect }
 

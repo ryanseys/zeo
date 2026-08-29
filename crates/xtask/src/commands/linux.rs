@@ -135,7 +135,10 @@ fn script_for(name: &str) -> Result<String, Error> {
     let profile = cargo_profile();
     let threads = threads();
     Ok(match name {
-        "build" => format!("cargo build --workspace {profile}"),
+        // `bundle install` first, and it is not optional: the oracle resolves
+        // `Gemfile.lock`, so a golden with no committed `.expected` needs the
+        // linux store present before any suite runs.
+        "build" => format!("bundle install --quiet && cargo build --workspace {profile}"),
         // No env var = the default (jit) leg. The goldens spawn a child zeo
         // each and the watchdog caps them at 512 MiB.
         "jit" => format!(
@@ -250,6 +253,12 @@ fn run_in_container(script: &str, tag: &str) -> Result<i32, Error> {
             &format!("{}:/src", root().display()),
             "-v",
             &format!("{}:/target", env_or("ZEO_LINUX_VOLUME", "zeo-linux-target")),
+            // The oracle's gems, resolved for linux. Never `/src/vendor/bundle`
+            // -- those are the host's macOS builds, and bundler answers every
+            // one of them with "ignoring ... because it is missing extensions"
+            // on stderr, which would land in a live-oracle golden.
+            "-v",
+            &format!("{}:/bundle", env_or("ZEO_LINUX_BUNDLE_VOLUME", "zeo-linux-bundle")),
             "-v",
             &format!("{}:/logs", logs.display()),
             "-w",

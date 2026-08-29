@@ -6,6 +6,10 @@
 #
 # The last two rows reach the branches n alone decides: 16 or fewer elements
 # is an insertion sort, and an already-ordered input is left untouched.
+#
+# TWO goldens: the `qsort_r` rows are libc's answer, and glibc's qsort does
+# not break a tie where BSD's does. `.expected` is macOS, `.linux.expected`
+# linux, both recorded from the same pinned ruby.
 
 def show(label)
   puts format("%-26s %s", label, (yield).inspect)

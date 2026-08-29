@@ -1,7 +1,8 @@
 # The FIRST line pins the tie order of `Array#sort!`: this comparator orders by
 # a pair of ranks, so ties are common, and the answer is whatever the C library
 # leaves behind. It was a divergence until zeo sorted through the same
-# `qsort_r` CRuby's `ruby_qsort` calls.
+# `qsort_r` CRuby's `ruby_qsort` calls. That makes the line PER PLATFORM, so
+# there are two goldens: `.expected` is macOS, `.linux.expected` linux.
 #
 # The SECOND line is what the file was imported for:
 #

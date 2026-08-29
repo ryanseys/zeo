@@ -24,6 +24,8 @@ const SIDECARS: &[&str] = &[
     "rb",
     "rb.expected",
     "rb.err.expected",
+    "rb.linux.expected",
+    "rb.linux.err.expected",
     "rb.args",
     "rb.stdin",
     "rb.gc",

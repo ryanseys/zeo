@@ -237,11 +237,18 @@ fn record(rb: &Path, suite: &Suite, oracle: &Oracle) -> Result<(), Error> {
     } else {
         run_oracle(rb, &source, &argv, stdin.as_deref(), oracle)?
     };
-    let expected = with_suffix(rb, ".expected");
+    // A golden whose answer is the PLATFORM's rather than ruby's -- a tie
+    // broken by libc's `qsort_r`, a last-ulp difference in libm -- carries a
+    // second record, `<rb>.linux.expected`. Bless writes that one only when it
+    // is already there: creating the split is a deliberate act, and without
+    // this rule a bless run inside the linux container would silently replace
+    // the macOS answer with the linux one.
+    let tag = platform_tag(rb);
+    let expected = with_suffix(rb, &format!("{tag}.expected"));
     std::fs::write(&expected, norm(&out.stdout, rb))
         .map_err(|e| Error::new(format!("writing {}: {e}", expected.display())))?;
 
-    let err_path = with_suffix(rb, ".err.expected");
+    let err_path = with_suffix(rb, &format!("{tag}.err.expected"));
     let err = norm(&out.stderr, rb);
     // An absent `.err.expected` is a real assertion: "stderr must be empty".
     // So an empty capture DELETES rather than writing nothing.
@@ -260,6 +267,16 @@ fn record(rb: &Path, suite: &Suite, oracle: &Oracle) -> Result<(), Error> {
 
 fn with_suffix(rb: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(format!("{}{suffix}", rb.display()))
+}
+
+/// `".linux"` for a golden that already carries a linux record and is being
+/// blessed on linux; `""` -- the ordinary single record -- everywhere else.
+/// See the note at the write site for why the file has to exist first.
+fn platform_tag(rb: &Path) -> &'static str {
+    match cfg!(target_os = "linux") && with_suffix(rb, ".linux.expected").exists() {
+        true => ".linux",
+        false => "",
+    }
 }
 
 fn sidecar(rb: &Path, suffix: &str) -> Result<Option<Vec<u8>>, Error> {

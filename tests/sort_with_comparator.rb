@@ -6,6 +6,9 @@
 # This was a decided divergence while zeo sorted stably. Imported from the
 # spinel corpus at c55d9bdb; see tests/spinel/UPSTREAM.md.
 #
+# TWO goldens, because the tie order is libc's and glibc's qsort is not BSD's:
+# `.expected` is macOS, `.linux.expected` linux.
+#
 a = [5, 3, 9, 1, 3, 7, 0, 3, 8, 2]
 p a.sort { |x, y| x <=> y }
 p a.sort { |x, y| y <=> x }
