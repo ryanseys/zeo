@@ -39,6 +39,15 @@ These files are faithful vendored copies rather than zeo-authored:
 | `syslog/lib/syslog/logger.rb` | syslog 0.4.0 (`Syslog::Logger`) |
 | `nkf/lib/kconv.rb` | nkf 0.3.0 (`Kconv` and the String patches) |
 | `pty/lib/expect.rb` | ruby's own `ext/pty/lib/` (`IO#expect`) |
+| `json/lib/json/add/*.rb` (15) | json 2.21.2, verbatim |
+
+`json/add/*` is the additions half: each file teaches one core class
+`as_json`/`to_json` and a `json_create` to read it back. They are plain Ruby
+with no C behind them, so they are vendored rather than rewritten. What zeo
+had to supply for them is the other side of the contract, in `lib/json.rb`
+and the native parser: `JSON::JSON_LOADED` (every one of these files checks
+it before requiring the library), `JSON::State.from_state` and the rest of
+the generator state's field list, and the parser's `create_additions`.
 
 Four libraries are mostly vendored, with marked deviations tagged `zeo:`
 in-file:

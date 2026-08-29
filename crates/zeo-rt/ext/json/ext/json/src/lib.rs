@@ -119,6 +119,7 @@ fn gen_state(opts: Option<&RubyValue>, base: generator::State) -> generator::Sta
             || bool_opt(opts, "escape_slash")
             || base.script_safe,
         max_nesting: nesting_opt(opts, 100),
+        sort_keys: opt(opts, "sort_keys").filter(|v| v.truthy()),
         ..generator::State::default()
     }
 }
@@ -150,7 +151,90 @@ fn parse_text(v: &RubyValue) -> Result<Vec<u8>, Signal> {
 fn parse_with(text: &RubyValue, opts: Option<&RubyValue>) -> Result<RubyValue, Signal> {
     let bytes = parse_text(text)?;
     let o = parse_opts(opts);
-    parser::Parser::new(&bytes, &o).parse_document()
+    let additions = bool_opt(opts, "create_additions");
+    if additions && o.symbolize {
+        return Err(crate::builtins::arg_error!(
+            "options :symbolize_names and :create_additions cannot be  used in conjunction"
+        ));
+    }
+    let parsed = parser::Parser::new(&bytes, &o).parse_document()?;
+    match additions {
+        true => revive_additions(parsed),
+        false => Ok(parsed),
+    }
+}
+
+/// `create_additions`: a parsed object naming a class under `JSON.create_id`
+/// becomes that class's `json_create` of itself.
+///
+/// Innermost first, so an addition's `json_create` receives children that are
+/// already revived -- which is the order CRuby reaches by converting inside
+/// the parse rather than after it. A name that resolves to no constant is an
+/// ArgumentError; one whose class has no `json_create` is left alone, because
+/// `json_class` is an ordinary key until some class claims it.
+fn revive_additions(v: RubyValue) -> Result<RubyValue, Signal> {
+    match &v {
+        RubyValue::Array(a) => {
+            let items = a.lock().to_vec();
+            for (i, e) in items.into_iter().enumerate() {
+                let e = revive_additions(e)?;
+                a.lock()[i] = e;
+            }
+        }
+        RubyValue::Hash(h) => {
+            for (k, val) in crate::hash_pairs(h) {
+                let val = revive_additions(val)?;
+                crate::hash_set(h, k, val);
+            }
+            let id = crate::dispatch::send_value(
+                &RubyValue::Class(zeo_abi::JSON_MODULE),
+                crate::Symbol::intern("create_id"),
+                &[],
+                None,
+            )?;
+            if let RubyValue::Str(name) = crate::hash_get(h, &id) {
+                let name = name.lock().to_utf8_lossy().into_owned();
+                let class = addition_class(&name)?;
+                let create = crate::Symbol::intern("json_create");
+                // Asked through `respond_to?` on the CLASS OBJECT, which walks
+                // its singleton chain. `responds_to(class.class_id(), ..)`
+                // would ask what a Class responds to, and every addition
+                // defines `json_create` on the class itself.
+                let has = crate::dispatch::send_value(
+                    &class,
+                    crate::Symbol::intern("respond_to?"),
+                    &[RubyValue::Symbol(create)],
+                    None,
+                )?;
+                if has.truthy() {
+                    return crate::dispatch::send_value(&class, create, &[v.clone()], None);
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(v)
+}
+
+/// The class an addition names. CRuby reads it through `Object.const_get`,
+/// which walks `A::B::C` and runs an autoload on the way, and wraps the miss
+/// in an ArgumentError carrying the NameError's own words.
+fn addition_class(name: &str) -> Result<RubyValue, Signal> {
+    let object = RubyValue::Class(zeo_abi::OBJECT_CLASS);
+    let arg = RubyValue::Str(string_new(name.to_string()));
+    crate::dispatch::send_value(&object, crate::Symbol::intern("const_get"), &[arg], None).map_err(
+        |e| {
+            let Signal::Raise(exc) = &e else { return e };
+            let m = crate::dispatch::send_value(exc, crate::Symbol::intern("message"), &[], None);
+            match m {
+                Ok(RubyValue::Str(s)) => {
+                    let m = s.lock().to_utf8_lossy().into_owned();
+                    crate::builtins::arg_error!("can't get const {name}: {m}")
+                }
+                _ => e,
+            }
+        },
+    )
 }
 
 fn generate_with(

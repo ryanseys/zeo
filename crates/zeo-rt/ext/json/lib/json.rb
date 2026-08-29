@@ -6,6 +6,16 @@ module JSON
   # The bundled gem's own version, which programs branch on.
   VERSION = "2.21.2"
 
+  # Every `json/add/*.rb` opens by checking this before requiring `json`
+  # itself, so it is what stops the additions from re-entering the library.
+  JSON_LOADED = true
+
+  # The three non-finite values the parser answers under `allow_nan:`, and
+  # what a program compares a parsed result against.
+  NaN = 0.0 / 0.0
+  Infinity = 1.0 / 0.0
+  MinusInfinity = -Infinity
+
   # CRuby's hierarchy (ext/json/lib/json/common.rb). Defined here in Ruby
   # rather than in the native half because a feature-gated native class
   # cannot register a constructible exception -- see
@@ -67,36 +77,117 @@ module JSON
   # The generator's option bag. CRuby's is a C struct with accessors; the
   # options travel to the native generator as an ordinary Hash, so this is a
   # plain object that remembers them and can generate with them.
-  class State
-    ATTRS = %i[indent space space_before object_nl array_nl allow_nan
-               ascii_only script_safe max_nesting depth].freeze
+  #
+  # Named where CRuby's C extension names it, because `#class` and `#inspect`
+  # say so -- `JSON::State` below is the alias every program actually writes.
+  module Ext
+    module Generator
+      class State
+        # `to_h`'s key order, which is the C struct's field order and what a
+        # program comparing two states sees.
+        ATTRS = %i[indent space space_before object_nl array_nl as_json allow_nan
+                   ascii_only max_nesting script_safe strict depth
+                   buffer_initial_length sort_keys].freeze
 
-    ATTRS.each { |a| attr_accessor(a) }
+        # The plain readers. `allow_nan`, `ascii_only` and `strict` are asked with
+        # a `?` instead -- CRuby gives those three no bare reader.
+        attr_reader :indent, :space, :space_before, :object_nl, :array_nl,
+                    :as_json, :max_nesting, :script_safe, :depth,
+                    :buffer_initial_length, :sort_keys
+        # `sort_keys=` and `as_json=` are written out below, because each stores
+        # something other than what it was handed.
+        attr_writer :indent, :space, :space_before, :object_nl, :array_nl,
+                    :allow_nan, :ascii_only, :max_nesting, :script_safe, :strict,
+                    :depth, :buffer_initial_length
 
-    def initialize(opts = {})
-      @indent = @space = @space_before = @object_nl = @array_nl = ""
-      @allow_nan = @ascii_only = @script_safe = false
-      @max_nesting = 100
-      @depth = 0
-      configure(opts)
-    end
+        # What `to_json(state)` calls to normalize whatever it was handed: a
+        # State passes through unchanged (identity, not a copy), a Hash becomes
+        # one, and anything else -- `nil` included -- gets the defaults.
+        # `json/add/symbol` reaches for it, so it is not optional.
+        def self.from_state(opts)
+          case opts
+          when self then opts
+          when Hash then new(opts)
+          else new
+          end
+        end
 
-    def configure(opts)
-      (opts || {}).each do |k, v|
-        setter = :"#{k}="
-        __send__(setter, v) if respond_to?(setter)
+        # `sort_keys = true` stores a TRANSFORM rather than the flag: the
+        # generator hands each object to it and emits what comes back, so a
+        # caller can supply any reordering it likes and the generator asks only
+        # one question of either.
+        DEFAULT_SORT = ->(hash) { hash.sort.to_h }
+
+        def initialize(opts = {})
+          @indent = @space = @space_before = @object_nl = @array_nl = ""
+          @allow_nan = @ascii_only = @script_safe = @strict = false
+          @as_json = @sort_keys = false
+          @max_nesting = 100
+          @depth = 0
+          @buffer_initial_length = 1024
+          configure(opts)
+        end
+
+        def configure(opts)
+          (opts || {}).each { |k, v| self[k] = v }
+          self
+        end
+        alias merge configure
+
+        def allow_nan? = @allow_nan
+        def ascii_only? = @ascii_only
+        def script_safe? = @script_safe
+        def strict? = @strict
+        def strict = @strict
+
+        # `escape_slash` is the old spelling of `script_safe`, and CRuby keeps
+        # both names on the one flag.
+        alias escape_slash script_safe
+        alias escape_slash? script_safe?
+        alias escape_slash= script_safe=
+
+        # True whenever a nesting limit is in force -- `max_nesting: 0` turns the
+        # limit off, and the circular check with it.
+        def check_circular? = !@max_nesting.nil? && @max_nesting != 0
+
+        # A Symbol or a bare `true` becomes the Proc the generator calls, so both
+        # of these read back as one.
+        def sort_keys=(v)
+          @sort_keys = v == true ? DEFAULT_SORT : v
+        end
+
+        def as_json=(v)
+          @as_json = v.is_a?(Symbol) ? v.to_proc : v
+        end
+
+        # An option the state does not model still round-trips: it lands in an
+        # ivar of its own, which is where CRuby's `[]` falls back to as well. It
+        # stays out of `to_h`, which lists the struct's own fields and nothing
+        # else.
+        def [](name)
+          respond_to?(name) ? __send__(name) : instance_variable_get(:"@#{name}")
+        end
+
+        def []=(name, value)
+          setter = :"#{name}="
+          if respond_to?(setter)
+            __send__(setter, value)
+          else
+            instance_variable_set(:"@#{name}", value)
+          end
+        end
+
+        def to_h
+          ATTRS.to_h { |a| [a, instance_variable_get(:"@#{a}")] }
+        end
+        alias to_hash to_h
+
+        def generate(obj) = JSON.generate(obj, to_h)
       end
-      self
     end
-    alias merge configure
-
-    def to_h
-      ATTRS.to_h { |a| [a, __send__(a)] }
-    end
-    alias to_hash to_h
-
-    def generate(obj) = JSON.generate(obj, to_h)
   end
+
+  State = Ext::Generator::State
 
   class << self
     # `dump(obj, anIO = nil, limit = nil)`. The second argument is
@@ -138,7 +229,10 @@ module JSON
               "options :symbolize_names and :create_additions cannot be  used in conjunction"
       end
 
-      result = parse(source, { max_nesting: false, allow_nan: true }.merge(options))
+      # `load` is the addition-aware entry point: `create_additions` is ON
+      # unless the caller turns it off, where `parse` leaves it off.
+      defaults = { max_nesting: false, allow_nan: true, create_additions: true }
+      result = parse(source, defaults.merge(options))
       recurse_proc(result, &proc) if proc
       result
     end

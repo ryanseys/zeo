@@ -38,6 +38,10 @@ pub(super) struct State {
     pub script_safe: bool,
     /// `None` = unbounded. The default is 100, and it is the cycle guard.
     pub max_nesting: Option<i64>,
+    /// `sort_keys`: a one-argument Proc handed each object, whose answer is
+    /// emitted instead. `sort_keys: true` resolves to the default transform
+    /// (`hash.sort.to_h`) in the Ruby half, so only a Proc ever arrives here.
+    pub sort_keys: Option<RubyValue>,
     pub(super) depth: i64,
 }
 
@@ -53,6 +57,7 @@ impl Default for State {
             ascii_only: false,
             script_safe: false,
             max_nesting: Some(100),
+            sort_keys: None,
             depth: 0,
         }
     }
@@ -241,7 +246,24 @@ fn emit_one(
             work.extend(steps.into_iter().rev());
         }
         RubyValue::Hash(h) => {
-            let pairs = crate::collections::hash_pairs(h);
+            // `sort_keys` reorders the object before anything is written, and
+            // the answer replaces it wholesale -- so a transform may drop or
+            // add entries, which is what makes it more than a comparator.
+            let pairs = match &st.sort_keys {
+                Some(f) => {
+                    let sorted = crate::dispatch::send_value(
+                        f,
+                        crate::Symbol::intern("call"),
+                        &[v.clone()],
+                        None,
+                    )?;
+                    match &sorted {
+                        RubyValue::Hash(s) => crate::collections::hash_pairs(s),
+                        _ => crate::collections::hash_pairs(h),
+                    }
+                }
+                None => crate::collections::hash_pairs(h),
+            };
             st.enter()?;
             let id = container_id(v).expect("a Hash has an identity");
             open.push(id);
