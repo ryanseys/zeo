@@ -160,6 +160,13 @@ pub struct Hir {
     /// `clif/stmt.rs`'s `lower_stmts`, which groups consecutive entries under one
     /// `singleton class` frame.
     pub singleton_frame_stmts: crate::compiler::FMap<NodeId, NodeId>,
+    /// Every `DefMethod` the `attr_*` fold generated, mapped to the macro that
+    /// wrote it. A class can `extend` a module defining its own
+    /// `attr_accessor`, and then the macro is an ordinary method call ruby
+    /// dispatches -- the fold has to give way. The FIRST node of one statement
+    /// carries the call to put back; the rest carry `None` and are dropped
+    /// with it. See `lower::defs::directives::attr`.
+    pub attr_macro: crate::compiler::FMap<NodeId, Option<(String, Vec<String>)>>,
     /// `DefMethod` nodes an `alias` cloned, mapped to the name they were born
     /// under -- see [`record_alias_origin`](Self::record_alias_origin).
     alias_origins: crate::compiler::FMap<NodeId, String>,

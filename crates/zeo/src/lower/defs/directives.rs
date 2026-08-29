@@ -443,6 +443,16 @@ pub(super) fn attr(
             // descends through `lower_node` has to stamp that
             // provenance itself.
             hir.push_span(crate::lower::span_of(hir, node));
+            // What the fold replaced, so analyze can put the call back when
+            // the class `extend`ed a module that writes its own `attr_*`.
+            let first = out.len();
+            let macro_args: Vec<String> = arg_list
+                .iter()
+                .map(|n| {
+                    String::from_utf8_lossy(n.as_symbol_node().expect("checked above").unescaped())
+                        .into_owned()
+                })
+                .collect();
             for n in &arg_list {
                 let ivar =
                     String::from_utf8_lossy(n.as_symbol_node().expect("checked above").unescaped())
@@ -486,6 +496,10 @@ pub(super) fn attr(
                 }
             }
             hir.pop_span();
+            for (i, &id) in out[first..].iter().enumerate() {
+                let entry = (i == 0).then(|| (name.to_string(), macro_args.clone()));
+                hir.attr_macro.insert(id, entry);
+            }
             return Ok(true);
         }
     }

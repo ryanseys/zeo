@@ -716,6 +716,9 @@ fn walk_class_body(
         .iter()
         .any(|&stmt| mutates_own_singleton_at_runtime(compiler, stmt));
 
+    // Whether the `attr_*` statement being walked gave way to a macro call --
+    // its remaining accessors go with it.
+    let mut attr_put_back = false;
     for &stmt in &body {
         // A `define_method(:x) { module M; end }` body is a block, so the
         // `module` keyword in it is legal and lands in THIS body's cref.
@@ -733,6 +736,41 @@ fn walk_class_body(
                 is_class_method,
                 ..
             } => {
+                // The `attr_*` fold gives way when a module the class has
+                // ALREADY `extend`ed writes its own macro: there the name is
+                // an ordinary method call, and the accessors ruby ends up
+                // with are whatever that method defined. Written before the
+                // `extend`, the fold still stands -- ruby dispatches at the
+                // statement's own position.
+                match compiler.hir.attr_macro.get(&stmt).cloned() {
+                    Some(Some((macro_name, macro_args))) => {
+                        attr_put_back = extends_supply_macro(compiler, class_id, &macro_name);
+                        if attr_put_back {
+                            let args = macro_args
+                                .iter()
+                                .map(|a| {
+                                    crate::hir::ArrayElem::Single(
+                                        compiler.hir.push(HirNode::SymbolLit(a.clone())),
+                                    )
+                                })
+                                .collect();
+                            let call = compiler.hir.push(HirNode::Call {
+                                receiver: None,
+                                name: macro_name,
+                                args,
+                                kwargs: vec![],
+                                block: None,
+                                block_arg: None,
+                                safe: false,
+                            });
+                            compiler.class_body_sites[site_idx].stmts.push(call);
+                            continue;
+                        }
+                    }
+                    // A later accessor of a statement already put back.
+                    Some(None) if attr_put_back => continue,
+                    _ => {}
+                }
                 // Under `Conditional::Yes` the whole body runs only if the
                 // guard passed, so the def stays a STATEMENT: it emits a
                 // runtime define at its document position -- the same
@@ -1799,4 +1837,20 @@ fn mutates_own_singleton_at_runtime(compiler: &Compiler, stmt: NodeId) -> bool {
             if name == "singleton_class"
                 && receiver.is_none_or(|r| matches!(compiler.hir[r], HirNode::SelfRef))
     )
+}
+
+/// Whether a module this class has ALREADY `extend`ed writes its own `name` --
+/// an `attr_accessor` macro override, which makes the fold wrong.
+///
+/// Reads `extends` as the body walk has filled it so far, so the answer is
+/// positional: an `extend` written below the `attr_accessor` has not happened
+/// yet and does not count. A module the extended module itself includes counts
+/// too, which is how a macro pack layered over another one is found.
+fn extends_supply_macro(compiler: &Compiler, class_id: ClassId, name: &str) -> bool {
+    let extends = compiler.classes[class_id.0 as usize].extends.clone();
+    extends.iter().any(|&m| {
+        std::iter::once(m)
+            .chain(compiler.classes[m.0 as usize].mixin_order.iter().map(|&(t, _)| t))
+            .any(|c| compiler.classes[c.0 as usize].own_method_at.contains_key(name))
+    })
 }
