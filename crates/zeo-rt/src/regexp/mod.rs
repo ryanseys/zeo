@@ -193,6 +193,30 @@ impl Caps {
     }
 }
 
+/// One Oniguruma search, with its runtime failures read as "no match".
+///
+/// The crate's own `search_with_options` PANICS when onig reports a search
+/// error, and onig reports one for a pattern that backtracks past its retry
+/// limit (`/(a*)*b/` against a long run of `a`). Ruby answers `nil` there, so
+/// aborting the process would be the wrong answer twice over.
+fn onig_search(
+    r: &onig::Regex,
+    haystack: &str,
+    start: usize,
+    region: Option<&mut onig::Region>,
+) -> Option<usize> {
+    r.search_with_param(
+        haystack,
+        start,
+        haystack.len(),
+        onig::SearchOptions::SEARCH_OPTION_NONE,
+        region,
+        onig::MatchParam::default(),
+    )
+    .ok()
+    .flatten()
+}
+
 impl Engine {
     pub fn is_match(&self, haystack: &str) -> bool {
         match self {
@@ -200,15 +224,7 @@ impl Engine {
             // A runtime error (e.g. backtrack-limit) counts as "no match" --
             // rare, documented; CRuby would raise on catastrophic backtracking.
             Engine::Fancy(r) => r.is_match(haystack).unwrap_or(false),
-            Engine::Onig(r) => r
-                .search_with_options(
-                    haystack,
-                    0,
-                    haystack.len(),
-                    onig::SearchOptions::SEARCH_OPTION_NONE,
-                    None,
-                )
-                .is_some(),
+            Engine::Onig(r) => onig_search(r, haystack, 0, None).is_some(),
             Engine::Unmatchable => false,
         }
     }
@@ -242,13 +258,7 @@ impl Engine {
             // spans of every group (`None` for a non-participating group).
             Engine::Onig(r) => {
                 let mut region = onig::Region::new();
-                r.search_with_options(
-                    haystack,
-                    start,
-                    haystack.len(),
-                    onig::SearchOptions::SEARCH_OPTION_NONE,
-                    Some(&mut region),
-                )?;
+                onig_search(r, haystack, start, Some(&mut region))?;
                 Some(Caps {
                     spans: (0..region.len()).map(|i| region.pos(i)).collect(),
                 })
@@ -775,6 +785,15 @@ fn escape_forward_slashes(source: &str) -> String {
                 }
             }
             '/' => out.push_str("\\/"),
+            // An unprintable ASCII byte prints as `\xHH`, so a NUL in a
+            // pattern never reaches the terminal raw. The five ASCII
+            // whitespace bytes are the exception ruby makes: `\t` and `\n`
+            // print as themselves.
+            other if (other.is_ascii() && !other.is_ascii_graphic() && other != ' ')
+                && !matches!(other, '\t' | '\n' | '\x0b' | '\x0c' | '\r') =>
+            {
+                out.push_str(&format!("\\x{:02X}", other as u32));
+            }
             other => out.push(other),
         }
     }
