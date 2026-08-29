@@ -519,7 +519,25 @@ fn validate_posix_classes(source: &str) -> Result<(), String> {
 /// Rewrite a regex-engine compile error into CRuby's own `RegexpError` message
 /// shape (`<reason>: /<source>/`) for the common cases; otherwise keep the
 /// engine's text. CRuby names the offending construct and echoes the pattern.
-fn cruby_regex_error(source: &str, raw: &str) -> String {
+fn cruby_regex_error(
+    source: &str,
+    raw: &str,
+    ignore_case: bool,
+    extended: bool,
+    multiline: bool,
+) -> String {
+    // Ruby closes the message with the pattern AS WRITTEN, flags and all, in
+    // its own `mix` order -- `/[z-a]/mi`, never `/[z-a]/im`.
+    let mut flags = String::new();
+    for (on, ch) in [(multiline, 'm'), (ignore_case, 'i'), (extended, 'x')] {
+        if on {
+            flags.push(ch);
+        }
+    }
+    let flagged = format!("{source}/{flags}");
+    // The onig crate stamps its own name on every message; ruby's text is
+    // what follows.
+    let raw = raw.strip_prefix("Oniguruma error: ").unwrap_or(raw);
     // `(?` alone ends INSIDE a group's opening sequence, which onig names
     // differently from a group that opened and never closed.
     let unterminated_group_head = source.ends_with("(?");
@@ -549,21 +567,20 @@ fn cruby_regex_error(source: &str, raw: &str) -> String {
         // is far too long to carry one here just to name what failed, and
         // the source always has the answer.
         let name = property_name_in(source).unwrap_or_default();
-        return format!("invalid character property name {{{name}}}: /{source}/");
+        return format!("invalid character property name {{{name}}}: /{flagged}");
     } else if raw.contains("Invalid group name in back reference")
         || raw.contains("unknown group name")
     {
         let name = backref_name_in(source).unwrap_or_default();
-        return format!("undefined name <{name}> reference: /{source}/");
+        return format!("undefined name <{name}> reference: /{flagged}");
     } else if raw.contains("Invalid back reference") || raw.contains("invalid backref") {
         "invalid backref number/name"
     } else {
-        // Every remaining engine message is MULTI-LINE (the `regex` crate
-        // renders a caret diagram), and ruby's are one line. Keep the first
-        // line so a message never spills across the page.
-        return raw.lines().next().unwrap_or(raw).trim_end().to_string();
+        // Anything else is onig's own wording, which IS ruby's. Keep the
+        // first line: ruby's messages never spill across the page.
+        raw.lines().next().unwrap_or(raw).trim_end()
     };
-    format!("{reason}: /{source}/")
+    format!("{reason}: /{flagged}")
 }
 
 /// The name inside the first `\\p{...}` of `source`, `^` negation stripped --
@@ -793,42 +810,46 @@ pub fn regexp_new_enc(
     let preprocessed = preprocess_unicode(source).map_err(|e| format!("{e}: /{source}/"))?;
     let written = source;
     let source = preprocessed.as_ref();
-    // A pattern with Ruby-specific semantics goes straight to Oniguruma (the
-    // raw source, no escape translation).
-    if needs_onig(source) || (ignore_case && has_backref(source)) || empty_iteration_capture(source)
-    {
-        return match build_onig(source, ignore_case, extended, multiline) {
-            Ok(r) => Ok(Arc::new(RegexpData {
-                engine: Engine::Onig(Arc::new(r)),
-                source: written.to_string(),
+    // ONIGURUMA DECIDES. It is ruby's own engine, so what it refuses ruby
+    // refuses and what it accepts ruby accepts -- no Rust engine may overrule
+    // it in either direction. Every pattern compiles here first, and the two
+    // faster engines below only ever choose a quicker way to run a pattern
+    // onig has already approved.
+    let onig = match build_onig(source, ignore_case, extended, multiline) {
+        Ok(r) => Arc::new(r),
+        Err(e) => {
+            return Err(cruby_regex_error(
+                written,
+                &e,
                 ignore_case,
                 extended,
                 multiline,
-                encoding,
-                frozen: std::sync::atomic::AtomicBool::new(false),
-            })),
-            Err(e) => Err(cruby_regex_error(written, &e)),
-        };
+            ));
+        }
+    };
+    // A pattern with Ruby-specific semantics runs on onig too.
+    if needs_onig(source) || (ignore_case && has_backref(source)) || empty_iteration_capture(source)
+    {
+        return Ok(Arc::new(RegexpData {
+            engine: Engine::Onig(onig),
+            source: written.to_string(),
+            ignore_case,
+            extended,
+            multiline,
+            encoding,
+            frozen: std::sync::atomic::AtomicBool::new(false),
+        }));
     }
     let translated = translate_ruby_escapes(source);
     let engine = if needs_fancy(&translated) {
         match build_fancy(&translated, ignore_case, extended, multiline) {
             Ok(r) => Engine::Fancy(r),
             // A forward numbered backreference (`/[\]]\1(a)/`) is valid in
-            // Onigmo but rejected by fancy-regex. If every backref names a
-            // group that actually exists, keep the regexp constructible (as
-            // Unmatchable) instead of raising -- a genuine invalid backref
-            // number still surfaces the error.
-            Err(e) if forward_backref_only(&translated) => {
-                let _ = e;
-                Engine::Unmatchable
-            }
-            // fancy-regex rejected a look-around/backref construct it can't do;
-            // real Oniguruma (Ruby's engine) may still accept it.
-            Err(e) => match build_onig(source, ignore_case, extended, multiline) {
-                Ok(r) => Engine::Onig(Arc::new(r)),
-                Err(_) => return Err(cruby_regex_error(written, &e)),
-            },
+            // Onigmo but rejected by fancy-regex, and onig has already said
+            // the pattern is good -- so this never raises, it only picks the
+            // engine that can run it.
+            Err(_) if forward_backref_only(&translated) => Engine::Unmatchable,
+            Err(_) => Engine::Onig(onig),
         }
     } else {
         match regex::RegexBuilder::new(&translated)
@@ -839,17 +860,9 @@ pub fn regexp_new_enc(
             .build()
         {
             Ok(r) => Engine::Fast(r),
-            // The pre-scan missed something the fast engine still rejects
-            // (e.g. a construct only its parser flags): fall back to fancy,
-            // then to real Oniguruma, which is more permissive than either
-            // Rust engine (e.g. it accepts the redundant `a***`). Only when
-            // Onig ALSO rejects it is the pattern a genuine RegexpError.
-            Err(fast_err) => match build_fancy(&translated, ignore_case, extended, multiline) {
+            Err(_) => match build_fancy(&translated, ignore_case, extended, multiline) {
                 Ok(r) => Engine::Fancy(r),
-                Err(_) => match build_onig(source, ignore_case, extended, multiline) {
-                    Ok(r) => Engine::Onig(Arc::new(r)),
-                    Err(_) => return Err(cruby_regex_error(written, &fast_err.to_string())),
-                },
+                Err(_) => Engine::Onig(onig),
             },
         }
     };

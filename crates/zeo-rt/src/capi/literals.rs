@@ -411,7 +411,11 @@ pub unsafe extern "C" fn zeo_rt_str_append_value(s: *const RubyValue, v: *const 
             };
         }
         let g = other.lock();
-        return match rs.lock().push_buf(&g) {
+        // A `match` scrutinee holds its temporary guard through every arm, so
+        // the push has to end in its own statement: the error arm reads `rs`
+        // again to name both sides.
+        let pushed = rs.lock().push_buf(&g);
+        return match pushed {
             Ok(()) => STATUS_OK,
             Err(_) => {
                 let left = rs.lock().clone();
