@@ -102,7 +102,9 @@ program run under zeo and under the oracle ruby, and `tests/harness/golden.rs`
 has no step that builds a C extension for either side -- so a golden that
 requires one would compare zeo against a ruby that raises `LoadError`.
 Building the extension twice, once per set of headers, is what these rows are
-waiting on.
+waiting on. When that lands, every row below that is a BUG rather than a
+decided divergence becomes an ordinary gap file, and this table keeps only the
+ones zeo means to keep answering differently.
 
 | Divergence | Why |
 |---|---|
