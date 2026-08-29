@@ -251,6 +251,34 @@ pub(crate) fn all_tables() -> impl Iterator<Item = &'static BuiltinClassTable> {
 }
 
 pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable> {
+    let found = lookup_table(id);
+    if found.is_none() && table_was_dropped(id) {
+        table_is_missing(id);
+    }
+    found
+}
+
+/// Whether `id` names an always-on builtin whose table this program did NOT
+/// carry -- the one shape [`registered_table`] aborts on, asked safely.
+///
+/// A sweep over every class that mixes a module in (`runtime_meta`'s
+/// `mixin_hosts`) reaches builtins the program never names, and such a class
+/// can never be a receiver here, so it is not a host. Asking the guarded
+/// probe about it would abort a correct program.
+///
+/// Note this is NOT "has no table": `Object` legitimately has none (its rows
+/// live on `Kernel`), and it is very much reachable.
+pub(crate) fn table_was_dropped(id: ClassId) -> bool {
+    if lookup_table(id).is_some() {
+        return false;
+    }
+    zeo_abi::BUILTINS
+        .iter()
+        .find(|b| b.id.0 == id.0)
+        .is_some_and(|b| b.feature.is_none() && !NO_TABLE.contains(&b.name))
+}
+
+fn lookup_table(id: ClassId) -> Option<&'static BuiltinClassTable> {
     /// Keys at or above this are reserved markers, not class ids. The
     /// runtime block itself starts here, and no `ruby_class!` table is
     /// keyed inside it.
@@ -289,9 +317,6 @@ pub(crate) fn registered_table(id: ClassId) -> Option<&'static BuiltinClassTable
             .find(|(key, _)| *key == id.0)
             .map(|(_, t)| *t)
     };
-    if found.is_none() {
-        table_is_missing(id);
-    }
     found
 }
 
@@ -320,13 +345,11 @@ const NO_TABLE: &[&str] = &[
 /// no such excuse.
 #[cold]
 #[inline(never)]
-fn table_is_missing(id: ClassId) {
-    let Some(b) = zeo_abi::BUILTINS.iter().find(|b| b.id.0 == id.0) else {
-        return; // a user class, a runtime-minted one, or an exception id
-    };
-    if b.feature.is_some() || NO_TABLE.contains(&b.name) {
-        return;
-    }
+fn table_is_missing(id: ClassId) -> ! {
+    let b = zeo_abi::BUILTINS
+        .iter()
+        .find(|b| b.id.0 == id.0)
+        .expect("table_was_dropped already found this builtin");
     panic!(
         "zeo: internal error -- this program carries no method table for the \
          always-on builtin `{}` (id {}), so every method and constant it has \

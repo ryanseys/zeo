@@ -160,16 +160,27 @@ pub fn runtime_replace_method(id: ClassId, name: Symbol, f: crate::dispatch::Met
     replace_method_impl(id, name, crate::dispatch::MethodImpl::Static(f));
 }
 
+/// Whether a value-shaped receiver of `id` reads its methods through
+/// `value_bodies` -- true for a builtin, and for a runtime-minted id, which
+/// has no frozen entry to read instead.
+fn dispatches_by_value(id: ClassId) -> bool {
+    zeo_abi::builtin_name(id).is_some()
+}
+
 /// [`runtime_replace_method`]'s Cranelift twin: the body is a compiled
 /// `ValueFn`, so the overlay entry is a `CValue`.
 pub fn runtime_replace_method_c(id: ClassId, name: Symbol, f: crate::capi::ValueFn) {
-    replace_method_impl(id, name, crate::dispatch::MethodImpl::CValue(f));
+    let hosts = replace_method_impl(id, name, crate::dispatch::MethodImpl::CValue(f));
     // A BUILTIN's instances dispatch through `value_bodies`, not `methods` --
     // the two overlay maps serve the two receiver shapes, and `define_method`
     // has always written both. Without this half a positional redefinition of
     // a builtin method installed a row nothing read, so `"x".shout` kept
     // answering the static row (the LAST body) from program start.
-    if zeo_abi::builtin_name(id).is_some() {
+    //
+    // A USER module mixed into a builtin needs the row on the MODULE, which
+    // is where the retired host copy sends the walk -- so the module gets one
+    // whenever a value-shaped host is going to ask it.
+    if dispatches_by_value(id) || hosts.iter().copied().any(dispatches_by_value) {
         let body = RProc::with_self_and_block(
             crate::dispatch::ValueImpl::C(f).into_fn(),
             RubyValue::Nil,
@@ -215,13 +226,32 @@ pub fn runtime_replace_class_method_c(id: ClassId, name: Symbol, f: crate::capi:
     mark_live();
 }
 
-fn replace_method_impl(id: ClassId, name: Symbol, imp: crate::dispatch::MethodImpl) {
+fn replace_method_impl(id: ClassId, name: Symbol, imp: crate::dispatch::MethodImpl) -> Vec<ClassId> {
+    // A redefinition on a MODULE has to reach the copies analyze materialized
+    // onto every including class, or it writes a row nothing reads: the host's
+    // own flattened copy answers first and holds the LAST body from program
+    // start. RETIRING that copy is the whole fix -- the walk then carries on to
+    // the module, where this redefinition and every later one is read live.
+    //
+    // The hosts are named BEFORE the write, for the reason the removal sweep
+    // gives: "whose copy is this" is `method_owner`, and that walk reads the
+    // overlay too.
+    let hosts = mixin_hosts(id, std::slice::from_ref(&name));
     {
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
         e.methods.insert(name, imp.clone());
         e.undefs.remove(&name);
         e.removed.remove(&name);
+        for host in &hosts {
+            // `removed` EMPTIES the position rather than ending the walk, so
+            // the host stops answering with its stale copy and the module
+            // answers instead -- which is where ruby's one body lives anyway.
+            w.entry(host.0)
+                .or_insert_with(OverlayEntry::delta)
+                .removed
+                .insert(name);
+        }
     }
     // A per-object `extend` COPIES the module's rows into that object's
     // singleton table, so nothing above reaches them. `extended_names` records
@@ -229,8 +259,12 @@ fn replace_method_impl(id: ClassId, name: Symbol, imp: crate::dispatch::MethodIm
     // refresh needs -- and an object whose OWN `def` later claimed the name
     // has already been cleared from that table, so it keeps its own body.
     refresh_extended_copies(id, name, &imp);
+    for &host in &hosts {
+        patch_class(host);
+    }
     patch_class(id);
     mark_live();
+    hosts
 }
 
 /// Re-copy `name`'s new body into every per-object singleton table that took
@@ -813,7 +847,13 @@ fn mixin_hosts(mid: ClassId, names: &[Symbol]) -> Vec<ClassId> {
         }
     }
     hosts.retain(|&h| {
+        // A class whose own table -- or an ancestor's -- `needed_class_tables`
+        // dropped cannot be a receiver in this program, so its flattened copy
+        // can never answer. It is skipped rather than asked: `method_owner`
+        // walks the whole chain and its table probe ABORTS on a dropped one,
+        // which is the tripwire for a real emitter bug.
         h != mid
+            && crate::dispatch::reachable_chain(h)
             && names
                 .iter()
                 .any(|&n| crate::dispatch::method_owner(h, n) == Some(mid))

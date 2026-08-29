@@ -811,6 +811,21 @@ pub(crate) fn frozen_ancestors(id: ClassId) -> &'static [ClassId] {
     REGISTRY.get().map_or(&[], |r| r.ancestors_of(id))
 }
 
+/// Whether every class in `id`'s chain still carries the table it should --
+/// so a walk over that chain is safe to run.
+///
+/// `needed_class_tables` drops the table of a builtin the program cannot
+/// reach, and probing one ABORTS (the tripwire for an emitter bug). A sweep
+/// that enumerates classes rather than following a real receiver has to ask
+/// this first: such a class cannot be a receiver here, so there is nothing to
+/// learn from walking it.
+pub(crate) fn reachable_chain(id: ClassId) -> bool {
+    !crate::builtins::table_was_dropped(id)
+        && ancestors_of_value(id)
+            .iter()
+            .all(|&a| !crate::builtins::table_was_dropped(a))
+}
+
 pub(crate) fn ancestors_of_value(id: ClassId) -> &'static [ClassId] {
     // The OVERLAY wins when it has a chain: a class born at runtime
     // (`Class.new`) has no frozen entry at all, and a runtime `include`/

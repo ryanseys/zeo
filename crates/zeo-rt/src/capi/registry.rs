@@ -169,6 +169,7 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
     // it belongs to is registered below, and would overwrite it with the LAST
     // body's row. Collected and applied after.
     let mut boot_metas: Vec<u32> = Vec::new();
+    let mut boot_redefs: Vec<&abi::RegRow> = Vec::new();
     for r in unsafe { rows(desc.reg_rows, desc.n_reg_rows) } {
         let ids = || {
             unsafe { rows(r.ids, r.n_ids) }
@@ -245,31 +246,12 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             }
             // `flag` is the CHANNEL: a `def self.x`'s first body installs on
             // the class-method side, whose overlay row is a different map.
-            abi::REG_BOOT_REDEF => {
-                let id = ClassId(r.class);
-                let name = Symbol::intern(text(r.a));
-                let f = value_fn(r.f.expect("a boot-redef row carries its fn"));
-                // Bit 0 is the channel; bits 1-2 are this body's own
-                // visibility. A `private :v` written between two bodies
-                // retagged THIS `def` at lower time, so the first body's mark
-                // has to be in place before the first statement runs.
-                let singleton = r.flag & 1 != 0;
-                match singleton {
-                    false => crate::runtime_meta::runtime_replace_method_c(id, name, f),
-                    true => crate::runtime_meta::runtime_replace_class_method_c(id, name, f),
-                }
-                let vis = match (r.flag >> 1) & 3 {
-                    0 => crate::dispatch::MethodVisibility::Private,
-                    1 => crate::dispatch::MethodVisibility::Protected,
-                    _ => crate::dispatch::MethodVisibility::Public,
-                };
-                if vis != crate::dispatch::MethodVisibility::Public {
-                    crate::runtime_meta::install_positional_visibility(id, name, vis, singleton);
-                }
-                if r.n_ids > 0 {
-                    boot_metas.push(unsafe { *r.ids });
-                }
-            }
+            // Held back until the registry is installed: the install has to
+            // sweep the classes that mixed a module in, and both
+            // `classes_with_ancestor` and `method_owner` read the registry.
+            // Run here it saw no ancestry at all, so a module's first body
+            // never reached its materialized copies.
+            abi::REG_BOOT_REDEF => boot_redefs.push(r),
             abi::REG_SINGLETON_SURROGATE => {
                 let owner = unsafe { *r.ids };
                 crate::runtime_meta::register_singleton_surrogate(ClassId(owner), ClassId(r.class));
@@ -323,6 +305,37 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
         .collect();
     registry.mark_visibility_rows(&vis);
     crate::dispatch::install_class_registry(registry);
+
+    // The FIRST body of every observable redefinition timeline, installed
+    // before the first statement runs -- but AFTER the registry, because the
+    // install sweeps the classes that mixed a module in and that sweep reads
+    // the ancestry.
+    for r in boot_redefs {
+        let id = ClassId(r.class);
+        let name = Symbol::intern(text(r.a));
+        let f = value_fn(r.f.expect("a boot-redef row carries its fn"));
+        // Bit 0 is the CHANNEL: a `def self.x`'s first body installs on the
+        // class-method side, whose overlay row is a different map. Bits 1-2
+        // are this body's own visibility -- a `private :v` written between
+        // two bodies retagged THIS `def` at lower time, so the first body's
+        // mark has to be in place before the first statement runs.
+        let singleton = r.flag & 1 != 0;
+        match singleton {
+            false => crate::runtime_meta::runtime_replace_method_c(id, name, f),
+            true => crate::runtime_meta::runtime_replace_class_method_c(id, name, f),
+        }
+        let vis = match (r.flag >> 1) & 3 {
+            0 => crate::dispatch::MethodVisibility::Private,
+            1 => crate::dispatch::MethodVisibility::Protected,
+            _ => crate::dispatch::MethodVisibility::Public,
+        };
+        if vis != crate::dispatch::MethodVisibility::Public {
+            crate::runtime_meta::install_positional_visibility(id, name, vis, singleton);
+        }
+        if r.n_ids > 0 {
+            boot_metas.push(unsafe { *r.ids });
+        }
+    }
 
     let meta_row = |m: &abi::MetaRowC| {
         let mut row = if m.singleton != 0 {
