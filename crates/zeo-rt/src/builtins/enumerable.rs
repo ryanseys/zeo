@@ -534,27 +534,41 @@ pub(crate) fn min_max(
     // One optional count. Checked here rather than per row, so `Array#min`,
     // `Enumerable#min` and the `max` twins all raise the same way.
     check_arity(args.len(), 0, Some(1))?;
-    // `min(n)`/`max(n)`: the n smallest/largest, as an Array -- sorted
-    // ascending for `min`, descending for `max` (CRuby's nsmallest/
-    // nlargest). Collect-then-sort (not a bounded heap): honest for the
-    // corpus's enumerable sizes.
+    // `min(n)`/`max(n)`: the n smallest/largest, as an Array. NOT
+    // sort-then-truncate -- CRuby quickselects through `nmin_run`, and which
+    // of several equal elements survive is decided there.
     if let Some(n_arg) = args.first().filter(|v| !matches!(v, RubyValue::Nil)) {
         let n = &crate::builtins::convert::to_index(n_arg)?;
         if *n < 0 {
             return Err(arg_error!("negative size ({n})"));
         }
-        let items: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
-        let items2 = items.clone();
+        let blk = match &block {
+            Some(RubyValue::Proc(p)) => Some(p.clone()),
+            _ => None,
+        };
+        let run = Arc::new(Mutex::new(crate::builtins::sort::Nmin::new(
+            *n as usize,
+            !want_min,
+            move |a: &RubyValue, b: &RubyValue| match &blk {
+                // The block's answer is validated like a `<=>` result, and an
+                // unusable one names the pair it was handed.
+                Some(p) => match crate::value::cmp_int(&p.call(&[a.clone(), b.clone()])?)? {
+                    Some(n) => Ok(n as i32),
+                    None => Err(crate::value::cmp_error(a, b)),
+                },
+                None => crate::value::cmp_or_raise(a, b).map(|c| c as i32),
+            },
+        )));
+        let run2 = run.clone();
         for_each(src, move |yielded| {
-            items2.lock().push(pack(yielded));
+            let e = pack(yielded);
+            run2.lock().push(e.clone(), e)?;
             Ok(RubyValue::Nil)
         })?;
-        let mut items = std::mem::take(&mut *items.lock());
-        crate::builtins::array::sort_items(&mut items, &block)?;
-        if !want_min {
-            items.reverse();
-        }
-        items.truncate(*n as usize);
+        let items = Arc::into_inner(run)
+            .expect("the walk's handle is dropped")
+            .into_inner()
+            .finish()?;
         return Ok(RubyValue::Array(array_new(items)));
     }
     let blk = match block {
@@ -670,32 +684,23 @@ fn min_max_by(
     let blk = block_or_enum!(recv, name, &[], block);
     let items = collect_elements(Src::sending(recv))?;
 
+    // NOT sort-then-take: CRuby quickselects through `nmin_run`, and WHICH of
+    // several equal keys survive is decided there rather than by the order
+    // they arrived in.
     if let Some(n) = count {
-        let mut keyed: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
+        let mut run = crate::builtins::sort::Nmin::new(
+            n,
+            !min,
+            |a: &RubyValue, b: &RubyValue| match a.rb_cmp(b) {
+                Some(c) => Ok(c as i32),
+                None => Err(crate::value::cmp_error(a, b)),
+            },
+        );
         for e in items {
             let key = blk.call(e.raw())?;
-            keyed.push((key, e.packed));
+            run.push(key, e.packed)?;
         }
-        // Ascending by key for min_by, descending for max_by; ties are
-        // order-unspecified in CRuby (a heap), and the corpus uses distinct
-        // keys, so a stable sort on the comparison is faithful enough.
-        let mut failed: Option<(RubyValue, RubyValue)> = None;
-        keyed.sort_by(|a, b| {
-            let ord = match a.0.rb_cmp(&b.0) {
-                Some(c) => c.cmp(&0),
-                None => {
-                    // `(b, a)`: see the note in `sort_by`.
-                    failed.get_or_insert_with(|| (b.0.clone(), a.0.clone()));
-                    std::cmp::Ordering::Equal
-                }
-            };
-            if min { ord } else { ord.reverse() }
-        });
-        if let Some((x, y)) = failed {
-            return Err(crate::value::cmp_error(&x, &y));
-        }
-        let out = keyed.into_iter().take(n).map(|(_, e)| e).collect();
-        return Ok(RubyValue::Array(array_new(out)));
+        return Ok(RubyValue::Array(array_new(run.finish()?)));
     }
 
     let mut best: Option<(RubyValue, RubyValue)> = None;
