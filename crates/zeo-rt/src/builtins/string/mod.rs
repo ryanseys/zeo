@@ -2306,6 +2306,11 @@ ruby_class! {
         match other {
             RubyValue::Regexp(re) => {
                 guard_valid(recv)?;
+                let (enc, ascii_only) = {
+                    let b = rstr.lock();
+                    (b.encoding(), b.ascii_only())
+                };
+                crate::builtins::encoding::guard_regexp_haystack(re, enc, ascii_only)?;
                 Ok(crate::regexp_match_index(re, &rstr.lock().to_utf8_lossy()))
             }
             // Only a STRING operand is the TypeError. Ruby's `rb_str_match`

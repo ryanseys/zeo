@@ -1,0 +1,5 @@
+group keeps haystack             "ASCII-8BIT"
+group keeps latin1               "ISO-8859-1"
+whole match                      "ASCII-8BIT"
+pre_match                        "ASCII-8BIT"
+post_match                       "ASCII-8BIT"

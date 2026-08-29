@@ -1,0 +1,8 @@
+fixed re vs binary               Encoding::CompatibilityError
+fixed re match binary            Encoding::CompatibilityError
+fixed re vs latin1               Encoding::CompatibilityError
+ascii re vs binary               0
+String#=~ binary                 Encoding::CompatibilityError
+scan keeps haystack              "ASCII-8BIT"
+split keeps haystack             "ASCII-8BIT"
+ascii re on latin1               "ISO-8859-1"

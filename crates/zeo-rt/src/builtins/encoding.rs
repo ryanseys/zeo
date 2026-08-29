@@ -71,6 +71,52 @@ pub fn computed_encoding_of(text: &str) -> EncodingId {
     }
 }
 
+/// The encoding a Regexp is PINNED to, or `None` when it is agnostic. A `/n`
+/// regexp is pinned to ASCII-8BIT; `/e`, `/s` and `/u` name theirs outright;
+/// and a source carrying a non-ASCII character pins itself to UTF-8. An
+/// all-ASCII source pins nothing, which is why `/caf/` matches any haystack.
+pub fn regexp_pinned_encoding(re: &crate::RRegexp) -> Option<EncodingId> {
+    match re.encoding {
+        zeo_abi::RegexpEncoding::EucJp => Some(encoding::EUC_JP),
+        zeo_abi::RegexpEncoding::Windows31j => Some(encoding::WINDOWS_31J),
+        zeo_abi::RegexpEncoding::Utf8 => Some(encoding::UTF_8),
+        zeo_abi::RegexpEncoding::None => Some(encoding::ASCII_8BIT),
+        zeo_abi::RegexpEncoding::Source => {
+            (!re.source.is_ascii()).then_some(encoding::UTF_8)
+        }
+    }
+}
+
+/// CRuby's `rb_reg_prepare_enc` compatibility half. A pinned regexp refuses a
+/// haystack in a different encoding, because the two disagree on where one
+/// character ends. A haystack that is pure ASCII is compatible with anything
+/// and always passes.
+pub fn guard_regexp_haystack(
+    re: &crate::RRegexp,
+    hay_enc: EncodingId,
+    hay_ascii_only: bool,
+) -> Result<(), crate::Signal> {
+    let Some(pinned) = regexp_pinned_encoding(re) else {
+        return Ok(());
+    };
+    if pinned == hay_enc || hay_ascii_only {
+        return Ok(());
+    }
+    // Ruby spells ASCII-8BIT `BINARY (ASCII-8BIT)` in THIS message alone.
+    let spell = |id: EncodingId| match id {
+        encoding::ASCII_8BIT => "BINARY (ASCII-8BIT)".to_string(),
+        other => other.name().to_string(),
+    };
+    Err(crate::dispatch::raise_error(
+        "Encoding::CompatibilityError",
+        format!(
+            "incompatible encoding regexp match ({} regexp with {} string)",
+            spell(pinned),
+            spell(hay_enc)
+        ),
+    ))
+}
+
 fn recv_encoding(recv: &RubyValue) -> EncodingId {
     let RubyValue::Object(o) = recv else {
         unreachable!("the Encoding table only dispatches on Encoding receivers")

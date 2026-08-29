@@ -202,7 +202,7 @@ ruby_class! {
     // `$~`; `#match` and `#=~` do build one (and set `$~`) via the runtime
     // helpers String's own rows share.
     def "match?" cfunc (recv, arg1, arg2?) {
-        let Some(h) = subject_arg(arg1)? else { return Ok(RubyValue::Bool(false)) };
+        let Some(h) = subject_arg(re_of(recv), arg1)? else { return Ok(RubyValue::Bool(false)) };
         // An optional start position (char offset, end-relative when negative)
         // anchors the search; a position past the end is simply no match.
         let Some(at) = crate::builtins::string::match_haystack(&h, arg2)? else {
@@ -215,7 +215,7 @@ ruby_class! {
         )))
     }
     def "match" cfunc (recv, arg1, _arg2?, &block) {
-        let Some(h) = subject_arg(arg1)? else { return Ok(RubyValue::Nil) };
+        let Some(h) = subject_arg(re_of(recv), arg1)? else { return Ok(RubyValue::Nil) };
         let m = crate::regexp_match(re_of(recv), &h);
         // With a block, ruby YIELDS the MatchData on a hit and the call
         // evaluates to the BLOCK's value; a miss answers nil without running
@@ -227,7 +227,7 @@ ruby_class! {
         Ok(m)
     }
     def "=~" (recv, other) {
-        let Some(h) = subject_arg(other)? else { return Ok(RubyValue::Nil) };
+        let Some(h) = subject_arg(re_of(recv), other)? else { return Ok(RubyValue::Nil) };
         Ok(crate::regexp_match_index(re_of(recv), &h))
     }
     // `casefold?` reports the `/i` flag.
@@ -392,7 +392,7 @@ fn re_of(recv: &RubyValue) -> &crate::RRegexp {
 /// The subject of `Regexp#=~`/`#match`/`#match?`: a String matches, `nil`
 /// answers "no match" (never raises), and any other type raises TypeError --
 /// CRuby's rule (`/p/ =~ 5` -> TypeError, not a silent non-match).
-fn subject_arg(v: &RubyValue) -> Result<Option<String>, crate::Signal> {
+fn subject_arg(re: &crate::RRegexp, v: &RubyValue) -> Result<Option<String>, crate::Signal> {
     match v {
         RubyValue::Nil => Ok(None),
         // A Symbol matches as its name, which is not an implicit String
@@ -413,7 +413,11 @@ fn subject_arg(v: &RubyValue) -> Result<Option<String>, crate::Signal> {
                     "invalid byte sequence in {enc}"
                 ));
             }
-            Ok(Some(buf.to_utf8_lossy().into_owned()))
+            let (enc, ascii_only) = (buf.encoding(), buf.ascii_only());
+            let text = buf.to_utf8_lossy().into_owned();
+            drop(buf);
+            crate::builtins::encoding::guard_regexp_haystack(re, enc, ascii_only)?;
+            Ok(Some(text))
         }
     }
 }
