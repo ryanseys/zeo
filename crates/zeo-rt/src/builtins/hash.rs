@@ -353,7 +353,9 @@ ruby_class! {
             .filter(|(_, v)| !matches!(v, RubyValue::Nil))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        Ok(RubyValue::Hash(crate::hash_new(pairs)))
+        let fresh = crate::hash_new(pairs);
+        crate::collections::copy_hash_meta(rhash, &fresh); // as `merge` does
+        Ok(RubyValue::Hash(fresh))
     }
     def "compact!" (recv) {
         // CRuby's modify check runs before the nothing-to-do nil answer.

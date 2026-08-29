@@ -90,6 +90,25 @@ ruby_class! {
             Some(RubyValue::Int(f)) => {
                 (f & IGNORECASE != 0, f & EXTENDED != 0, f & MULTILINE != 0)
             }
+            // A String spells the flags out. Ruby names the WHOLE string in
+            // the refusal, not the one letter that was wrong.
+            Some(RubyValue::Str(o)) => {
+                let text = o.lock().to_utf8_lossy().into_owned();
+                let mut flags = (false, false, false);
+                for ch in text.chars() {
+                    match ch {
+                        'i' => flags.0 = true,
+                        'x' => flags.1 = true,
+                        'm' => flags.2 = true,
+                        _ => {
+                            return Err(crate::builtins::arg_error!(
+                                "unknown regexp option: {text}"
+                            ));
+                        }
+                    }
+                }
+                flags
+            }
             Some(other) => (other.truthy(), false, false),
         };
         crate::regexp_new(&source, ignore_case, extended, multiline)

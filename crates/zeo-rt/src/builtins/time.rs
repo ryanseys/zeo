@@ -757,6 +757,23 @@ pub(crate) fn render_strftime(b: &Broken, fmt: &str) -> String {
         // `%e`/`%k`/`%l` are the space-padded twins of `%d`/`%H`/`%I`. The pad
         // is only their DEFAULT, so `%0e` still zero-pads.
         let num_sp = |v: i64| num_pad(v, 2, ' ');
+        // `%Y` pads to four DIGITS, so a negative year carries its sign
+        // outside the padding: year -1 is `-0001`, not `-001`. An explicit
+        // width overrides that and counts the sign like every other field.
+        let year = |v: i64| -> String {
+            if left || width.is_some() {
+                return num(v, 4);
+            }
+            let body = match pad.unwrap_or('0') {
+                '_' | ' ' => format!("{:>4}", v.unsigned_abs()),
+                _ => format!("{:04}", v.unsigned_abs()),
+            };
+            if v >= 0 {
+                return body;
+            }
+            let at = body.find(|c: char| c != ' ').unwrap_or(0);
+            format!("{}-{}", &body[..at], &body[at..])
+        };
         // `%N`/`%L`'s fractional seconds to `digits` places: the 9-digit
         // nanosecond string, truncated or right-zero-padded to width.
         let frac = |digits: usize| -> String {
@@ -768,7 +785,7 @@ pub(crate) fn render_strftime(b: &Broken, fmt: &str) -> String {
             }
         };
         let mut piece = match d {
-            'Y' => num(tm.tm_year as i64 + 1900, 1),
+            'Y' => year(tm.tm_year as i64 + 1900),
             'y' => num((tm.tm_year as i64 + 1900) % 100, 2),
             'C' => num((tm.tm_year as i64 + 1900) / 100, 2),
             'm' => num(tm.tm_mon as i64 + 1, 2),

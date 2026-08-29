@@ -3,10 +3,11 @@
 # therefore come out in a different order: line 5 below sorts a mixed-case word
 # list case-insensitively, and "Apple"/"apple" compare equal.
 #
-# Matching CRuby means porting `ruby_qsort`'s exact pivot choices into a hot
-# path, to reproduce an order ruby's own documentation does not promise, and
-# making zeo's answer less useful in the process. So zeo keeps the stable sort
-# and says so here.
+# There is no order to copy. `ruby_qsort` calls the SYSTEM `qsort_r` wherever
+# the platform has one, and this build does (`HAVE_BSD_QSORT_R`), so the tie
+# order is the C library's and differs between macOS and glibc. Matching it
+# would mean matching each libc in turn, to reproduce an order ruby's own
+# documentation does not promise. zeo keeps the stable sort and says so here.
 #
 # Imported from the spinel corpus at c55d9bdb; see tests/spinel/UPSTREAM.md.
 #

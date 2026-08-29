@@ -167,12 +167,10 @@ pub(super) fn lines_from_args(
     sep: Option<&RubyValue>,
     opts: Option<&RubyValue>,
 ) -> Vec<RubyValue> {
+    // `chomp:` is a flag, so any truthy value arms it -- not `true` alone.
     let mut chomp = false;
-    if let Some(RubyValue::Hash(h)) = opts
-        && let RubyValue::Bool(b) =
-            crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("chomp")))
-    {
-        chomp = b;
+    if let Some(RubyValue::Hash(h)) = opts {
+        chomp = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("chomp"))).truthy();
     }
     let sep = match sep {
         Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
