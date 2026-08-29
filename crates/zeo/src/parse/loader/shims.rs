@@ -47,7 +47,14 @@ fn synthetic_shim_static(feature: &str) -> Option<&'static str> {
         // under zeo and writes a real Makefile, so mkmf is Ruby zeo RUNS
         // rather than a thing it reimplements -- 3,061 lines of probing and
         // Makefile generation that no summary of would stay true.
-        "mkmf" => Some(include_str!("../../../tools-lib/mkmf.rb")),
+        // ...followed by `shims/mkmf_zeo.rb`, the delta zeo maintains, which
+        // is kept as its own file so the vendored copy above stays
+        // byte-identical to ruby's. See that file for what it changes and why.
+        "mkmf" => Some(concat!(
+            include_str!("../../../tools-lib/mkmf.rb"),
+            "\n",
+            include_str!("../shims/mkmf_zeo.rb")
+        )),
         "securerandom" => Some(include_str!("../shims/securerandom.rb")),
         "gem-securerandom" => Some(include_str!("../shims/gem_securerandom.rb")),
         // CRuby's C `erb/escape` extension -- defined as a pure-Ruby shim over

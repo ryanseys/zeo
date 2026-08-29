@@ -73,13 +73,16 @@ Beyond the probe, the 23 C-extension gems in the oracle's gemdir -- 165k lines
 of C -- were compiled with `-fsyntax-only` against this tree and against
 pristine MRI 4.0.6 headers, and the two results diffed. Four files differ, in
 eight places, and every one is a direct payload read that upstream's headers
-would have answered with a byte zeo does not own:
+would have answered with a byte zeo does not own.
+`-fsyntax-only` compiles every branch, though, so the table counted three
+sites in a shim a working `have_func` compiles out; those are struck through
+below, and strscan builds:
 
 | Site | Reads |
 |---|---|
 | `date/date_core.c` | `RTYPEDDATA(v)->data` |
 | `nio4r/monitor.c`, `nio4r/bytebuffer.c` (×3) | `RFILE(v)->fptr` |
-| `strscan/strscan.c` (×3) | `RREGEXP(re)->usecnt`, inside a `#ifndef HAVE_RB_REG_ONIG_MATCH` shim mkmf skips |
+| ~~`strscan/strscan.c` (×3)~~ | RETIRED: `RREGEXP(re)->usecnt`, inside a `#ifndef HAVE_RB_REG_ONIG_MATCH` shim. mkmf really does skip it now -- every `have_func` used to answer no, so the shim was always compiled; see `shims/mkmf_zeo.rb`. strscan builds. |
 
 Each is a compile error naming its line. That is the design: loud at the call,
 never a wrong answer.
