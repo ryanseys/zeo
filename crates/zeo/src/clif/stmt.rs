@@ -1601,7 +1601,7 @@ pub(crate) fn stamp_call_line(fx: &mut Fx, site: NodeId) {
 
 /// Stamp a `set_line` only when the statement's line differs from the
 /// previous stamp.
-fn stamp_line(fx: &mut Fx, stmt: NodeId) {
+pub(super) fn stamp_line(fx: &mut Fx, stmt: NodeId) {
     let Some((file, line)) = fx.location(stmt) else {
         return;
     };

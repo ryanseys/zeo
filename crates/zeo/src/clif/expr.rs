@@ -306,8 +306,22 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
             }
             if_expr(fx, cond, &then_body, &else_body)
         }
-        // A diverging expression in value position (`a = (raise "x")`):
-        // the signal leaves the block unreachable; the nil is never read.
+        // `raise` in VALUE position (`a = raise "x"`). Kernel#raise never
+        // returns, so its value is unreachable -- but a program that defines
+        // its OWN `raise` gets an ordinary method, and the expression has to
+        // carry what that method answered. The send below finds whichever of
+        // the two is in scope.
+        HirNode::Raise(args, crate::hir::RaiseCause::Absent) => {
+            let args = args.clone();
+            let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
+            // The statement path stamps the line before it lowers; a `raise`
+            // that ends a body reaches this arm instead and its backtrace
+            // frame would otherwise name the line above it.
+            super::stmt::stamp_line(fx, id);
+            super::call::implicit_send(fx, id, "raise", &elems)
+        }
+        // A diverging expression in value position: the signal leaves the
+        // block unreachable; the nil is never read.
         HirNode::Break(..)
         | HirNode::Next(..)
         | HirNode::Redo
