@@ -450,6 +450,12 @@ pub(crate) fn pipe_value(f: std::fs::File) -> RubyValue {
     RubyValue::Object(Arc::new(RIo::new(IoBackend::Pipe(Some(f)), None)))
 }
 
+/// [`pipe_value`] with a `#path` -- a pty master, whose name is the slave's
+/// device under CRuby's `masterpty:` prefix rather than a node of its own.
+pub(crate) fn pipe_value_named(f: std::fs::File, path: String) -> RubyValue {
+    RubyValue::Object(Arc::new(RIo::new(IoBackend::Pipe(Some(f)), Some(path))))
+}
+
 /// Everything `IO.new`'s MODE argument and options Hash say about the handle
 /// it is about to wrap.
 ///

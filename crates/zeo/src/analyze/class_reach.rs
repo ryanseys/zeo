@@ -284,6 +284,25 @@ const GLOBAL_SEEDS: &[(&str, &[ClassId])] = &[
     ("$stderr", &[zeo_abi::IO_CLASS]),
 ];
 
+/// An always-on class a REQUIRE-GATED extension hands back, which the program
+/// itself may never name.
+///
+/// The loop over `BUILTINS` below seeds the gated class itself; this is the
+/// other direction -- `PTY.spawn` answers two `File`s and `PTY.check` a
+/// `Process::Status`, so a program that requires `pty` and writes neither name
+/// still dispatches through both. Dropping one of those tables is not a wrong
+/// answer, it is an abort at the first method call.
+const FEATURE_SEEDS: &[(&str, &[ClassId])] = &[(
+    "pty",
+    &[
+        zeo_abi::FILE_CLASS,
+        zeo_abi::FILE_CONSTANTS_MODULE,
+        zeo_abi::IO_CLASS,
+        zeo_abi::PROCESS_STATUS_CLASS,
+        zeo_abi::THREAD_CLASS,
+    ],
+)];
+
 /// The narrowed set, or `None` for "every class is reachable".
 ///
 /// `None` is the answer whenever a run-time compile or a reflection hatch
@@ -309,6 +328,11 @@ pub(crate) fn resolve(compiler: &Compiler) -> Option<FSet<ClassId>> {
     for b in zeo_abi::BUILTINS {
         if b.feature.is_some() && compiler.feature_active(ClassId(b.id.0)) {
             set.insert(b.id);
+        }
+    }
+    for (feature, ids) in FEATURE_SEEDS {
+        if compiler.hir.activated_features.contains(*feature) {
+            set.extend(ids.iter().copied());
         }
     }
     // A user class's resolved chain names every builtin it inherits or mixes

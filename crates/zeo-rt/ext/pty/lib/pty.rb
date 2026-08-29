@@ -7,9 +7,9 @@ module PTY
   # CRuby defines this in C (`ext/pty/pty.c`) with a `#status` reader its
   # constructor fills; a feature-gated native class cannot register a
   # constructible exception in this runtime (see `ext/zlib/lib/zlib.rb` for
-  # the row-shape reason), so it lives here and the native `PTY.check` raises
-  # it by name. That raise carries only the message, so `#status` answers nil
-  # -- the one documented divergence (`docs/EXTENSIONS.md`).
+  # the row-shape reason), so it lives here. `PTY.check` raises it by name and
+  # then stamps `@status` onto the object it built, so this reader answers the
+  # real `Process::Status`.
   class ChildExited < RuntimeError
     attr_reader :status
   end

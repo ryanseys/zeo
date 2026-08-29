@@ -78,9 +78,19 @@ fn close_quietly(io: &RubyValue) {
 fn spawn_under_pty(args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
-    crate::builtins::check_arity(args.len(), 1, Some(3))?;
+    crate::builtins::check_arity(args.len(), 0, Some(3))?;
 
-    let (master, slave, _name) = open_pair()?;
+    let (master, slave, name) = open_pair()?;
+    // `PTY.spawn` with no command runs a login shell, `$SHELL` or `/bin/sh`.
+    let shell;
+    let args = if args.is_empty() {
+        shell = [RubyValue::Str(crate::collections::string_new(
+            std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()),
+        ))];
+        &shell[..]
+    } else {
+        args
+    };
     let mut cmd = crate::builtins::process::build_spawn_command(args)?;
     let dup = |f: &std::fs::File| {
         f.try_clone()
@@ -103,35 +113,40 @@ fn spawn_under_pty(args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyV
             Ok(())
         });
     }
+    // `pty.c` blames "fork failed" for a command it could not start, whatever
+    // the errno; the errno itself still picks the Errno class.
     let child = cmd
         .spawn()
-        .map_err(|e| crate::builtins::process::spawn_error(&e))?;
+        .map_err(|e| crate::builtins::file::raise_bare_errno_named(&e, "fork failed"))?;
     // `Command` retains the slave Stdio fds until it drops; while any copy of
     // the slave stays open here, the master never sees EOF (`IO.popen` has the
     // same note).
     drop(cmd);
     let pid = i64::from(child.id());
 
-    // Two handles on the ONE master fd, CRuby's own shape: a reader that knows
-    // the child (`#pid`), and a writer.
-    let r = crate::builtins::io::popen_value(
+    // Two handles on the ONE master fd, CRuby's own shape. Both are `File`s
+    // named for the SLAVE device -- `rb_io_open_descriptor(rb_cFile, ...)` --
+    // and neither carries the pid: `r.pid` is nil in ruby, and the caller has
+    // the pid from the trio.
+    let r = crate::builtins::io::file_value(
         master
             .try_clone()
             .map_err(|e| crate::builtins::process::spawn_error(&e))?,
-        pid,
+        Some(name.clone()),
     );
-    let w = crate::builtins::io::pipe_value(master);
+    let w = crate::builtins::io::file_value(master, Some(name));
     let trio = vec![r.clone(), w.clone(), RubyValue::Int(pid)];
     let result = RubyValue::Array(crate::collections::array_new(trio));
 
     let Some(RubyValue::Proc(p)) = block else {
         return Ok(result);
     };
-    let out = p.call(&[result]);
+    p.call(&[result])?;
     // CRuby's block form leaves a detached reaper behind (not a close): the
     // block owns the IOs, but the child must still not linger as a zombie.
+    // It answers NIL, not the block's value.
     crate::builtins::process::detach_thread(pid);
-    out
+    Ok(RubyValue::Nil)
 }
 
 ruby_module! {
@@ -139,7 +154,9 @@ ruby_module! {
 
     // `PTY.spawn([env,] command... [,options]) -> [r, w, pid]` (or yields the
     // trio). `getpty` is CRuby's older name for the same call.
-    def self."spawn" | "getpty" cfunc (_recv, _command, _arg1?, _arg2?, &block) {
+    // Variadic, so the NO-argument form reaches the body: `PTY.spawn` with
+    // nothing to run starts a login shell.
+    def self."spawn" | "getpty" cfunc (_recv, *_args, &block) {
         spawn_under_pty(__args, block)
     }
 
@@ -148,7 +165,10 @@ ruby_module! {
     // File carrying its device path.
     def self."open" (_recv, &block) {
         let (master, slave, name) = open_pair()?;
-        let m = crate::builtins::io::pipe_value(master);
+        // The master's path is the slave's device under a `masterpty:` prefix
+        // -- it has no device node of its own, and this is the name CRuby
+        // gives it, which is what `#inspect` and `#path` report.
+        let m = crate::builtins::io::pipe_value_named(master, format!("masterpty:{name}"));
         let s = crate::builtins::io::file_value(slave, Some(name));
         let pair = RubyValue::Array(crate::collections::array_new(vec![m.clone(), s.clone()]));
         let Some(RubyValue::Proc(p)) = block else {
@@ -167,15 +187,32 @@ ruby_module! {
     def self."check" arity -1 (_recv, arg1, arg2?) {
         let pid = convert::to_index(arg1)?;
         let do_raise = !matches!(arg2, None | Some(RubyValue::Nil) | Some(RubyValue::Bool(false)));
-        match crate::builtins::process::raw_waitpid(pid, i64::from(libc::WNOHANG | libc::WUNTRACED))? {
-            None => Ok(RubyValue::Nil),
-            Some((reaped, raw)) => {
-                if do_raise {
-                    // CRuby words the state: exited / stopped / changed.
-                    let state = if libc::WIFSTOPPED(raw) { "stopped" } else { "exited" };
-                    return Err(raise_error("PTY::ChildExited", format!("pty - {state}: {reaped}")));
+        // A pid that is not this process's child is nil, never an error:
+        // `pty.c` calls `rb_waitpid` and answers Qnil on -1, so a stale or
+        // foreign pid reads as "nothing to report". Raising ECHILD made
+        // `PTY.check` unusable as the poll it is meant to be.
+        let reaped = crate::builtins::process::raw_waitpid(
+            pid,
+            i64::from(libc::WNOHANG | libc::WUNTRACED),
+        );
+        match reaped {
+            Err(_) | Ok(None) => Ok(RubyValue::Nil),
+            Ok(Some((reaped, raw))) => {
+                let status = crate::builtins::process::new_status(reaped, raw);
+                if !do_raise {
+                    return Ok(status);
                 }
-                Ok(crate::builtins::process::new_status(reaped, raw))
+                // CRuby words the state: exited / stopped / changed. The
+                // exception carries the status in `@status`, which is what
+                // `PTY::ChildExited#status` reads -- raising by name alone
+                // left it nil.
+                let state = if libc::WIFSTOPPED(raw) { "stopped" } else { "exited" };
+                let signal = raise_error("PTY::ChildExited", format!("pty - {state}: {reaped}"));
+                if let Signal::Raise(exc) = &signal {
+                    // `ivar_set_dyn` writes the `@` itself.
+                    crate::dispatch::ivar_set_dyn(exc, "status", status)?;
+                }
+                Err(signal)
             }
         }
     }
