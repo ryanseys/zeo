@@ -428,7 +428,7 @@ pub(crate) fn port_receive(port: &RPort) -> Result<RubyValue, Signal> {
         ));
     }
     crate::thread::check_interrupt()?;
-    crate::gvl::process_gvl().without(|| port_receive_locked(port))
+    crate::gvl::without_gvl(|| port_receive_locked(port))
 }
 
 fn port_receive_locked(port: &RPort) -> Result<RubyValue, Signal> {
@@ -855,7 +855,7 @@ pub fn ractor_select(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         });
     }
     let hit = crate::thread::check_interrupt()
-        .and_then(|()| crate::gvl::process_gvl().without(|| select_wait_locked(&me, &entries)));
+        .and_then(|()| crate::gvl::without_gvl(|| select_wait_locked(&me, &entries)));
     let result = hit.and_then(|(idx, obj)| {
         let entry = &entries[idx];
         match &entry.monitored {

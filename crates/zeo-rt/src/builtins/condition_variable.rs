@@ -117,7 +117,7 @@ ruby_class! {
         // The park itself runs with an armed process Gvl released (a no-op
         // when disabled, the default) -- the signaller needs to RUN to
         // signal.
-        crate::gvl::process_gvl().without(|| {
+        crate::gvl::without_gvl(|| {
             match timeout {
                 None => cv.cond.wait(&mut guard),
                 Some(dur) => {

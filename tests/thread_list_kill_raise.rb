@@ -1,12 +1,16 @@
-# Thread.list (the live-thread registry) and Thread#kill/#raise. At the single
-# scheduler worker a spawned thread does not run until the current one yields,
-# so the counts and delivery points here are deterministic.
+# Thread.list (the live-thread registry) and Thread#kill/#raise.
 Thread.report_on_exception = false
 
 p Thread.list.size                       # 1 (just main)
 p Thread.list.include?(Thread.current)   # true
-threads = (1..3).map { Thread.new { 1 } }
-p Thread.list.size                       # 4 (main + 3 runnable)
+# The three are HELD blocked while they are counted. A thread that has run to
+# the end leaves the registry whether or not anyone joined it, so counting
+# racing threads would count luck.
+gate = Queue.new
+threads = (1..3).map { Thread.new { gate.pop } }
+sleep 0.005 until threads.all? { |t| t.status == "sleep" }
+p Thread.list.size                       # 4 (main + 3 blocked)
+3.times { gate << :go }
 threads.each(&:join)
 p Thread.list.size                       # 1 (spawns finished)
 p Thread.list.include?(Thread.main)      # true

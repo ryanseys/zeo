@@ -815,8 +815,14 @@ fn thread_registry_and_kill_raise() {
         Thread.report_on_exception = false
         p Thread.list.size
         p Thread.list.include?(Thread.current)
-        ts = (1..3).map { Thread.new { 1 } }
+        # The three are held blocked while they are counted: a thread that
+        # has already run to the end leaves `Thread.list` whether or not
+        # anyone joined it, so counting racing threads counts luck.
+        gate = Queue.new
+        ts = (1..3).map { Thread.new { gate.pop } }
+        sleep 0.005 until ts.all? { |t| t.status == "sleep" }
         p Thread.list.size
+        3.times { gate << :go }
         ts.each(&:join)
         p Thread.list.size
 

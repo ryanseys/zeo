@@ -1383,7 +1383,7 @@ pub(crate) fn sleep_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             }
             None => None,
         };
-        crate::gvl::process_gvl().without(|| ctx.sleep(remaining));
+        crate::gvl::without_gvl(|| ctx.sleep(remaining));
     }
     Ok(RubyValue::Int(
         started.elapsed().as_secs_f64().round() as i64

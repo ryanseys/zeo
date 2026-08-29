@@ -125,6 +125,15 @@ pub struct ThreadData {
     /// Set while this thread is parked inside `Thread.stop`, cleared by
     /// `#wakeup`/`#run` -- what `#stop?` reports for a live thread.
     stopped: AtomicBool,
+    /// How deep this thread sits inside blocking primitives -- a Queue pop, a
+    /// contended Mutex, `sleep`, a `#join`, an IO syscall. Non-zero is what
+    /// makes `#status` answer "sleep", which is the word CRuby gives all of
+    /// them. It cannot ride on `stopped`: `thread_stop_current` LOOPS on that
+    /// latch, so a blocking primitive that set it would park the thread.
+    ///
+    /// A counter rather than a flag, because blocking nests and an inner
+    /// guard must not un-block the outer one.
+    blocking: AtomicU64,
     /// The OS thread id, recorded by the thread ITSELF at start (no other
     /// thread can read it). Zero until then, which is what makes
     /// `#native_thread_id` answer nil for a thread that never ran.
@@ -182,6 +191,7 @@ impl ThreadData {
             origin,
             priority: AtomicI64::new(0),
             stopped: AtomicBool::new(false),
+            blocking: AtomicU64::new(0),
             native_id: AtomicU64::new(0),
             class_id: AtomicU32::new(zeo_abi::THREAD_CLASS.0),
         })
@@ -285,6 +295,46 @@ pub fn claim_main_os_thread() {
 /// Ruby thread total reports a deadlock that a live producer is about to end.
 pub fn is_ruby_thread() -> bool {
     CURRENT.with(|c| c.lock().is_some()) || execution_id() == MAIN_EXECUTION.load(Ordering::Relaxed)
+}
+
+/// The calling OS thread's `Thread` object, or `None` when it is one the
+/// runtime spawned for its own purposes. Unlike [`thread_current`] this never
+/// mints the main thread for a bare worker, and it survives TLS teardown.
+fn current_thread_opt() -> Option<RThread> {
+    match CURRENT.try_with(|c| c.lock().clone()) {
+        Ok(Some(t)) => Some(t),
+        Ok(None) if execution_id() == MAIN_EXECUTION.load(Ordering::Relaxed) => Some(main_thread()),
+        _ => None,
+    }
+}
+
+/// Marks the calling Ruby thread blocked for as long as it lives -- see
+/// [`ThreadData::blocking`]. Taken by [`crate::gvl::without_gvl`], which is
+/// the wrapper every potentially blocking primitive goes through, so one
+/// site covers Queue, SizedQueue, Mutex, `sleep`, `#join`,
+/// ConditionVariable, the Ractor ports and the IO syscalls alike.
+pub struct BlockGuard(Option<RThread>);
+
+pub fn block_guard() -> BlockGuard {
+    let t = current_thread_opt();
+    if let Some(t) = &t {
+        t.blocking.fetch_add(1, Ordering::Relaxed);
+    }
+    BlockGuard(t)
+}
+
+impl Drop for BlockGuard {
+    fn drop(&mut self) {
+        if let Some(t) = &self.0 {
+            t.blocking.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Whether `t` is asleep: parked in `Thread.stop`, or inside a blocking
+/// primitive. CRuby reports both as "sleep".
+fn thread_is_asleep(t: &RThread) -> bool {
+    t.stopped.load(Ordering::Relaxed) || t.blocking.load(Ordering::Relaxed) > 0
 }
 
 /// One fiber's `Thread#[]` storage -- shared by handle so the root fiber's
@@ -580,7 +630,7 @@ pub fn thread_stop_current() -> Result<RubyValue, Signal> {
         // Before parking, for the reason `sleep_impl` documents: an interrupt
         // posted while this thread was starting up found no ctx to wake.
         crate::blocking_checkpoint()?;
-        crate::gvl::process_gvl().without(|| ctx.sleep(None));
+        crate::gvl::without_gvl(|| ctx.sleep(None));
     }
     Ok(RubyValue::Nil)
 }
@@ -599,7 +649,7 @@ pub fn thread_wakeup(t: &RThread) -> Result<(), &'static str> {
 /// `Thread#stop?` -- true while parked in `Thread.stop`, and always true for a
 /// thread that has finished (CRuby counts dead as stopped).
 pub fn thread_is_stopped(t: &RThread) -> bool {
-    !thread_alive(t) || t.stopped.load(Ordering::Relaxed)
+    !thread_alive(t) || thread_is_asleep(t)
 }
 
 /// `Thread#native_thread_id` -- the OS-level id, which only the thread itself
@@ -663,14 +713,15 @@ pub fn thread_local_fetch(t: &RThread, key: Symbol) -> Option<RubyValue> {
 /// thread still reads "run", since the outcome isn't observable until
 /// joined.)
 pub fn thread_status(t: &RThread) -> RubyValue {
-    if t.is_main {
-        return RubyValue::Str(crate::string_new("run".to_string()));
-    }
+    // The main thread reads its state like any other: CRuby reports a main
+    // blocked on a Queue or a `sleep` as "sleep" too.
+    reap_if_finished(t);
     match &*t.state.lock() {
         Some(ThreadState::Running(_)) | None => {
-            // A thread parked in `Thread.stop` reports "sleep", not "run" --
-            // CRuby's `THREAD_STOPPED`/`THREAD_STOPPED_FOREVER` both do.
-            let word = match t.stopped.load(Ordering::Relaxed) {
+            // A thread parked in `Thread.stop`, or inside a blocking
+            // primitive, reports "sleep" -- CRuby's `THREAD_STOPPED` /
+            // `THREAD_STOPPED_FOREVER` both do.
+            let word = match thread_is_asleep(t) {
                 true => "sleep",
                 false => "run",
             };
@@ -831,7 +882,7 @@ pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
             // The joiner must not sit on an ARMED Gvl across the blocking
             // join -- the target needs it to finish (the release is free
             // when the Gvl is disabled, the default).
-            let joined = crate::gvl::process_gvl().without(|| handle.join());
+            let joined = crate::gvl::without_gvl(|| handle.join());
             let outcome = match joined {
                 Ok(result) => result,
                 Err(panic_payload) => std::panic::resume_unwind(panic_payload),
@@ -898,7 +949,7 @@ pub fn thread_join(t: &RThread, limit: Option<std::time::Duration>) -> Result<bo
         check_interrupt()?;
         let slice = std::time::Duration::from_millis(1)
             .min(deadline.saturating_duration_since(std::time::Instant::now()));
-        crate::gvl::process_gvl().without(|| std::thread::sleep(slice));
+        crate::gvl::without_gvl(|| std::thread::sleep(slice));
     }
 }
 
@@ -918,7 +969,35 @@ fn thread_finished(t: &RThread) -> bool {
 /// Whether the thread is still running (`Thread#alive?`) -- a peek at the
 /// state that, unlike `thread_outcome`, never joins or consumes the handle.
 pub fn thread_alive(t: &RThread) -> bool {
+    reap_if_finished(t);
     t.is_main || matches!(&*t.state.lock(), Some(ThreadState::Running(_)))
+}
+
+/// Cache a finished thread's outcome WITHOUT blocking, so `#status` and
+/// `#alive?` can answer for a thread nobody has joined.
+///
+/// CRuby has no join handle: a thread marks itself dead as it exits, and
+/// every observer sees that at once. zeo only learned the outcome at the
+/// `join`, so a thread killed by `#raise` read "run" and `alive?` true for
+/// the rest of the program.
+fn reap_if_finished(t: &RThread) {
+    let mut slot = t.state.lock();
+    if !matches!(&*slot, Some(ThreadState::Running(h)) if h.is_finished()) {
+        return;
+    }
+    let Some(ThreadState::Running(handle)) = slot.take() else {
+        return;
+    };
+    // `is_finished` just said the OS thread is done, so this cannot block.
+    match handle.join() {
+        Ok(outcome) => *slot = Some(ThreadState::Done(outcome)),
+        // Same whole-process posture as `thread_outcome`: a Rust panic in a
+        // thread body propagates with its original payload.
+        Err(payload) => {
+            drop(slot);
+            std::panic::resume_unwind(payload)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -996,7 +1075,7 @@ pub fn mutex_lock(m: &RMutex) -> Result<(), WaitFailure> {
     // released (free otherwise) -- a waiter holding the scheduling lock
     // would starve the very owner it waits on. The recursive-lock check
     // lives inside so the read and the park see one consistent owner.
-    crate::gvl::process_gvl().without(|| {
+    crate::gvl::without_gvl(|| {
         let mut owner = m.owner.lock();
         if *owner == Some(me) {
             return Err(WaitFailure::Thread("deadlock; recursive locking"));
@@ -1168,7 +1247,7 @@ pub fn queue_push(q: &RQueue, value: RubyValue) -> Result<(), WaitFailure> {
     // still holding the queue guard inverts lock order against a holder
     // trying to lock this same queue -- the armed-mode gate found exactly
     // that deadlock on the SizedQueue back-pressure tests.
-    crate::gvl::process_gvl().without(|| queue_push_locked(q, value))
+    crate::gvl::without_gvl(|| queue_push_locked(q, value))
 }
 
 fn queue_push_locked(q: &RQueue, value: RubyValue) -> Result<(), WaitFailure> {
@@ -1214,7 +1293,7 @@ pub fn queue_pop(q: &RQueue) -> Result<RubyValue, Signal> {
     // Whole lock-wait-take section under one armed-Gvl release -- see
     // `queue_push` for the lock-order rationale (the Gvl must never be
     // re-acquired while the queue's own guard is held).
-    crate::gvl::process_gvl().without(|| queue_pop_locked(q))
+    crate::gvl::without_gvl(|| queue_pop_locked(q))
 }
 
 /// `Queue#pop(true)` -- take a queued value or raise, never wait.
@@ -1239,7 +1318,7 @@ pub fn queue_pop_nonblock(q: &RQueue) -> Result<RubyValue, WaitFailure> {
 pub fn queue_pop_timeout(q: &RQueue, limit: Duration) -> Result<Option<RubyValue>, Signal> {
     check_interrupt()?;
     let deadline = std::time::Instant::now() + limit;
-    crate::gvl::process_gvl().without(|| {
+    crate::gvl::without_gvl(|| {
         let mut inner = q.inner.lock();
         loop {
             if let Some(v) = inner.items.pop_front() {

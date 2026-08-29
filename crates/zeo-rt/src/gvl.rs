@@ -507,7 +507,13 @@ pub fn arm_for_cext() -> bool {
 /// lock-op-unlock section of the blocking primitive (never re-acquire the
 /// Gvl while still holding the primitive's own lock -- lock-order
 /// inversion; see `thread::queue_push_locked`).
+///
+/// It is also where the calling Ruby thread is marked ASLEEP, which is what
+/// `Thread#status` reports. That has to happen here rather than in
+/// [`Gvl::without`]: `without` returns `f()` immediately when this thread
+/// does not hold the Gvl, which is always true in the default parallel mode.
 pub fn without_gvl<R>(f: impl FnOnce() -> R) -> R {
+    let _blocked = crate::thread::block_guard();
     process_gvl().without(f)
 }
 
