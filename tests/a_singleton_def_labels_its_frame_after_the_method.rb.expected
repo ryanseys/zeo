@@ -1,0 +1,21 @@
+'block in sm'
+'Array#each'
+'sm'
+--- def obj.m ---
+'block in dm'
+'Array#each'
+'dm'
+--- def self.meta inside class << obj ---
+'block in meta'
+'Array#each'
+'meta'
+--- a define_method body really is a block ---
+'block (2 levels) in <class:D>'
+'Array#each'
+'block in <class:D>'
+--- def self.x in a class body is qualified ---
+'block in L.sm2'
+'Array#each'
+'L.sm2'
+--- the iseq label reads the same string ---
+"labelled"

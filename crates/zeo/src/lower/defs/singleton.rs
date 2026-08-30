@@ -706,6 +706,9 @@ fn define_singleton_method_call(
         body,
         method_body: true,
     });
+    // This lambda IS a `def`'s body, so ruby labels its frame after the
+    // method rather than as a block. See `Hir::singleton_def_names`.
+    hir.singleton_def_names.insert(lambda, name.clone());
     let sym = hir.push(HirNode::SymbolLit(name));
     hir.push(HirNode::Call {
         receiver: Some(recv),

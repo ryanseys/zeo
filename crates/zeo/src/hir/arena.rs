@@ -160,6 +160,20 @@ pub struct Hir {
     /// `clif/stmt.rs`'s `lower_stmts`, which groups consecutive entries under one
     /// `singleton class` frame.
     pub singleton_frame_stmts: crate::compiler::FMap<NodeId, NodeId>,
+    /// Every `method_body` `Lambda` that a per-object singleton `def`
+    /// desugared into, mapped to the METHOD NAME it installs.
+    ///
+    /// `def obj.m` and `class << obj; def m` both become
+    /// `obj.define_singleton_method(:m, ->{ ... })`, and a lambda's frame is
+    /// labelled as a block. Ruby labels a real `def` after the method however
+    /// it is installed, so a raise inside one reported `block in <main>` where
+    /// ruby reports `m`. The name has to ride here because the desugar throws
+    /// the `DefMethod` node away, and `clif/expr.rs`'s `Lambda` arm is the
+    /// only place left that could say it.
+    ///
+    /// The bare name, unqualified: that is what ruby prints for a PER-OBJECT
+    /// singleton, where `def self.x` in a class body prints `C.x`.
+    pub singleton_def_names: crate::compiler::FMap<NodeId, String>,
     /// Every `DefMethod` the `attr_*` fold generated, mapped to the macro that
     /// wrote it. A class can `extend` a module defining its own
     /// `attr_accessor`, and then the macro is an ordinary method call ruby

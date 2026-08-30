@@ -1851,6 +1851,10 @@ pub(crate) fn try_lower_definition(
                     body,
                     method_body: true,
                 });
+                // Ruby labels a real `def`'s frame after the method however it
+                // is installed, so this one is `name`, not a block. See
+                // `Hir::singleton_def_names`.
+                hir.singleton_def_names.insert(lambda, name.clone());
                 let sym = hir.push(HirNode::SymbolLit(name));
                 return Ok(Some(hir.push(HirNode::Call {
                     receiver: Some(recv),

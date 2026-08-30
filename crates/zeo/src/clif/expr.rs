@@ -444,12 +444,20 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
                 // parameter list a `def` actually wrote (rustc marks
                 // `runtime_super_params` here and leaves
                 // `defined_by_define_method` alone).
+                // A per-object singleton `def` labels its frame after the
+                // METHOD, bare (`m`), where a `def self.x` in a class body is
+                // qualified (`C.x`). Anything else reaching here really is a
+                // block. See `Hir::singleton_def_names`.
+                let frame = match fx.an.compiler.hir.singleton_def_names.get(&id) {
+                    Some(name) => super::blocks::FrameName::Method(name.clone()),
+                    None => super::blocks::FrameName::Block,
+                };
                 let ss = super::blocks::build_method_body(
                     fx,
                     id,
                     &params,
                     &body,
-                    super::blocks::FrameName::Block,
+                    frame,
                     super::blocks::MethodBody::Def,
                 )?;
                 return Ok(Operand::Slot {
