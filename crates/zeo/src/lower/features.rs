@@ -30,6 +30,19 @@ pub fn is_preloaded_at_boot(feature: &str) -> bool {
 /// needs to ENUMERATE it, not just ask about one name.
 pub const PRELOADED_AT_BOOT: &[&str] = zeo_abi::PRELOADED_AT_BOOT;
 
+/// Whether zeo's OWN implementation answers `require "feature"` -- which is
+/// [`is_builtin_feature`] unless `ZEO_DISABLE_BUILTIN` retired it.
+///
+/// Every site that chooses between zeo's implementation and a file asks this
+/// rather than `is_builtin_feature` directly, so the dial reaches all of
+/// them: the store resolver, the loader's three resolution sites, and the
+/// fold in `lower::calls` that replaces the require with an activation.
+/// `is_builtin_feature` stays the question "does zeo HAVE a row for this",
+/// which the gated-constant resolver still needs whatever the dial says.
+pub fn zeo_provides(feature: &str) -> bool {
+    is_builtin_feature(feature) && !crate::debug_flags::builtin_disabled(feature)
+}
+
 /// Whether `feature` names a stdlib feature the runtime compiles in, so
 /// `require`ing it is a no-op (nothing to splice). `tmpdir` (`Dir.mktmpdir`)
 /// and `set` (the `Set` core class) are both compiled in -- `Set` is now an

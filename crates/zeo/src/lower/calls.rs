@@ -1386,7 +1386,18 @@ fn lower_require_call(
                             hir.loader.optional_require_sites.contains(&key)
                                 || hir.loader.conditional_require_sites.contains(&key)
                         }));
-                if name == "require" && features::is_builtin_feature(&feature) && !kept_by_loader {
+                // A store gem that supplies this feature answers the require
+                // itself, so the fold must not eat the call -- see
+                // `LoaderState::store_overrides`.
+                let overridden = hir
+                    .loader
+                    .store_overrides
+                    .contains(features::canonical_ext_feature(&feature));
+                if name == "require"
+                    && features::zeo_provides(&feature)
+                    && !overridden
+                    && !kept_by_loader
+                {
                     let canonical = features::canonical_ext_feature(&feature).to_string();
                     let newly_loaded = hir.activated_features.insert(canonical.clone());
                     let first = newly_loaded && !features::is_preloaded_at_boot(&feature);

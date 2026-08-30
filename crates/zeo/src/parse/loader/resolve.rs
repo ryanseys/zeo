@@ -46,7 +46,7 @@ impl Loader {
     /// which is what a bare `zeo -e 'require "psych"'` gets with no Gemfile,
     /// no store, and no compiler.
     pub(super) fn builtin_wins(&self, feature: &str) -> bool {
-        is_builtin_feature(feature) && !self.store_overrides.contains(feature)
+        zeo_provides(feature) && !self.store_overrides.contains(feature)
     }
 
     /// The file this literal `require`/`require_relative` names, canonicalized

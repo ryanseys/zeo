@@ -134,7 +134,7 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
         // own, because the project asked for that release by name. Only when
         // the store cannot supply it does zeo's implementation answer, which
         // is what a bare `zeo -e 'require "psych"'` gets.
-        let builtin_provides = crate::lower::features::is_builtin_feature(&name);
+        let builtin_provides = crate::lower::features::zeo_provides(&name);
 
         // Force the ruby (source) platform: the suffix-less
         // `<name>-<version>.gemspec`. The first store with a source-platform

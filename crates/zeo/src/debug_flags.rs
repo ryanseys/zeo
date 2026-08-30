@@ -142,3 +142,35 @@ pub(crate) fn loads_at_runtime(feature: &str) -> bool {
                 .is_some_and(|rest| rest.starts_with('/'))
     })
 }
+
+/// Whether `ZEO_DISABLE_BUILTIN` retires zeo's own implementation of
+/// `feature`, so the `require` resolves to the real gem instead.
+///
+/// zeo REIMPLEMENTS a number of default gems in Rust -- psych, strscan,
+/// syslog, fiddle, io-console, json. Each is faster and needs no C toolchain,
+/// and each is also a second implementation of a library that upstream keeps
+/// releasing, which zeo then has to keep chasing. Whether to keep any of them
+/// is a question that can only be answered by RUNNING the alternative, and
+/// until this dial there was no way to: `is_builtin_feature` short-circuited
+/// every require of these names before the gem store was ever consulted.
+///
+/// A name here removes zeo's answer for that one library. The require then
+/// resolves like any other -- to a lockfile's gem, or to a `LoadError` when
+/// nothing supplies it, which is itself the honest answer. `all` retires
+/// every one at once, which is what the eventual deletion would look like.
+///
+/// This is the measuring instrument for that deletion, not a shipping
+/// feature: it changes which implementation a program runs.
+pub(crate) fn builtin_disabled(feature: &str) -> bool {
+    static NAMES: OnceLock<Vec<String>> = OnceLock::new();
+    let names = NAMES.get_or_init(|| {
+        std::env::var("ZEO_DISABLE_BUILTIN")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .collect()
+    });
+    names.iter().any(|n| n == "all" || n == feature)
+}

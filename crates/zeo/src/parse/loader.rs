@@ -43,7 +43,7 @@
 
 use crate::hir::{Hir, HirNode, LoadedFile, NodeId};
 use crate::lower::context::{BindingsFrame, SourceFileFrame, current_box_binding};
-use crate::lower::features::{canonical_ext_feature, is_builtin_feature};
+use crate::lower::features::{canonical_ext_feature, is_builtin_feature, zeo_provides};
 use crate::lower::{PResult, lower_node};
 use crate::lower_error::LowerError;
 use crate::rename;
@@ -428,6 +428,15 @@ pub(super) fn lower_main_file(
         ambiguous_features: std::cell::RefCell::new(HashMap::new()),
         activated: std::cell::RefCell::new(Vec::new()),
     };
+    // `ZEO_DISABLE_BUILTIN` retires zeo's implementation of a library, and
+    // the ext tier's Ruby half IS part of that implementation -- it sits on
+    // `crates/zeo-rt/ext/<name>/lib` and requires the native half beside it.
+    // Leaving its package on the search path would answer the require with
+    // exactly the code the dial turned off. Dropped here, before
+    // `dual_homed_features` probes and memoizes anything.
+    loader
+        .packages
+        .retain(|g| !crate::debug_flags::builtin_disabled(&g.name));
     // Which gated builtins ALSO have a vendored Ruby half. Probed once here
     // rather than asked per call site, because the answer is a property of
     // the tree and the question is asked from three places -- the deferred
@@ -462,6 +471,13 @@ pub(super) fn lower_main_file(
         loader
             .packages
             .retain(|g| !overriding.contains(g.name.as_str()));
+        // `dual_homed_features` above probed every builtin feature, and
+        // `probe_require` memoizes -- so the memo already holds zeo's own
+        // path for each name just handed over. Resolution would keep
+        // answering it and the store root would be searched by nothing.
+        if !overriding.is_empty() {
+            loader.require_memo.borrow_mut().clear();
+        }
         for (name, roots) in resolution.roots {
             if !loader.packages.iter().any(|g| g.name == name) {
                 let version = parsed
@@ -478,9 +494,9 @@ pub(super) fn lower_main_file(
         // Under the feature name a `require` spells, not the gem name:
         // `require "yaml"` canonicalizes to `psych` before it is asked.
         for name in resolution.overrides {
-            loader
-                .store_overrides
-                .insert(canonical_ext_feature(&name).to_string());
+            let feature = canonical_ext_feature(&name).to_string();
+            loader.store_overrides.insert(feature.clone());
+            hir.loader.store_overrides.insert(feature);
         }
         for record in resolution.disclosures {
             // An excluded gem's reason is kept so a `require` of it fails

@@ -27,7 +27,10 @@ impl Loader {
             .or_else(|| feature.strip_suffix(".bundle"))
             .or_else(|| feature.strip_suffix(".o"))
             .unwrap_or(feature);
-        if !is_builtin_feature(bare) {
+        // `builtin_wins`, not `is_builtin_feature`: a store gem that supplies
+        // this name, or `ZEO_DISABLE_BUILTIN` retiring it, both mean zeo's row
+        // is not the answer and the gem's own C extension is built below.
+        if !self.builtin_wins(bare) {
             // A gem that ships its C as SOURCE is built HERE, at the require
             // that reached it -- an AOT compiler builds only what a require
             // reaches, which is why this is not eager.

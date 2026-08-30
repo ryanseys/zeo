@@ -493,6 +493,13 @@ pub struct LoaderState {
     /// here, and keeps folding -- which is the difference
     /// `is_builtin_feature` alone cannot see.
     pub dual_homed_requires: crate::compiler::FSet<String>,
+    /// Features an external-store gem supplies that zeo ALSO implements
+    /// natively. The lockfile named the gem and the store had it, so the
+    /// project asked for that release and it answers the `require` -- see
+    /// `Loader::builtin_wins`. The builtin fold in `lower::calls` reads this
+    /// for the same reason the loader does: without it the fold eats the call
+    /// and activates zeo's row, and the store gem is never loaded at all.
+    pub store_overrides: crate::compiler::FSet<String>,
 }
 
 /// One compiled-in load-path file -- see `LoaderState::feature_units`. Its statements
