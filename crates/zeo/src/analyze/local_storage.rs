@@ -51,6 +51,29 @@ impl Locals {
     }
 }
 
+/// The locals a SPLICED block body contributes to the scope around it:
+/// everything it mentions EXCEPT the names that are its own.
+///
+/// A splice shares the enclosing Rust scope but not the enclosing Ruby one.
+/// A name the block first assigns is block-local in ruby, and
+/// `clif::iter::lower_counted` gives it storage of its own for the loop's
+/// extent, so it must not be declared out here as well: a hoisted one is
+/// visible to every SIBLING block in the scope, and a sibling then captures
+/// it as a shared cell instead of declaring its own. Two closures built in
+/// two iterations of the sibling then read one variable.
+fn collect_spliced_block(compiler: &Compiler, block: NodeId, out: &mut Locals) {
+    let HirNode::Block { params, .. } = &compiler.hir[block] else {
+        return;
+    };
+    let mut inner = Locals::default();
+    collect_locals(compiler, block, &mut inner);
+    for name in inner.into_names() {
+        if !params.implicit_block_locals.contains(&name) && !params.block_locals.contains(&name) {
+            out.add(&name);
+        }
+    }
+}
+
 pub(crate) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Locals) {
     match &compiler.hir[id] {
         // An FFI wrapper body declares no hoistable locals (only param
@@ -214,7 +237,7 @@ pub(crate) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Locals) 
                     kwargs.is_empty(),
                     *b,
                 ) {
-                    collect_locals(compiler, *b, out);
+                    collect_spliced_block(compiler, *b, out);
                 }
             }
             if let Some(b) = block_arg {

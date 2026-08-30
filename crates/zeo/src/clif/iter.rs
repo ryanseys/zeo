@@ -291,10 +291,13 @@ pub(crate) fn lower_counted(
     for name in bound.clone() {
         bind_shadow(fx, &mut restore, &name);
     }
+    // EVERY name the body owns, not only the escaping ones: the hoisting
+    // scan leaves a spliced body's own locals out of the enclosing scope
+    // (`analyze::local_storage::collect_spliced_block`), so this is the only
+    // storage they get -- and keeping them out there is what stops a sibling
+    // block in the same scope from capturing one as if it were shared.
     for name in implicit_locals.iter().chain(block_locals.iter()) {
-        if per_iteration_cells.iter().any(|n| n == name) || block_locals.contains(name) {
-            bind_shadow(fx, &mut restore, name);
-        }
+        bind_shadow(fx, &mut restore, name);
     }
 
     let counter =
