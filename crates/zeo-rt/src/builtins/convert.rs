@@ -34,6 +34,7 @@ fn target_class(target: &str) -> Option<ClassId> {
         "Hash" => zeo_abi::HASH_CLASS,
         "Float" => zeo_abi::FLOAT_CLASS,
         "Regexp" => zeo_abi::REGEXP_CLASS,
+        "Rational" => zeo_abi::RATIONAL_CLASS,
         _ => return None,
     })
 }
@@ -153,6 +154,20 @@ pub fn to_str(v: &RubyValue) -> Result<RubyValue, Signal> {
 
 pub fn check_to_str(v: &RubyValue) -> Result<Option<RubyValue>, Signal> {
     check_convert(v, "String", "to_str")
+}
+
+/// `to_r`, the first half of CRuby's `num_exact`. Not a `to_*` COERCION
+/// protocol like the others -- `to_r` is public and lossy on a String -- so
+/// there is no strict `to_r` beside it; every caller has to decide what a
+/// miss means.
+pub fn check_to_r(v: &RubyValue) -> Result<Option<RubyValue>, Signal> {
+    check_convert(v, "Rational", "to_r")
+}
+
+/// `to_time`, the protocol `time_timespec` accepts a non-numeric argument
+/// through. `None` when the value does not answer it.
+pub fn check_to_time(v: &RubyValue) -> Result<Option<RubyValue>, Signal> {
+    check_convert(v, "Time", "to_time")
 }
 
 pub fn to_ary(v: &RubyValue) -> Result<RubyValue, Signal> {

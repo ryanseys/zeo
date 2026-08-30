@@ -2856,7 +2856,13 @@ ruby_class! {
     def "write_nonblock" params "buf, exception: nil" (recv, buffer, **opts, &_blk) {
         check_writable(recv)?;
         let raises = nonblock_raises(opts);
-        let bytes = convert::to_rstr(buffer)?.lock().bytes().to_vec();
+        // Every write path renders its argument with `to_s`
+        // (`rb_obj_as_string`), not the `to_str` protocol -- this one asked
+        // for `to_str` and refused an object that `IO#write` accepts.
+        let bytes = match buffer {
+            RubyValue::Str(s) => s.lock().bytes().to_vec(),
+            other => other.try_display_string()?.into_bytes(),
+        };
         set_fd_nonblock(raw_fd(recv)?, true)?;
         let wrote = with_file(recv, |f, _path| {
             loop {

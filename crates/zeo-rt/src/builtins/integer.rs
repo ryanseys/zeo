@@ -579,19 +579,22 @@ ruby_class! {
             other => Err(coerce_error(other, "Integer")),
         }
     }
+    // The shift COUNT goes through `rb_to_int`, like the bit predicates'
+    // mask, not the numeric tower's `coerce`: anything with a `to_int` is a
+    // count, and anything without gets the conversion message.
     def "<<" (recv, other) {
         match other {
             RubyValue::Int(_) | RubyValue::BigInt(_) => int_shl(recv, other),
             // A Float count is truncated toward zero (CRuby's `to_int`).
             RubyValue::Float(f) => int_shl(recv, &RubyValue::Int(f.trunc() as i64)),
-            other => Err(coerce_error(other, "Integer")),
+            other => int_shl(recv, &crate::builtins::convert::to_int(other)?),
         }
     }
     def ">>" (recv, other) {
         match other {
             RubyValue::Int(_) | RubyValue::BigInt(_) => int_shr(recv, other),
             RubyValue::Float(f) => int_shr(recv, &RubyValue::Int(f.trunc() as i64)),
-            other => Err(coerce_error(other, "Integer")),
+            other => int_shr(recv, &crate::builtins::convert::to_int(other)?),
         }
     }
     def "-@" (recv) {

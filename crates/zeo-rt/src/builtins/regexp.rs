@@ -64,8 +64,16 @@ ruby_class! {
 
     // `Regexp.escape(str)` / `.quote(str)`: a source-safe literal of `str`.
     def self."escape" | "quote"(_recv, arg) {
-        let s = &crate::builtins::convert::to_rstr(arg)?;
-        let escaped = escape_regexp_source(&s.lock().to_utf8_lossy());
+        // `reg_operand` takes a SYMBOL as its own name, beside the `to_str`
+        // protocol -- `Regexp.escape(:"a.b")` is `"a\\.b"`.
+        let text = match arg {
+            RubyValue::Symbol(sym) => sym.name(),
+            other => crate::builtins::convert::to_rstr(other)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned(),
+        };
+        let escaped = escape_regexp_source(&text);
         Ok(RubyValue::Str(crate::string_new(escaped)))
     }
 

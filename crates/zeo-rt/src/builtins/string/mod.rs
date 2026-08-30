@@ -354,6 +354,21 @@ fn case_comparable(a: &crate::RStr, b: &crate::RStr) -> bool {
     crate::encoding::compat_concat_enc(&ga, &gb).is_some()
 }
 
+/// `chomp`/`chomp!`'s separator argument as a String handle.
+///
+/// `None` covers both the no-argument form (strip the line separator) and
+/// `chomp(nil)` (a no-op) -- the callers tell them apart by the argument
+/// itself. Anything else runs the `to_str` protocol, as CRuby's
+/// `rb_str_chomp`'s `StringValue` does, so a value with `to_str` is a
+/// separator and one without is the TypeError.
+fn chomp_separator(arg: Option<&RubyValue>) -> Result<Option<crate::RStr>, Signal> {
+    match arg {
+        None | Some(RubyValue::Nil) => Ok(None),
+        Some(RubyValue::Str(s)) => Ok(Some(s.clone())),
+        Some(other) => Ok(Some(crate::builtins::convert::to_rstr(other)?)),
+    }
+}
+
 /// CRuby's `rb_str_modify` guard: a frozen receiver can't be mutated in place.
 /// Shared by the mutators that don't route through `str_bang_replace`
 /// (`insert`/`prepend`/`replace`), so a `frozen_string_literal` literal raises
@@ -1389,26 +1404,27 @@ ruby_class! {
         // suffix is compared verbatim, so nothing here needs decoding -- and
         // decoding would both rewrite an invalid byte as U+FFFD and lose the
         // receiver's encoding (this row used to answer UTF-8 whatever it got).
+        let sep = chomp_separator(arg)?;
         let buf = rstr.lock();
         let b = buf.bytes();
-        let out: &[u8] = match arg {
+        let out: &[u8] = match &sep {
             // `chomp("")` is paragraph mode: strip EVERY trailing newline record
             // (`\n`/`\r\n`), but keep a lone trailing `\r` (CRuby's rb_str_chomp).
-            Some(RubyValue::Str(suffix)) if suffix.lock().bytes().is_empty() => {
+            Some(suffix) if suffix.lock().bytes().is_empty() => {
                 let mut t = b;
                 while let Some(rest) = t.strip_suffix(b"\n") {
                     t = rest.strip_suffix(b"\r").unwrap_or(rest);
                 }
                 t
             }
-            Some(RubyValue::Str(suffix)) => {
+            Some(suffix) => {
                 let s = suffix.lock();
                 b.strip_suffix(s.bytes()).unwrap_or(b)
             }
             // `chomp(nil)` is a no-op (CRuby returns the string unchanged),
             // distinct from the no-arg form which strips the line separator.
-            Some(RubyValue::Nil) => b,
-            _ => b
+            None if matches!(arg, Some(RubyValue::Nil)) => b,
+            None => b
                 .strip_suffix(b"\r\n")
                 .or_else(|| b.strip_suffix(b"\n"))
                 .or_else(|| b.strip_suffix(b"\r"))
@@ -1435,22 +1451,24 @@ ruby_class! {
     // route through the shared bang mutator (frozen guard, nil when nothing
     // changed).
     def "chomp!"(recv, arg?) {
+        let sep = chomp_separator(arg)?;
         let text = rstr.lock().to_utf8_lossy().into_owned();
-        let out = match arg {
+        let out = match &sep {
             // `chomp("")` is paragraph mode: strip EVERY trailing newline record
             // (`\n`/`\r\n`), but keep a lone trailing `\r` (CRuby's rb_str_chomp).
-            Some(RubyValue::Str(suffix)) if suffix.lock().to_utf8_lossy().is_empty() => {
+            Some(suffix) if suffix.lock().to_utf8_lossy().is_empty() => {
                 let mut t = text.as_str();
                 while let Some(rest) = t.strip_suffix('\n') {
                     t = rest.strip_suffix('\r').unwrap_or(rest);
                 }
                 t.to_string()
             }
-            Some(RubyValue::Str(suffix)) => {
+            Some(suffix) => {
                 let suffix = suffix.lock().to_utf8_lossy().into_owned();
                 text.strip_suffix(&suffix).unwrap_or(&text).to_string()
             }
-            _ => text
+            None if matches!(arg, Some(RubyValue::Nil)) => text.clone(),
+            None => text
                 .strip_suffix("\r\n")
                 .or_else(|| text.strip_suffix('\n'))
                 .or_else(|| text.strip_suffix('\r'))

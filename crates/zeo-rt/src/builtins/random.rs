@@ -105,7 +105,11 @@ fn edom() -> Signal {
 fn rand_with(state: &Mutex<crate::mt::Mt>, bound: Option<&RubyValue>) -> Result<RubyValue, Signal> {
     let invalid = |v: &RubyValue| arg_error!("invalid argument - {}", v.to_display_string());
     match bound {
-        None | Some(RubyValue::Nil) => Ok(RubyValue::Float(state.lock().next_real())),
+        // Only the ABSENT argument is the unit draw. `Random.rand(nil)` is an
+        // ArgumentError naming an empty bound -- unlike `Kernel#rand`, which
+        // reads nil as no argument at all.
+        None => Ok(RubyValue::Float(state.lock().next_real())),
+        Some(RubyValue::Nil) => Err(invalid(&RubyValue::Nil)),
         Some(RubyValue::Int(n)) => {
             if *n <= 0 {
                 return Err(invalid(bound.unwrap()));
@@ -142,7 +146,14 @@ fn rand_with(state: &Mutex<crate::mt::Mt>, bound: Option<&RubyValue>) -> Result<
             let (lo, hi, exclusive) = __rg.parts();
             rand_range(state, lo, hi, exclusive)
         }
-        Some(other) => Err(invalid(other)),
+        // `rand_random` reads a non-Float bound through `rb_check_to_int`, so
+        // anything with a `to_int` is a bound -- and a value with none falls
+        // through to the strict read, whose TypeError names the conversion.
+        // `invalid` is for a bound that CONVERTS and is out of range.
+        Some(other) => {
+            let n = crate::builtins::convert::to_int(other)?;
+            rand_with(state, Some(&n))
+        }
     }
 }
 

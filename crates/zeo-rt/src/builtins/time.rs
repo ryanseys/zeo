@@ -943,12 +943,15 @@ fn shift(t: &RTime, delta: &RubyValue, sign: i64) -> Result<RubyValue, Signal> {
                 RubyValue::Float(*f).to_display_string()
             ));
         }
-        other => {
-            return Err(type_error!(
-                "can't convert {} into an exact number",
-                crate::builtins::class_name_of(other)
-            ));
-        }
+        other => match num_exact(other)? {
+            Some(n) => return shift(t, &n, sign),
+            None => {
+                return Err(type_error!(
+                    "can't convert {} into an exact number",
+                    crate::builtins::class_name_of(other)
+                ));
+            }
+        },
     };
     // Everything over the common denominator `den`, in nanoseconds.
     // Exact rational addition over a common denominator -- NO rounding at
@@ -957,6 +960,29 @@ fn shift(t: &RTime, delta: &RubyValue, sign: i64) -> Result<RubyValue, Signal> {
     let new_num = &t.num * &den + BigInt::from(sign) * num * &t.den;
     let new_den = &t.den * &den;
     Ok(time_exact(new_num, new_den, t.offset()))
+}
+
+/// CRuby's `num_exact` fallback for a value that is not already a number:
+/// `to_r` first, then `to_int`. `None` when neither answers.
+///
+/// A value that also answers `to_str` is refused however good its `to_r` is.
+/// That guard is CRuby's own, and it is load-bearing: `String#to_r` reads a
+/// leading number and answers `(0/1)` for anything else, so without it
+/// `Time.at("x")` would silently mean the epoch.
+fn num_exact(v: &RubyValue) -> Result<Option<RubyValue>, Signal> {
+    // `nil` and the booleans are refused by TYPE, before any protocol runs --
+    // `nil.to_r` is `(0/1)`, so asking would read a missing argument as the
+    // epoch.
+    if matches!(v, RubyValue::Nil | RubyValue::Bool(_)) {
+        return Ok(None);
+    }
+    if crate::builtins::convert::check_to_str(v)?.is_some() {
+        return Ok(None);
+    }
+    match crate::builtins::convert::check_to_r(v)? {
+        Some(r) => Ok(Some(r)),
+        None => crate::builtins::convert::check_to_int(v),
+    }
 }
 
 /// A count of seconds as an EXACT `(num, den)` -- `Time.at`'s argument and
@@ -976,10 +1002,13 @@ fn exact_seconds(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::BigIn
             let t = o.as_any().downcast_ref::<RTime>().unwrap();
             Ok((t.num.clone(), t.den.clone()))
         }
-        other => Err(type_error!(
-            "can't convert {} into an exact number",
-            crate::builtins::class_name_of(other)
-        )),
+        other => match num_exact(other)? {
+            Some(n) => exact_seconds(&n),
+            None => Err(type_error!(
+                "can't convert {} into an exact number",
+                crate::builtins::class_name_of(other)
+            )),
+        },
     }
 }
 
@@ -1008,6 +1037,15 @@ fn month_from_name(s: &str) -> Option<i64> {
     NAMES.iter().position(|n| *n == lower).map(|i| i as i64 + 1)
 }
 
+/// What an ABSENT civil field means, by slot: month and day count from 1,
+/// hour/min/sec from 0. Slot 0 (the year) has no default and never asks.
+fn civil_default(slot: usize) -> i64 {
+    match slot {
+        1 | 2 => 1,
+        _ => 0,
+    }
+}
+
 fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
     args.iter()
         .take(take)
@@ -1027,8 +1065,11 @@ fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
                 t.parse::<i64>()
                     .map_err(|_| arg_error!("argument out of range: {t:?}"))
             }
-            // Floats truncate, `to_int` ducks convert. (CRuby treats a nil
-            // component as absent-with-default; here it raises -- noted gap.)
+            // CRuby reads a nil component as ABSENT, so it takes its slot's
+            // default -- `Time.utc(2000, 5, nil)` is the first of May. The
+            // YEAR has no default and keeps the conversion error.
+            RubyValue::Nil if slot > 0 => Ok(civil_default(slot)),
+            // Floats truncate, `to_int` ducks convert.
             other => crate::builtins::convert::to_index(other),
         })
         .collect()
@@ -1200,10 +1241,15 @@ fn offset_arg(v: Option<&RubyValue>) -> Result<Option<i32>, Signal> {
         None | Some(RubyValue::Nil) => Ok(None),
         Some(RubyValue::Int(o)) => Ok(Some(check_offset(*o)?)),
         Some(RubyValue::Str(s)) => Ok(Some(parse_offset(&s.lock().to_utf8_lossy())?)),
-        Some(other) => Err(arg_error!(
-            "\"+HH:MM\" expected for utc_offset: {}",
-            other.to_display_string()
-        )),
+        // `utc_offset_arg` reads the slot through `rb_check_string_type`
+        // first, so anything with a `to_str` spells its own offset.
+        Some(other) => match crate::builtins::convert::check_to_str(other)? {
+            Some(RubyValue::Str(s)) => Ok(Some(parse_offset(&s.lock().to_utf8_lossy())?)),
+            _ => Err(arg_error!(
+                "\"+HH:MM\" expected for utc_offset: {}",
+                other.to_display_string()
+            )),
+        },
     }
 }
 

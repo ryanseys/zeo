@@ -118,17 +118,35 @@ pub fn path_arg(v: &RubyValue, _method: &str) -> Result<String, Signal> {
 
 /// Flatten `File.join`'s arguments: a String (or `to_path`-able) becomes one
 /// path component; an Array is recursively flattened.
+///
+/// An array holding itself is `ArgumentError: recursive array`, as CRuby's
+/// `rb_check_array_type` walk reports it -- the descent used to run until the
+/// machine stack died.
 fn collect_join_parts(v: &RubyValue, parts: &mut Vec<String>) -> Result<(), Signal> {
+    join_parts(v, parts, &mut crate::value::recursion::Visited::default())
+}
+
+fn join_parts(
+    v: &RubyValue,
+    parts: &mut Vec<String>,
+    seen: &mut crate::value::recursion::Visited,
+) -> Result<(), Signal> {
     match v {
         RubyValue::Array(el) => {
             let items: Vec<RubyValue> = el.lock().iter().cloned().collect();
-            for e in &items {
-                collect_join_parts(e, parts)?;
-            }
+            seen.with(v, |seen| {
+                for e in &items {
+                    join_parts(e, parts, seen)?;
+                }
+                Ok(())
+            })
+            .unwrap_or_else(|| Err(arg_error!("recursive array")))
         }
-        other => parts.push(path_arg(other, "join")?),
+        other => {
+            parts.push(path_arg(other, "join")?);
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 fn str_val(s: String) -> RubyValue {
@@ -341,6 +359,18 @@ pub(crate) fn kwarg_str(trailing: Option<&RubyValue>, name: &str) -> Option<Stri
     let key = RubyValue::Symbol(crate::Symbol::intern(name));
     match crate::collections::hash_get(h, &key) {
         RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
+        _ => None,
+    }
+}
+
+/// [`kwarg_str`]'s Integer twin -- `perm:` is the only caller.
+pub(crate) fn kwarg_int(trailing: Option<&RubyValue>, name: &str) -> Option<i64> {
+    let RubyValue::Hash(h) = trailing? else {
+        return None;
+    };
+    let key = RubyValue::Symbol(crate::Symbol::intern(name));
+    match crate::collections::hash_get(h, &key) {
+        RubyValue::Int(n) => Some(n),
         _ => None,
     }
 }
@@ -876,19 +906,40 @@ fn lchmod_at(path: &std::ffi::CStr, mode: libc::mode_t) -> bool {
     }
 }
 
+/// `utime`/`lutime`'s "stamp both with NOW": ruby reads the pair only when at
+/// least one of them is non-nil, so BOTH nil is the null time array.
+fn now_times(atime: &RubyValue, mtime: &RubyValue) -> bool {
+    matches!(atime, RubyValue::Nil) && matches!(mtime, RubyValue::Nil)
+}
+
 fn time_secs(v: &RubyValue) -> Result<libc::time_t, Signal> {
     match v {
         RubyValue::Int(i) => Ok(*i as libc::time_t),
         RubyValue::Float(f) => Ok(*f as libc::time_t),
-        // A Time (or anything Integer-ish) answers via `to_i`. NOT the
-        // generic implicit-conversion shape: CRuby says "can't convert X
-        // into time" (oracle: `File.utime("x", ...)`).
+        // `time_timespec`'s own protocol: `to_time`, then that Time's second
+        // count. NOT `to_i` -- every String answers `to_i` with 0, so
+        // `File.utime("x", "x", path)` stamped the epoch where ruby says
+        // "can't convert String into time". Nor the generic implicit
+        // conversion, whose message is a different sentence.
+        // A real Time answers with its own second count.
+        RubyValue::Object(o) if o.as_any().is::<crate::builtins::time::RTime>() => {
+            match crate::dispatch::send_value(v, crate::Symbol::intern("to_i"), &[], None)? {
+                RubyValue::Int(i) => Ok(i as libc::time_t),
+                _ => Err(type_error!("can't convert Time into time")),
+            }
+        }
         other => {
-            match crate::dispatch::send_value(other, crate::Symbol::intern("to_i"), &[], None)? {
+            let t = crate::builtins::convert::check_to_time(other)?.ok_or_else(|| {
+                type_error!(
+                    "can't convert {} into time",
+                    crate::builtins::class_name_of(other)
+                )
+            })?;
+            match crate::dispatch::send_value(&t, crate::Symbol::intern("to_i"), &[], None)? {
                 RubyValue::Int(i) => Ok(i as libc::time_t),
                 _ => Err(type_error!(
                     "can't convert {} into time",
-                    crate::builtins::convert_name_of(other)
+                    crate::builtins::class_name_of(other)
                 )),
             }
         }
@@ -979,25 +1030,31 @@ pub(crate) fn split_mode(mode: &str) -> (&str, Option<&str>) {
 /// A `File.open` mode string (`"r"`, `"w"`, `"a"`, `"r+"`, ... with an
 /// optional `b`/`t` suffix, and an optional `:extenc[:intenc]` tail).
 pub(crate) fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
-    let base: String = split_mode(mode)
-        .0
+    // `rb_io_modestr_oflags` reads the FIRST character, then walks the rest as
+    // a set of independent flags -- so `b`, `t`, `+` and `x` may appear in any
+    // order, and `"wx+"` names the same open as `"w+x"`.
+    let access = split_mode(mode).0;
+    let base: String = access
         .chars()
-        .filter(|c| *c != 'b' && *c != 't')
+        .filter(|c| *c != 'b' && *c != 't' && *c != 'x')
         .collect();
+    // `x` is CREAT|EXCL, which ruby allows only on a mode that CREATES.
+    let exclusive = access.contains('x');
     let mut o = std::fs::OpenOptions::new();
-    match base.as_str() {
-        "r" => o.read(true),
-        "r+" => o.read(true).write(true),
-        "w" => o.write(true).create(true).truncate(true),
-        "w+" => o.read(true).write(true).create(true).truncate(true),
-        "a" => o.append(true).create(true),
-        "a+" => o.read(true).append(true).create(true),
-        // `x` requires the file NOT to exist.
-        "wx" | "w+x" => o.write(true).create_new(true),
+    match (base.as_str(), exclusive) {
+        ("r", false) => o.read(true),
+        ("r+", false) => o.read(true).write(true),
+        ("w", _) => o.write(true).create(true).truncate(true),
+        ("w+", _) => o.read(true).write(true).create(true).truncate(true),
+        ("a", false) => o.append(true).create(true),
+        ("a+", false) => o.read(true).append(true).create(true),
         _ => {
             return Err(arg_error!("invalid access mode {mode}"));
         }
     };
+    if exclusive {
+        o.create_new(true).truncate(false);
+    }
     Ok(o)
 }
 
@@ -1041,10 +1098,16 @@ pub(crate) fn open_options_for(
     };
     // Only an Integer is a permission: the third argument is also where an
     // options Hash lands (`File.open(path, "w", external_encoding: ...)`).
-    // umask still applies, exactly as it does to open(2).
-    if let Some(RubyValue::Int(bits)) = perm {
+    // `perm:` is the keyword spelling of the same slot, and the positional
+    // wins where both are written. umask still applies, exactly as it does to
+    // open(2).
+    let bits = match perm {
+        Some(RubyValue::Int(bits)) => Some(*bits),
+        _ => kwarg_int(opts, "perm"),
+    };
+    if let Some(bits) = bits {
         use std::os::unix::fs::OpenOptionsExt;
-        o.mode(*bits as u32);
+        o.mode(bits as u32);
     }
     Ok(o)
 }
@@ -1553,18 +1616,25 @@ ruby_class! {
     // `File.utime(atime, mtime, *paths)` -- set each file's access and
     // modification times; answers the number of files touched.
     def self."utime" cfunc (_recv, atime, mtime, *paths, &_block) {
-        let atime = time_secs(atime)?;
-        let mtime = time_secs(mtime)?;
-        let tv = [
-            libc::timeval { tv_sec: atime, tv_usec: 0 },
-            libc::timeval { tv_sec: mtime, tv_usec: 0 },
-        ];
+        // BOTH nil means NOW, which `utimes` spells as a null time array.
+        // Only one nil is an ordinary unconvertible argument (`utime_internal`
+        // asks for the pair only when at least one is non-nil).
+        let both_nil = now_times(atime, mtime);
+        let tv = match both_nil {
+            true => [libc::timeval { tv_sec: 0, tv_usec: 0 }; 2],
+            false => [
+                libc::timeval { tv_sec: time_secs(atime)?, tv_usec: 0 },
+                libc::timeval { tv_sec: time_secs(mtime)?, tv_usec: 0 },
+            ],
+        };
+        let tvp = if both_nil { std::ptr::null() } else { tv.as_ptr() };
         for p in paths {
             let path = path_arg(p, "utime")?;
             let c = std::ffi::CString::new(path.clone())
                 .map_err(|_| arg_error!("string contains null byte"))?;
-            // SAFETY: `c` is a valid NUL-terminated path, `tv` a 2-element array.
-            if unsafe { libc::utimes(c.as_ptr(), tv.as_ptr()) } != 0 {
+            // SAFETY: `c` is a valid NUL-terminated path, and `tvp` is either
+            // null (meaning now) or a 2-element array that outlives the call.
+            if unsafe { libc::utimes(c.as_ptr(), tvp) } != 0 {
                 return Err(raise_errno(&std::io::Error::last_os_error(), "apply2files", &path));
             }
         }
@@ -1573,18 +1643,25 @@ ruby_class! {
     // `File.lutime(atime, mtime, *paths)` -- `utime` that does NOT follow a
     // final symlink, so it stamps the link itself.
     def self."lutime" cfunc (_recv, atime, mtime, *paths, &_block) {
-        let tv = [
-            timespec_secs(time_secs(atime)?),
-            timespec_secs(time_secs(mtime)?),
-        ];
+        // Both nil means NOW -- see `utime`. `utimensat` spells it null too.
+        let both_nil = now_times(atime, mtime);
+        let tv = match both_nil {
+            true => [timespec_secs(0); 2],
+            false => [
+                timespec_secs(time_secs(atime)?),
+                timespec_secs(time_secs(mtime)?),
+            ],
+        };
+        let tvp = if both_nil { std::ptr::null() } else { tv.as_ptr() };
         for p in paths {
             let path = path_arg(p, "lutime")?;
             let c = std::ffi::CString::new(path.clone())
                 .map_err(|_| arg_error!("string contains null byte"))?;
-            // SAFETY: `c` is a valid NUL-terminated path, `tv` a 2-element array.
+            // SAFETY: `c` is a valid NUL-terminated path, and `tvp` is either
+            // null (meaning now) or a 2-element array that outlives the call.
             // `AT_FDCWD` resolves it relative to the cwd, as `utimes` does.
             let rc = unsafe {
-                libc::utimensat(libc::AT_FDCWD, c.as_ptr(), tv.as_ptr(), libc::AT_SYMLINK_NOFOLLOW)
+                libc::utimensat(libc::AT_FDCWD, c.as_ptr(), tvp, libc::AT_SYMLINK_NOFOLLOW)
             };
             if rc != 0 {
                 return Err(raise_errno(&std::io::Error::last_os_error(), "apply2files", &path));

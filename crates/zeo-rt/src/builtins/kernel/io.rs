@@ -170,10 +170,16 @@ pub fn kernel_print(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 
 /// `Kernel#format`/`sprintf`.
 pub fn kernel_format(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    let Some((RubyValue::Str(template), rest)) = args.split_first() else {
+    let Some((first, rest)) = args.split_first() else {
         return Err(type_error!("no format string given"));
     };
-    crate::builtins::format::sprintf_encoded(template, rest)
+    // The FORMAT STRING runs the `to_str` protocol, as `rb_f_sprintf`'s
+    // `StringValue` does. Only a value with no `to_str` is the TypeError.
+    let template = match first {
+        RubyValue::Str(s) => s.clone(),
+        other => crate::builtins::convert::to_rstr(other)?,
+    };
+    crate::builtins::format::sprintf_encoded(&template, rest)
 }
 
 /// `Kernel#printf`.
