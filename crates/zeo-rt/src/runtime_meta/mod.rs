@@ -728,7 +728,14 @@ pub(crate) fn class_maybe_patched_gated(gates: u16, id: ClassId) -> bool {
 /// the program redefines whatever it likes.
 #[inline(always)]
 pub(crate) fn gates_cache_off(g: u16, id: ClassId) -> bool {
-    g & GATE_CACHE_WIDE != 0 || class_maybe_patched_gated(g, id)
+    gates_cache_wide(g) || class_maybe_patched_gated(g, id)
+}
+
+/// [`gates_cache_off`]'s class-independent half, for the sites that answer
+/// the per-class question some other way.
+#[inline(always)]
+pub(crate) fn gates_cache_wide(g: u16) -> bool {
+    g & GATE_CACHE_WIDE != 0
 }
 
 /// Mark `id` and everything that inherits from it.
@@ -739,6 +746,11 @@ pub(crate) fn gates_cache_off(g: u16, id: ClassId) -> bool {
 /// nothing. That matters because `obj.extend(M)` in a loop reaches here once
 /// per call.
 fn patch_class(id: ClassId) {
+    // The bump is UNCONDITIONAL, ahead of the early return: a second mark on
+    // a class already in the set adds no member and still changes what it
+    // resolves. `private_class_method` after a `define_singleton_method` is
+    // the shape -- same class, same set, a different verdict.
+    PATCH_GEN.fetch_add(1, Ordering::Release);
     if patched().read().unwrap().closed.contains(&id.0) {
         return;
     }
@@ -755,6 +767,23 @@ fn patch_class(id: ClassId) {
     GATES.fetch_or(GATE_PATCHED_ANY, Ordering::Release);
 }
 
+/// How many times a class has been marked. Anything derived from "what does
+/// this class resolve `name` to, and may I call it" is valid only while this
+/// stands still -- see [`crate::dispatch::ClassMethodSite`]'s remembered
+/// barrier verdict.
+///
+/// One counter for the whole process rather than one per class, because the
+/// thing it guards is not always a fact about ONE class: the visibility
+/// barrier falls through to `Class`'s own instance methods when the receiver
+/// class does not supply the name. A program settles once its definitions
+/// have run, and the counter stops moving with them.
+static PATCH_GEN: AtomicU32 = AtomicU32::new(0);
+
+#[inline(always)]
+pub(crate) fn patch_gen() -> u32 {
+    PATCH_GEN.load(Ordering::Relaxed)
+}
+
 /// Mark `id` ALONE -- no descendant closure.
 ///
 /// For a change one class's instances can see and its subclasses' cannot,
@@ -764,6 +793,7 @@ fn patch_class(id: ClassId) {
 /// `classes_with_ancestor(Object)` -- every class in the program -- and
 /// deoptimize the whole thing to record a row on one object.
 fn patch_class_own(id: ClassId) {
+    PATCH_GEN.fetch_add(1, Ordering::Release);
     if patched().read().unwrap().ids.contains(&id.0) {
         return;
     }

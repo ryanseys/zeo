@@ -292,6 +292,25 @@ type ClassMethodHit = (u32, Option<(ValueImpl, Option<&'static str>)>);
 
 pub struct ClassMethodSite {
     hit: std::sync::OnceLock<ClassMethodHit>,
+    /// The [`ClassVet`] this site last computed, packed with the patch
+    /// generation it was computed at: `(gen << 32) | (code + 1)`, and zero
+    /// while nothing is remembered.
+    ///
+    /// A site whose class IS patched cannot fill `hit` -- the answer may
+    /// change -- so it took the uncached route, and the uncached route asks
+    /// the visibility barrier on every call. The barrier's class arm is two
+    /// ancestor walks with a lock acquisition per probe, and it measured
+    /// **640ms of a 960ms loop** of 3M calls to a class method a run-time
+    /// `extend` supplied. It is a pure function of `(class, name)`, both
+    /// per-site constants, so all it needs is a stamp that moves when the
+    /// class does.
+    ///
+    /// A plain `AtomicU64` rather than a second `OnceLock`: this line is
+    /// REPLACED, not filled once. Both halves fit in the word, so there is
+    /// no allocation to publish and no tearing to reason about -- a reader
+    /// that loses the race sees either the old pair or the new one, and each
+    /// is self-consistent.
+    vet: std::sync::atomic::AtomicU64,
 }
 
 impl Default for ClassMethodSite {
@@ -304,6 +323,7 @@ impl ClassMethodSite {
     pub const fn new() -> ClassMethodSite {
         ClassMethodSite {
             hit: std::sync::OnceLock::new(),
+            vet: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -393,6 +413,27 @@ pub fn send_class_cached(
             };
         }
     }
+    // The uncached route, with the one piece of it this site CAN remember.
+    //
+    // A site whose class is patched never fills `hit`, so it re-ran the whole
+    // barrier on every call -- and the barrier's class arm is two ancestor
+    // walks, each probe taking the overlay's lock. That was 640ms of a 960ms
+    // loop of 3M calls to a class method a run-time `extend` supplied.
+    // `class_vet_at` reduces it to a load while the program's definitions
+    // stand still, and re-asks the moment one moves.
+    if caller_class != FCALL
+        && !crate::runtime_meta::gates_cache_wide(gates)
+        && matches!(recv, RubyValue::Class(c) if c.0 == cid)
+    {
+        return match class_vet_at(site, ClassId(cid), name) {
+            ClassVet::Private => missing_or_raise(recv, name, args, block, MissingReason::Private),
+            ClassVet::Provided => send_value_in(0, recv, name, args, block),
+            // The caller-dependent remainder is not this site's to remember.
+            ClassVet::NotProvided => {
+                send_value_explicit_in(0, recv, name, args, block, caller_class)
+            }
+        };
+    }
     send_value_explicit_in(0, recv, name, args, block, caller_class)
 }
 
@@ -410,6 +451,60 @@ pub fn send_value_explicit_in(
         Some(reason) => missing_or_raise(recv, name, args, block, reason),
         None => send_value_in(box_id, recv, name, args, block),
     }
+}
+
+/// [`explicit_call_barrier`]'s CLASS arm as a value.
+///
+/// A pure function of `(class, name)`: neither outcome reads the caller, so
+/// it can be remembered where the whole barrier cannot ([`ClassMethodSite`]'s
+/// `vet`). The `NotProvided` arm hands the call to the rest of the barrier,
+/// which does read the caller.
+#[derive(Clone, Copy, PartialEq)]
+enum ClassVet {
+    /// `private_class_method` here or up the singleton chain.
+    Private,
+    /// The class supplies the name, so nothing below may overrule it.
+    /// `File.open` is File's own public singleton method; the instance walk
+    /// would reach past it to the private `Kernel#open`, which is not on
+    /// File's singleton chain at all.
+    Provided,
+    /// It does not; the rest of the barrier decides.
+    NotProvided,
+}
+
+fn class_vet(cid: ClassId, name: Symbol) -> ClassVet {
+    if class_method_is_private(cid, name) {
+        return ClassVet::Private;
+    }
+    match class_method_owner(cid, name).is_some() {
+        true => ClassVet::Provided,
+        false => ClassVet::NotProvided,
+    }
+}
+
+/// [`class_vet`] for a `ClassMethodSite`, remembered against the patch
+/// generation. Two ancestor walks become one relaxed load once the program's
+/// definitions have run.
+fn class_vet_at(site: &'static ClassMethodSite, cid: ClassId, name: Symbol) -> ClassVet {
+    use std::sync::atomic::Ordering;
+    let stamp = crate::runtime_meta::patch_gen();
+    let word = site.vet.load(Ordering::Relaxed);
+    if word != 0 && (word >> 32) as u32 == stamp {
+        return match word as u8 {
+            1 => ClassVet::Private,
+            2 => ClassVet::Provided,
+            _ => ClassVet::NotProvided,
+        };
+    }
+    let vet = class_vet(cid, name);
+    let code = match vet {
+        ClassVet::Private => 1u64,
+        ClassVet::Provided => 2,
+        ClassVet::NotProvided => 3,
+    };
+    site.vet
+        .store((u64::from(stamp) << 32) | code, Ordering::Relaxed);
+    vet
 }
 
 /// The `caller_class` that means "run no visibility check" -- ruby's
@@ -437,15 +532,10 @@ fn explicit_call_barrier(
     // A CLASS receiver's class methods keep their own visibility table; the
     // instance walk below reads Class/Module's, which says nothing about them.
     if let RubyValue::Class(cid) = recv {
-        if class_method_is_private(*cid, name) {
-            return Some(MissingReason::Private);
-        }
-        // ...and a class method the class DOES provide is the one that answers,
-        // so nothing below may overrule it. `File.open` is File's own public
-        // singleton method; the instance walk would reach past it to the
-        // private `Kernel#open`, which is not on File's singleton chain at all.
-        if class_method_owner(*cid, name).is_some() {
-            return None;
+        match class_vet(*cid, name) {
+            ClassVet::Private => return Some(MissingReason::Private),
+            ClassVet::Provided => return None,
+            ClassVet::NotProvided => {}
         }
     }
     // ENV's rows are SINGLETON methods on one object, and dispatch probes them

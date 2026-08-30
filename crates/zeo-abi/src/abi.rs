@@ -96,7 +96,7 @@ pub enum SignalKind {
 /// Rust-or-C two-word implementation).
 pub const CALLSITE_SIZE: usize = 56;
 pub const DYNCALLER_SITE_SIZE: usize = 56;
-pub const CLASSMETHOD_SITE_SIZE: usize = 48;
+pub const CLASSMETHOD_SITE_SIZE: usize = 56;
 pub const CONST_SITE_SIZE: usize = 40;
 pub const NEW_SITE_SIZE: usize = 32;
 pub const CIVAR_SITE_SIZE: usize = 40;
