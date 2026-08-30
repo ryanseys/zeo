@@ -1,0 +1,14 @@
+true
+false
+[:resolve_feature_path]
+[:rb, "zeo_probe_feature.rb", true, true]
+[:rb, "zeo_probe_feature.rb"]
+nil
+["set", nil]
+["fiber", nil]
+["thread", nil]
+["rational", nil]
+["complex", nil]
+TypeError
+TypeError
+TypeError

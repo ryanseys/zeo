@@ -215,6 +215,16 @@ pub const NATIVE_FEATURES: &[&str] = &[
 /// [`is_builtin_feature`] accepts.
 pub const PRELOADED_AT_BOOT: &[&str] = &["set", "monitor", "rational", "complex", "thread"];
 
+/// Features ruby folded into CORE, keeping the name only so old code still
+/// loads: it has NO FILE for them anywhere, so
+/// `$LOAD_PATH.resolve_feature_path` answers nil rather than naming one.
+///
+/// NOT the same set as [`PRELOADED_AT_BOOT`], which is why it is written out.
+/// MEASURED against ruby 4.0.6 over every [`NATIVE_FEATURES`] name: `monitor`
+/// is preloaded and still HAS `monitor.rb`, and `fiber` is not preloaded and
+/// has no file. Every other native feature names a real file there.
+pub const CORE_WITH_NO_FILE: &[&str] = &["set", "fiber", "thread", "rational", "complex"];
+
 /// A `require` spelling mapped to its canonical in-tree `ext/` feature name.
 /// Sub-path and alias spellings of one extension collapse to a single
 /// feature: `cgi`/`cgi/util` -> `cgi/escape`, `digest/sha2` -> `digest`, and

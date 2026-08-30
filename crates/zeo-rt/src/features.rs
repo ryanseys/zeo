@@ -83,6 +83,83 @@ pub fn install_unit_compiler(compiler: &'static dyn UnitCompiler) {
     let _ = UNIT_COMPILER.set(compiler);
 }
 
+/// `$LOAD_PATH.resolve_feature_path(feature)` -- where a `require` of
+/// `feature` WOULD land, without loading it.
+///
+/// CRuby answers `[:rb, <absolute path>]` for a Ruby file, `[:so, <path>]`
+/// for an extension, and `nil` when nothing supplies the name. The search
+/// order is `search_required`'s: every load-path root first, the
+/// statically-linked-extension table only after that.
+///
+/// zeo is a ruby built `--with-static-linked-ext`, so a compiled-in feature
+/// has no file to name and answers `[:so, feature]` -- CRuby's own answer for
+/// a static ext. A feature with a Ruby half on disk still answers `:rb`,
+/// which is why the disk search runs first here too.
+///
+/// Box 0: `Kernel#require` resolves against box 0 as well (`kernel/load.rs`),
+/// so the question and the load agree.
+fn resolve_feature_path(feature: &str) -> Option<(&'static str, RubyValue)> {
+    if let Some(path) = resolve_on_disk(feature, 0, true) {
+        let path = path.to_string_lossy().into_owned();
+        return Some(("rb", RubyValue::Str(crate::string_new(path))));
+    }
+    let bare = feature
+        .strip_suffix(".so")
+        .or_else(|| feature.strip_suffix(".bundle"))
+        .or_else(|| feature.strip_suffix(".rb"))
+        .unwrap_or(feature);
+    // Ruby has no file for these at all, so it answers nil and so does zeo.
+    if zeo_abi::CORE_WITH_NO_FILE.contains(&zeo_abi::canonical_ext_feature(bare)) {
+        return None;
+    }
+    zeo_abi::is_builtin_feature(bare)
+        .then(|| ("so", RubyValue::Str(crate::string_new(bare.to_string()))))
+}
+
+/// Installs `resolve_feature_path` on the `$LOAD_PATH` array.
+///
+/// A SINGLETON method, as in CRuby (`load.c` puts it on that one object):
+/// `$LOAD_PATH.singleton_methods` answers `[:resolve_feature_path]` and a
+/// plain `[]` does not respond to it. Defining it on `Array` would have been
+/// simpler and wrong.
+pub fn install_resolve_feature_path(load_path: &RubyValue) {
+    let body = crate::rproc::ProcBuilder::from_rust(
+        |_recv, args, _block| {
+            let feature = match args.first() {
+                Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
+                // CRuby converts through `to_str` and raises `TypeError` for
+                // anything else -- including `nil`, which is NOT the "no
+                // argument" case.
+                Some(other) => {
+                    return Err(crate::builtins::type_error!(
+                        "no implicit conversion of {} into String",
+                        crate::builtins::class_name_of(other)
+                    ));
+                }
+                None => return Err(crate::dispatch::wrong_arity(0, "1")),
+            };
+            Ok(match resolve_feature_path(&feature) {
+                Some((kind, path)) => RubyValue::Array(crate::array_new(vec![
+                    RubyValue::Symbol(crate::Symbol::intern(kind)),
+                    path,
+                ])),
+                None => RubyValue::Nil,
+            })
+        },
+        RubyValue::Nil,
+        1,
+        true,
+    )
+    .build();
+    // The BOOT install, which fires no `singleton_method_added`: CRuby
+    // defines this row in C during VM init, so no program sees it appear.
+    crate::runtime_meta::install_boot_singleton(
+        load_path,
+        crate::Symbol::intern("resolve_feature_path"),
+        body,
+    );
+}
+
 /// The path `feature` names on DISK for box `box_id`, or `None`.
 ///
 /// CRuby's own resolution: a path that is absolute or explicitly relative

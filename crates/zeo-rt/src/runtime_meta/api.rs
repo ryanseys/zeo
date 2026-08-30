@@ -1827,6 +1827,37 @@ pub fn runtime_define_singleton_method(
     }
 }
 
+/// Installs a singleton method on a heap VALUE at boot, firing no hook.
+///
+/// CRuby defines its own such rows -- `$LOAD_PATH.resolve_feature_path` is
+/// the one this exists for -- in C during VM init, before any Ruby code runs.
+/// No program can observe them, so none reports through
+/// `singleton_method_added`.
+///
+/// [`runtime_define_singleton_method`] cannot serve: it fires the hook, and a
+/// program that defines a GLOBAL `singleton_method_added` then runs its own
+/// hook body while the runtime is still being seeded. Measured: that ran the
+/// body of `definition_hooks_global.rb` before its classes existed, and the
+/// hook raised.
+///
+/// No frozen check either, for the same reason -- nothing has had the chance
+/// to freeze the receiver yet.
+pub fn install_boot_singleton(recv: &RubyValue, name: Symbol, body: RProc) {
+    let Some(key) = pin_identity(recv) else {
+        return;
+    };
+    crate::method_meta::record_singleton_params(key, name, &body);
+    maps()
+        .value_singletons
+        .write()
+        .unwrap()
+        .entry(key)
+        .or_default()
+        .insert(name, body);
+    mark_singletons_for(recv);
+    mark_live();
+}
+
 /// `recv.extend(Mod)` -- mix a module's instance methods into the receiver's
 /// singleton, so they resolve on `recv`. Works for every receiver kind Ruby
 /// allows:

@@ -403,6 +403,13 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             .collect();
         crate::globals::seed_load_path(&paths, desc.n_load_path_search);
     }
+    // AFTER the seeding above, because that replaces the array, and after the
+    // class tables are registered, because the install patches a class. Doing
+    // it in `seed_default_globals` -- before registration -- left the emitted
+    // code reading a half-built table, and a captured closure cell came back
+    // shared. Unconditional: a program with no load-path entry still answers
+    // `$LOAD_PATH.resolve_feature_path`.
+    crate::features::install_resolve_feature_path(&crate::globals::global_get(0, "$LOAD_PATH"));
     // Each COMPILE-TIME box gets its own copy of what main was just
     // seeded with. A run-time box seeds itself when it is minted; both go
     // through the one seeder, so the two cannot drift.
