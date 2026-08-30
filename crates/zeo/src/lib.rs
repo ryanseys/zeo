@@ -38,6 +38,7 @@ pub mod analyze;
 pub mod analyze_error;
 pub mod backend;
 pub mod builtin_surface;
+pub mod bundled;
 pub mod cext;
 pub mod clif;
 pub mod codegen_error;

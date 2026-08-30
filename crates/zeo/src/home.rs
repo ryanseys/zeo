@@ -1,4 +1,4 @@
-//! Where zeo finds its payload -- the bundled `gems/` and the runtime it
+//! Where zeo finds its payload -- the bundled libraries and the runtime it
 //! links programs against -- and where it writes build artifacts.
 //!
 //! Two homes exist today:
@@ -8,7 +8,7 @@
 //!   in via `CARGO_MANIFEST_DIR` at compile time) is both the payload (its
 //!   libraries, its `crates/zeo-rt`) and the build root (its `target/`).
 //! - **Installed**: a relocatable prefix laid out as `<prefix>/bin/zeo` +
-//!   `<prefix>/share/zeo/{gems,lib}`, assembled by `cargo xtask dist`.
+//!   `<prefix>/share/zeo/lib/{ruby,<triple>}`, assembled by `cargo xtask dist`.
 //!   The payload is found relative to the executable, and all build output
 //!   goes to a per-user cache -- the prefix itself is never written to (it
 //!   may be root-owned, as in a Homebrew Cellar).
@@ -133,7 +133,7 @@ fn resolve(
          - ZEO_HOME: not set\n\
          - executable-relative: {}\n\
          - dev tree: {} (no crates/zeo-rt there)\n\
-         An installed zeo expects `share/zeo/{{gems,lib}}` next to its \
+         An installed zeo expects `share/zeo/lib/{{ruby,<triple>}}` next to its \
          `bin/` directory; set ZEO_HOME to point at a payload directory to \
          override.",
         probed
@@ -179,19 +179,19 @@ pub fn ruby_prefix() -> PathBuf {
 static EMBEDDED_GEMS: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/gems.pregen.tar.gz"));
 
-/// The bundled-gems dir for a [`ZeoHome::Registry`] zeo: the embedded archive,
+/// The bundled-library dir for a [`ZeoHome::Registry`] zeo: the embedded archive,
 /// extracted once per zeo version into the cache. Concurrent first runs race
 /// benignly: each extracts into its own temp dir and the `rename` into place
 /// is last-writer-wins on a directory that is content-identical either way.
-pub fn registry_gems_dir(cache: &Path) -> Option<PathBuf> {
+pub fn registry_libraries_dir(cache: &Path) -> Option<PathBuf> {
     #[cfg(zeo_embedded_gems)]
     {
-        let dest = cache.join(format!("gems-{}", env!("CARGO_PKG_VERSION")));
+        let dest = cache.join(format!("lib-ruby-{}", env!("CARGO_PKG_VERSION")));
         if dest.is_dir() {
             return Some(dest);
         }
         let staging = cache.join(format!(
-            ".gems-extract-{}-{}",
+            ".lib-ruby-extract-{}-{}",
             env!("CARGO_PKG_VERSION"),
             std::process::id()
         ));
@@ -217,8 +217,8 @@ pub fn registry_gems_dir(cache: &Path) -> Option<PathBuf> {
 
 /// A payload directory is one `cargo xtask dist` laid out. The archive is
 /// the load-bearing half -- `zeo -o` links against it and can do nothing
-/// without it. `gems/` is optional: its absence just contributes no bundled
-/// gems, as in the dev tree.
+/// without it. `lib/ruby/` is optional: its absence just contributes no
+/// bundled libraries, as in the dev tree.
 ///
 /// It keys on THIS host's triple, so a payload built for another platform
 /// reads as no payload at all rather than as one whose every link fails.
@@ -311,12 +311,12 @@ mod tests {
         assert!(err.contains("not a zeo payload directory"), "{err}");
     }
 
-    /// `gems/` is optional; the archive is not.
+    /// `lib/ruby/` is optional; the archive is not.
     #[test]
     fn a_payload_without_the_archive_is_not_a_payload() {
         let tmp = tempdir("no-archive");
         let payload = tmp.join("share/zeo");
-        touch(&payload.join("gems/json/json.gemspec"));
+        touch(&payload.join("lib/ruby/json/json.gemspec"));
         let dev = dev_fixture(&tmp);
         let err = resolve(None, Some(payload.as_os_str()), &dev).unwrap_err();
         assert!(err.contains("libzeo.a"), "{err}");

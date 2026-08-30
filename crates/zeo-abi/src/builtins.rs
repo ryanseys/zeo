@@ -802,7 +802,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         feature: None,
     },
     // A NAMESPACE only: `WeakRef` itself is the vendored pure-Ruby
-    // `gems/weakref` (CRuby's own file, `class WeakRef < Delegator`), which
+    // the `weakref` gem (CRuby's own file, `class WeakRef < Delegator`), which
     // reopens this row and declares its real superclass. The row exists
     // because `WeakRef::RefError` nests under it and because `BUILTINS` must
     // stay contiguous from `ClassId(1)`.

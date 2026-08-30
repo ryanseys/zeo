@@ -725,7 +725,7 @@ fn base64_package_matches_real_ruby() {
         )],
         "main.rb",
         &[],
-        &[crate::REPO_PACKAGES],
+        &[],
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
@@ -843,7 +843,7 @@ fn set_package_matches_real_rubys_core_set() {
         )],
         "main.rb",
         &[],
-        &[crate::REPO_PACKAGES],
+        &[],
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
@@ -1458,7 +1458,7 @@ fn dynamic_load_compiles_and_raises_loaderror_only_when_executed() {
 
 #[test]
 fn fileutils_core_commands_run_from_the_vendored_gem() {
-    // `require "fileutils"` compiles the real vendored gem (gems/fileutils),
+    // `require "fileutils"` compiles the real upstream gem the lock resolves,
     // including its load-time module metaprogramming (module_function, extend
     // self, class << self, a platform-conditional StreamUtils_), and the core
     // file operations bundler relies on work.

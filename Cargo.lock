@@ -2268,6 +2268,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tar",
+ "zeo",
 ]
 
 [[package]]

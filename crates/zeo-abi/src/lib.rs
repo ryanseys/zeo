@@ -564,7 +564,7 @@ pub fn is_namespace_placeholder(id: ClassId) -> bool {
 }
 
 /// `WeakRef`'s NAMESPACE slot. The class itself is the vendored pure-Ruby
-/// `gems/weakref` -- CRuby's own file, `class WeakRef < Delegator`, standing
+/// the `weakref` gem -- CRuby's own file, `class WeakRef < Delegator`, standing
 /// on the `ObjectSpace::WeakMap` beside it. The builtin row carries no
 /// methods; it exists so `WeakRef::RefError` has a scope to nest under.
 pub const WEAKREF_CLASS: ClassId = ClassId(84);

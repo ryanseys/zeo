@@ -30,32 +30,34 @@
 
 source "https://rubygems.org"
 
-# --- What zeo vendors -----------------------------------------------------
+# --- What zeo ships -------------------------------------------------------
 #
-# One line per `gems/<name>/`, at the version that directory's gemspec
-# claims. Four of them are spelled differently here than on disk:
+# One line per bundled library. zeo resolves these out of `vendor/bundle`, so
+# this list IS its payload. Four names need saying:
 #
-#   gems/English   -> `english`, which is the name ruby's own
-#                     lib/English.gemspec gives it. zeo's copy says
-#                     "English" and is simply wrong.
-#   gems/rubygems  -> `rubygems-update`, the only published gem carrying the
-#                     `lib/rubygems/**` tree. Its require_paths deliberately
-#                     is not `lib`, so installing it cannot shadow the
-#                     running RubyGems.
-#   gems/bundler   -> no line of its own. `rubygems-update` ships the whole
-#                     `bundler/` subtree at the same version, which is the
-#                     same one-tag-two-gems shape upstream.rb already used.
-#                     A `gem "bundler"` line would additionally force every
-#                     contributor to run exactly that bundler.
-#   gems/socket, gems/pty, gems/monitor
-#                  -> absent. ruby carries these as `ext/socket`, `ext/pty`
-#                     and `ext/monitor`, with no gemspec at any point in its
-#                     history, so they are extensions rather than gems and
-#                     there is nothing to pin. Their Ruby halves are
-#                     zeo-authored and live beside the Rust that implements
-#                     them.
+#   rubygems     `rubygems-update` is the only published gem carrying the
+#                `lib/rubygems/**` tree. zeo COMMITS that tree under
+#                `lib/ruby/`, because `bundle install` cannot supply the
+#                bundler that runs it, so the line here states the version
+#                rather than the source of the files. `rubygems-update`'s own
+#                require_paths deliberately is not `lib` -- that is what
+#                stops it shadowing the running RubyGems -- so a store copy
+#                could not be loaded anyway.
+#   bundler      no line of its own. `rubygems-update` ships the whole
+#                `bundler/` subtree at the same version. A `gem "bundler"`
+#                line would additionally force every contributor to run
+#                exactly that bundler.
+#   socket, pty, monitor
+#                absent. ruby carries these as `ext/socket`, `ext/pty` and
+#                `ext/monitor`, with no gemspec at any point in its history,
+#                so they are extensions rather than gems and there is nothing
+#                to pin. Their Ruby halves are zeo-authored and live beside
+#                the Rust that implements them.
 #
-# One line per `gems/<name>/`.
+# A library zeo implements in Rust (json, psych, ffi, ...) still has a line.
+# The lock is what the ORACLE resolves, and it is what `ZEO_DISABLE_BUILTIN`
+# makes it possible to run; in an ordinary compile zeo's own half wins the
+# name.
 
 gem "abbrev", "0.1.2"
 gem "benchmark", "0.5.0"
@@ -134,6 +136,10 @@ gem "zlib", "3.2.3"
 # exact-pin rule as everything else, so a move shows up as a line here
 # rather than as a silent transitive change. `io-console` is the one that
 # can actually move a golden: it rides under reline.
+#
+# `rbs` is pinned but NOT shipped -- see `NOT_SHIPPED` in
+# `crates/zeo/src/bundled.rs` for why. The pin still holds the oracle to one
+# release.
 gem "io-console", "0.9.2"
 gem "rbs", "4.2.0"
 gem "rdoc", "8.0.0"

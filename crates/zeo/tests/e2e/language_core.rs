@@ -818,10 +818,6 @@ fn monitor_is_a_reentrant_lock() {
 /// `OptionParser` lives in `examples/optparse_subset.rb`.
 #[test]
 fn bundled_optparse_parses_switches_and_leaves_positionals() {
-    // The bundled `gems/` dir is a CLI default (`main.rs`), not a library
-    // one, so a library-level test has to name it. `Path::join` with an
-    // absolute path answers that path, so this reaches the real package.
-    let bundled = concat!(env!("CARGO_MANIFEST_DIR"), "/../../gems");
     let result = run_ruby_packages(
         &[(
             "main.rb",
@@ -851,7 +847,7 @@ fn bundled_optparse_parses_switches_and_leaves_positionals() {
         )],
         "main.rb",
         &[],
-        &[bundled],
+        &[],
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(

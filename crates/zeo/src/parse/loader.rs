@@ -105,7 +105,7 @@ pub(super) struct Gem {
 pub(super) enum GemProvenance {
     /// A caller-supplied package dir (`--gems`).
     PackageDir,
-    /// zeo's own bundled library (`gems/`) -- the compiler's stdlib tier.
+    /// zeo's own bundled library (`zeo::bundled`) -- the compiler's stdlib tier.
     Bundled,
     /// An external installed store, admitted by a lockfile.
     Store,
@@ -394,7 +394,6 @@ pub(super) fn lower_main_file(
     };
     // `LoaderState::search_roots` is filled at the END of lowering, once the
     // set of gems a require actually activated is final.
-    let bundled_dirs = bundled_gems_dirs();
     let mut loader = Loader {
         roots: opts.load_roots.clone(),
         // The libraries zeo itself ships are ALWAYS discoverable, appended
@@ -404,15 +403,7 @@ pub(super) fn lower_main_file(
         // forgot them would resolve a two-half gem's NATIVE half and silently
         // miss its Ruby half, which is how `StringScanner::Error` would go
         // missing and turn a raise into a panic.
-        packages: discover_packages(
-            &opts
-                .package_dirs
-                .iter()
-                .cloned()
-                .chain(bundled_dirs.iter().cloned())
-                .collect::<Vec<_>>(),
-            &bundled_dirs,
-        )?,
+        packages: discover_packages(&opts.package_dirs, bundled_libraries())?,
         required: HashSet::new(),
         splicing: Vec::new(),
         in_unit_sweep: false,

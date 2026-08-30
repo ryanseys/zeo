@@ -111,10 +111,11 @@ $ zeo -e "puts eval('1 + 1 + (\"hello\" * 8).length')"
 
 ### Compile an app against its locked gems
 
-Zeo ships its bundled gems in [`gems/`](gems) — `bundler` and `rubygems` included. A
-program that requires `csv` gets the copy in this repository, with no
-`Gemfile` at all. `gems/UPSTREAM.md` records each gem's origin, version, and
-license; `upstream.lock` pins the ones tracked from git.
+Zeo ships a bundled stdlib — `bundler` and `rubygems` included. A program that
+requires `csv` gets the copy zeo ships, with no `Gemfile` of its own at all.
+Every version comes from this repository's [`Gemfile.lock`](Gemfile.lock),
+which is also what the ruby oracle resolves, so the two can never name
+different releases. `lib/ruby/UPSTREAM.md` describes the tiers.
 
 To compile against your own locked dependencies instead:
 
@@ -174,7 +175,7 @@ replacement for any removed spelling.
 1. `-I` roots in order, then `RUBYLIB`.
 2. `--gems` directories in order.
 3. The input file's sibling `gems/` directory.
-4. Zeo's own bundled gems, then the external gem store.
+4. Zeo's own bundled libraries, then the external gem store.
 
 **Environment:**
 
@@ -548,10 +549,11 @@ structurally impossible.
 crates/      the six workspace crates (above)
 docs/        BINARY_SIZE, CLIF, COMPATIBILITY, EVAL, EXTENSIONS,
              ROADMAP
-tests/       example goldens, the spinel corpus, the gaps tracker, gemtests
-gems/        67 bundled gems (upstream.lock pins the git-tracked ones)
+tests/       example goldens, the spinel corpus, the gaps tracker
+lib/ruby/    rubygems and bundler, the one tier that must be committed
+Gemfile      every other bundled library, pinned; `make install-deps`
 bench/       61 benchmark programs; read bench/README.md
-vendor/      rubygems and fetched test trees (gitignored)
+vendor/      the resolved gems and fetched test trees (gitignored)
 Makefile     the front door: make / test / check / gate / linux
 Dockerfile   the linux verification image (`cargo xtask linux`)
 ```

@@ -11,7 +11,7 @@
 //! `<default_dir>/gems/<name>-<version>` beside
 //! `<default_dir>/specifications/default/<name>-<version>.gemspec`
 //! (`Specification.default_stubs` builds exactly those two paths); zeo's
-//! payload is `<gems>/<name>/lib`, version-less and possibly read-only. So the
+//! payload is `lib/ruby/<name>/lib`, version-less and possibly read-only. So the
 //! store is BUILT, once, into the writable prefix (`home::ruby_prefix`): a
 //! generated gemspec per library, and a symlink per library pointing back at
 //! the payload directory. Nothing is copied, so the store costs a few hundred

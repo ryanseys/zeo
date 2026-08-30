@@ -1,8 +1,9 @@
 version: 2
 updates:
-  # Cargo only. The gems in gems/ are pinned by commit in upstream.rb and
-  # vendored from git tags pinned in `upstream.rb`; Dependabot would not
-  # understand that layout.
+  # Cargo only. The ruby half is a `Gemfile` whose every entry is pinned
+  # exactly, on purpose: the same lock decides what zeo vendors AND what the
+  # ruby oracle resolves, so a bump is a deliberate act followed by a golden
+  # run, never a routine PR. `bundler` here would fight that.
   - package-ecosystem: cargo
     directory: "/"
     schedule:

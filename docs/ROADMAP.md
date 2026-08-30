@@ -22,7 +22,7 @@ writing the fix.
 oracle's tree, add one match arm, extend the fixture); an iterator kind in
 [Performance](#performance) (`arr.each` proved the shape; each remaining kind
 is the same guard with a different accumulator); a row for `irb`, `minitest`
-or `openssl` in [`gems/UPSTREAM.md`](../gems/UPSTREAM.md).
+or `openssl` in [`crates/zeo-rt/ext/UPSTREAM.md`](../crates/zeo-rt/ext/UPSTREAM.md).
 [`CONTRIBUTING.md`](../CONTRIBUTING.md) gives the house rule for all of them:
 oracle-verified, divergence-documented.
 
@@ -275,5 +275,5 @@ measurement rather than from a guess, ranked by the gap they close.
 
 ## Docs
 
-- `gems/UPSTREAM.md` has no rows for `irb`, `minitest` or `openssl` — their
-  provenance lives only in gemspec header comments.
+- `crates/zeo-rt/ext/UPSTREAM.md` has no rows for `irb`, `minitest` or
+  `openssl` — their provenance lives only in gemspec header comments.

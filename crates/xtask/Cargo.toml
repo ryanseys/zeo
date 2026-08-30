@@ -12,3 +12,6 @@ regex.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tar.workspace = true
+# For `zeo::bundled` alone: the one place that decides which libraries ship,
+# so `dist` and a compile can never disagree about the set.
+zeo = { path = "../zeo" }

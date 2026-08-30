@@ -7,7 +7,7 @@ class StringScanner
   # `strscan.c`'s own constants. rexml gates two compat shims on
   # `StringScanner::Version` (`if StringScanner::Version < "3.0.8"`), so their
   # absence was a NameError at load, not merely a reflection gap. Kept in step
-  # with the gemspec version by `gems/UPSTREAM.md`.
+  # with the gemspec version by `crates/zeo-rt/ext/UPSTREAM.md`.
   Version = "3.1.6"
   Id = "$Id$"
 

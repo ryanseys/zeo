@@ -22,7 +22,7 @@
 //!    `Gem::StubSpecification` exists: everything zeo consumes is available
 //!    without parsing the body at all.
 //! 2. **A static prism parse of the body**, for gemspecs with no stub header --
-//!    including the ones zeo itself ships under `gems/`, which are
+//!    including the stub gemspecs zeo itself ships, which are
 //!    hand-written and short.
 //!
 //! # What is consumed, and what is ignored

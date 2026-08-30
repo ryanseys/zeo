@@ -1,18 +1,21 @@
-//! The libraries the compiler ships, flattened to the one `gems/` directory
-//! every install channel carries.
+//! The libraries the compiler ships, flattened to the one `lib/ruby/`
+//! directory every install channel carries.
 //!
-//! The dev tree keeps them in two places -- the gem-shaped directories zeo
-//! owns under `crates/zeo-rt/ext/`, and the vendored upstream copies in
-//! `gems/`. This is where the two become one, so `dist` and `stage-publish`
-//! cannot disagree about what ships.
+//! The dev tree keeps them in three tiers -- zeo's own halves under
+//! `crates/zeo-rt/ext/`, the committed rubygems/bundler bootstrap under
+//! `lib/ruby/`, and everything else resolved out of `vendor/bundle` from
+//! `Gemfile.lock`. `zeo::bundled` decides that list, and both `dist` and
+//! `stage-publish` read it from there, so neither they nor the compiler can
+//! disagree about what ships.
+//!
+//! That makes `bundle install` a prerequisite of building a distribution.
+//! It already is one for the ruby oracle, and the alternative -- vendoring
+//! the trees again -- is the drift this replaced.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::{Error, root_join};
-
-const EXT: &str = "crates/zeo-rt/ext";
-const GEMS: &str = "gems";
+use crate::{Error, root};
 
 /// `("json/lib/json.rb", <abs path>)` pairs, sorted, for every library.
 /// Everything in a library directory ships -- gemspec, licence text, the
@@ -29,40 +32,27 @@ pub fn files() -> Result<Vec<(String, PathBuf)>, Error> {
     Ok(out)
 }
 
-/// zeo's own libraries first, so a name both tiers carry resolves to zeo's --
-/// the same precedence the loader applies (`bundled_gems_dirs`).
+/// Every library, name-keyed, with the tier precedence already applied -- so
+/// a name zeo implements resolves to zeo's own half, exactly as it does in a
+/// compile.
 pub fn library_dirs() -> Result<BTreeMap<String, PathBuf>, Error> {
-    let mut dirs = BTreeMap::new();
-    for tier in [EXT, GEMS] {
-        for (name, path) in libraries_in(&root_join(tier))? {
-            dirs.entry(name).or_insert(path);
-        }
+    let libs = zeo::bundled::dev_tree_libraries(root());
+    let missing: Vec<String> = zeo::bundled::vendored_names(root())
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| !libs.iter().any(|lib| &lib.name == name))
+        .collect();
+    if !missing.is_empty() {
+        return Err(Error::new(format!(
+            "{} locked librar{} are not unpacked under vendor/bundle, so a \
+             distribution built now would silently ship without them. Run \
+             `make install-deps`.\n  {}",
+            missing.len(),
+            if missing.len() == 1 { "y" } else { "ies" },
+            missing.join(" ")
+        )));
     }
-    Ok(dirs)
-}
-
-/// A library is a directory with a `lib/`. Under `ext/` that skips every
-/// extension whose Rust needs no Ruby half.
-fn libraries_in(dir: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| Error::new(format!("reading {}: {e}", dir.display())))?;
-    let mut out = Vec::new();
-    for entry in entries {
-        let path = entry
-            .map_err(|e| Error::new(format!("reading {}: {e}", dir.display())))?
-            .path();
-        if !path.join("lib").is_dir() {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .expect("a directory name")
-            .to_string_lossy()
-            .into_owned();
-        out.push((name, path));
-    }
-    out.sort();
-    Ok(out)
+    Ok(libs.into_iter().map(|lib| (lib.name, lib.dir)).collect())
 }
 
 /// Every file in a library directory, as a `/`-joined relative path, except

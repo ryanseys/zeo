@@ -1,4 +1,4 @@
-# Vendored from ruby 4.0.6's bundled date 3.5.1 (see gems/UPSTREAM.md).
+# Vendored from ruby 4.0.6's bundled date 3.5.1 (see ../UPSTREAM.md).
 Gem::Specification.new do |s|
   s.name = "date"
   s.version = "3.5.1"

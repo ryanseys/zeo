@@ -24,7 +24,7 @@ use crate::lower::PResult;
 
 /// The parsed lockfile: every locked gem, and the declared platforms.
 #[derive(Debug, Default, PartialEq)]
-pub(super) struct Lockfile {
+pub(crate) struct Lockfile {
     /// Locked gems, deduped by name with the `ruby`-platform row preferred
     /// (see the module docs). Sorted by name for determinism.
     pub gems: Vec<LockedGem>,
@@ -39,7 +39,7 @@ pub(super) struct Lockfile {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct LockedGem {
+pub(crate) struct LockedGem {
     pub name: String,
     pub version: String,
     /// The platform suffix on the spec line (`arm64-darwin`), or `None` for a
@@ -55,7 +55,7 @@ pub(super) struct LockedGem {
 /// Which lockfile section a gem came from -- a `PATH`/`GIT` gem lives outside
 /// the RubyGems store and is handled differently by the provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum GemSource {
+pub(crate) enum GemSource {
     /// A RubyGems `GEM` section gem -- found in the store's `specifications/`.
     Rubygems,
     /// A `GIT` section gem -- a checkout, not in the store.
@@ -106,7 +106,7 @@ impl GemSourceKind {
     }
 }
 
-pub(super) fn parse_file(path: &Path) -> PResult<Lockfile> {
+pub(crate) fn parse_file(path: &Path) -> PResult<Lockfile> {
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     parse(&text).map_err(|e| format!("{}: {e}", path.display()).into())
@@ -114,7 +114,7 @@ pub(super) fn parse_file(path: &Path) -> PResult<Lockfile> {
 
 /// Parse lockfile text. `name (version)` at 4-space indent is a spec; a
 /// `ruby`-platform row wins over a platform-suffixed one of the same name.
-pub(super) fn parse(text: &str) -> PResult<Lockfile> {
+pub(crate) fn parse(text: &str) -> PResult<Lockfile> {
     // Keyed by name so a later row (e.g. the platform variant) can be compared
     // against an earlier one and the ruby-platform row kept. BTree for a
     // deterministic final order.

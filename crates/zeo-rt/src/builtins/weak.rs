@@ -1,6 +1,6 @@
 //! `ObjectSpace::WeakMap`/`WeakKeyMap` (CRuby weakmap.c) and the finalizer
 //! registry behind `ObjectSpace.define_finalizer`. `WeakRef` itself is the
-//! vendored `gems/weakref` -- CRuby's own pure-Ruby file, which stands on
+//! resolved `weakref` gem -- CRuby's own pure-Ruby file, which stands on
 //! `Delegator` and on the `WeakMap` here. The `ObjectSpace` module
 //! itself is next door in `objspace.rs`, which stands on the registry here.
 //!
@@ -560,7 +560,7 @@ pub fn register_weak(registry: &mut ClassRegistry) {
     );
 
     // `WeakRef` is a NAMESPACE slot whose class body is the vendored Ruby file
-    // (`gems/weakref`), so it has no native rows and no native payload. Its
+    // (the `weakref` gem), so it has no native rows and no native payload. Its
     // instances must be whatever its declared superclass allocates --
     // `Delegator`'s compiled struct, whose inherited bodies downcast to it --
     // which is exactly what `compiled_subclass_construct` resolves, falling

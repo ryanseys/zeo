@@ -1,4 +1,4 @@
-# Shellwords -- the vendored pure-Ruby stdlib gem (gems/shellwords), compiled
+# Shellwords -- the pure-Ruby stdlib gem the lock resolves, compiled
 # from its real upstream source. Its module methods are defined with
 # `module_function`, then aliased to shorter names inside `class << self`
 # (`alias split shellsplit`) -- class-method aliases resolved against the

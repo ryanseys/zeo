@@ -1,6 +1,12 @@
-//! rubygems and bundler: the two largest vendored gems, and the only pair that
-//! ships from ONE upstream repo (`rubygems/rubygems`, bundler under its
-//! `bundler/` subdirectory).
+//! rubygems and bundler: the two libraries zeo still COMMITS, and the only
+//! pair that ships from one upstream release (`rubygems-update`, which
+//! carries `bundler/` complete at the same version).
+//!
+//! They are committed because nothing else can supply them. Every other
+//! library resolves out of `vendor/bundle`, and `vendor/bundle` is what
+//! `bundle install` writes -- so the bundler that runs the install cannot
+//! come from the thing the install produces. A machine with no ruby on it
+//! must still reach a working `zeo bundle install`.
 //!
 //! The end-to-end behavioural proof is the gem probe's (the compile-side
 //! inputs `tests/bench/rubygems.rb` and `tests/bench/bundler.rb` are the same
@@ -18,86 +24,76 @@ fn repo(rel: &str) -> PathBuf {
     crate::paths::workspace_root().join(rel)
 }
 
-/// One gem's entry in `upstream.lock` -- the DERIVED manifest. `upstream.rb`
-/// is the source, and it is ruby, so only the derived lock is machine-read.
-fn manifest_entry(name: &str) -> serde_json::Value {
-    let text = std::fs::read_to_string(repo("upstream.lock")).expect("upstream.lock is readable");
-    let lock: serde_json::Value = serde_json::from_str(&text).expect("upstream.lock is valid JSON");
-    lock["gems"]
-        .as_array()
-        .expect("upstream.lock has a gems array")
-        .iter()
-        .find(|e| e["name"] == name)
-        .unwrap_or_else(|| panic!("upstream.lock has no gem {name}"))
-        .clone()
-}
+/// The one lock entry both committed trees are measured against.
+const LOCKED_AS: &str = "rubygems-update";
 
-fn manifest_value(name: &str, key: &str) -> String {
-    manifest_entry(name)[key]
-        .as_str()
-        .unwrap_or_else(|| panic!("upstream.lock gem {name} has no `{key}`"))
-        .to_string()
+/// `rubygems-update`'s version in `Gemfile.lock`.
+fn locked_version() -> String {
+    let text =
+        std::fs::read_to_string(repo("Gemfile.lock")).expect("Gemfile.lock is committed");
+    text.lines()
+        .map(str::trim)
+        .find_map(|l| l.strip_prefix(&format!("{LOCKED_AS} (")))
+        .map(|rest| rest.trim_end_matches(')').to_string())
+        .unwrap_or_else(|| panic!("Gemfile.lock names no {LOCKED_AS}"))
 }
 
 #[test]
-fn both_gems_are_pinned_to_the_one_upstream_repo() {
-    // Two manifest entries, one repo: bundler is not separately released, and
-    // pinning it to a different rev than the rubygems it rides with is how the
-    // pair silently drifts out of step.
-    assert_eq!(manifest_value("rubygems", "github"), "rubygems/rubygems");
-    assert_eq!(manifest_value("bundler", "github"), "rubygems/rubygems");
-    // `subdir` is what lets one repo ship two gems -- without it `gem sync`
-    // vendors rubygems' `lib/` twice and bundler is simply absent.
-    assert_eq!(manifest_value("bundler", "subdir"), "bundler");
+fn one_release_states_the_version_of_both_trees() {
+    // bundler is not separately released, and a `gem "bundler"` line would
+    // additionally force every contributor onto exactly that bundler --
+    // bundler refuses to resolve a version other than the one running it. So
+    // the pair is pinned once, and drifting out of step is not expressible.
     assert!(
-        manifest_entry("rubygems").get("subdir").is_none(),
-        "rubygems is the repo root; a subdir there would vendor the wrong tree"
+        zeo::bundled::BOOTSTRAP_LOCK_NAMES
+            .iter()
+            .all(|(_, locked)| *locked == LOCKED_AS),
+        "the bootstrap tier is measured against more than one lock entry"
     );
-    for gem in ["rubygems", "bundler"] {
-        assert_eq!(
-            manifest_value(gem, "rev").len(),
-            40,
-            "{gem} rev is a full SHA"
-        );
-    }
+    let names: Vec<&str> = zeo::bundled::BOOTSTRAP_LOCK_NAMES
+        .iter()
+        .map(|(dir, _)| *dir)
+        .collect();
+    assert_eq!(names, ["bundler", "rubygems"]);
 }
 
 #[test]
-fn the_vendored_trees_carry_the_files_their_requires_name() {
-    // A `gem sync` that silently vendored an empty or wrong tree still leaves
-    // `gems/<name>/` behind, so the check has to name real entry points.
+fn the_committed_trees_carry_the_files_their_requires_name() {
+    // A half-finished vendoring still leaves `lib/ruby/<name>/` behind, so the
+    // check has to name real entry points.
     for rel in [
-        "gems/rubygems/lib/rubygems.rb",
-        "gems/rubygems/lib/rubygems/version.rb",
-        "gems/rubygems/lib/rubygems/requirement.rb",
-        "gems/rubygems/lib/rubygems/specification.rb",
-        "gems/rubygems/lib/rubygems/platform.rb",
+        "lib/ruby/rubygems/lib/rubygems.rb",
+        "lib/ruby/rubygems/lib/rubygems/version.rb",
+        "lib/ruby/rubygems/lib/rubygems/requirement.rb",
+        "lib/ruby/rubygems/lib/rubygems/specification.rb",
+        "lib/ruby/rubygems/lib/rubygems/platform.rb",
         // The vendored-inside-the-vendored tree: rubygems carries its own
         // copies of timeout/uri/net-http under `Gem::`, and the `::Gem::
         // Timeout::Error` superclass in it is what the anchored-path
         // forward-shell fix exists for.
-        "gems/rubygems/lib/rubygems/vendor/timeout/lib/timeout.rb",
-        "gems/bundler/lib/bundler.rb",
-        "gems/bundler/lib/bundler/lockfile_parser.rb",
-        "gems/bundler/lib/bundler/dependency.rb",
-        "gems/bundler/lib/bundler/version.rb",
+        "lib/ruby/rubygems/lib/rubygems/vendor/timeout/lib/timeout.rb",
+        "lib/ruby/bundler/lib/bundler.rb",
+        "lib/ruby/bundler/lib/bundler/lockfile_parser.rb",
+        "lib/ruby/bundler/lib/bundler/dependency.rb",
+        "lib/ruby/bundler/lib/bundler/version.rb",
     ] {
-        assert!(repo(rel).is_file(), "missing vendored file: {rel}");
+        assert!(repo(rel).is_file(), "missing committed file: {rel}");
     }
-    // The stub gemspec each vendored directory carries is what makes it a package.
+    // The stub gemspec each directory carries is what makes it a package.
     for rel in [
-        "gems/rubygems/rubygems.gemspec",
-        "gems/bundler/bundler.gemspec",
+        "lib/ruby/rubygems/rubygems.gemspec",
+        "lib/ruby/bundler/bundler.gemspec",
     ] {
         assert!(repo(rel).is_file(), "missing stub gemspec: {rel}");
     }
 }
 
 #[test]
-fn the_vendored_versions_agree_with_their_manifest_tags() {
-    // `Gem::VERSION`/`Bundler::VERSION` are the goldens' own sanity anchors, so
-    // a tag that no longer matches the tree it vendored is worth catching here
-    // rather than as a mystery diff.
+fn the_committed_versions_agree_with_the_lock() {
+    // `Gem::VERSION`/`Bundler::VERSION` are the goldens' own sanity anchors,
+    // and they are what the trees themselves say -- a re-vendor that took a
+    // different release than the lock names is worth catching here rather
+    // than as a mystery diff.
     let version_in = |rel: &str| -> String {
         let text = std::fs::read_to_string(repo(rel)).expect("readable");
         let line = text
@@ -109,21 +105,28 @@ fn the_vendored_versions_agree_with_their_manifest_tags() {
             .expect("a quoted version")
             .to_string()
     };
-    let tag_version = |gem: &str| {
-        let tag = manifest_value(gem, "tag");
-        tag.rsplit_once('v')
-            .expect("a v-prefixed tag")
-            .1
-            .to_string()
-    };
-    assert_eq!(
-        version_in("gems/rubygems/lib/rubygems.rb"),
-        tag_version("rubygems")
-    );
-    assert_eq!(
-        version_in("gems/bundler/lib/bundler/version.rb"),
-        tag_version("bundler")
-    );
+    let locked = locked_version();
+    assert_eq!(version_in("lib/ruby/rubygems/lib/rubygems.rb"), locked);
+    assert_eq!(version_in("lib/ruby/bundler/lib/bundler/version.rb"), locked);
+}
+
+#[test]
+fn the_bootstrap_pair_never_comes_out_of_the_store() {
+    // `rubygems-update`'s require_paths is deliberately NOT `lib` -- it exists
+    // so installing it cannot shadow the running RubyGems -- so a store copy
+    // would contribute a name and no files.
+    let libs = zeo::bundled::dev_tree_libraries(&crate::paths::workspace_root());
+    for name in ["rubygems", "bundler"] {
+        let lib = libs
+            .iter()
+            .find(|l| l.name == name)
+            .unwrap_or_else(|| panic!("{name} is not a shipped library at all"));
+        assert!(
+            lib.dir.starts_with(repo(zeo::bundled::BOOTSTRAP_TIER)),
+            "{name} resolved to {}",
+            lib.dir.display()
+        );
+    }
 }
 
 /// One compile of the whole graph, shared by the tests below: `require

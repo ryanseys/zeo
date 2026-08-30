@@ -1,23 +1,22 @@
 //! Every bundled gem reaches codegen.
 //!
-//! `gems/` is zeo's shipped stdlib -- ~50 trees, most of them vendored from
-//! upstream at the tags `upstream.rb` pins. Until this file existed nothing
-//! swept them: a
-//! version bump could drag in a construct zeo cannot lower, and the only
-//! signal would be whichever golden happened to `require` that gem, or
-//! nothing at all for the seven gems no golden covers.
+//! The sweep covers the two upstream tiers of zeo's shipped stdlib: the
+//! committed rubygems/bundler bootstrap under `lib/ruby/`, and the ~52
+//! libraries resolved out of `vendor/bundle` from `Gemfile.lock`. Until this
+//! file existed nothing swept them: a version bump could drag in a construct
+//! zeo cannot lower, and the only signal would be whichever golden happened
+//! to `require` that gem, or nothing at all for the seven gems no golden
+//! covers. A lock bump is now the way a version moves, so the sweep is what
+//! reads the new code first.
+//!
+//! zeo's OWN halves (`crates/zeo-rt/ext/`) are not here. They are zeo's
+//! source, covered by the suites that exercise the Rust beside them.
 //!
 //! Front end only (`check_program_with` -- parse, splice, analyze; no CLIF
 //! emission), so the whole sweep is seconds rather than the minutes a
 //! build-and-run pass costs. That is the right depth for this check: "does
 //! zeo still accept this library" is a front-end question, and behaviour is
 //! already the goldens' job.
-
-use std::path::PathBuf;
-
-fn repo(rel: &str) -> PathBuf {
-    crate::paths::workspace_root().join(rel)
-}
 
 /// The feature name to `require`, when it is not the directory name.
 ///
@@ -30,7 +29,9 @@ fn entry_point(dir: &str) -> &str {
         "net-ftp" => "net/ftp",
         "net-smtp" => "net/smtp",
         "net-protocol" => "net/protocol",
-        "English" => "English",
+        // ruby's own `lib/English.gemspec` names the gem `english`; the file
+        // it ships is `English.rb`.
+        "english" => "English",
         // The gem is `nkf`; its Ruby half is the Kconv wrapper.
         "nkf" => "kconv",
         other => other,
@@ -50,19 +51,15 @@ fn skip_reason(dir: &str) -> Option<&'static str> {
     SKIPPED.iter().find(|(n, _)| *n == dir).map(|(_, why)| *why)
 }
 
-/// Every subdirectory of `gems/` that carries a gemspec -- the same rule
-/// `parse/loader.rs` uses to decide what is a package.
+/// The upstream libraries zeo ships: the committed bootstrap pair and every
+/// gem the lock resolves. Asked of the compiler's own resolver, so the sweep
+/// covers exactly what a compile would load.
 fn bundled_gems() -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(repo("gems"))
-        .expect("gems/ is readable")
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
-        .filter(|e| {
-            std::fs::read_dir(e.path()).is_ok_and(|mut d| {
-                d.any(|f| f.is_ok_and(|f| f.path().extension().is_some_and(|x| x == "gemspec")))
-            })
-        })
-        .map(|e| e.file_name().to_string_lossy().into_owned())
+    let root = crate::paths::workspace_root();
+    let mut names: Vec<String> = zeo::bundled::libraries_in(&root.join(zeo::bundled::BOOTSTRAP_TIER))
+        .into_iter()
+        .chain(zeo::bundled::resolved_libraries(&root))
+        .map(|lib| lib.name)
         .collect();
     names.sort();
     names
@@ -73,14 +70,14 @@ fn every_bundled_gem_compiles() {
     let gems = bundled_gems();
     assert!(
         gems.len() > 40,
-        "expected the full bundled stdlib, found {} gems -- has gems/ moved?",
+        "expected the full bundled stdlib, found {} gems -- has `bundle \
+         install` run? (`make install-deps`)",
         gems.len()
     );
 
-    let opts = zeo::CompileOptions {
-        package_dirs: vec![repo("gems")],
-        ..Default::default()
-    };
+    // No package dirs: the compiler appends its own libraries unconditionally,
+    // so naming them here would only be a second, staler spelling of the set.
+    let opts = zeo::CompileOptions::default();
 
     let mut failures = Vec::new();
     let mut compiled = 0;

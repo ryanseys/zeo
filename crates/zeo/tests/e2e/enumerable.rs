@@ -82,7 +82,7 @@ fn rust_enumerable_matches_real_ruby_across_all_receiver_kinds() {
         )],
         "main.rb",
         &[],
-        &[crate::REPO_PACKAGES],
+        &[],
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(

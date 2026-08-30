@@ -51,7 +51,7 @@ p Syslog::Option::LOG_PID
 p Syslog::Facility::LOG_LOCAL7
 p Syslog::Constants::LOG_ERR
 # The SHAPE, not the number: zeo tracks syslog's latest upstream release and
-# the oracle reads the copy ruby 4.0.6 ships (`gems/UPSTREAM.md`).
+# the oracle reads the copy ruby 4.0.6 ships (`crates/zeo-rt/ext/UPSTREAM.md`).
 p Syslog::VERSION.match?(/\A\d+\.\d+\.\d+\z/)
 
 class UsesConstants

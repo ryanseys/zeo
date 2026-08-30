@@ -867,7 +867,7 @@ fn derive_lockfile(gemfile: PathBuf) -> PathBuf {
 /// The compiler's OWN libraries are not listed here: the loader appends them
 /// unconditionally, so they are found whether zeo is driven through this CLI
 /// or used as a library. They come from the resolved home (see `zeo::home`);
-/// `bundled_gems_dirs` names the directories.
+/// `zeo::bundled` decides the set.
 fn default_package_dirs(input: Option<&std::path::Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(parent) = input.and_then(|p| p.parent()) {

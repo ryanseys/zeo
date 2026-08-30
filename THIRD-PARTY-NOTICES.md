@@ -23,10 +23,13 @@ resolved list of Rust crates and their licenses, run `cargo deny list`.
 
 ## The bundled Ruby standard library (`gems/`)
 
-`gems/` carries ~50 pure-Ruby gems -- the standard library zeo compiles
-against, plus rubygems and bundler. Provenance for every one of them, and
-which are third-party versus zeo-authored, is documented in
-[`gems/UPSTREAM.md`](gems/UPSTREAM.md). Each third-party gem keeps its
+zeo ships ~70 pure-Ruby libraries -- the standard library it compiles
+against, plus rubygems and bundler. `Gemfile.lock` names every one and the
+release it comes from; the tiers, and which are third-party versus
+zeo-authored, are documented in
+[`lib/ruby/UPSTREAM.md`](lib/ruby/UPSTREAM.md) and
+[`crates/zeo-rt/ext/UPSTREAM.md`](crates/zeo-rt/ext/UPSTREAM.md). Each
+third-party gem keeps its
 upstream license file in its own directory: Ruby's `COPYING` + `BSDL` pair
 for the Ruby-licensed gems, and the gem's own `LICENSE`/`LICENSE.txt`/
 `LICENSE.md` where upstream ships one. All are Ruby-license, 2-clause BSD, or

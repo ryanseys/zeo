@@ -8,7 +8,7 @@
 //!   bin/zeo                          # dist-profile build
 //!   share/zeo/
 //!     dist-manifest.json             # {schema, version, target}
-//!     gems/                          # every bundled library (payload)
+//!     lib/ruby/                      # every bundled library (payload)
 //!     lib/<triple>/libzeo.a          # what `zeo -o` links against
 //!   share/doc/zeo/                   # README + licenses
 //! ```
@@ -72,7 +72,7 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     let payload_dir = stage.join("share/zeo");
 
     for (rel, src) in payload::files()? {
-        copy(&src, &payload_dir.join("gems").join(rel))?;
+        copy(&src, &payload_dir.join("lib/ruby").join(rel))?;
     }
     write(
         &payload_dir.join("dist-manifest.json"),

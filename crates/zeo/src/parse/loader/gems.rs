@@ -2,29 +2,32 @@
 //! parsing, lockfile precedence, and the native-gem/feature classifiers.
 
 use super::{Gem, GemProvenance, PResult};
+use crate::bundled::Library;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-/// The directories holding the libraries the compiler ships, highest
-/// precedence first. An absent dir contributes nothing.
+/// The libraries the compiler ships, highest precedence first -- each entry
+/// is one library's own directory, not a directory of them.
 ///
-/// The dev tree has TWO. Each library zeo owns is a gem-shaped directory
-/// under `crates/zeo-rt/ext/`, its Ruby half in `lib/` beside the Rust that
-/// implements it; the vendored upstream copies stay in `gems/`. A zeo
-/// library must win its name, so it is searched first. Every other home has
-/// one directory, because `dist`/`stage-publish` stage both tiers into it.
-pub(super) fn bundled_gems_dirs() -> Vec<PathBuf> {
-    let dirs = match crate::home::zeo_home() {
-        crate::home::ZeoHome::DevTree { root } => {
-            vec![root.join("crates/zeo-rt/ext"), root.join("gems")]
+/// The dev tree draws on three tiers and an installed zeo on one, because
+/// `dist`/`stage-publish` flatten all of them into `share/zeo/lib/ruby/`.
+/// [`crate::bundled`] is where that list is decided and why.
+///
+/// Memoized: the tiers are read once per process, and a run-time `eval` is a
+/// whole compile that would otherwise walk the store again.
+pub(super) fn bundled_libraries() -> &'static [Library] {
+    static LIBS: std::sync::OnceLock<Vec<Library>> = std::sync::OnceLock::new();
+    LIBS.get_or_init(|| match crate::home::zeo_home() {
+        crate::home::ZeoHome::DevTree { root } => crate::bundled::dev_tree_libraries(root),
+        crate::home::ZeoHome::Installed { payload, .. } => {
+            crate::bundled::libraries_in(&payload.join(crate::bundled::BOOTSTRAP_TIER))
         }
-        crate::home::ZeoHome::Installed { payload, .. } => vec![payload.join("gems")],
         // Embedded in the binary at publish time; extracted once per version.
-        crate::home::ZeoHome::Registry { cache } => {
-            crate::home::registry_gems_dir(cache).into_iter().collect()
-        }
-    };
-    dirs.into_iter().filter(|d| d.is_dir()).collect()
+        crate::home::ZeoHome::Registry { cache } => crate::home::registry_libraries_dir(cache)
+            .as_deref()
+            .map(crate::bundled::libraries_in)
+            .unwrap_or_default(),
+    })
 }
 
 /// Whether `ZEO_DEBUG=strict-ambiguous-require` is set: a feature found in
@@ -77,8 +80,8 @@ pub(super) fn lockfile_precedence(
         .collect()
 }
 
-/// Discovers packages under each dir, in dir order: every subdirectory
-/// containing a `.gemspec` is a gem (subdirectories without
+/// Discovers packages under each `package_dirs` entry, in dir order: every
+/// subdirectory containing a `.gemspec` is a gem (subdirectories without
 /// one are silently ignored -- not gems). Within one dir, discovery is
 /// name-sorted (deterministic); across dirs, the FIRST occurrence of a
 /// package NAME wins entirely (a project-local package shadows a
@@ -86,6 +89,12 @@ pub(super) fn lockfile_precedence(
 /// wins" rule, the same shape as Bundler's lockfile picking exactly one
 /// version). A missing/unreadable packages dir contributes nothing (the
 /// CLI passes default candidate locations that often don't exist).
+///
+/// `bundled_libs` names each shipped library's OWN directory and is appended
+/// last, so a caller-supplied dir shadows the compiler's stdlib tier. It is
+/// a list of libraries rather than of directories holding them because its
+/// third tier is a RubyGems store, where the directory is `<name>-<version>`
+/// and only the gemspec states the name.
 ///
 /// MEMOIZED for the life of the process, and that is not an optimization
 /// detail: a run-time `eval` is a whole compile, so it discovers packages
@@ -99,7 +108,7 @@ pub(super) fn lockfile_precedence(
 /// a gemspec while a compile is running. A fresh process reads it.
 pub(super) fn discover_packages(
     package_dirs: &[PathBuf],
-    bundled_dirs: &[PathBuf],
+    bundled_libs: &[Library],
 ) -> PResult<Vec<Gem>> {
     type Key = (Vec<PathBuf>, Vec<PathBuf>, Vec<Option<std::time::SystemTime>>);
     static MEMO: std::sync::Mutex<Option<HashMap<Key, Vec<Gem>>>> = std::sync::Mutex::new(None);
@@ -108,7 +117,10 @@ pub(super) fn discover_packages(
         .iter()
         .map(|d| std::fs::metadata(d).and_then(|m| m.modified()).ok())
         .collect();
-    let key: Key = (package_dirs.to_vec(), bundled_dirs.to_vec(), stamps);
+    // Each library's directory identifies it; its gemspec path is a function
+    // of that directory and the tier it came from.
+    let libs: Vec<PathBuf> = bundled_libs.iter().map(|l| l.dir.clone()).collect();
+    let key: Key = (package_dirs.to_vec(), libs, stamps);
     if let Some(hit) = MEMO
         .lock()
         .expect("the package memo is never poisoned")
@@ -117,7 +129,7 @@ pub(super) fn discover_packages(
     {
         return Ok(hit.clone());
     }
-    let packages = discover_packages_uncached(package_dirs, bundled_dirs)?;
+    let packages = discover_packages_uncached(package_dirs, bundled_libs)?;
     MEMO.lock()
         .expect("the package memo is never poisoned")
         .get_or_insert_with(HashMap::default)
@@ -127,53 +139,66 @@ pub(super) fn discover_packages(
 
 fn discover_packages_uncached(
     package_dirs: &[PathBuf],
-    bundled_dirs: &[PathBuf],
+    bundled_libs: &[Library],
 ) -> PResult<Vec<Gem>> {
     let mut packages: Vec<Gem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    let mut admit = |pkg: Gem, packages: &mut Vec<Gem>| {
+        if seen.insert(pkg.name.clone()) {
+            packages.push(pkg);
+            return;
+        }
+        // First-name-wins, EXCEPT for the curated set where zeo's own
+        // native half IS the gem (`gem_report::substitution_note` -- ffi,
+        // json, psych, openssl, ...). There the upstream Ruby half is
+        // dead code: it opens by requiring a C extension zeo does not
+        // have, and every class it then defines is one zeo's native half
+        // already owns. Letting a caller-supplied copy shadow zeo's
+        // compiled a program that died at load -- the real ffi gem's
+        // `ffi/types.rb` raising `uninitialized constant FFI::TypeDefs`
+        // -- and, once that file's computed `require RUBY_VERSION... +
+        // "/ffi_c"` demanded the gem's whole load path as units, dragged
+        // in `ffi/struct_layout.rb`'s `class Enum < Field` and failed the
+        // compile outright. The `zeo-gems.json` record has always
+        // CLAIMED zeo's implementation is the one in use; this is what
+        // makes the claim true.
+        //
+        // Only a CALLER's copy is displaced. Within the bundled tiers the
+        // list is already precedence-ordered, so zeo's own half is the
+        // incumbent there and displacing it would hand the name back to the
+        // upstream Ruby this rule exists to keep out.
+        if pkg.provenance == GemProvenance::Bundled
+            && crate::gem_report::substitution_note(&pkg.name).is_some()
+            && let Some(slot) = packages
+                .iter_mut()
+                .find(|g| g.name == pkg.name && g.provenance == GemProvenance::PackageDir)
+        {
+            *slot = pkg;
+        }
+    };
+
     for dir in package_dirs {
-        let bundled = bundled_dirs.contains(dir);
-        let provenance = if bundled {
-            GemProvenance::Bundled
-        } else {
-            GemProvenance::PackageDir
-        };
         let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
         };
         let mut pkg_dirs: Vec<PathBuf> = entries
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| p.is_dir() && (gemspec_path(p).is_some() || is_bundled_library(p, bundled)))
+            .filter(|p| p.is_dir() && gemspec_path(p).is_some())
             .collect();
         pkg_dirs.sort();
         for pkg_dir in pkg_dirs {
-            let pkg = parse_manifest(&pkg_dir, provenance)?;
-            if seen.insert(pkg.name.clone()) {
-                packages.push(pkg);
-                continue;
-            }
-            // First-name-wins, EXCEPT for the curated set where zeo's own
-            // native half IS the gem (`gem_report::substitution_note` -- ffi,
-            // json, psych, openssl, ...). There the upstream Ruby half is
-            // dead code: it opens by requiring a C extension zeo does not
-            // have, and every class it then defines is one zeo's native half
-            // already owns. Letting a caller-supplied copy shadow zeo's
-            // compiled a program that died at load -- the real ffi gem's
-            // `ffi/types.rb` raising `uninitialized constant FFI::TypeDefs`
-            // -- and, once that file's computed `require RUBY_VERSION... +
-            // "/ffi_c"` demanded the gem's whole load path as units, dragged
-            // in `ffi/struct_layout.rb`'s `class Enum < Field` and failed the
-            // compile outright. The `zeo-gems.json` record has always
-            // CLAIMED zeo's implementation is the one in use; this is what
-            // makes the claim true.
-            if provenance == GemProvenance::Bundled
-                && crate::gem_report::substitution_note(&pkg.name).is_some()
-                && let Some(slot) = packages.iter_mut().find(|g| g.name == pkg.name)
-            {
-                *slot = pkg;
-            }
+            admit(
+                parse_manifest(&pkg_dir, None, GemProvenance::PackageDir)?,
+                &mut packages,
+            );
         }
+    }
+    for lib in bundled_libs {
+        admit(
+            parse_manifest(&lib.dir, lib.gemspec.as_deref(), GemProvenance::Bundled)?,
+            &mut packages,
+        );
     }
     Ok(packages)
 }
@@ -186,9 +211,13 @@ fn discover_packages_uncached(
 /// That is what lets one code path read a bundled zeo library, a vendored
 /// gem, and a gem out of a real installed store.
 ///
-/// The gemspec's `name` must match its directory, mirroring RubyGems' own
-/// `<name>-<version>/` convention: a mismatch means a `require` would resolve
-/// out of a directory that doesn't name the gem it provides.
+/// The gemspec's `name` must match its directory -- either verbatim, or as
+/// RubyGems' own `<name>-<version>/`, which is how the resolved tier's
+/// `vendor/bundle` store names an unpacked gem. A mismatch means a `require`
+/// would resolve out of a directory that doesn't name the gem it provides.
+///
+/// `manifest` overrides where the gemspec is read from, which a store gem
+/// needs: see [`Library::gemspec`].
 ///
 /// A declared `require_paths` entry that doesn't exist contributes no search
 /// root, and is not an error. RubyGems puts the directory on `$LOAD_PATH`
@@ -197,16 +226,29 @@ fn discover_packages_uncached(
 /// declares `require_paths: [lib]` and ships only a README and a licence, so
 /// rejecting the gem would refuse to compile every program that depends on it.
 /// An unsatisfiable `require` still fails, which is where the real error is.
-pub(super) fn parse_manifest(pkg_dir: &Path, provenance: GemProvenance) -> PResult<Gem> {
-    let Some(manifest_path) = gemspec_path(pkg_dir) else {
-        return bundled_library(pkg_dir, provenance);
+pub(super) fn parse_manifest(
+    pkg_dir: &Path,
+    manifest: Option<&Path>,
+    provenance: GemProvenance,
+) -> PResult<Gem> {
+    let manifest_path = match manifest {
+        Some(path) => path.to_path_buf(),
+        None => match gemspec_path(pkg_dir) {
+            Some(path) => path,
+            None => return bundled_library(pkg_dir, provenance),
+        },
     };
     let spec = crate::parse::gemspec::parse_file(&manifest_path)?;
     let dir_name = pkg_dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    if spec.name != dir_name {
+    let versioned = spec
+        .version
+        .as_deref()
+        .map(|v| format!("{}-{v}", spec.name))
+        .unwrap_or_default();
+    if spec.name != dir_name && versioned != dir_name {
         return Err(format!(
             "{}: gem name \"{}\" doesn't match its directory name \"{dir_name}\"",
             manifest_path.display(),
@@ -228,14 +270,10 @@ pub(super) fn parse_manifest(pkg_dir: &Path, provenance: GemProvenance) -> PResu
     })
 }
 
-/// A `lib/` with no `.gemspec` in the tier zeo itself ships: `socket`, `pty`
-/// and `monitor`, which ruby installs on rubylibdir rather than as gems.
-fn is_bundled_library(pkg_dir: &Path, bundled: bool) -> bool {
-    bundled && pkg_dir.join("lib").is_dir()
-}
-
-/// One of those, as a package with no version -- there is no gemspec to state
-/// one, and inventing a number nothing can check is what this replaces.
+/// A `lib/` with no `.gemspec` in the tier zeo itself ships -- `socket`,
+/// `pty` and `monitor`, which ruby installs on rubylibdir rather than as gems
+/// -- as a package with no version. There is no gemspec to state one, and
+/// inventing a number nothing can check is what this replaces.
 fn bundled_library(pkg_dir: &Path, provenance: GemProvenance) -> PResult<Gem> {
     let lib = pkg_dir.join("lib");
     if !lib.is_dir() {
@@ -276,12 +314,13 @@ pub(super) fn gemspec_path(pkg_dir: &Path) -> Option<PathBuf> {
 
 /// CRuby's exact missing-feature message (`load_failed` -> `rb_load_fail`).
 /// A path for the disclosure record, made relative to the current directory
-/// when it sits under it (so a bundled gem reads `gems/optparse/lib/optparse.rb`
-/// rather than an absolute machine path), else left absolute.
+/// when it sits under it (so a bundled gem reads
+/// `vendor/bundle/ruby/4.0.0/gems/optparse-0.8.1/lib/optparse.rb` rather than
+/// an absolute machine path), else left absolute.
 pub(super) fn display_path(path: &Path) -> String {
-    // Canonicalize first so a bundled path baked with `../..`
-    // (`CARGO_MANIFEST_DIR/../../gems/...`) collapses before the CWD strip,
-    // yielding a clean relative path rather than `crates/zeo/../..`.
+    // Canonicalize first so a bundled path baked with `../..` collapses
+    // before the CWD strip, yielding a clean relative path rather than
+    // `crates/zeo/../..`.
     let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     std::env::current_dir()
         .ok()
