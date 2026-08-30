@@ -37,6 +37,15 @@ pub(crate) fn dynamic_require(arg1: &RubyValue) -> Result<RubyValue, crate::Sign
     if let Some(result) = crate::features::load_from_disk(&path, 0, false) {
         return result.map(RubyValue::Bool);
     }
+    // ...and, failing THAT, a compiled extension on the load path. Ruby's own
+    // `search_required` tries the source suffixes and the native ones from
+    // one walk; here the source half runs first and this is its tail, which
+    // gives the same order. A literal require of a store gem's extension is
+    // built and spliced at COMPILE time; this is the spelling no compile can
+    // see -- `%w[...].each { |f| require f }` over a native name.
+    if let Some(result) = crate::features::load_native_from_disk(&path, 0) {
+        return result.map(RubyValue::Bool);
+    }
     // `#path` carries the feature as WRITTEN. CRuby absolutizes it for
     // `require_relative` only, against the calling file's directory -- a
     // compiled binary has no such directory, so the argument stands.
@@ -115,6 +124,11 @@ pub(crate) fn dynamic_require_relative(arg1: &RubyValue) -> Result<RubyValue, cr
     // The ABSOLUTIZED spelling on disk -- `require_relative` resolves
     // against the calling file's directory, which is what the frame carries.
     if let Some(result) = crate::features::load_from_disk(&abs, 0, false) {
+        return result.map(RubyValue::Bool);
+    }
+    // A compiled extension beside the calling file -- the same tail
+    // `require` has, for the same reason.
+    if let Some(result) = crate::features::load_native_from_disk(&abs, 0) {
         return result.map(RubyValue::Bool);
     }
     Err(missing_feature_error(&abs))

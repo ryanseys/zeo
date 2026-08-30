@@ -205,6 +205,12 @@ ruby_module! {
         if let Some(result) = crate::features::load_from_disk(&path, 0, true) {
             return result.map(RubyValue::Bool);
         }
+        // `rb_load_internal` dlopens a compiled extension too, and `Init_` is
+        // not re-runnable, so a second `load` of one answers false rather
+        // than defining its classes twice.
+        if let Some(result) = crate::features::load_native_from_disk(&path, 0) {
+            return result.map(RubyValue::Bool);
+        }
         require_feature(recv, std::slice::from_ref(arg1), None)
     }
     // Written as two defs rather than one `module_function`: CRuby defines

@@ -42,7 +42,13 @@ fn box_load(box_id: u32, feature: &RubyValue, reload: bool) -> Result<RubyValue,
         .lock()
         .to_utf8_lossy()
         .into_owned();
-    match crate::features::load_from_disk(&path, box_id, reload) {
+    // A compiled extension on the box's own load path takes the same tail a
+    // top-level `require` has. The extension itself is process-wide -- a
+    // dlopen has no box -- which is a limitation the box model already has
+    // for every linked-in library.
+    let found = crate::features::load_from_disk(&path, box_id, reload)
+        .or_else(|| crate::features::load_native_from_disk(&path, box_id));
+    match found {
         Some(result) => result.map(RubyValue::Bool),
         None => Err(crate::builtins::kernel::missing_feature_error(&path)),
     }

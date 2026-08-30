@@ -174,3 +174,90 @@ fn an_extension_configures_compiles_and_links() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A COMPUTED `require` reaches a compiled extension on `$LOAD_PATH`.
+///
+/// The literal spelling has always worked: the compile-time loader maps the
+/// feature onto a store gem, builds it, and splices a `CExtLoaded` node. A
+/// computed one names a feature no compile can see, so it has to resolve and
+/// dlopen at RUN time -- and the run-time resolver used to be Ruby-source
+/// only, trying `.rb` and the verbatim name and reading every hit as text.
+/// `%w[...].each { |f| require f }` over a native name raised `LoadError`,
+/// and the explicit `require "probe.bundle"` failed with "stream did not
+/// contain valid UTF-8", which reads like a corrupt file rather than a
+/// loader that took the wrong branch.
+///
+/// Four things are asserted together because each of them was separately
+/// wrong: the resolve, the load, the SECOND require answering `false`, and
+/// one `$LOADED_FEATURES` entry naming the library.
+#[test]
+fn a_computed_require_loads_a_compiled_extension() {
+    if !have("make") || !have("cc") {
+        eprintln!("skipping: this machine has no `make` or no `cc`");
+        return;
+    }
+    let root = repo_root();
+    let dir = std::env::temp_dir().join(format!("zeo-cext-require-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    for f in ["extconf.rb", "probe.c"] {
+        std::fs::copy(root.join("tests/cext_probe").join(f), dir.join(f))
+            .unwrap_or_else(|e| panic!("copying {f}: {e}"));
+    }
+    zeo::cext::configure(&zeo_bin(), &dir, Path::new("extconf.rb"), &[])
+        .unwrap_or_else(|e| panic!("{e}"));
+    let bundle = zeo::cext::build_extension(&dir, 4).unwrap_or_else(|e| panic!("{e}"));
+    assert!(bundle.is_file(), "{} was not produced", bundle.display());
+
+    let program = format!(
+        r#"$LOAD_PATH.unshift({dir:?})
+p $LOAD_PATH.resolve_feature_path("probe")[0]
+f = "probe"
+p require(f)
+p probe_hi
+p require(f)
+p $LOADED_FEATURES.count {{ |e| e.end_with?({name:?}) }}
+"#,
+        dir = dir.display().to_string(),
+        name = bundle
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("the bundle has a name"),
+    );
+    let out = Command::new(zeo_bin())
+        .arg("-e")
+        .arg(&program)
+        .env("ZEO_CACHE", "0")
+        .output()
+        .expect("zeo runs");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        ":so\ntrue\n\"hi\"\nfalse\n1\n",
+        "stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The explicit-suffix spelling names the same library, and the loader
+    // must not try to read it as source.
+    let out = Command::new(zeo_bin())
+        .arg("-e")
+        .arg(format!(
+            "$LOAD_PATH.unshift({:?})\np require(\"probe.{}\")\np probe_hi\n",
+            dir.display().to_string(),
+            bundle
+                .extension()
+                .and_then(|e| e.to_str())
+                .expect("the bundle has a suffix"),
+        ))
+        .env("ZEO_CACHE", "0")
+        .output()
+        .expect("zeo runs");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "true\n\"hi\"\n",
+        "stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

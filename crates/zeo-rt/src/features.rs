@@ -103,6 +103,11 @@ fn resolve_feature_path(feature: &str) -> Option<(&'static str, RubyValue)> {
         let path = path.to_string_lossy().into_owned();
         return Some(("rb", RubyValue::Str(crate::string_new(path))));
     }
+    // A compiled extension on a load-path root is named as itself, `:so`.
+    if let Some((path, _)) = resolve_native_on_disk(feature, 0) {
+        let path = path.to_string_lossy().into_owned();
+        return Some(("so", RubyValue::Str(crate::string_new(path))));
+    }
     let bare = feature
         .strip_suffix(".so")
         .or_else(|| feature.strip_suffix(".bundle"))
@@ -205,6 +210,95 @@ pub fn resolve_on_disk(feature: &str, box_id: u32, append_rb: bool) -> Option<st
         .find_map(|root| first_readable(spellings(std::path::Path::new(&root).join(feature))))
 }
 
+/// The suffixes a compiled extension wears on this platform, `DLEXT` first.
+///
+/// `.so` is tried on macOS too: mkmf builds `.bundle`, but a gem that ships a
+/// prebuilt binary, or one built by another ruby, may carry either -- and
+/// CRuby's own `search_required` walks a suffix LIST rather than one name.
+#[cfg(target_vendor = "apple")]
+const NATIVE_SUFFIXES: &[&str] = &["bundle", "so"];
+#[cfg(not(target_vendor = "apple"))]
+const NATIVE_SUFFIXES: &[&str] = &["so"];
+
+/// Whether this process publishes the C API an extension resolves against.
+///
+/// One `RTLD_DEFAULT` lookup of a symbol every extension needs. Asked once
+/// per process: the answer is a property of how the binary was LINKED.
+fn c_api_is_published() -> bool {
+    static PUBLISHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PUBLISHED.get_or_init(|| {
+        let Ok(name) = std::ffi::CString::new("rb_define_method") else {
+            return false;
+        };
+        // SAFETY: a NUL-terminated name against the process's own tables; a
+        // miss answers null.
+        !unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) }.is_null()
+    })
+}
+
+/// Whether `path` wears a compiled extension's suffix on this platform.
+fn is_native_library(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| NATIVE_SUFFIXES.contains(&e))
+}
+
+/// The compiled extension `feature` names on a `$LOAD_PATH` root, and the
+/// stem its `Init_` is named after.
+///
+/// mkmf writes both from one string: `create_makefile("bcrypt_ext")` builds
+/// `bcrypt_ext.bundle` and the extension defines `Init_bcrypt_ext`. So the
+/// file stem IS the init stem, and no table has to carry the pair.
+///
+/// A feature written WITH a native suffix names the file exactly; one without
+/// is tried under each suffix in turn.
+pub fn resolve_native_on_disk(feature: &str, box_id: u32) -> Option<(std::path::PathBuf, String)> {
+    let named = |p: std::path::PathBuf| -> Option<(std::path::PathBuf, String)> {
+        let stem = p.file_stem()?.to_str()?.to_string();
+        Some((p, stem))
+    };
+    if NATIVE_SUFFIXES.iter().any(|s| feature.ends_with(&format!(".{s}"))) {
+        return resolve_on_disk(feature, box_id, false).and_then(named);
+    }
+    NATIVE_SUFFIXES
+        .iter()
+        .find_map(|s| resolve_on_disk(&format!("{feature}.{s}"), box_id, false))
+        .and_then(named)
+}
+
+/// `dlopen` the compiled extension `feature` names, and run its `Init_`.
+///
+/// `None` means nothing on the load path supplies it; the caller then raises
+/// the `LoadError` it would have raised anyway. This is the run-time half of
+/// what a LITERAL `require` of a store gem's extension gets at compile time
+/// (`parse::loader::cext`), for the spelling no compile can see -- the
+/// `%w[...].each { |f| require f }` idiom over a native name.
+pub fn load_native_from_disk(feature: &str, box_id: u32) -> Option<Result<bool, Signal>> {
+    let (path, init) = resolve_native_on_disk(feature, box_id)?;
+    let entry = path.to_string_lossy().into_owned();
+    // A compiled program publishes the C API only when its compile SAW a
+    // require that loads an extension (`backend::link`'s `loads_cext`, a flag
+    // rather than always-on because the export table is what `-dead_strip`
+    // prunes against). A computed require is invisible to that decision, so
+    // the check happens here -- otherwise `dlopen` fails with an unresolved
+    // `rb_*` and the reason is the dynamic loader's, not zeo's.
+    if !c_api_is_published() {
+        return Some(Err(crate::builtins::load_error!(
+            "cannot load such file -- {feature}: this program does not publish the C API, so \
+             the extension at {entry} cannot resolve against it (a require zeo can see at \
+             compile time publishes it; a computed one cannot)"
+        )));
+    }
+    Some(crate::cext::load::load(&entry, &init).inspect(|&loaded| {
+        // `$LOADED_FEATURES` names the LIBRARY, which is what makes the second
+        // require answer `false`. `cext::load` is idempotent by path, so the
+        // two records cannot drift.
+        if loaded {
+            feature_loaded(box_id, &entry, "");
+        }
+    }))
+}
+
 /// The `--embed-sources` pack: the ruby source that travelled inside the
 /// program, keyed by the load-path-relative spelling a `require` writes.
 static SOURCES: std::sync::OnceLock<HashMap<&'static str, &'static str>> =
@@ -239,12 +333,17 @@ pub fn load_from_disk(feature: &str, box_id: u32, reload: bool) -> Option<Result
     // The embedded pack first, then disk -- see `resolve_embedded`.
     let (path, embedded) = match resolve_embedded(feature) {
         Some((name, text)) => (format!("<embedded>/{name}.rb"), Some(text)),
-        None => (
-            resolve_on_disk(feature, box_id, !reload)?
-                .to_string_lossy()
-                .into_owned(),
-            None,
-        ),
+        None => {
+            let found = resolve_on_disk(feature, box_id, !reload)?;
+            // A compiled extension is not source. `require "probe.bundle"`
+            // resolves here verbatim, and reading it as text answered
+            // "stream did not contain valid UTF-8" -- so hand it back and let
+            // `load_native_from_disk` dlopen it.
+            if is_native_library(&found) {
+                return None;
+            }
+            (found.to_string_lossy().into_owned(), None)
+        }
     };
     let key = (box_id, path.clone());
     if !reload {
