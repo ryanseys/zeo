@@ -45,7 +45,7 @@ use crate::{FMap, FSet};
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use zeo_abi::RUNTIME_CLASS_ID_BASE;
 
@@ -435,6 +435,28 @@ const GATE_LIVE_MASK: u16 =
 /// What forbids a fused-iterator splice, apart from the receiver's own
 /// patched state.
 const GATE_ITER_BLOCKED: u16 = GATE_ANY_SINGLETONS | GATE_ANCESTRY_MUTATED | GATE_MOVED;
+/// What turns an inline cache off no matter WHICH class the site is keyed on
+/// -- [`gates_cache_off`]'s wide half.
+///
+/// [`GATE_OVERLAY`] is deliberately absent. "Something, somewhere, was defined
+/// at run time" is a fact about the PROCESS, and a cache asks a fact about ONE
+/// class, which `PATCHED` records (INV-1). Reading the wide latch cost every
+/// program that ever calls `define_method`, `attr_accessor`, `alias_method` or
+/// `remove_method` -- which is every program that loads a gem -- **14x on a
+/// loop whose body is one cached send**, for a definition on a class the loop
+/// never touches.
+///
+/// What remains is what no class-id set can express: a hook part-way through
+/// installing its class ([`GATE_PENDING`]), a chain holding a class twice,
+/// whose `super` resume a hit would skip ([`GATE_MRO_DUPLICATES`]), and an
+/// `extend` the program has not reached yet ([`GATE_PENDING_EXTENDS`]).
+///
+/// The other two narrowed latches are NOT here, and that is the load-bearing
+/// half of this: [`GATE_ANY_SINGLETONS`] and [`GATE_ANCESTRY_MUTATED`] are
+/// answered per class instead, which every writer of either now pays for --
+/// `mark_singletons_for` patches the receiver's class scope, and every
+/// ancestry splice patches the class it splices into BEFORE it splices.
+const GATE_CACHE_WIDE: u16 = GATE_PENDING | GATE_MRO_DUPLICATES | GATE_PENDING_EXTENDS;
 static OVERLAY: OnceLock<OverlayMaps> = OnceLock::new();
 
 fn maps() -> &'static OverlayMaps {
@@ -593,7 +615,57 @@ pub fn iter_inline_ok_for(box_id: u32, recv: ClassId) -> bool {
 /// downward-closed over ancestry. Behind [`GATE_PATCHED_ANY`] so the common
 /// answer costs no lock -- and no load of its own, for a caller that already
 /// holds the gate byte.
-static PATCHED: OnceLock<RwLock<FSet<u32>>> = OnceLock::new();
+static PATCHED: OnceLock<RwLock<PatchedSets>> = OnceLock::new();
+
+#[derive(Default)]
+struct PatchedSets {
+    /// The membership every reader asks about.
+    ids: FSet<u32>,
+    /// Ids whose whole descendant closure is already in `ids`, so a second
+    /// [`patch_class`] on one costs nothing. Kept apart from `ids` because
+    /// [`patch_class_own`] inserts a class WITHOUT its descendants, and a
+    /// later closing mark on the same id must still do the walk.
+    closed: FSet<u32>,
+}
+
+fn patched() -> &'static RwLock<PatchedSets> {
+    PATCHED.get_or_init(|| RwLock::new(PatchedSets::default()))
+}
+
+/// How many class ids [`PATCHED_BITS`] covers. 8 KiB of BSS against a 29 MB
+/// binary, and every program the corpus compiles fits inside it; anything
+/// past it is correct but slow, which is the right way round.
+const PATCHED_BITS_IDS: u32 = 1 << 16;
+
+/// One bit per frozen class id -- [`class_maybe_patched_gated`]'s read path,
+/// and the answer for every id below [`PATCHED_BITS_IDS`].
+///
+/// [`PATCHED`] is the authority and this is its mirror. An `RwLock<FSet>`
+/// read was the first shape and it is the wrong one for a question asked once
+/// per cached send: a reader-lock acquire is a read-modify-write on one shared
+/// word, so every thread sending any message serializes on it. Measured at 3M
+/// sends, the mirror is worth ~13ns a call.
+///
+/// A fixed static array rather than a sized allocation, because the read is
+/// then ONE load at a link-time-known address: an `OnceLock<Box<[..]>>` put
+/// four dependent loads (the once state, its value, the box pointer, its
+/// length) in front of the same bit test.
+///
+/// `Relaxed`, on the module's standing argument: a reader that misses a bit
+/// behaves as if it ran before the patch, which is what `Acquire` permits too
+/// -- acquire adds ordering, never freshness.
+static PATCHED_BITS: [AtomicU64; (PATCHED_BITS_IDS / 64) as usize] =
+    [const { AtomicU64::new(0) }; (PATCHED_BITS_IDS / 64) as usize];
+
+/// Set `added`'s bits. Ids past the array's span stay set-only; the reader
+/// falls back to [`PATCHED`] for those.
+fn mirror_patched_bits(added: &[u32]) {
+    for &id in added {
+        if id < PATCHED_BITS_IDS {
+            PATCHED_BITS[(id / 64) as usize].fetch_or(1u64 << (id % 64), Ordering::Release);
+        }
+    }
+}
 
 #[inline(always)]
 pub fn class_maybe_patched(id: ClassId) -> bool {
@@ -605,24 +677,98 @@ pub(crate) fn class_maybe_patched_gated(gates: u16, id: ClassId) -> bool {
     if id.0 >= RUNTIME_CLASS_ID_BASE {
         return true;
     }
-    gates & GATE_PATCHED_ANY != 0
-        && PATCHED
-            .get()
-            .is_some_and(|p| p.read().unwrap().contains(&id.0))
+    if gates & GATE_PATCHED_ANY == 0 {
+        return false;
+    }
+    if id.0 < PATCHED_BITS_IDS {
+        return PATCHED_BITS[(id.0 / 64) as usize].load(Ordering::Relaxed) & (1u64 << (id.0 % 64))
+            != 0;
+    }
+    PATCHED
+        .get()
+        .is_some_and(|p| p.read().unwrap().ids.contains(&id.0))
 }
 
-/// Mark `id` and everything that inherits from it. O(#classes), and only ever
-/// reached from a runtime definition -- never from a loop.
+/// Whether an inline cache keyed on `id` must stand down: the wide gates
+/// ([`GATE_CACHE_WIDE`]), or this one class's own patched state.
+///
+/// The narrow half is INV-1 read forwards -- `PATCHED` holds every class whose
+/// resolution a runtime operation could have changed, downward-closed -- so a
+/// site keyed on a class nobody has touched keeps its answer while the rest of
+/// the program redefines whatever it likes.
+#[inline(always)]
+pub(crate) fn gates_cache_off(g: u16, id: ClassId) -> bool {
+    g & GATE_CACHE_WIDE != 0 || class_maybe_patched_gated(g, id)
+}
+
+/// Mark `id` and everything that inherits from it.
+///
+/// O(#classes) on the first mark of a class and O(1) after: an id already in
+/// the set brought its whole descendant closure in with it, and
+/// `classes_with_ancestor` is transitive, so a descendant re-marked later adds
+/// nothing. That matters because `obj.extend(M)` in a loop reaches here once
+/// per call.
 fn patch_class(id: ClassId) {
-    let set = PATCHED.get_or_init(|| RwLock::new(FSet::default()));
-    {
-        let mut w = set.write().unwrap();
-        w.insert(id.0);
-        w.extend(crate::dispatch::classes_with_ancestor(id));
+    if patched().read().unwrap().closed.contains(&id.0) {
+        return;
     }
+    let added: Vec<u32> = {
+        let below = crate::dispatch::classes_with_ancestor(id);
+        let mut w = patched().write().unwrap();
+        w.closed.insert(id.0);
+        std::iter::once(id.0)
+            .chain(below)
+            .filter(|&c| w.ids.insert(c))
+            .collect()
+    };
+    mirror_patched_bits(&added);
     GATES.fetch_or(GATE_PATCHED_ANY, Ordering::Release);
 }
 
+/// Mark `id` ALONE -- no descendant closure.
+///
+/// For a change one class's instances can see and its subclasses' cannot,
+/// which is exactly what a per-object singleton row is: it lives on ONE
+/// object, whose class is `id` and nothing else. The closure matters here:
+/// `def o.x` on a plain `Object.new` would otherwise mark
+/// `classes_with_ancestor(Object)` -- every class in the program -- and
+/// deoptimize the whole thing to record a row on one object.
+fn patch_class_own(id: ClassId) {
+    if patched().read().unwrap().ids.contains(&id.0) {
+        return;
+    }
+    patched().write().unwrap().ids.insert(id.0);
+    mirror_patched_bits(&[id.0]);
+    GATES.fetch_or(GATE_PATCHED_ANY, Ordering::Release);
+}
+
+/// Arm [`GATE_ANY_SINGLETONS`] for a singleton installed on `recv`, and patch
+/// the class scope that singleton can be reached through.
+///
+/// The gate stays a process-wide boolean because INV-2 is true: an
+/// identity-keyed row is not a fact about a class. The PATCH is the weaker
+/// fact that is still worth recording -- a row on one object can only change
+/// what a receiver OF THAT OBJECT'S CLASS resolves, so marking the class is
+/// sound, and it is what keeps `def obj.x` on one object from deoptimizing
+/// every call site in the program.
+///
+/// A CLASS receiver takes its own id rather than `Class`: a singleton on the
+/// class value IS one of that class's class methods, which is what a
+/// `ClassMethodSite` is keyed by.
+fn mark_singletons_for(recv: &RubyValue) {
+    mark_singletons();
+    match recv {
+        // A class method IS inherited, so a singleton on a Class value takes
+        // the descendant closure that every other class-method write takes.
+        RubyValue::Class(cid) => patch_class(*cid),
+        // An ordinary object's row reaches one object, so its class alone.
+        other => patch_class_own(other.class_id()),
+    }
+}
+
+/// Arm [`GATE_ANY_SINGLETONS`] and nothing else -- for a seating whose rows
+/// the COMPILER already materialized, so no class's resolution changes.
+/// [`crate::runtime_meta::class_extend_at`] is the only caller.
 fn mark_singletons() {
     GATES.fetch_or(GATE_ANY_SINGLETONS, Ordering::Release);
 }
@@ -1119,6 +1265,10 @@ fn rebase_compiled_surrogate(sid: ClassId, recv: &RubyValue) {
             ..Default::default()
         },
     );
+    // The surrogate's chain is what its owner's CLASS methods resolve through,
+    // so rewriting it is a change to `sid` -- and the only caller reaches here
+    // with the owner in hand and marks that side itself.
+    patch_class(sid);
     mark_live();
 }
 
@@ -1246,7 +1396,7 @@ pub(crate) fn set_singleton_visibility(
         .entry(key)
         .or_default()
         .insert(name, vis);
-    mark_singletons();
+    mark_singletons_for(recv);
     mark_live();
 }
 
@@ -1259,6 +1409,7 @@ pub(crate) fn clear_singleton_visibility(recv: &RubyValue, name: Symbol) {
     if let Some(t) = maps().singleton_vis.write().unwrap().get_mut(&key) {
         t.remove(&name);
     }
+    mark_singletons_for(recv);
 }
 
 /// The singleton method `name` installed directly on `recv`, or `None`. Always
@@ -1326,6 +1477,11 @@ pub fn copy_value_singletons(from: &RubyValue, to: &RubyValue) {
     }
     if copied && let Some(weak) = crate::value::weak_owner(to) {
         maps().pinned.write().unwrap().insert(tk, weak);
+        // The copy's class already carries the source's patch (a clone keeps
+        // its class), but the rule is "every writer of a singleton table
+        // patches its class scope" and an unstated exception is how one gets
+        // broken.
+        mark_singletons_for(to);
     }
 }
 

@@ -658,7 +658,7 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
             .unwrap()
             .insert(id_num, owner);
     }
-    mark_singletons();
+    mark_singletons_for(recv);
     mark_live();
     Ok(RubyValue::Class(new_id))
 }

@@ -221,8 +221,7 @@ pub fn runtime_replace_class_method_c(id: ClassId, name: Symbol, f: crate::capi:
         e.extended_class_methods.remove(&name);
         e.class_removed.remove(&name);
     }
-    mark_singletons();
-    patch_class(id);
+    mark_singletons_for(&RubyValue::Class(id));
     mark_live();
 }
 
@@ -557,7 +556,7 @@ fn runtime_undef_singleton_method(
             .insert(name);
         undefined.push(name);
     }
-    mark_singletons();
+    mark_singletons_for(owner);
     mark_live();
     for name in undefined {
         fire_def_hook(DefTarget::Singleton(owner), DefEvent::Undefined, name)?;
@@ -613,7 +612,7 @@ fn runtime_alias_singleton_method(
     if let Some(t) = maps().singleton_undefs.write().unwrap().get_mut(&key) {
         t.remove(&new);
     }
-    mark_singletons();
+    mark_singletons_for(owner);
     mark_live();
     Ok(RubyValue::Symbol(new))
 }
@@ -939,7 +938,7 @@ fn runtime_remove_singleton_method(
         clear_extended_name(key, name);
         removed_names.push(name);
     }
-    mark_singletons();
+    mark_singletons_for(owner);
     for name in removed_names {
         fire_def_hook(DefTarget::Singleton(owner), DefEvent::Removed, name)?;
     }
@@ -1129,6 +1128,7 @@ pub fn runtime_set_visibility(
                 .or_insert_with(OverlayEntry::delta)
                 .singleton_default_vis = Some(vis);
             drop(w);
+            patch_class(id);
             mark_live();
         }
         return Ok(RubyValue::Nil);
@@ -1683,7 +1683,7 @@ pub fn runtime_define_singleton_from_method(
             let e = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
             e.class_methods.insert(name, wrapped);
             e.extended_class_methods.remove(&name);
-            mark_singletons();
+            mark_singletons_for(recv);
             mark_live();
             // A singleton definition reports to the OBJECT, not to its
             // singleton class -- CRuby's `RCLASS_ATTACHED_OBJECT` rewrite.
@@ -1700,7 +1700,7 @@ pub fn runtime_define_singleton_from_method(
                 .entry(key)
                 .or_default()
                 .insert(name, m);
-            mark_singletons();
+            mark_singletons_for(recv);
             mark_live();
             // A singleton definition reports to the OBJECT, not to its
             // singleton class -- CRuby's `RCLASS_ATTACHED_OBJECT` rewrite.
@@ -1745,7 +1745,7 @@ pub fn runtime_define_singleton_method(
                 e.class_methods.insert(name, body);
                 e.extended_class_methods.remove(&name);
             }
-            mark_singletons();
+            mark_singletons_for(recv);
             mark_live();
             // A singleton definition reports to the OBJECT, not to its
             // singleton class -- CRuby's `RCLASS_ATTACHED_OBJECT` rewrite.
@@ -1768,7 +1768,7 @@ pub fn runtime_define_singleton_method(
             // caller re-applies a cursor if one is live.
             clear_singleton_visibility(recv, name);
             clear_extended_name(key, name);
-            mark_singletons();
+            mark_singletons_for(recv);
             mark_live();
             // A singleton definition reports to the OBJECT, not to its
             // singleton class -- CRuby's `RCLASS_ATTACHED_OBJECT` rewrite.
@@ -1794,7 +1794,7 @@ pub fn runtime_define_singleton_method(
                 w.entry(key).or_default().insert(name, body);
             }
             clear_extended_name(key, name);
-            mark_singletons();
+            mark_singletons_for(recv);
             mark_live();
             // A singleton definition reports to the OBJECT, not to its
             // singleton class -- CRuby's `RCLASS_ATTACHED_OBJECT` rewrite.
@@ -1921,9 +1921,12 @@ pub fn class_extend_at(class: ClassId, module: ClassId) -> Result<(), Signal> {
     };
     record_extended(&recv, module);
     refresh_singleton_ancestors(&recv);
+    // The GATE alone, and no patch: `PATCHED` is monotone too, so marking the
+    // class here would cost `C.helper` its inline cache for the rest of the
+    // run -- the same 12x this function's `mark_live` note describes, by
+    // another route. The window is `GATE_PENDING_EXTENDS`, and it closes.
     mark_singletons();
     mark_ancestry_mutated();
-    patch_class(class);
     // NOT `mark_live`: that latch is monotone and sits in `GATE_LIVE_MASK`,
     // so arming it here turned off every inline cache in the process for the
     // rest of the run -- measured at 77x on a loop calling a class method an
@@ -1951,7 +1954,6 @@ pub fn defer_extended_class_method(class: ClassId, name: Symbol) {
             .class_deferred
             .insert(name)
     };
-    patch_class(class);
     // The window, not the monotone overlay latch -- see `GATE_PENDING_EXTENDS`.
     if fresh {
         mark_extend_pending();
@@ -2101,7 +2103,7 @@ pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result
     // all read it, and none of them can see a copied method table.
     record_extended(recv, *mid);
     refresh_singleton_ancestors(recv);
-    mark_singletons();
+    mark_singletons_for(recv);
     mark_ancestry_mutated();
     mark_live();
     Ok(())
@@ -2167,7 +2169,7 @@ fn prepend_into_class_singleton(owner: ClassId, module_val: &RubyValue) -> Resul
     // into", and the readers behind it must run.
     GATES.fetch_or(GATE_ANY_EXTENDED, std::sync::atomic::Ordering::Release);
     refresh_singleton_ancestors(&owner_val);
-    mark_singletons();
+    mark_singletons_for(&owner_val);
     mark_ancestry_mutated();
     mark_live();
     Ok(())
@@ -2314,7 +2316,13 @@ fn mix_in(
     // and an overlay chain is only consulted once the overlay is live. A
     // multi-argument call spliced every module against the FROZEN chain
     // otherwise, so the last write won and the rest vanished.
+    //
+    // The patch goes BEFORE the loop for a second reason: `fire_mixin_hook`
+    // runs user code with the chain already spliced, and a cached send on an
+    // instance of `cid` from inside that hook would otherwise answer from the
+    // frozen chain the splice just replaced.
     mark_ancestry_mutated();
+    patch_class(*cid);
     mark_live();
     for module_val in ordered {
         let RubyValue::Class(mid) = module_val else {
@@ -2381,6 +2389,9 @@ pub fn splice_mixin(target: &RubyValue, module: &RubyValue, before: bool) -> Res
         true => Placement::Before,
         false => Placement::After,
     };
+    // Marked before the splice, `mix_in`'s rule: no window in which the chain
+    // has changed and the caches have not been told.
+    patch_class(*cid);
     splice_module_into(*cid, *mid, placement);
     if before {
         overlay_prepended_methods(*cid, *mid);

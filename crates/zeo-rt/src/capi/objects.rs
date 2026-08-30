@@ -180,9 +180,8 @@ pub unsafe extern "C" fn zeo_rt_attr_read(
 ) -> i32 {
     let r = unsafe { &*recv };
     let gates = crate::runtime_meta::gates();
-    if !crate::runtime_meta::gates_live(gates)
+    if !crate::runtime_meta::gates_cache_off(gates, zeo_abi::ClassId(cid))
         && !crate::runtime_meta::gates_moved(gates)
-        && !crate::runtime_meta::class_maybe_patched_gated(gates, zeo_abi::ClassId(cid))
         && let RubyValue::Object(o) = r
         && o.class_id().0 == cid
     {
@@ -217,9 +216,8 @@ pub unsafe extern "C" fn zeo_rt_attr_write(
     let r = unsafe { &*recv };
     let value = unsafe { &*v };
     let gates = crate::runtime_meta::gates();
-    if !crate::runtime_meta::gates_live(gates)
+    if !crate::runtime_meta::gates_cache_off(gates, zeo_abi::ClassId(cid))
         && !crate::runtime_meta::gates_moved(gates)
-        && !crate::runtime_meta::class_maybe_patched_gated(gates, zeo_abi::ClassId(cid))
         && let RubyValue::Object(o) = r
         && o.class_id().0 == cid
     {

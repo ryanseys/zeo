@@ -124,6 +124,28 @@ pub fn send_value_vcall_cached(
     })
 }
 
+/// The receiver class a value cache may answer for, or `None` for a receiver
+/// this site must send the slow way.
+///
+/// A `Class` receiver is ruled out FIRST, before the class id is computed or
+/// the cache is even read: it resolves through a class-method arm of its own
+/// further down, so a site that only ever sees one (`Math.sin`) would
+/// otherwise pay the lookup on every call and never fill.
+///
+/// The gate question is asked WITH the class ([`runtime_meta::gates_cache_off`])
+/// rather than about the process: a definition on some other class is no
+/// reason for this site to stop caching. The wide bits that remain cover a
+/// running definition hook, whose class is only part-built -- a filled cache
+/// line would answer for a method that does not exist yet.
+#[inline(always)]
+fn cacheable_class(box_id: u32, recv: &RubyValue, gates: u16) -> Option<ClassId> {
+    if box_id != 0 || matches!(recv, RubyValue::Class(_)) {
+        return None;
+    }
+    let id = recv.class_id();
+    (!crate::runtime_meta::gates_cache_off(gates, id)).then_some(id)
+}
+
 /// The shared body of the value-cache entries: everything the cache can
 /// serve, with the route it cannot serve handed back to `miss` (which gets
 /// the untouched block). [`send_value_cached`]'s documentation covers the
@@ -155,19 +177,9 @@ fn cached_send_core(
     if crate::runtime_meta::gates_moved(gates) && value_moved(recv) {
         return Err(crate::ractor::moved_object_error());
     }
-    // A `Class` receiver is ruled out FIRST, before the class id is computed
-    // or the cache is even read: it resolves through a class-method arm of its
-    // own further down, so a site that only ever sees one (`Math.sin`) would
-    // otherwise pay the lookup on every call and never fill.
-    // The live gates also cover a running definition hook, whose class is only
-    // part-built: a filled cache line would answer for a method that does not
-    // exist yet. Sending the whole call down the slow route while a hook runs
-    // puts that question where it is already asked (`send_in_reason`).
-    if !matches!(recv, RubyValue::Class(_))
-        && box_id == 0
-        && !crate::runtime_meta::gates_live(gates)
-    {
-        let id = recv.class_id();
+    // Sending the whole call down the slow route while a hook runs puts that
+    // question where it is already asked (`send_in_reason`).
+    if let Some(id) = cacheable_class(box_id, recv, gates) {
         if let Some((cached, target)) = site.hit.get() {
             if *cached == id.0 {
                 note_dispatch_gated(gates, name);
@@ -332,10 +344,16 @@ pub fn send_class_cached(
     // `send_value_cached`.
     crate::stack_guard::stack_check()?;
     let gates = crate::runtime_meta::gates();
-    // One gate-byte load, same as `send_value_cached`: nothing caches while
-    // anything is defined at runtime, and a poisoned (moved) program takes
-    // the slow route so the husk raise stays in one place.
-    if !crate::runtime_meta::gates_live(gates)
+    // One gate-byte load, same as `send_value_cached`: the site stands down
+    // while THIS class may have been redefined, and a poisoned (moved)
+    // program takes the slow route so the husk raise stays in one place.
+    //
+    // The class asked about is the RECEIVER class, not the receiver's class:
+    // a class method lives on the class itself, and every runtime write to
+    // one -- `def self.x` through `define_singleton_method`, an `undef` or
+    // `remove` inside `class << self`, a singleton visibility mark -- patches
+    // that id (see `runtime_meta::mark_singletons_for`).
+    if !crate::runtime_meta::gates_cache_off(gates, ClassId(cid))
         && !crate::runtime_meta::gates_moved(gates)
         && matches!(recv, RubyValue::Class(c) if c.0 == cid)
     {
@@ -611,7 +629,9 @@ pub fn class_new_cached(
     // checked here -- `send_value_cached`'s rule.
     crate::stack_guard::stack_check()?;
     let gates = crate::runtime_meta::gates();
-    if !crate::runtime_meta::gates_live(gates) && !crate::runtime_meta::gates_moved(gates) {
+    if !crate::runtime_meta::gates_cache_off(gates, class)
+        && !crate::runtime_meta::gates_moved(gates)
+    {
         let hit = match site.hit.get() {
             Some(h) => Some(h),
             // Resolve BEFORE the call fills anything (`CallSite`'s rule),
@@ -726,11 +746,7 @@ pub fn send_value_dyn_cached(
     if crate::runtime_meta::gates_moved(gates) && value_moved(recv) {
         return Err(crate::ractor::moved_object_error());
     }
-    if !matches!(recv, RubyValue::Class(_))
-        && box_id == 0
-        && !crate::runtime_meta::gates_live(gates)
-    {
-        let id = recv.class_id();
+    if let Some(id) = cacheable_class(box_id, recv, gates) {
         if let Some((cached, vet, target)) = site.hit.get() {
             if *cached == id.0 {
                 if let Some(reason) = vet_denies(*vet, caller_class) {

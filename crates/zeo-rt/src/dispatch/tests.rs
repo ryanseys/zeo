@@ -435,8 +435,8 @@ fn a_live_overlay_turns_a_filled_site_off() {
     );
     assert_eq!(SITE.cached_class(), Some(a.0));
 
-    // A runtime redefinition arms `is_live`, which turns the cache off
-    // wholesale -- no invalidation edge, the gate IS the invalidation.
+    // A runtime redefinition puts THIS class in `PATCHED`, which turns the
+    // site off -- no invalidation edge, the mark IS the invalidation.
     crate::runtime_meta::runtime_define_method(
         a,
         ping,
@@ -449,6 +449,103 @@ fn a_live_overlay_turns_a_filled_site_off() {
     );
     // The stale fill is still sitting there, gated off -- never served.
     assert_eq!(SITE.cached_class(), Some(a.0));
+}
+
+#[test]
+fn a_definition_on_one_class_leaves_another_class_cached() {
+    let a = ClassId(500_001);
+    let b = ClassId(500_002);
+    let ping = Symbol::intern("ping");
+    install_core_with(|r| {
+        user_class(r, a.0, "A", &[]);
+        user_class(r, b.0, "B", &[]);
+        r.define_method(a, ping, row_1);
+        r.define_method(b, ping, row_2);
+    });
+    // A redefines its own `ping`. That arms the overlay, which USED to turn
+    // every cache in the process off; the question each site asks is about
+    // its OWN class now, and nothing has touched B.
+    crate::runtime_meta::runtime_define_method(
+        a,
+        ping,
+        RProc::with_meta(|_| Ok(RubyValue::Int(3)), 0, false),
+    )
+    .unwrap();
+
+    static B_SITE: CallSite = CallSite::new(FCALL);
+    let b_recv = instance_of(b);
+    assert_eq!(
+        int_of(send_value_cached(&B_SITE, 0, &b_recv, ping, &[], None)),
+        2
+    );
+    assert_eq!(B_SITE.cached_class(), Some(b.0));
+    assert_eq!(
+        int_of(send_value_cached(&B_SITE, 0, &b_recv, ping, &[], None)),
+        2
+    );
+
+    // A's own site answers the NEW body and fills nothing.
+    static A_SITE: CallSite = CallSite::new(FCALL);
+    assert_eq!(
+        int_of(send_value_cached(
+            &A_SITE,
+            0,
+            &instance_of(a),
+            ping,
+            &[],
+            None
+        )),
+        3
+    );
+    assert_eq!(A_SITE.cached_class(), None);
+}
+
+#[test]
+fn a_singleton_on_one_object_leaves_another_class_cached() {
+    let a = ClassId(500_001);
+    let b = ClassId(500_002);
+    let ping = Symbol::intern("ping");
+    install_core_with(|r| {
+        user_class(r, a.0, "A", &[]);
+        user_class(r, b.0, "B", &[]);
+        r.define_method(a, ping, row_1);
+        r.define_method(b, ping, row_2);
+    });
+    // A row on ONE object of class A. It is identity-keyed, so no class-id
+    // set can express it -- but it can only ever answer for a receiver whose
+    // class is A, which is the weaker fact `PATCHED` records.
+    let owner = instance_of(a);
+    crate::runtime_meta::runtime_define_singleton_method(
+        &owner,
+        ping,
+        RProc::with_meta(|_| Ok(RubyValue::Int(9)), 0, false),
+    )
+    .unwrap();
+    assert_eq!(int_of(send_value(&owner, ping, &[], None)), 9);
+
+    static B_SITE: CallSite = CallSite::new(FCALL);
+    let b_recv = instance_of(b);
+    assert_eq!(
+        int_of(send_value_cached(&B_SITE, 0, &b_recv, ping, &[], None)),
+        2
+    );
+    assert_eq!(B_SITE.cached_class(), Some(b.0));
+
+    // A SECOND instance of A -- one with no singleton of its own -- still
+    // takes the slow route, because the mark is per class.
+    static A_SITE: CallSite = CallSite::new(FCALL);
+    assert_eq!(
+        int_of(send_value_cached(
+            &A_SITE,
+            0,
+            &instance_of(a),
+            ping,
+            &[],
+            None
+        )),
+        1
+    );
+    assert_eq!(A_SITE.cached_class(), None);
 }
 
 #[test]
