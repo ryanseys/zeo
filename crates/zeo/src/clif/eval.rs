@@ -259,7 +259,7 @@ pub(super) fn eval_mixin_send_value(
 /// against, which class owns `@@x`. Lowering the body HERE would need all
 /// of that a second time, against a class id no compile can know.
 pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> CResult<super::operand::Operand> {
-    use super::operand::{Operand, TagInfo};
+    use super::operand::TagInfo;
     let HirNode::ClassDef {
         name,
         superclass,
@@ -271,8 +271,18 @@ pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> CResult<super::operan
     };
     let (name, superclass, body, is_module) =
         (name.clone(), superclass.clone(), body.clone(), *is_module);
+    // `class << self`: the class is `self.singleton_class` -- the run time
+    // owns it, and one compiled snippet may run against any number of
+    // receivers -- and the body runs against it as its own `class_eval`,
+    // exactly as a `class Foo` body does below. Ruby labels the frame
+    // `singleton class`.
     if name == crate::compiler::SINGLETON_SURROGATE {
-        return fx.unsupported(stmt, "a `class << self` inside an `eval`");
+        let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
+        let empty = fx.b.ins().iconst(fx.em.ptr, 0);
+        let op = eval_definee_call(fx, self_ptr, "singleton_class", empty, 0)?;
+        let class_ptr = ownership::borrow_ptr(fx, &op);
+        ownership::pool_owned(fx, class_ptr, op.tag());
+        return eval_class_body(fx, stmt, &body, class_ptr, "singleton class");
     }
     let (scope, leaf) = crate::hir::split_const_path(&name);
 
@@ -323,11 +333,24 @@ pub(crate) fn eval_class_def(fx: &mut Fx, stmt: NodeId) -> CResult<super::operan
         TagInfo::Known(zeo_abi::abi::ValueTag::Class as u8),
     );
 
-    let (src, file, line) = eval_body_source(fx, stmt, &body)?;
+    let kind = if is_module { "module" } else { "class" };
+    eval_class_body(fx, stmt, &body, class_ptr, &format!("<{kind}:{leaf}>"))
+}
+
+/// The BODY half of a class written in a snippet: its own source text run as
+/// one more `class_eval` against `class_ptr`, under `label`'s frame.
+fn eval_class_body(
+    fx: &mut Fx,
+    stmt: NodeId,
+    body: &[NodeId],
+    class_ptr: cranelift_codegen::ir::Value,
+    label: &str,
+) -> CResult<super::operand::Operand> {
+    use super::operand::{Operand, TagInfo};
+    let (src, file, line) = eval_body_source(fx, stmt, body)?;
     let (sptr, slen) = super::expr::rodata_name(fx, &src);
     let (fptr, flen) = super::expr::rodata_name(fx, &file);
-    let kind = if is_module { "module" } else { "class" };
-    let (lptr, llen) = super::expr::rodata_name(fx, &format!("<{kind}:{leaf}>"));
+    let (lptr, llen) = super::expr::rodata_name(fx, label);
     let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
     let bx = fx.box_v();
     // The chain THIS scope searches, which the body prepends its own class

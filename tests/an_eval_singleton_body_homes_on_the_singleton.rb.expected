@@ -1,0 +1,11 @@
+[]
+[]
+[:Box, :CHARS, :MAX]
+".+-"
+[true, true]
+NameError
+true
+false
+[:box, :chars, :list]
+true
+7

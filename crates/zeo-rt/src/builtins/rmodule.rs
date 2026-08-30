@@ -799,17 +799,17 @@ ruby_class! {
     // from inside `module Foo` misses Foo's own constants. Top-level is where
     // this is written (`Module.constants.include?(:Rails)` guards), and
     // answering Object's set is strictly closer than answering Module's.
-    def self."constants" (_recv, *args) {
-        // Given ANY argument, `rb_mod_s_constants` stops being the lexical-scope
-        // query and delegates to `Module#constants` on `Module` itself -- which
-        // owns none, so every arity-1 form answers `[]`. `nil` is an ordinary
-        // falsy `inherit`, not a missing argument.
-        if !args.is_empty() {
-            return lookup("constants").expect("Module#constants")(
-                &RubyValue::Class(zeo_abi::MODULE_CLASS),
-                args,
-                None,
-            );
+    def self."constants" (recv, *args) {
+        // `rb_mod_s_constants` is the lexical-scope query ONLY for a bare
+        // `Module.constants`. Given any argument, or any OTHER receiver, it
+        // delegates to `Module#constants` on that receiver. The receiver half
+        // matters: this row is inherited by every singleton class of a module
+        // (`#<Class:M>.singleton_class`'s superclass IS `#<Class:Module>`), so
+        // `M.singleton_class.constants` came here and answered Module's own
+        // few instead of the singleton's. `nil` is an ordinary falsy
+        // `inherit`, not a missing argument.
+        if !args.is_empty() || !matches!(recv, RubyValue::Class(c) if *c == zeo_abi::MODULE_CLASS) {
+            return lookup("constants").expect("Module#constants")(recv, args, None);
         }
         let names = crate::constants::const_names_of(0)
             .into_iter()

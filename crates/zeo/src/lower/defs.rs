@@ -1896,6 +1896,18 @@ pub(crate) fn try_lower_definition(
     // CLASS body is handled earlier by `lower_class_body`, defining class
     // methods; this generic path is only top-level/method-body.)
     if let Some(singleton) = node.as_singleton_class_node() {
+        // In a SNIPPET, `class << self` keeps its own shape: the emitter runs
+        // the body as one more `class_eval` of its source text against
+        // `self.singleton_class`, which is the cref ruby gives it. The
+        // desugar below cannot -- it has no class to home a constant or a
+        // nested class on, so both landed on the enclosing module and
+        // `M.constants` reported names ruby does not.
+        if hir.mode.is_eval()
+            && singleton.expression().as_self_node().is_some()
+            && let Some(def) = eval_singleton_body(result, hir, node, &singleton)?
+        {
+            return Ok(Some(def));
+        }
         let stmts = desugar_singleton_class_defs(result, hir, &singleton)?;
         let seq = hir.push(HirNode::Seq(stmts));
         // The body's own `singleton class` frame, as in the class-body

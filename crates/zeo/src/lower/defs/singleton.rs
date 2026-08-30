@@ -27,6 +27,41 @@ pub(crate) fn desugar_singleton_class_defs(
     desugar_singleton_items(result, hir, &recv_node, inner)
 }
 
+/// `class << self` written inside a run-time `eval`: the surrogate `ClassDef`
+/// the emitter runs as one more `class_eval` against `self.singleton_class`
+/// (`clif::eval::eval_class_def`). `None` for a body with no statements to
+/// slice, which falls back on the desugar.
+///
+/// A snippet has no compile-time class to home a constant or a nested class
+/// on -- that is what the whole-program path's surrogate is -- so the desugar
+/// hoisted both onto the enclosing module and `M.constants` reported names
+/// ruby does not. Handing the body back to the compiler as SOURCE, with the
+/// singleton as its cref, answers every such question the way the class-body
+/// path already answers it for `class Foo` in a snippet.
+///
+/// The lowered statements are never emitted; they exist so `eval_body_source`
+/// can slice the body's own text out of the snippet by their spans.
+pub(crate) fn eval_singleton_body(
+    result: &ruby_prism::ParseResult,
+    hir: &mut Hir,
+    node: &Node<'_>,
+    singleton: &ruby_prism::SingletonClassNode<'_>,
+) -> PResult<Option<NodeId>> {
+    let body = lower_class_body(result, hir, singleton.body(), None, None)?;
+    if body.is_empty() {
+        return Ok(None);
+    }
+    hir.push_span(crate::lower::span_of(hir, node));
+    let def = hir.push(HirNode::ClassDef {
+        name: SINGLETON_SURROGATE.to_string(),
+        superclass: None,
+        body,
+        is_module: false,
+    });
+    hir.pop_span();
+    Ok(Some(def))
+}
+
 /// Maps each lowered `class << obj` body node onto `recv`: a `def` becomes
 /// `recv.define_singleton_method(:name) { body }`; a constant/nested class is
 /// HOISTED to the enclosing scope (zeo has no per-object singleton-class
