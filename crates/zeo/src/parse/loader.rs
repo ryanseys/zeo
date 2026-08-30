@@ -189,6 +189,10 @@ pub(super) struct Loader {
     /// External-store gems whose C is shipped as SOURCE, by gem name. A
     /// `require` that reaches one builds it -- see [`Loader::build_cext`].
     native_exts: HashMap<String, super::gem_store::NativeExt>,
+    /// Features a store gem supplies that zeo ALSO implements natively.
+    /// The lockfile named the gem and the store had it, so the project asked
+    /// for that release by name and it wins -- see [`Loader::builtin_wins`].
+    store_overrides: HashSet<String>,
     /// Extensions already built in this compile, `gem name -> (library,
     /// init)`. A gem's Ruby half often requires its native half from more
     /// than one file, and building twice would relink for nothing.
@@ -416,6 +420,7 @@ pub(super) fn lower_main_file(
         unit_only_targets: HashSet::new(),
         store_exclusions: HashMap::new(),
         native_exts: HashMap::new(),
+        store_overrides: HashSet::new(),
         built_cexts: HashMap::new(),
         gem_records: Vec::new(),
         gem_names: std::collections::HashSet::new(),
@@ -449,6 +454,14 @@ pub(super) fn lower_main_file(
     {
         let parsed = super::lockfile::parse_file(lock)?;
         let resolution = super::gem_store::resolve(&opts.gem_paths, &parsed)?;
+        // The overriding names first: a gem zeo also implements already sits
+        // in `packages` from the bundled-gems scan, and the guard below would
+        // read that as "already provided" and drop the store root on the
+        // floor. Dropping zeo's entry hands the name over completely.
+        let overriding: HashSet<&str> = resolution.overrides.iter().map(String::as_str).collect();
+        loader
+            .packages
+            .retain(|g| !overriding.contains(g.name.as_str()));
         for (name, roots) in resolution.roots {
             if !loader.packages.iter().any(|g| g.name == name) {
                 let version = parsed
@@ -461,6 +474,13 @@ pub(super) fn lower_main_file(
         }
         for ext in resolution.native_exts {
             loader.native_exts.insert(ext.name.clone(), ext);
+        }
+        // Under the feature name a `require` spells, not the gem name:
+        // `require "yaml"` canonicalizes to `psych` before it is asked.
+        for name in resolution.overrides {
+            loader
+                .store_overrides
+                .insert(canonical_ext_feature(&name).to_string());
         }
         for record in resolution.disclosures {
             // An excluded gem's reason is kept so a `require` of it fails
@@ -854,7 +874,7 @@ impl Loader {
                 continue;
             };
             let relative = call.name().as_slice() == b"require_relative";
-            if !relative && is_builtin_feature(&feature) {
+            if !relative && self.builtin_wins(&feature) {
                 continue;
             }
             let resolved = if relative {
@@ -1733,7 +1753,7 @@ impl Loader {
                 (p, abs)
             })
         } else {
-            if is_builtin_feature(&feature) {
+            if self.builtin_wins(&feature) {
                 return Ok(None);
             }
             self.resolve_require(&feature)

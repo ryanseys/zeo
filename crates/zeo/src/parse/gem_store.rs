@@ -45,6 +45,10 @@ pub(super) struct StoreResolution {
     /// `require` reaches its feature -- never eagerly, because an AOT
     /// compiler only builds what a require reaches.
     pub native_exts: Vec<NativeExt>,
+    /// Gems the store supplied that zeo ALSO implements natively. The
+    /// lockfile named them, so the store release wins and the loader must
+    /// stop treating their `require` as a builtin activation.
+    pub overrides: Vec<String>,
 }
 
 /// A gem zeo can compile from source.
@@ -113,6 +117,7 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
     let mut roots = Vec::new();
     let mut disclosures = Vec::new();
     let mut native_exts = Vec::new();
+    let mut overrides = Vec::new();
 
     for locked in &lockfile.gems {
         // Only RubyGems-store gems live in `specifications/`; a git checkout or
@@ -122,16 +127,14 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
         }
         let name = locked.name.clone();
 
-        // zeo already provides this under its own name -- a static ext
-        // (`json`) or a default gem it reimplements. Its own implementation
-        // wins; record the divergence and add no store root.
-        if crate::lower::features::is_builtin_feature(&name) {
-            disclosures.push(GemRecord {
-                name: name.clone(),
-                by: SatisfiedBy::BuiltinExt { feature: name },
-            });
-            continue;
-        }
+        // zeo provides some of these under its own name -- a static ext
+        // (`json`) or a default gem it reimplements. Whose implementation
+        // wins is decided BELOW, once the store has been searched: a lockfile
+        // that names the gem AND a store that actually holds it beat zeo's
+        // own, because the project asked for that release by name. Only when
+        // the store cannot supply it does zeo's implementation answer, which
+        // is what a bare `zeo -e 'require "psych"'` gets.
+        let builtin_provides = crate::lower::features::is_builtin_feature(&name);
 
         // Force the ruby (source) platform: the suffix-less
         // `<name>-<version>.gemspec`. The first store with a source-platform
@@ -148,6 +151,15 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
                 Located::PrecompiledOnly => saw_precompiled = true,
                 Located::Absent => {}
             }
+        }
+        // Nothing usable in the store, and zeo has its own: the divergence
+        // record it always carried, and no store root.
+        if builtin_provides && found.is_none() {
+            disclosures.push(GemRecord {
+                name: name.clone(),
+                by: SatisfiedBy::BuiltinExt { feature: name },
+            });
+            continue;
         }
         let (gemspec_path, store) = match found {
             Some(hit) => hit,
@@ -215,6 +227,12 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
         if gem_roots.is_empty() {
             continue;
         }
+        // The store supplied a gem zeo also implements. Record the name so
+        // the loader stops short-circuiting its `require` to the builtin --
+        // otherwise the root below is searched by nothing.
+        if builtin_provides {
+            overrides.push(name.clone());
+        }
         roots.push((name, gem_roots));
     }
 
@@ -222,6 +240,7 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
         roots,
         disclosures,
         native_exts,
+        overrides,
     })
 }
 

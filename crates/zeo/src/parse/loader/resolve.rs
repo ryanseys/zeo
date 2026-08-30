@@ -34,6 +34,21 @@ pub(super) fn feature_name_under(root: &Path, path: &Path) -> Option<String> {
 }
 
 impl Loader {
+    /// Whether a plain `require "feature"` is answered by zeo's OWN
+    /// implementation rather than by a file.
+    ///
+    /// [`is_builtin_feature`] alone used to decide this, and it is only half
+    /// the question. zeo reimplements a number of default gems -- `psych`,
+    /// `strscan`, `json` -- and a project whose lockfile names one, against a
+    /// store that actually holds it, asked for THAT release: the version it
+    /// pinned is the version it expects to run. So a store gem wins its own
+    /// name, and zeo's implementation stays the answer for everything else,
+    /// which is what a bare `zeo -e 'require "psych"'` gets with no Gemfile,
+    /// no store, and no compiler.
+    pub(super) fn builtin_wins(&self, feature: &str) -> bool {
+        is_builtin_feature(feature) && !self.store_overrides.contains(feature)
+    }
+
     /// The file this literal `require`/`require_relative` names, canonicalized
     /// -- the key `Kernel#require`'s already-loaded answer is read from.
     ///
@@ -55,7 +70,7 @@ impl Loader {
         let Some(feature) = literal_feature(result, hir, call)? else {
             return Ok(None);
         };
-        if name == "require" && is_builtin_feature(&feature) {
+        if name == "require" && self.builtin_wins(&feature) {
             return Ok(None);
         }
         let path = match name {
