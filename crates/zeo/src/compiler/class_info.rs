@@ -144,7 +144,11 @@ pub struct ClassInfo {
     /// IT RAN, so resolution filters `method_history` against it.
     /// `is_class_method` (an `alias` inside `class << self`) resolves against
     /// `own_class_methods`. See `HirNode::AliasMethod`'s docs.
-    pub pending_aliases: Vec<(String, String, bool, u32)>,
+    ///
+    /// The last field is the alias site's STREAM (`Compiler::unit_stream`).
+    /// `seq` orders definitions within one stream only, so resolution may
+    /// compare it against a candidate's seq only when the two share a stream.
+    pub pending_aliases: Vec<(String, String, bool, u32, Option<u32>)>,
     /// Every own-method registration in execution order:
     /// `(name, is_class_method, seq, scope)`. Unlike `own_methods`, where a
     /// redefinition REPLACES the earlier row (last-`def`-wins is what dispatch

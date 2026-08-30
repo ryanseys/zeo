@@ -417,7 +417,7 @@ fn process_top_stmt_inner(
         let seq = next_def_seq(compiler);
         compiler.classes[OBJECT_CLASS.0 as usize]
             .pending_aliases
-            .push((entry.0, entry.1, entry.2, seq));
+            .push((entry.0, entry.1, entry.2, seq, compiler.unit_stream));
     } else if let HirNode::If {
         cond,
         then_body,

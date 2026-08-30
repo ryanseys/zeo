@@ -415,7 +415,7 @@ fn reinfer_local_types(compiler: &mut Compiler) {
 /// unchanged by this filter).
 fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
     let pending = std::mem::take(&mut compiler.classes[class_id.0 as usize].pending_aliases);
-    for (new_name, old_name, is_class_method, alias_seq) in pending {
+    for (new_name, old_name, is_class_method, alias_seq, alias_stream) in pending {
         let ancestors = compiler.class(class_id).ancestors.clone();
         // A class-method alias (`class << self; alias split shellsplit`)
         // resolves against `own_class_methods`; an ordinary alias against
@@ -441,12 +441,23 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
                 // seq-filtered search above exists only LATER -- resolution
                 // moves on to the ancestors, where document order is the
                 // order their bodies already ran in.
-                if anc_id == class_id
-                    && anc
-                        .method_history
-                        .iter()
-                        .any(|(n, cm, _, _)| *cm == is_class_method && *n == old_name)
-                {
+                // ...but only when the two are in ONE stream, where seq
+                // really is execution order. The walk numbers the whole main
+                // file before the first unit, while a unit's body runs at its
+                // `require`, so a seq from one stream and a seq from another
+                // answer nothing. bundler's `alias_method :eql?, :==` on
+                // `Gem::Dependency` is the case: the alias sits in one unit
+                // (seq 83) and the `def ==` it names in another (seq 1529),
+                // so the "exists only LATER" reading was an artefact of walk
+                // order and the alias fell through to `Kernel#eql?`. Every
+                // dependency then compared unequal to its own twin and
+                // `bundle install` refused the lockfile.
+                let later_in_one_stream = anc.method_history.iter().any(|(n, cm, _, sid)| {
+                    *cm == is_class_method
+                        && *n == old_name
+                        && compiler.scope_stream.get(sid).copied() == alias_stream
+                });
+                if anc_id == class_id && later_in_one_stream {
                     return None;
                 }
                 let list = if is_class_method {

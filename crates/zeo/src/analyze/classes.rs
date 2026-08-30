@@ -1011,7 +1011,13 @@ fn walk_class_body(
                 let (new_name, old_name, singleton) =
                     (new_name.clone(), old_name.clone(), *is_class_method);
                 let seq = next_def_seq(compiler);
-                let entry = (new_name.clone(), old_name, singleton, seq);
+                let entry = (
+                    new_name.clone(),
+                    old_name,
+                    singleton,
+                    seq,
+                    compiler.unit_stream,
+                );
                 let new_name_owned = new_name;
                 let def = crate::compiler::SiteDef {
                     seq,

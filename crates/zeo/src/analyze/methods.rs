@@ -102,6 +102,9 @@ pub(crate) fn add_own_method_at(
     if compiler.unit_walk {
         compiler.unit_scopes.insert(sid);
     }
+    if let Some(stream) = compiler.unit_stream {
+        compiler.scope_stream.insert(sid, stream);
+    }
 }
 
 /// Whether a `def` runs whenever its class body does, or only when a guard zeo

@@ -234,7 +234,11 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // Everything a unit's walk REGISTERS is registered-but-not-promised --
     // see `register_method`'s `runtime_conditional` marking.
     compiler.unit_walk = true;
-    for unit in std::mem::take(&mut compiler.hir.loader.feature_units) {
+    for (stream, unit) in std::mem::take(&mut compiler.hir.loader.feature_units)
+        .into_iter()
+        .enumerate()
+    {
+        compiler.unit_stream = Some(stream as u32);
         let mut stmts = Vec::new();
         let mut unit_pre_exec = Vec::new();
         let mut failed = None;
@@ -304,6 +308,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         }
     }
     compiler.unit_walk = false;
+    compiler.unit_stream = None;
     warn_on_colliding_unit_features(compiler, &feature_units);
 
     // Stage C invariant: the ids the compiler just assigned the built-in

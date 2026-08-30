@@ -345,6 +345,20 @@ pub struct Compiler {
     /// corpus case: a spec file's `define_singleton_method` stub over a
     /// lazily-required rspec class lost to the gem's own later-walked def.
     pub unit_scopes: FSet<ScopeId>,
+    /// Which STREAM the walk is in: `None` is the eager main file, `Some(k)`
+    /// the k-th feature unit.
+    ///
+    /// `seq` orders definitions WITHIN a stream and says nothing across them:
+    /// the walk numbers the whole main file before the first unit, while a
+    /// unit's body really runs at its `require`. `resolve_aliases` is the
+    /// consumer -- an alias binds the body that existed when it ran, and
+    /// comparing seqs from two streams answers a question neither number
+    /// asked.
+    pub unit_stream: Option<u32>,
+    /// The stream each scope was registered in -- [`Self::unit_stream`] at
+    /// the moment of registration, kept for the scopes a later pass has to
+    /// compare against an alias site.
+    pub scope_stream: FMap<ScopeId, u32>,
     /// Boot-time overlay installs for observable redefinition timelines:
     /// `(class, name, first_scope)`. The static tables carry the FINAL body
     /// (last-`def`-wins, so every compile-time fact -- super inlining,
@@ -645,6 +659,8 @@ impl Compiler {
             runtime_mixin_super_names: FSet::default(),
             unit_walk: false,
             unit_scopes: FSet::default(),
+            unit_stream: None,
+            scope_stream: FMap::default(),
             positional_redefs: Vec::new(),
             runtime_patches_any_name: false,
             runtime_eval: true,
