@@ -1,0 +1,5 @@
+a fresh descriptor: true
+a plain IO:         IO
+back on the console
+the log holds: ["into the log"]
+a File dup reads:   abc

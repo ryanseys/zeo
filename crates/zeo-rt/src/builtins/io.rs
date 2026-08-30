@@ -3891,11 +3891,8 @@ ruby_class! {
                 "initialize_copy should take same class object"
             ));
         };
-        let dup_slot = |slot: &Option<std::fs::File>| -> Result<Option<std::fs::File>, Signal> {
-            let Some(f) = slot else {
-                return Err(crate::builtins::io_error!("closed stream"));
-            };
-            let fd = unsafe { libc::dup(f.as_raw_fd()) };
+        let dup_raw = |fd: libc::c_int| -> Result<std::fs::File, Signal> {
+            let fd = unsafe { libc::dup(fd) };
             if fd < 0 {
                 return Err(crate::builtins::file::raise_errno(
                     &std::io::Error::last_os_error(),
@@ -3904,10 +3901,35 @@ ruby_class! {
                 ));
             }
             // SAFETY: `dup(2)` just handed us this descriptor to own.
-            Ok(Some(unsafe { std::fs::File::from_raw_fd(fd) }))
+            Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+        };
+        let dup_slot = |slot: &Option<std::fs::File>| -> Result<Option<std::fs::File>, Signal> {
+            let Some(f) = slot else {
+                return Err(crate::builtins::io_error!("closed stream"));
+            };
+            dup_raw(f.as_raw_fd()).map(Some)
         };
         let new_backend = match &*src.backend.lock() {
-            IoBackend::Std(s) => IoBackend::Std(*s),
+            // A std stream is a NUMBER, not a descriptor this process owns, so
+            // copying the backend produced a second handle that WAS fd 1 --
+            // and `$stdout.dup` exists precisely to save the old description
+            // before a `reopen` replaces it. `orgout = $stdout.dup;
+            // $stdout.reopen(log); $stdout.reopen(orgout)` then restored fd 1
+            // from itself, `dup2(1, 1)`, and every later write stayed in the
+            // log. mkmf's `Logging.open` is that exact sequence, which is why
+            // a gem's build progress vanished into its own mkmf.log.
+            //
+            // `dup(2)` gives what ruby gives: a plain IO on a fresh descriptor
+            // over the same open file description. `Pipe` is the backend for
+            // that -- a real fd, `IO` for `#class`, and no path.
+            IoBackend::Std(s) => {
+                let fd = match s {
+                    StdStream::Stdin => 0,
+                    StdStream::Stdout => 1,
+                    StdStream::Stderr => 2,
+                };
+                IoBackend::Pipe(Some(dup_raw(fd)?))
+            }
             IoBackend::File(slot) => IoBackend::File(dup_slot(slot)?),
             IoBackend::Pipe(slot) => IoBackend::Pipe(dup_slot(slot)?),
             IoBackend::Uninit => IoBackend::Uninit,
