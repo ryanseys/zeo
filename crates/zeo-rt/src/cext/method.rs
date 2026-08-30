@@ -147,6 +147,8 @@ pub unsafe fn method_proc(f: MethodPtr, argc: c_int) -> Result<RProc, Signal> {
             // `rb_yield` reads the FRAME's block, and this trampoline IS the
             // C method's frame.
             let _block = super::call::BlockFrame::enter(block.clone());
+            // `rb_call_super` reads the receiver from here.
+            let _frame = super::call::MethodFrame::enter(recv.clone());
             let this = to_value(recv)?;
             let raw: Vec<Value> = args.iter().map(to_value).collect::<Result<_, _>>()?;
 
@@ -549,5 +551,45 @@ mod tests {
     fn a_wrong_argument_count_raises_rather_than_reading_a_missing_slot() {
         let p = unsafe { method_proc(two_args as MethodPtr, 2) }.expect("argc 2 is legal");
         let _ = p.call(&[RubyValue::Int(1)]);
+    }
+
+    // What the C body under test saw on the frame while it ran.
+    thread_local! {
+        static SEEN: std::cell::RefCell<Option<RubyValue>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// `rb_call_super` names no receiver, so it reads the running frame's --
+    /// and only the trampoline can park one. It used to hard-code `main`,
+    /// which walked `main`'s ancestors instead of the receiver's.
+    ///
+    /// io-console writes `IO#tty?` as a C body that is nothing but
+    /// `rb_call_super(0, 0)`, in a module PREPENDED to `IO`. With `main` as
+    /// the receiver that raised `no superclass method 'tty?' for main`. What
+    /// the frame carries is the whole of the fix, so that is what is checked
+    /// here; the end-to-end half needs a loaded extension (task #79).
+    #[test]
+    fn a_c_method_frame_carries_its_receiver_for_rb_call_super() {
+        unsafe extern "C" fn seen(this: Value) -> Value {
+            SEEN.with_borrow_mut(|s| *s = super::super::call::current_receiver());
+            this
+        }
+
+        assert!(
+            super::super::call::current_receiver().is_none(),
+            "a receiver outlived an earlier call"
+        );
+        let p = unsafe { method_proc(seen as MethodPtr, 0) }.expect("argc 0 is legal");
+        assert!(p.call(&[]).is_ok(), "the trampoline refused");
+        // The trampoline's own receiver, NOT `main` -- which is what
+        // `rb_call_super` used to walk from no matter who was called.
+        assert!(
+            SEEN.with_borrow(Option::is_some),
+            "the body found no receiver on the frame"
+        );
+        assert!(
+            super::super::call::current_receiver().is_none(),
+            "the frame outlived its call"
+        );
     }
 }

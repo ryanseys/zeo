@@ -427,6 +427,35 @@ pub(super) fn current_block() -> Option<RubyValue> {
     BLOCKS.with_borrow(|b| b.last().cloned().flatten())
 }
 
+// `rb_call_super` names no receiver: MRI reads the one the running frame was
+// called on. A C body's frame is the trampoline in `cext::method`, so it parks
+// its receiver here for the length of the call. Separate from `BLOCKS` because
+// `rb_iterate` pushes a block frame without being a method call.
+thread_local! {
+    static RECEIVERS: std::cell::RefCell<Vec<RubyValue>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Park `recv` for the length of one C method call.
+pub(super) struct MethodFrame;
+
+impl MethodFrame {
+    pub(super) fn enter(recv: RubyValue) -> MethodFrame {
+        RECEIVERS.with_borrow_mut(|r| r.push(recv));
+        MethodFrame
+    }
+}
+
+impl Drop for MethodFrame {
+    fn drop(&mut self) {
+        RECEIVERS.with_borrow_mut(Vec::pop);
+    }
+}
+
+pub(super) fn current_receiver() -> Option<RubyValue> {
+    RECEIVERS.with_borrow(|r| r.last().cloned())
+}
+
 pub(super) fn yield_to_block(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     match current_block() {
         Some(RubyValue::Proc(p)) => p.call(args),

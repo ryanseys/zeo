@@ -188,9 +188,15 @@ crate::cext_fn! {
 
     /// `rb_call_super(argc, argv)`: MRI walks the frame stack for the method
     /// the current C body overrides.
+    ///
+    /// Both halves come from the frame. `send_super_dynamic` reads the
+    /// defining class and name; the RECEIVER is the trampoline's, and hard
+    /// coding `main` here made io-console's prepended `IO#tty?` -- whose body
+    /// is `rb_call_super(0, 0)` -- walk main's ancestors and raise.
     fn rb_call_super(argc: c_int, argv: *const Value) -> Value {
         let args = unsafe { args_of(argc, argv) };
-        let recv = crate::dispatch::main_object();
+        let recv = super::call::current_receiver()
+            .unwrap_or_else(crate::dispatch::main_object);
         to_value(&crate::runtime_meta::send_super_dynamic(&recv, &args, super::call::current_block())?)
     }
 
