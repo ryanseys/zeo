@@ -27,10 +27,12 @@
 mod api;
 mod dyn_object;
 mod frames;
+mod lock;
 mod resolver;
 mod watermark;
 pub use api::*;
 pub(crate) use dyn_object::*;
+pub(crate) use lock::OverlayLock;
 pub use frames::*;
 pub use resolver::*;
 pub use watermark::*;
@@ -241,17 +243,17 @@ impl OverlayEntry {
 }
 
 struct OverlayMaps {
-    classes: RwLock<FMap<u32, OverlayEntry>>,
+    classes: OverlayLock<FMap<u32, OverlayEntry>>,
     /// Per-object singleton methods, keyed by the receiver's `Arc` DATA address
     /// (object identity). Not carried across `dup` -- a fresh `Arc` is a fresh
     /// address -- matching Ruby (`dup` drops singletons); `clone` re-keys the
     /// tables onto the copy via [`copy_value_singletons`].
-    singletons: RwLock<FMap<usize, FMap<Symbol, MethodImpl>>>,
+    singletons: OverlayLock<FMap<usize, FMap<Symbol, MethodImpl>>>,
     /// Singleton methods on a NON-object heap value (`def SOME_ARRAY.[](i)`),
     /// keyed the same way. Separate from `singletons` because there is no
     /// `RObj` to bind: the body stays an `RProc` and runs with the value itself
     /// as `self`. See `value_identity`.
-    value_singletons: RwLock<FMap<usize, FMap<Symbol, RProc>>>,
+    value_singletons: OverlayLock<FMap<usize, FMap<Symbol, RProc>>>,
     /// The VISIBILITY of a per-object singleton method, keyed by the same
     /// identity the two tables above use.
     ///
@@ -268,13 +270,13 @@ struct OverlayMaps {
     /// singleton class is minted only when something NAMES it: `def obj.x`
     /// alone mints nothing, and recording a mark must not be what forces one.
     /// An absent entry is public, which is what `def obj.x` writes.
-    singleton_vis: RwLock<FMap<usize, FMap<Symbol, crate::dispatch::MethodVisibility>>>,
+    singleton_vis: OverlayLock<FMap<usize, FMap<Symbol, crate::dispatch::MethodVisibility>>>,
     /// Names `obj.singleton_class.undef_method(:name)` retired for ONE object,
     /// keyed by the same identity the two tables above use. A tombstone, not an
     /// absence: the class still defines the name, and the point of the undef is
     /// that this object no longer answers it. `OverlayEntry::undefs` is the
     /// per-CLASS twin; there is no per-object `OverlayEntry` to put this in.
-    singleton_undefs: RwLock<FMap<usize, FSet<Symbol>>>,
+    singleton_undefs: OverlayLock<FMap<usize, FSet<Symbol>>>,
     /// A weak reference to every value that has ever received a singleton
     /// method, keyed by the same identity the tables above use.
     ///
@@ -291,29 +293,29 @@ struct OverlayMaps {
     /// a leak of its own, and one the cycle collector correctly read as "this
     /// node is referenced from outside the registry". [`sweep_pinned`] drops
     /// the rows whose owner is gone.
-    pinned: RwLock<FMap<usize, crate::value::WeakOwner>>,
+    pinned: OverlayLock<FMap<usize, crate::value::WeakOwner>>,
     /// The modules `recv.extend(M)` mixed into one receiver, newest LAST,
     /// keyed by [`extend_key`]. Separate from the method tables above because
     /// `extend` changes what the receiver IS, not only what it answers:
     /// `o.is_a?(M)` and `o.singleton_class.ancestors` both read this, and
     /// neither can be recovered from a copied method table.
-    extended: RwLock<FMap<usize, Vec<ClassId>>>,
+    extended: OverlayLock<FMap<usize, Vec<ClassId>>>,
     /// WHICH module a per-object `extend` copied each singleton-table name
     /// from -- `obj.method(:x).owner`'s record, since the copy itself can't
     /// say. Cleared per name by every own definition (`def obj.x` shadows
     /// the module's copy and owns the name from then on), and by an undef.
     /// The record, not a guess: "an extended module that defines the name
     /// owns it" is wrong exactly when a later own def shadows one.
-    extended_names: RwLock<FMap<usize, FMap<Symbol, ClassId>>>,
+    extended_names: OverlayLock<FMap<usize, FMap<Symbol, ClassId>>>,
     /// `obj.singleton_class`'s cache: object identity -> the runtime class id
     /// minted for its singleton class (so a second call answers the same id,
     /// matching Ruby's identity).
-    singleton_classes: RwLock<FMap<usize, ClassId>>,
+    singleton_classes: OverlayLock<FMap<usize, ClassId>>,
     /// The inverse plus the owner value: a singleton-class id -> the object (or
     /// class) it belongs to. A `define_method` on that id installs a per-object
     /// singleton (or, for a class owner, a class method) rather than an ordinary
     /// instance method -- which is exactly what `class << obj` semantics mean.
-    singleton_owner: RwLock<FMap<u32, RubyValue>>,
+    singleton_owner: OverlayLock<FMap<u32, RubyValue>>,
     next_id: AtomicU32,
 }
 
@@ -469,16 +471,16 @@ static OVERLAY: OnceLock<OverlayMaps> = OnceLock::new();
 
 fn maps() -> &'static OverlayMaps {
     OVERLAY.get_or_init(|| OverlayMaps {
-        classes: RwLock::new(FMap::default()),
-        singletons: RwLock::new(FMap::default()),
-        value_singletons: RwLock::new(FMap::default()),
-        singleton_vis: RwLock::new(FMap::default()),
-        singleton_undefs: RwLock::new(FMap::default()),
-        extended: RwLock::new(FMap::default()),
-        extended_names: RwLock::new(FMap::default()),
-        pinned: RwLock::new(FMap::default()),
-        singleton_classes: RwLock::new(FMap::default()),
-        singleton_owner: RwLock::new(FMap::default()),
+        classes: OverlayLock::new("classes", FMap::default()),
+        singletons: OverlayLock::new("singletons", FMap::default()),
+        value_singletons: OverlayLock::new("value_singletons", FMap::default()),
+        singleton_vis: OverlayLock::new("singleton_vis", FMap::default()),
+        singleton_undefs: OverlayLock::new("singleton_undefs", FMap::default()),
+        extended: OverlayLock::new("extended", FMap::default()),
+        extended_names: OverlayLock::new("extended_names", FMap::default()),
+        pinned: OverlayLock::new("pinned", FMap::default()),
+        singleton_classes: OverlayLock::new("singleton_classes", FMap::default()),
+        singleton_owner: OverlayLock::new("singleton_owner", FMap::default()),
         next_id: AtomicU32::new(RUNTIME_CLASS_ID_BASE),
     })
 }
