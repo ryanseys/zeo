@@ -34,8 +34,8 @@ impl Loader {
             // A gem that ships its C as SOURCE is built HERE, at the require
             // that reached it -- an AOT compiler builds only what a require
             // reaches, which is why this is not eager.
-            if let Some(node) = self.build_cext(hir, bare)? {
-                return Ok(vec![node]);
+            if let Some(nodes) = self.build_cext(hir, bare)? {
+                return Ok(nodes);
             }
             // A gem the external store locked but zeo can't provide gets its
             // precise reason (which native layout, why), not the generic miss.
@@ -90,16 +90,14 @@ impl Loader {
     /// [`crate::cext`]. A failure is a COMPILE error naming the gem: the
     /// alternative is a program that builds and then cannot load, which is
     /// the failure mode the whole C0 design exists to avoid.
-    fn build_cext(&mut self, hir: &mut Hir, feature: &str) -> PResult<Option<NodeId>> {
+    fn build_cext(&mut self, hir: &mut Hir, feature: &str) -> PResult<Option<Vec<NodeId>>> {
         let Some(gem) = self.cext_gem(feature).map(str::to_string) else {
             return Ok(None);
         };
         let gem = gem.as_str();
         if let Some((library, init)) = self.built_cexts.get(gem) {
-            return Ok(Some(hir.push(HirNode::CExtLoaded {
-                library: library.clone(),
-                init: init.clone(),
-            })));
+            let (library, init) = (library.clone(), init.clone());
+            return Ok(Some(loaded_cext(hir, &library, init)));
         }
         let ext = &self.native_exts[gem];
         let zeo =
@@ -137,10 +135,31 @@ impl Loader {
                 library: library.clone(),
             },
         });
-        Ok(Some(hir.push(HirNode::CExtLoaded { library, init })))
+        Ok(Some(loaded_cext(hir, &library, init)))
+    }
+
+    /// Whether a `require` of `feature` would reach a C extension THIS compile
+    /// has already built and loaded -- ruby's `false` for the second one.
+    ///
+    /// A built extension has no file on a load path, so the loader's ordinary
+    /// path dedup (`required`) never sees it and both requires answered
+    /// `true`. `build_cext` memoizes on `built_cexts`, so that memo is the
+    /// same fact under a name this can ask.
+    pub(super) fn cext_already_loaded(&self, feature: &str) -> bool {
+        let bare = feature
+            .strip_suffix(".so")
+            .or_else(|| feature.strip_suffix(".bundle"))
+            .or_else(|| feature.strip_suffix(".o"))
+            .unwrap_or(feature);
+        !self.builtin_wins(bare)
+            && self
+                .cext_gem(bare)
+                .is_some_and(|gem| self.built_cexts.contains_key(gem))
     }
 
     /// Which store gem, if any, would build `feature`.
+    ///
+    /// (See [`loaded_cext`] for what a built extension records.)
     ///
     /// Two rules, and the second is not optional. `require "foo/foo"` and
     /// `require "foo"` belong to the gem `foo`: the first segment is the gem
@@ -162,4 +181,30 @@ impl Loader {
             .find(|ext| ext.provides(feature))
             .map(|ext| ext.name.as_str())
     }
+}
+
+/// The two nodes a built C extension lowers to: the `$LOADED_FEATURES` entry,
+/// then the load itself.
+///
+/// Ruby records the file that ANSWERED the require -- for an extension that is
+/// the `.bundle`/`.so` it dlopens, not a feature name. Without the marker the
+/// require ran correctly and left no trace, so a second `require` of the same
+/// feature had nothing to answer `false` from.
+///
+/// The marker LEADS the load, matching what a spliced `.rb` does. Ruby appends
+/// its entry after the file runs instead -- measured: `require "syslog"` lists
+/// `syslog_ext.bundle` before `syslog.rb`, and zeo lists them the other way.
+/// That order is the whole of the difference and it belongs to the `.rb`
+/// convention in `splice.rs`, not to this function.
+fn loaded_cext(hir: &mut Hir, library: &str, init: String) -> Vec<NodeId> {
+    vec![
+        hir.push(HirNode::FeatureLoaded {
+            entry: library.to_string(),
+            feature: None,
+        }),
+        hir.push(HirNode::CExtLoaded {
+            library: library.to_string(),
+            init,
+        }),
+    ]
 }

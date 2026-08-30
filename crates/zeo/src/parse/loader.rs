@@ -1187,6 +1187,19 @@ impl Loader {
                 let mut here: Vec<PathBuf> = Vec::new();
                 for call in &nested.calls {
                     let cname = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+                    // A gem's C extension answers under no file name, so the
+                    // path dedup below cannot see it. It is loaded exactly
+                    // once all the same -- `build_cext` memoizes on
+                    // `built_cexts` -- and a require that reaches the memo is
+                    // ruby's `false`.
+                    if cname == "require"
+                        && let Some(feature) = literal_feature(result, hir, call)?
+                        && self.cext_already_loaded(&feature)
+                    {
+                        hir.loader
+                            .rerequire_sites
+                            .insert((file, call.location().start_offset() as u32));
+                    }
                     let Some(target) = self.require_target(hir, result, call, &cname, dir)? else {
                         continue;
                     };
