@@ -51,6 +51,12 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     crate::method_meta::record_runtime_params(id, crate::MethodKind::Instance, name, &body);
     let m = dynamic_from_proc(id, name, body.clone());
     let frame = current_frame_for(id);
+    // Named BEFORE the write, and for the reason `replace_method_impl` gives:
+    // "whose copy is this" is `method_owner`, and that walk reads the overlay
+    // too. A `def` reaching a MODULE at run time -- `M.module_eval { def x }`,
+    // `M.define_method` -- has to retire the copies analyze flattened onto
+    // every including class, or it writes a row nothing reads.
+    let hosts = mixin_hosts(id, std::slice::from_ref(&name));
     {
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
@@ -88,6 +94,15 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
                 e.methods_vis.remove(&name);
             }
         }
+        for host in &hosts {
+            // `removed` EMPTIES the position rather than ending the walk, so
+            // the host stops answering with its stale copy and the walk
+            // carries on to the module, where ruby's one body lives.
+            w.entry(host.0)
+                .or_insert_with(OverlayEntry::delta)
+                .removed
+                .insert(name);
+        }
     }
     // The module-method half is built with the overlay lock DROPPED:
     // `extended_class_method` reads the overlay itself.
@@ -98,6 +113,9 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
         e.class_methods.insert(name, wrapper);
         e.extended_class_methods.remove(&name);
+    }
+    for &host in &hosts {
+        patch_class(host);
     }
     patch_class(id);
     mark_live();

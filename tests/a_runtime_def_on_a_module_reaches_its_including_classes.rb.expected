@@ -1,0 +1,8 @@
+:first
+:by_module_eval
+:by_class_eval
+:by_define_method
+:a
+:b
+:by_define_method
+Greet
