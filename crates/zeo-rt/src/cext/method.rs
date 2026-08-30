@@ -281,7 +281,7 @@ fn new_class(outer: ClassId, name: &str, superclass: Option<RubyValue>) -> Resul
     // namespace depends on that -- creating a second class would leave the
     // constant pointing at whichever half ran last, and the other half's
     // methods invisible.
-    if let Some(existing @ RubyValue::Class(_)) = crate::constants::const_get_own(outer.0, name) {
+    if let Some(existing) = reopen_target(outer, name) {
         return to_value(&existing);
     }
     let cls = crate::runtime_meta::runtime_class_new(superclass, None)?;
@@ -291,6 +291,33 @@ fn new_class(outer: ClassId, name: &str, superclass: Option<RubyValue>) -> Resul
         crate::constants::const_set(outer.0, name, cls.clone());
     }
     to_value(&cls)
+}
+
+/// The class `outer::name` already names, for `new_class`/`new_module` to
+/// REOPEN rather than mint a second one.
+///
+/// Two sources, because zeo stores a class's home two ways -- the same split
+/// `Module#constants` reads. An ordinary `Foo = Class.new` lands in the
+/// constant table; a COMPILED `class Foo; class Bar; end; end` is registered
+/// by its qualified NAME and never reaches that table, because codegen
+/// resolves `Foo::Bar` statically.
+///
+/// Reading only the constant table minted a second class for every compiled
+/// namespace a C extension also writes to: `rb_define_class_under(mPB,
+/// "Engine", ...)` answered a fresh id, the extension's rows went there, and
+/// the program's own `PB::Engine` -- folded to the compiled id -- had none of
+/// them. bcrypt is the corpus case (`BCrypt::Engine.__bc_salt`).
+fn reopen_target(outer: ClassId, name: &str) -> Option<RubyValue> {
+    if let Some(existing @ RubyValue::Class(_)) = crate::constants::const_get_own(outer.0, name) {
+        return Some(existing);
+    }
+    let full = qualified(outer, name);
+    let cid = crate::dispatch::registered_class_id_by_name(&full)?;
+    // The define MAKES it exist, so a class still concealed (its compiled body
+    // has not run) is revealed here, exactly as `rb_define_class_under` makes
+    // one exist in CRuby. Its own body reopens it when it runs.
+    crate::constants::reveal_class(cid.0);
+    Some(RubyValue::Class(cid))
 }
 
 fn qualified(outer: ClassId, name: &str) -> String {
@@ -444,7 +471,7 @@ crate::cext_fn! {
 
 fn new_module(outer: ClassId, name: &str) -> Result<Value, Signal> {
     // Reopen, for the reason `new_class` states.
-    if let Some(existing @ RubyValue::Class(_)) = crate::constants::const_get_own(outer.0, name) {
+    if let Some(existing) = reopen_target(outer, name) {
         return to_value(&existing);
     }
     let m = crate::runtime_meta::runtime_module_new(None)?;

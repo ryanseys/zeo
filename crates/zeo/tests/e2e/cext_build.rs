@@ -261,3 +261,69 @@ p $LOADED_FEATURES.count {{ |e| e.end_with?({name:?}) }}
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A C extension REOPENS a compiled namespace instead of minting a second one.
+///
+/// `rb_define_class_under(mod, "Engine", ...)` asked only the constant table,
+/// and a compiled `module M; class Engine` is registered by its qualified NAME
+/// instead -- codegen resolves `M::Engine` statically, so nothing ever
+/// `const_set`s it. The extension therefore built a SECOND `Engine`, put its
+/// rows there, and rebound the constant; the program's own `M::Engine`, folded
+/// to the compiled id, had none of them.
+///
+/// bcrypt is the corpus case: `BCrypt::Engine.__bc_salt` is defined in C and
+/// made private by the Ruby half, and reading `BCrypt.constants` was enough to
+/// make it unreachable.
+///
+/// The identity assertion is the one that matters -- `equal?` was false, and
+/// every other symptom followed from that.
+#[test]
+fn a_c_extension_reopens_a_compiled_namespace() {
+    if !have("make") || !have("cc") {
+        eprintln!("skipping: this machine has no `make` or no `cc`");
+        return;
+    }
+    let root = repo_root();
+    let dir = std::env::temp_dir().join(format!("zeo-cext-nested-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    for f in ["extconf.rb", "nested_probe.c"] {
+        std::fs::copy(root.join("tests/cext_probe_nested").join(f), dir.join(f))
+            .unwrap_or_else(|e| panic!("copying {f}: {e}"));
+    }
+    zeo::cext::configure(&zeo_bin(), &dir, Path::new("extconf.rb"), &[])
+        .unwrap_or_else(|e| panic!("{e}"));
+    zeo::cext::build_extension(&dir, 4).unwrap_or_else(|e| panic!("{e}"));
+
+    let program = format!(
+        r#"$LOAD_PATH.unshift({dir:?})
+require "nested_probe"
+module NestedProbe
+  class Engine
+    private_class_method :__np_salt
+    def self.gen = __np_salt
+  end
+end
+p NestedProbe::Engine.equal?(NestedProbe.const_get(:Engine))
+p NestedProbe::Engine.respond_to?(:__np_salt, true)
+p NestedProbe.constants
+p NestedProbe::Engine.gen
+p NestedProbe::Engine.respond_to?(:__np_salt)
+"#,
+        dir = dir.display().to_string(),
+    );
+    let out = Command::new(zeo_bin())
+        .arg("-e")
+        .arg(&program)
+        .env("ZEO_CACHE", "0")
+        .output()
+        .expect("zeo runs");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "true\ntrue\n[:Engine]\n\"SALT\"\nfalse\n",
+        "stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

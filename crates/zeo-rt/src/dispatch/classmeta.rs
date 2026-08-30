@@ -124,6 +124,23 @@ pub fn class_id_by_name(name: &str) -> Option<ClassId> {
         .or_else(|| crate::runtime_meta::runtime_class_id_by_name(name))
 }
 
+/// [`class_id_by_name`] without the concealment filter -- the id a compiled
+/// `class Foo::Bar` registered, whether or not its body has run.
+///
+/// A C extension's `rb_define_class_under` wants this one. Concealment models
+/// "ruby has no such constant YET", which is the right answer to a LOOKUP; a
+/// C `define` is not a lookup but a definition, and CRuby's own
+/// `rb_define_class_under` creates the class if it is absent and REOPENS it
+/// otherwise. Answering `None` here minted a second class, so the extension's
+/// rows and the program's own body ended up on different ids.
+pub fn registered_class_id_by_name(name: &str) -> Option<ClassId> {
+    REGISTRY
+        .get()
+        .and_then(|r| r.by_name.get(name))
+        .map(|&id| ClassId(id))
+        .or_else(|| crate::runtime_meta::runtime_class_id_by_name(name))
+}
+
 /// The classes and modules nested DIRECTLY inside `id`, by their unqualified
 /// names -- `["Error", "ZStream", ...]` for `Zlib`.
 ///
