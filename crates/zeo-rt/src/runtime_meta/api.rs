@@ -1074,6 +1074,8 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
     // method entry keeps its flags) -- resolved before install so a stale
     // mark under `new` can't shadow it.
     let vis = crate::dispatch::instance_method_visibility(id, old);
+    // Resolved before the write lock: the walk reads the same map.
+    let value_body = snapshot_value_body(id, old);
     {
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
@@ -1088,9 +1090,15 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
         // def_instance_delegators`, then `extend Forwardable; def_delegators`
         // raised `undefined method 'def_instance_delegator'`.
         //
-        // Own-only, matching `overlay_value_body`'s own rule: a body on an
-        // ancestor is still reached through the ordinary walk.
-        if let Some(vb) = e.value_bodies.get(&old).cloned() {
+        // The source's own overlay body when it has one, and otherwise the
+        // value-shaped body the SOURCE resolves to -- a builtin row, or a
+        // compiled reopen. Copying an existing entry alone was not enough:
+        // `String.class_eval { alias_method :shout, :upcase }` snapshots a
+        // builtin, which has no overlay body to copy, so the alias reached
+        // no String at all. rubygems' `alias_method :gem_original_require,
+        // :require` is the same shape, which is what made `zeo gem install`
+        // raise NoMethodError on its own alias.
+        if let Some(vb) = value_body {
             e.value_bodies.insert(new, vb);
         }
         match vis {
@@ -1390,6 +1398,42 @@ pub fn runtime_class_method_visibility(
 /// (rows are terminal, so the single recursion can't loop).
 pub(crate) fn snapshot_instance_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
     snapshot_from(id, name, false)
+}
+
+/// [`snapshot_instance_method`]'s VALUE-shaped twin: the same walk, resolving
+/// to the body that takes a plain `RubyValue` rather than an `&RObj`.
+///
+/// A method is installed in two shapes and every non-`Object` receiver -- a
+/// String, an Integer, a class object -- dispatches only through the second
+/// (`send_value`'s MRO walk reads `value_bodies`, never `methods`). So a copy
+/// that takes the `&RObj` shape alone is reachable from ordinary objects and
+/// from nothing else.
+fn snapshot_value_body(id: ClassId, name: Symbol) -> Option<RProc> {
+    for &anc in ancestors_of_value(id) {
+        if let Some(vb) = maps()
+            .classes
+            .read()
+            .unwrap()
+            .get(&anc.0)
+            .and_then(|e| e.value_bodies.get(&name).cloned())
+        {
+            return Some(vb);
+        }
+        let f = crate::dispatch::value_method(anc, 0, name).or_else(|| {
+            crate::builtins::class_table(anc)
+                .and_then(|t| t(name.name_str()))
+                .map(crate::dispatch::ValueImpl::Rust)
+        });
+        if let Some(f) = f {
+            return Some(RProc::with_self_and_block(
+                f.into_fn(),
+                RubyValue::Nil,
+                -1,
+                true,
+            ));
+        }
+    }
+    None
 }
 
 /// [`snapshot_instance_method`] with the overlay layer skipped on EVERY
