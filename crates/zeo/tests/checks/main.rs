@@ -11,6 +11,7 @@ mod diagnostics;
 mod env_vars;
 mod gem_versions;
 mod goldens_hygiene;
+mod mkmf_probes;
 
 // The golden comparison's scrubbing. Its suites run under datatest, which
 // replaces the libtest harness, so its unit tests only run from here.
