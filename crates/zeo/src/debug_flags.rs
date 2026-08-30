@@ -163,14 +163,74 @@ pub(crate) fn loads_at_runtime(feature: &str) -> bool {
 /// feature: it changes which implementation a program runs.
 pub(crate) fn builtin_disabled(feature: &str) -> bool {
     static NAMES: OnceLock<Vec<String>> = OnceLock::new();
-    let names = NAMES.get_or_init(|| {
-        std::env::var("ZEO_DISABLE_BUILTIN")
-            .unwrap_or_default()
-            .split(',')
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(str::to_string)
-            .collect()
-    });
+    let names = NAMES.get_or_init(parse_disabled_builtins);
     names.iter().any(|n| n == "all" || n == feature)
+}
+
+/// `ZEO_DISABLE_BUILTIN`'s value, as canonical FEATURE names.
+///
+/// The dial keys on the feature, but a user reaches for the GEM: rubygems
+/// spells `io/console`'s gem `io-console`, and that is what `Gemfile.lock`
+/// and `gem list` show. `ZEO_DISABLE_BUILTIN=io-console` therefore named
+/// nothing and did nothing, and the run looked exactly like a working one --
+/// zeo's own copy still answered the require. Both spellings are accepted
+/// now, and a name matching neither warns instead of passing silently.
+///
+/// A warning, not an error: this module's rule for every dial (see the module
+/// doc), and a debug dial must not make a compile fail.
+fn parse_disabled_builtins() -> Vec<String> {
+    disabled_builtins_from(&std::env::var("ZEO_DISABLE_BUILTIN").unwrap_or_default())
+}
+
+/// [`parse_disabled_builtins`] over a value rather than the environment, so
+/// the spelling rules can be tested without a process-wide variable.
+fn disabled_builtins_from(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in raw.split(',').map(str::trim).filter(|v| !v.is_empty()) {
+        if name == "all" || zeo_abi::is_builtin_feature(name) {
+            out.push(name.to_string());
+            continue;
+        }
+        let as_feature = name.replace('-', "/");
+        if zeo_abi::is_builtin_feature(&as_feature) {
+            out.push(as_feature);
+            continue;
+        }
+        let near: Vec<&str> = crate::lower::features::builtin_feature_names()
+            .filter(|f| f.contains(name) || name.contains(f))
+            .collect();
+        let hint = if near.is_empty() {
+            "`all` retires every one".to_string()
+        } else {
+            format!("did you mean {}?", near.join(", "))
+        };
+        tracing::warn!("ZEO_DISABLE_BUILTIN=`{name}` names no builtin zeo provides; {hint}");
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::disabled_builtins_from;
+
+    /// The dial keys on the feature; a user reads the GEM name off the
+    /// lockfile. `io-console` used to match nothing and retire nothing, and
+    /// said so nowhere.
+    #[test]
+    fn the_gem_spelling_and_the_feature_spelling_both_name_one_builtin() {
+        assert_eq!(disabled_builtins_from("io/console"), ["io/console"]);
+        assert_eq!(disabled_builtins_from("io-console"), ["io/console"]);
+        assert_eq!(disabled_builtins_from("json"), ["json"]);
+    }
+
+    /// A name matching nothing is dropped rather than stored, so it can never
+    /// silently equal a feature later. `all` is the one non-feature accepted.
+    #[test]
+    fn a_name_that_matches_no_builtin_is_refused() {
+        assert!(disabled_builtins_from("jsonn").is_empty());
+        assert!(disabled_builtins_from("").is_empty());
+        assert_eq!(disabled_builtins_from("all"), ["all"]);
+        // The good names in a mixed list still take effect.
+        assert_eq!(disabled_builtins_from("zzz, json ,yyy"), ["json"]);
+    }
 }
