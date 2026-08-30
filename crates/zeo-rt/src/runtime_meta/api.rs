@@ -722,21 +722,24 @@ pub(crate) fn overlay_class_undefs(id: ClassId) -> Vec<Symbol> {
 pub(crate) fn class_method_undefined(id: ClassId, name: Symbol) -> bool {
     // Every ancestor, not just `id`: a class method is inherited through the
     // parallel singleton chain, so `class Multi; class << self; undef x; end;
-    // end` retires it for `Sub < Multi` too. A subclass that DEFINES the name
-    // again ends the walk -- its own `def self.x` sits nearer than the
-    // tombstone, exactly as it would in ruby.
-    let c = maps().classes.read().unwrap();
-    for &anc in crate::dispatch::ancestors_of_value(id) {
-        if c.get(&anc.0)
-            .is_some_and(|e| e.class_undefs.contains(&name))
-        {
-            return true;
-        }
-        if anc != id && crate::dispatch::class_defines_own_class_method(anc, name) {
-            return false;
-        }
-    }
-    false
+    // end` retires it for `Sub < Multi` too.
+    let ancestors = crate::dispatch::ancestors_of_value(id);
+    // Where the nearest tombstone sits, under ONE guard which is then let go.
+    // The definition walk below re-enters `classes`, and this used to run
+    // under this guard -- see `runtime_meta::lock` for what that costs.
+    let tomb = {
+        let c = maps().classes.read().unwrap();
+        ancestors.iter().position(|anc| {
+            c.get(&anc.0)
+                .is_some_and(|e| e.class_undefs.contains(&name))
+        })
+    };
+    let Some(tomb) = tomb else { return false };
+    // A subclass that DEFINES the name again ends the walk -- its own
+    // `def self.x` sits nearer than the tombstone, exactly as it would in ruby.
+    !ancestors[..tomb]
+        .iter()
+        .any(|&anc| anc != id && crate::dispatch::class_defines_own_class_method(anc, name))
 }
 
 /// `Module#remove_method` -- drops this class's OWN definition, leaving an
@@ -1679,10 +1682,12 @@ pub fn runtime_define_singleton_from_method(
                 -1,
                 true,
             );
-            let mut w = maps().classes.write().unwrap();
-            let e = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
-            e.class_methods.insert(name, wrapped);
-            e.extended_class_methods.remove(&name);
+            {
+                let mut w = maps().classes.write().unwrap();
+                let e = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
+                e.class_methods.insert(name, wrapped);
+                e.extended_class_methods.remove(&name);
+            }
             mark_singletons_for(recv);
             mark_live();
             // A singleton definition reports to the OBJECT, not to its

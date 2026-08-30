@@ -394,23 +394,35 @@ pub fn overlay_ancestors(id: ClassId) -> Option<&'static [ClassId]> {
 
 /// A runtime class's Ruby-visible name (or the anonymous `#<Class:ID>` form).
 pub fn overlay_class_name(id: ClassId) -> Option<String> {
-    let c = maps().classes.read().unwrap();
-    let entry = c.get(&id.0)?;
-    if entry.ancestors.is_empty() {
-        return None; // a pure delta over a frozen class carries no name of its own
-    }
-    if let Some(name) = entry.name.read().unwrap().clone() {
+    // Everything this needs from the entry, taken under one guard which then
+    // ends. `class_name` below walks back into the overlay -- through
+    // `refinement_of` and through this very function for a nested owner -- and
+    // holding the guard across it re-enters `classes`. See `runtime_meta::lock`.
+    let (owner_class, is_module, addr, name) = {
+        let c = maps().classes.read().unwrap();
+        let entry = c.get(&id.0)?;
+        if entry.ancestors.is_empty() {
+            return None; // a pure delta over a frozen class carries no name of its own
+        }
+        (
+            entry.owner_class,
+            entry.is_module,
+            entry.addr,
+            entry.name.read().unwrap().clone(),
+        )
+    };
+    if let Some(name) = name {
         return Some(name);
     }
     // An anonymous value renders as `#<ITS CLASS:0xADDR>`, so a module a
     // `class X < Module` minted reads `#<X:0x...>` -- CRuby's rule, and the
     // reason the owner is consulted before the plain Class/Module split.
-    let kind = match entry.owner_class.and_then(crate::dispatch::class_name) {
+    let kind = match owner_class.and_then(crate::dispatch::class_name) {
         Some(owner) => owner,
-        None if entry.is_module => "Module".to_string(),
+        None if is_module => "Module".to_string(),
         None => "Class".to_string(),
     };
-    Some(format!("#<{kind}:0x{:016x}>", entry.addr))
+    Some(format!("#<{kind}:0x{addr:016x}>"))
 }
 
 /// Whether class `id`'s OWN entry undef'd `name` -- the terminator every MRO
