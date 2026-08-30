@@ -95,27 +95,27 @@ pub fn register_compiled_struct(
 /// The struct/data metadata for `class_id` -- its own, or the nearest struct
 /// ancestor's (so `class Foo < PointStruct` inherits `Point`'s members).
 pub fn meta_of(class_id: ClassId) -> Option<Arc<StructMeta>> {
+    // The chain first, so no `STRUCT_META` guard is alive across
+    // `ancestors_of_value` -- which reads the overlay's own locks, and this
+    // runs on every dynamic send.
+    let ancestors = crate::dispatch::ancestors_of_value(class_id);
     let table = STRUCT_META.read().unwrap();
     if let Some(m) = table.get(&class_id.0) {
         return Some(m.clone());
     }
-    for anc in crate::dispatch::ancestors_of_value(class_id) {
-        if let Some(m) = table.get(&anc.0) {
-            return Some(m.clone());
-        }
-    }
-    None
+    ancestors.iter().find_map(|anc| table.get(&anc.0).cloned())
 }
 
 /// The class a struct/data meta is registered ON -- `class_id` itself, or the
 /// nearest ancestor carrying one. `meta_of` answers the META; this answers
 /// WHOSE it is, which is what names the constructor's frame.
 fn data_meta_owner(class_id: ClassId) -> Option<ClassId> {
+    let ancestors = crate::dispatch::ancestors_of_value(class_id);
     let table = STRUCT_META.read().unwrap();
     if table.contains_key(&class_id.0) {
         return Some(class_id);
     }
-    crate::dispatch::ancestors_of_value(class_id)
+    ancestors
         .iter()
         .find(|anc| table.contains_key(&anc.0))
         .copied()

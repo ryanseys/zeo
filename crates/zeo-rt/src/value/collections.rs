@@ -1396,11 +1396,19 @@ pub fn hash_new_with_default(default: RubyValue, default_proc: Option<RubyValue>
 /// inherits them from the left receiver -- both of which build a fresh hash
 /// via `hash_new` (default-less) and would otherwise lose them.
 pub fn copy_hash_meta(src: &RHash, dst: &RHash) {
-    let s = src.lock();
+    // Read out, then write -- never both locks at once. Holding them would
+    // self-deadlock for `src == dst`, and let `copy_hash_meta(a, b)` on one
+    // thread take them in the opposite order to `(b, a)` on another.
+    let meta = {
+        let s = src.lock();
+        (
+            s.default.clone(),
+            s.default_proc.clone(),
+            s.compare_by_identity,
+        )
+    };
     let mut d = dst.lock();
-    d.default = s.default.clone();
-    d.default_proc = s.default_proc.clone();
-    d.compare_by_identity = s.compare_by_identity;
+    (d.default, d.default_proc, d.compare_by_identity) = meta;
 }
 
 /// A plain lookup: the stored value, or `nil` for a missing key -- WITHOUT

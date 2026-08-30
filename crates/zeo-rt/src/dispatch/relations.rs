@@ -117,14 +117,28 @@ pub(crate) fn c_frame_label(owner: ClassId, name: Symbol, sep: char) -> Option<&
     static LABELS: std::sync::Mutex<Option<crate::FMap<LabelKey, &'static str>>> =
         std::sync::Mutex::new(None);
     let key = (owner.0, name, sep == '#');
-    let mut cache = LABELS.lock().expect("label cache");
-    let map = cache.get_or_insert_with(crate::FMap::default);
-    if let Some(&label) = map.get(&key) {
+    if let Some(&label) = LABELS
+        .lock()
+        .expect("label cache")
+        .as_ref()
+        .and_then(|m| m.get(&key))
+    {
         return Some(label);
     }
+    // `class_name` walks the overlay, and this whole function runs inside the
+    // `flat_value` `OnceLock` init on the first send to a class. The guard
+    // ends above, so the mutex is never pinned across that walk. Two threads
+    // racing one key each leak a label; the second insert loses and its leak
+    // is dropped on the floor, so every caller still gets ONE pointer per key.
     let label: &'static str = Box::leak(format!("{}{sep}{n}", class_name(owner)?).into_boxed_str());
-    map.insert(key, label);
-    Some(label)
+    Some(
+        *LABELS
+            .lock()
+            .expect("label cache")
+            .get_or_insert_with(crate::FMap::default)
+            .entry(key)
+            .or_insert(label),
+    )
 }
 
 /// Run `f` under the row's synthetic C frame, or bare for a `None` label,
@@ -334,7 +348,11 @@ fn is_a_singleton_class(recv: &RubyValue, target: ClassId) -> bool {
 pub fn rescue_matches_any(exc: &RubyValue, list: &RubyValue) -> Result<bool, Signal> {
     match list {
         RubyValue::Array(a) => {
-            for el in a.lock().to_vec() {
+            // Bound, not inlined into the `for` head: a temporary there lives
+            // for the whole loop, so the Array's mutex would be held across
+            // the `===` send below.
+            let elements = a.lock().to_vec();
+            for el in elements {
                 if rescue_class_matches(&el, exc)? {
                     return Ok(true);
                 }
@@ -353,7 +371,8 @@ pub fn rescue_matches_any(exc: &RubyValue, list: &RubyValue) -> Result<bool, Sig
                 // Array is the caller's problem, and the element check names
                 // it.
                 if let RubyValue::Array(a) = expanded {
-                    for el in a.lock().to_vec() {
+                    let elements = a.lock().to_vec();
+                    for el in elements {
                         if rescue_class_matches(&el, exc)? {
                             return Ok(true);
                         }

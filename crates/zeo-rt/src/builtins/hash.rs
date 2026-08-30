@@ -139,10 +139,12 @@ ruby_class! {
     // expression is the argument, but that is the parser's rule, not this
     // method's return.)
     def "default_proc=" (recv, arg) {
-        let mut g = rhash.lock();
-        match arg {
-            RubyValue::Nil => g.default_proc = None,
-            p @ RubyValue::Proc(_) => g.default_proc = Some(p.clone()),
+        // Settled BEFORE the Hash's own lock is taken: the `to_proc` probe
+        // below runs user Ruby, which may reach this same Hash, and the lock
+        // is not reentrant.
+        let settled = match arg {
+            RubyValue::Nil => None,
+            p @ RubyValue::Proc(_) => Some(p.clone()),
             // CRuby probes `to_proc` and, failing that (or a lying answer),
             // raises its own shape: "wrong default_proc type X (expected
             // Proc)" -- NOT the generic implicit-conversion TypeError.
@@ -154,7 +156,7 @@ ruby_class! {
                     None
                 };
                 match ducked {
-                    Some(p @ RubyValue::Proc(_)) => g.default_proc = Some(p),
+                    Some(p @ RubyValue::Proc(_)) => Some(p),
                     _ => {
                         return Err(type_error!(
                             "wrong default_proc type {} (expected Proc)",
@@ -163,7 +165,9 @@ ruby_class! {
                     }
                 }
             }
-        }
+        };
+        let mut g = rhash.lock();
+        g.default_proc = settled;
         Ok(g.default_proc.clone().unwrap_or(RubyValue::Nil))
     }
     // Switch to identity keying (`equal?`/`object_id` instead of `eql?`/`hash`);

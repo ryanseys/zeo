@@ -401,25 +401,20 @@ pub unsafe extern "C" fn zeo_rt_str_append_value(s: *const RubyValue, v: *const 
         STATUS_SIGNAL
     };
     if let RubyValue::Str(other) = unsafe { &*v } {
-        // Same object both sides (`s = "x"; s << "#{s}"`): the two locks
-        // would be one, so copy the bytes out first.
-        if std::sync::Arc::ptr_eq(rs, other) {
-            let copy = other.lock().clone();
-            return match rs.lock().push_buf(&copy) {
-                Ok(()) => STATUS_OK,
-                Err(_) => fail(crate::builtins::string::encode::concat_incompat(&copy, &copy)),
-            };
-        }
-        let g = other.lock();
-        // A `match` scrutinee holds its temporary guard through every arm, so
-        // the push has to end in its own statement: the error arm reads `rs`
-        // again to name both sides.
-        let pushed = rs.lock().push_buf(&g);
+        // The source is copied out and its guard ended before the destination
+        // is locked -- for the same-object case (`s = "x"; s << "#{s}"`),
+        // where the two locks are one, and equally for two distinct strings,
+        // where holding both would let `a << b` on one thread and `b << a` on
+        // another take them in opposite orders.
+        let copy = other.lock().clone();
+        let pushed = rs.lock().push_buf(&copy);
         return match pushed {
             Ok(()) => STATUS_OK,
             Err(_) => {
                 let left = rs.lock().clone();
-                fail(crate::builtins::string::encode::concat_incompat(&left, &g))
+                fail(crate::builtins::string::encode::concat_incompat(
+                    &left, &copy,
+                ))
             }
         };
     }
