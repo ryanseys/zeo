@@ -968,14 +968,21 @@ pub(crate) fn typed_direct_send(
 /// arm. `None` = the site does not qualify (wrong shape, or the program
 /// itself touches `Array#[]`/`#[]=`) and the caller lowers as before.
 ///
-/// The guard is three questions. Receiver tag == Array and index tag ==
-/// Int prove the shapes; the gate word proves nothing in the process has
-/// ever armed a gate -- ZERO implies no runtime definition, no singleton,
-/// no ancestry splice, no Ractor move, no patched class. A nonzero word
-/// asks the real question (`iter_inline_ok_for`, which also checks the
-/// per-class patched set) before choosing an arm. Both rows sit in
-/// `SPECIALIZED` (no synthetic frame), so the frameless core is
-/// backtrace-identical.
+/// The guard is four questions, and it is `typed_direct_send`'s ladder with
+/// `Array` for the nominated class. Receiver tag == Array and index tag ==
+/// Int prove the shapes; no gate in [`zeo_abi::abi::GATE_ITER_INLINE_SLOW`]
+/// may be armed; and `Array`'s own bit in `zeo_rt_patched_bits` must be
+/// clear. Both rows sit in `SPECIALIZED` (no synthetic frame), so the
+/// frameless core is backtrace-identical.
+///
+/// The last two used to be one test for a ZERO gate word, with a capi call
+/// to `iter_inline_ok_for` behind it -- so a program that ran any runtime
+/// definition paid a CALL on every array index, measured at +14%. The two
+/// inline tests cost the same as the zero test did.
+///
+/// A boxed site declines outright rather than emitting a guard that can
+/// never pass: `iter_inline_ok_for` refused a nonzero box anyway, and the
+/// box is a per-site constant.
 ///
 /// Every operand is evaluated ONCE, in ruby's order, into the same argv
 /// both arms read -- the slow arm never re-lowers.
@@ -994,7 +1001,7 @@ pub(crate) fn indexed_send(
         ("[]=", 2) => true,
         _ => return Ok(None),
     };
-    if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+    if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) || fx.box_id != 0 {
         return Ok(None);
     }
     // The program's own text touching the rows stands the whole site down:
@@ -1023,7 +1030,7 @@ pub(crate) fn indexed_send(
 
     let idx_chk = fx.b.create_block();
     let gates_chk = fx.b.create_block();
-    let gate_ask = fx.b.create_block();
+    let patch_chk = fx.b.create_block();
     let fast = fx.b.create_block();
     let slow = fx.b.create_block();
     let join = fx.b.create_block();
@@ -1047,15 +1054,21 @@ pub(crate) fn indexed_send(
     fx.b.switch_to_block(gates_chk);
     let gbase = fx.gates_base();
     let gates = fx.b.ins().load(types::I16, fl, gbase, 0);
-    fx.b.ins().brif(gates, gate_ask, &[], fast, &[]);
+    let wide = fx
+        .b
+        .ins()
+        .band_imm_u(gates, i64::from(zeo_abi::abi::GATE_ITER_INLINE_SLOW));
+    fx.b.ins().brif(wide, slow, &[], patch_chk, &[]);
 
-    fx.b.switch_to_block(gate_ask);
-    let box_v = fx.box_v();
-    let array_cid =
-        fx.b.ins()
-            .iconst(types::I32, i64::from(crate::compiler::ARRAY_CLASS.0));
-    let ok = fx.call_status("zeo_rt_iter_inline_ok_for", &[box_v, array_cid]);
-    fx.b.ins().brif(ok, fast, &[], slow, &[]);
+    fx.b.switch_to_block(patch_chk);
+    let acid = crate::compiler::ARRAY_CLASS.0;
+    let pbase = fx.patched_bits_base();
+    let word = fx
+        .b
+        .ins()
+        .load(types::I64, fl, pbase, ((acid / 64) * 8) as i32);
+    let bit = fx.b.ins().band_imm_u(word, (1u64 << (acid % 64)) as i64);
+    fx.b.ins().brif(bit, slow, &[], fast, &[]);
 
     fx.b.switch_to_block(fast);
     let idx =

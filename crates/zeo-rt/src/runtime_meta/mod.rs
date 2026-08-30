@@ -434,7 +434,15 @@ const GATE_LIVE_MASK: u16 =
     GATE_OVERLAY | GATE_PENDING | GATE_MRO_DUPLICATES | GATE_PENDING_EXTENDS;
 /// What forbids a fused-iterator splice, apart from the receiver's own
 /// patched state.
-const GATE_ITER_BLOCKED: u16 = GATE_ANY_SINGLETONS | GATE_ANCESTRY_MUTATED | GATE_MOVED;
+///
+/// `GATE_MOVED` alone: a fused body reads its receiver's payload directly
+/// and would iterate a husk's gutted storage instead of raising
+/// `Ractor::MovedError`. [`GATE_ANY_SINGLETONS`] and
+/// [`GATE_ANCESTRY_MUTATED`] used to ride here and are answered per class
+/// now -- `def some_array.each` marks `Array`, an `include` marks the class
+/// it splices into and its descendants -- so a program that puts a singleton
+/// on one unrelated object keeps its fused loops.
+const GATE_ITER_BLOCKED: u16 = GATE_MOVED;
 /// What turns an inline cache off no matter WHICH class the site is keyed on
 /// -- [`gates_cache_off`]'s wide half.
 ///
@@ -640,6 +648,10 @@ const PATCHED_BITS_IDS: u32 = zeo_abi::abi::PATCHED_BITS_IDS;
 /// The emitted typed-direct-call guard tests exactly the bits this module
 /// does NOT answer per class. Asserted rather than restated, so renumbering a
 /// gate breaks the build instead of the guard.
+/// The emitted array-index guard tests [`iter_inline_ok_for`]'s wide half
+/// inline, for the same reason and with the same protection.
+const _: () = assert!(zeo_abi::abi::GATE_ITER_INLINE_SLOW == GATE_ITER_BLOCKED);
+
 const _: () = assert!(
     zeo_abi::abi::GATE_TYPED_DIRECT_SLOW
         == GATE_PENDING
@@ -1661,9 +1673,13 @@ mod tests {
     }
 
     #[test]
-    fn a_singleton_anywhere_stops_fusion_for_every_class() {
-        // Identity-keyed, so no class-id set can express it (INV-2).
+    fn a_singleton_stops_fusion_for_its_owners_class_alone() {
+        // The ROW is identity-keyed and no class-id set can express it
+        // (INV-2). What a class-id set CAN express is the weaker fact that
+        // makes it reachable: the row answers only for a receiver of the
+        // owner's class, so that class alone stands down.
         let a: RObj = Arc::new(DynObject::new(ClassId(0)));
+        assert!(iter_inline_ok_for(0, ClassId(0)));
         assert!(iter_inline_ok_for(0, ClassId(3)));
         runtime_define_singleton_method(
             &RubyValue::Object(a.clone()),
@@ -1671,7 +1687,24 @@ mod tests {
             nullary(1),
         )
         .unwrap();
-        assert!(!iter_inline_ok_for(0, ClassId(3)));
+        assert!(!iter_inline_ok_for(0, ClassId(0)));
+        assert!(iter_inline_ok_for(0, ClassId(3)));
+    }
+
+    #[test]
+    fn a_singleton_marks_its_class_without_the_descendant_closure() {
+        // `def o.x` on a plain `Object.new` must not mark every class in the
+        // program: the row lives on ONE object, and a subclass instance is
+        // not it.
+        let a: RObj = Arc::new(DynObject::new(zeo_abi::OBJECT_CLASS));
+        runtime_define_singleton_method(
+            &RubyValue::Object(a.clone()),
+            Symbol::intern("m"),
+            nullary(1),
+        )
+        .unwrap();
+        assert!(class_maybe_patched(zeo_abi::OBJECT_CLASS));
+        assert!(!class_maybe_patched(ClassId(3)));
     }
 
     #[test]
@@ -1720,8 +1753,10 @@ mod tests {
         )
         .unwrap();
         assert!(gate(GATE_ANY_SINGLETONS));
-        // Part of GATE_ITER_BLOCKED: fusion stops process-wide.
-        assert!(!iter_inline_ok_for(0, ClassId(3)));
+        // The latch arms for the identity-keyed PROBES; fusion is decided
+        // per class now, so an untouched one keeps it.
+        assert!(iter_inline_ok_for(0, ClassId(3)));
+        assert!(!iter_inline_ok_for(0, ClassId(0)));
     }
 
     #[test]

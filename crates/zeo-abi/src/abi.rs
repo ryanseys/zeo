@@ -153,6 +153,17 @@ pub const GATE_FRAMES_INDIRECT_BIT: u16 = 512;
 /// compile time.
 pub const GATE_TYPED_DIRECT_SLOW: u16 = 2 | 4 | 8 | 256 | 512 | 1024;
 
+/// The `zeo_rt_gates` bits that forbid a SPECIALIZED builtin path whatever
+/// class it names: `GATE_MOVED` (4) alone, because a fused body reads its
+/// receiver's payload directly and would iterate a husk's gutted storage
+/// instead of raising `Ractor::MovedError`.
+///
+/// Everything else that could override the builtin row -- a per-object
+/// singleton, an ancestry splice, a runtime definition -- is a fact about the
+/// receiver's CLASS, which [`PATCHED_BITS_SYM`]'s bit answers. `zeo-rt`
+/// asserts this against `iter_inline_ok_for`'s own mask.
+pub const GATE_ITER_INLINE_SLOW: u16 = 4;
+
 /// The exported bitmap of classes whose method resolution may differ from the
 /// frozen registry -- one bit per class id, word `id / 64`, bit `id % 64`.
 /// Emitted code loads its word at a link-time-known address.
