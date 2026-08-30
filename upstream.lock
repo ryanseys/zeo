@@ -15,8 +15,8 @@
     {
       "name": "bundler",
       "github": "rubygems/rubygems",
-      "tag": "v4.0.16",
-      "rev": "fc18079dba6c2caf60ea45a68dcd7840e25b38ea",
+      "tag": "v4.0.19",
+      "rev": "2d0e3df43a2fa92ea654fdfacef51c295dbde937",
       "subdir": "bundler"
     },
     {
@@ -196,8 +196,8 @@
     {
       "name": "rubygems",
       "github": "rubygems/rubygems",
-      "tag": "v4.0.16",
-      "rev": "fc18079dba6c2caf60ea45a68dcd7840e25b38ea"
+      "tag": "v4.0.19",
+      "rev": "2d0e3df43a2fa92ea654fdfacef51c295dbde937"
     },
     {
       "name": "tempfile",

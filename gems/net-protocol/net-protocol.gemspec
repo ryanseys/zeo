@@ -2,6 +2,6 @@
 # Do not edit by hand -- see gems.toml.
 Gem::Specification.new do |s|
   s.name = "net-protocol"
-  s.version = "0.2.2"
+  s.version = "0.3.0"
   s.require_paths = ["lib"]
 end

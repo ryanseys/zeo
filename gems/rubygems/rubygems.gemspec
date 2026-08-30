@@ -2,6 +2,6 @@
 # Do not edit by hand -- see upstream.rb.
 Gem::Specification.new do |s|
   s.name = "rubygems"
-  s.version = "4.0.16"
+  s.version = "4.0.19"
   s.require_paths = ["lib"]
 end

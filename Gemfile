@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Every gem version zeo depends on, in the one format ruby already reads.
+# Every gem zeo depends on, in the one format ruby already reads.
 #
 # The same lock answers two questions that used to be answered separately,
 # and therefore differently:
@@ -12,6 +12,17 @@
 # library versions and called it a zeo bug. `json` is the case that forced
 # this: zeo shipped 2.21.2's parser while the oracle resolved whatever the
 # machine had, and the two disagree about a line counter.
+#
+# EVERY GEM IS PINNED EXACTLY, at the latest upstream release. Both halves
+# of that matter. Exact, because a range lets a rebuild resolve differently
+# from the one the goldens were blessed against, which is the drift this
+# file exists to stop. Latest, because zeo IMPLEMENTS these libraries and
+# has to implement the current ones -- so the versions here run ahead of
+# what ruby 4.0.6 ships for many of them, and that only works because the
+# oracle resolves this same lock.
+#
+# Moving the set forward is a deliberate act: re-resolve, read the lock
+# diff, run the golden suite. Nothing floats on its own.
 #
 # No `ruby` directive. The oracle's ruby is pinned in `mise.toml` (4.0.6);
 # the Linux container deliberately runs the distro's ruby for `tools/zeo-dev`
@@ -44,10 +55,7 @@ source "https://rubygems.org"
 #                     zeo-authored and live beside the Rust that implements
 #                     them.
 #
-# Every version below is the latest upstream release, which is deliberately
-# ahead of what ruby 4.0.6 ships for 13 of them. That only works because the
-# oracle resolves this same lock, so it runs the versions zeo implements.
-# `rubygems` is the one exception and gets ruby's own version -- see below.
+# One line per `gems/<name>/`.
 
 gem "abbrev", "0.1.2"
 gem "benchmark", "0.5.0"
@@ -78,7 +86,7 @@ gem "net-ftp", "0.3.9"
 gem "net-http", "0.9.1"
 gem "net-imap", "0.6.6"
 gem "net-pop", "0.1.2"
-gem "net-protocol", "0.2.2"
+gem "net-protocol", "0.3.0"
 gem "net-smtp", "0.5.1"
 gem "nkf", "0.3.0"
 gem "observer", "0.1.2"
@@ -87,27 +95,27 @@ gem "open3", "0.2.1"
 gem "openssl", "4.0.2"
 gem "optparse", "0.8.1"
 gem "ostruct", "0.6.3"
-gem "power_assert", "3.0.1"
+gem "power_assert", "3.1.0"
 gem "pp", "0.6.4"
 gem "prettyprint", "0.2.0"
 gem "prime", "0.1.4"
 gem "prism", "1.9.0"
 gem "pstore", "0.2.1"
-gem "psych", "5.4.0"
+gem "psych", "5.5.0"
 gem "racc", "1.8.1"
 gem "rake", "13.4.2"
 gem "reline", "0.7.0"
-gem "resolv", "0.7.1"
+gem "resolv", "0.7.2"
 gem "rexml", "3.4.4"
-# The one gem that must MATCH ruby rather than lead it. RubyGems loads before
-# bundler, so `Gem::VERSION` in the oracle is whatever the running ruby ships
-# -- 4.0.16 -- and no Gemfile can change it. Vendoring 4.0.18 would be a
-# version zeo reports and the oracle can never agree with. bundler rides the
-# same release, so it stays in step.
-gem "rubygems-update", "4.0.16"
+# The gem to watch when a lock bump breaks something. RubyGems loads before
+# bundler, so `Gem::VERSION` in the ORACLE is whatever the running ruby
+# ships and no Gemfile can change it. zeo reports the version it vendors
+# from here, so the two disagree whenever this leads ruby 4.0.6. bundler
+# rides the same release and stays in step with it.
+gem "rubygems-update", "4.0.19"
 gem "shellwords", "0.2.2"
 gem "singleton", "0.3.0"
-gem "strscan", "3.1.6"
+gem "strscan", "3.1.8"
 gem "syslog", "0.4.0"
 gem "tempfile", "0.3.1"
 gem "test-unit", "3.7.8"
@@ -122,15 +130,13 @@ gem "zlib", "3.2.3"
 
 # --- Pulled in by the gems above, and named so they cannot float ----------
 #
-# zeo implements none of these, so they have no reason to lead ruby: the rule
-# is that the oracle IS ruby 4.0.6 except where zeo deliberately ships newer.
-# Left to the resolver they came out ahead of it -- io-console 0.9.2 against
-# ruby's 0.8.2, rdoc 8.0.0 against 7.0.4, rbs 4.2.0 against 3.10.0 -- which
-# nobody had chosen and nothing recorded. `io-console` is the one that could
-# actually move a golden: it rides under reline.
-gem "io-console", "0.8.2"
-gem "rbs", "3.10.0"
-gem "rdoc", "7.0.4"
+# The resolver reaches these anyway. Naming them puts them under the same
+# exact-pin rule as everything else, so a move shows up as a line here
+# rather than as a silent transitive change. `io-console` is the one that
+# can actually move a golden: it rides under reline.
+gem "io-console", "0.9.2"
+gem "rbs", "4.2.0"
+gem "rdoc", "8.0.0"
 
 # --- What only the oracle needs -------------------------------------------
 #

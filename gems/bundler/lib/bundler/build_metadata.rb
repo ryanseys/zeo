@@ -5,6 +5,7 @@ module Bundler
   module BuildMetadata
     # begin ivars
     @built_at = nil
+    @git_commit_sha = "2d0e3df43a".freeze
     # end ivars
 
     # A hash representation of the build metadata.

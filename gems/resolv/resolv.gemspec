@@ -2,6 +2,6 @@
 # Do not edit by hand -- see gems.toml.
 Gem::Specification.new do |s|
   s.name = "resolv"
-  s.version = "0.7.1"
+  s.version = "0.7.2"
   s.require_paths = ["lib"]
 end

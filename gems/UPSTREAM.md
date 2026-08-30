@@ -38,6 +38,7 @@ own dual license, so those dirs carry Ruby's `COPYING` + `BSDL` pair verbatim
 | pp | 0.6.4 | upstream ruby/pp |
 | prettyprint | 0.2.0 | ruby 4.0.5 default gem |
 | prime | 0.1.4 | ruby 4.0.6 bundled gem |
+| rdoc | 8.0.0 | upstream ruby/rdoc |
 | shellwords | 0.2.2 | ruby 4.0.5 stdlib |
 | singleton | 0.3.0 | ruby 4.0.5 stdlib |
 | timeout | 0.6.1 | upstream ruby/timeout |

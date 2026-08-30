@@ -37,6 +37,21 @@ const COVERED_BY: &[(&str, &str)] = &[
 /// nothing else -- so they carry no version to compare.
 const NO_SOURCE: &[&str] = &["monitor", "pty", "socket"];
 
+/// Libraries zeo REIMPLEMENTS in Rust rather than vendors.
+///
+/// The equality this file checks rests on a premise -- that the tree and the
+/// lock describe the same code -- and for these that premise is false. Their
+/// directory holds zeo's own implementation, so its gemspec version is a
+/// claim about how much of that release zeo MATCHES, which only moves when
+/// the Rust does. The lock meanwhile names the latest release, which is what
+/// a project resolving these from its own store gets (`Loader::builtin_wins`)
+/// and what `ZEO_DISABLE_BUILTIN` makes it possible to run.
+///
+/// Exempt from the equality, NOT from the lock: each still has to appear
+/// there, so a name that stops being released is still caught. Which of these
+/// zeo keeps is task #116; every one that goes drops a row from here.
+const REIMPLEMENTED: &[&str] = &["psych", "strscan"];
+
 /// Every `name (version)` in the lock's `specs:` block. A gem resolved for
 /// several platforms appears once per platform with the platform appended to
 /// the version, so the value is a list.
@@ -121,6 +136,11 @@ fn every_vendored_gem_matches_the_locked_version() {
             let Some(versions) = locked.get(name) else {
                 return Some(format!("gems/{dir}: no `{name}` in Gemfile.lock"));
             };
+            // Present in the lock is all a reimplemented library owes: its
+            // version is a claim about zeo's Rust, not about a vendored copy.
+            if REIMPLEMENTED.contains(&name) {
+                return None;
+            }
             // A platform-specific row appends its platform to the version, so
             // compare against the plain one and the prefixed ones alike.
             let agrees = versions
@@ -151,6 +171,7 @@ fn every_exemption_still_names_a_vendored_gem() {
         .iter()
         .chain(RENAMED.iter().map(|(d, _)| d))
         .chain(COVERED_BY.iter().map(|(d, _)| d))
+        .chain(REIMPLEMENTED.iter())
         .copied()
         .filter(|d| !bundled.contains_key(*d))
         .collect();

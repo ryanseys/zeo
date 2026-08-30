@@ -2,6 +2,6 @@
 # Do not edit by hand -- see gems.toml.
 Gem::Specification.new do |s|
   s.name = "power_assert"
-  s.version = "3.0.1"
+  s.version = "3.1.0"
   s.require_paths = ["lib"]
 end
