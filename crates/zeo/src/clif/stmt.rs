@@ -922,6 +922,19 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             if overrides {
                 mixin_hook_send(fx, &module, primitive)?;
             }
+            // The `extend` edges this statement installs, seated HERE.
+            // `rb_extend_object` includes the module into the singleton class
+            // where the statement stands, so a `def`/`remove_method` written
+            // above it cannot see the module's hooks, and a class method it
+            // supplies is not callable yet. Before the notification, which is
+            // ruby's order (`rb_obj_extend`: `extend_object`, then
+            // `extended`).
+            for (class, module_id) in fx.an.compiler.extends_installed_at(stmt) {
+                let cid = fx.b.ins().iconst(types::I32, i64::from(class.0));
+                let mid = fx.b.ins().iconst(types::I32, i64::from(module_id.0));
+                let status = fx.call_status("zeo_rt_class_extend_at", &[cid, mid]);
+                fx.fallible(status);
+            }
             mixin_hook_send(fx, &module, hook)
         }
         // A definition report -- `Klass.method_added(:name)` and its five

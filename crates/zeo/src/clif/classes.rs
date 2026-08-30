@@ -230,6 +230,28 @@ pub(crate) struct CollectedClasses {
 
 /// Collect + declare every user class and its methods; refusals are loud
 /// and name the class.
+/// The `extend` edges that are in place from PROGRAM START -- every edge no
+/// statement installs.
+///
+/// A class body's `extend M` and the `base.extend(ClassMethods)` an
+/// `included` hook performs are both positional: `rb_extend_object` is
+/// `rb_include_module(rb_singleton_class(obj), module)`, which seats the
+/// module where the statement stands. Those edges are emitted at their own
+/// site instead (`Compiler::extends_installed_at`), so a `def` or a
+/// `remove_method` written above the `extend` cannot see the module's hooks
+/// and a class method it supplies is not callable yet.
+///
+/// What is left here is an edge with no statement to hang off: a BUILTIN's
+/// own `zeo_abi::BUILTIN_EXTENDS` row, which is true before line 1.
+fn boot_extends(compiler: &crate::compiler::Compiler, class: crate::compiler::ClassId) -> Vec<u32> {
+    compiler.classes[class.0 as usize]
+        .extends
+        .iter()
+        .filter(|m| !compiler.extend_sites.contains_key(&(class, **m)))
+        .map(|m| m.0)
+        .collect()
+}
+
 pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<CollectedClasses> {
     let compiler = &analyzed.compiler;
     let mut classes = Vec::new();
@@ -732,8 +754,9 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             // chain still does: `CGI` EXTENDS the module it includes
             // (`zeo_abi::BUILTIN_EXTENDS`), and without the row
             // `CGI.escapeHTML` reaches no body at all.
-            if !class.extends.is_empty() {
-                extends.push((idx as u32, class.extends.iter().map(|m| m.0).collect()));
+            let boot = boot_extends(compiler, crate::compiler::ClassId(idx as u32));
+            if !boot.is_empty() {
+                extends.push((idx as u32, boot));
             }
             continue;
         }
@@ -824,8 +847,14 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 return refuse("a prepend that shadows an own def on a native-backed class");
             }
         }
-        if !class.extends.is_empty() {
-            extends.push((idx as u32, class.extends.iter().map(|m| m.0).collect()));
+        // Only the edges NO statement installs. A class body`s `extend M`,
+        // and the `base.extend(ClassMethods)` an `included` hook performs, are
+        // seated at their own statement instead (`extends_installed_at`) --
+        // ruby puts the module in the singleton chain where the statement
+        // stands, not from program start.
+        let boot: Vec<u32> = boot_extends(compiler, crate::compiler::ClassId(idx as u32));
+        if !boot.is_empty() {
+            extends.push((idx as u32, boot));
         }
         // Every ancestor past self must be a user class or the plain
         // Object/Kernel/BasicObject spine -- a builtin superclass outside

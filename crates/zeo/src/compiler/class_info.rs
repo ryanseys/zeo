@@ -952,6 +952,56 @@ impl Compiler {
             .map(|e| (e.defined_class(self), e.def))
     }
 
+    /// The `(class, module)` edges the statement at `stmt` installs -- an
+    /// `extend M` written in a class body, and the `base.extend(ClassMethods)`
+    /// an `include`'s `included` hook performs.
+    ///
+    /// Codegen emits one positional mixin per edge here: CRuby seats the
+    /// module in the singleton chain WHERE THE STATEMENT STANDS
+    /// (`rb_extend_object` is `rb_include_module(rb_singleton_class(obj), m)`),
+    /// so the edge cannot be in place from program start. Every compile-time
+    /// fact about the edge -- the materialized rows, the hook splices -- still
+    /// reads `ClassInfo::extends`; only the timeline moves.
+    pub fn extends_installed_at(&self, stmt: crate::hir::NodeId) -> Vec<(ClassId, ClassId)> {
+        let mut edges: Vec<(ClassId, ClassId)> = self
+            .extend_sites
+            .iter()
+            .filter(|&(_, at)| *at == stmt)
+            .map(|(&pair, _)| pair)
+            .collect();
+        // The map is unordered and two modules extended by one statement must
+        // seat in a stable order, or the winner for a shared name flips
+        // between builds.
+        edges.sort_by_key(|&(c, m)| (c.0, m.0));
+        edges
+    }
+
+    /// The class methods `class` carries a MATERIALIZED copy of that only a
+    /// positional `extend` seats -- the names whose winner comes from a module
+    /// the class body extends.
+    ///
+    /// zeo flattens an extended module's instance methods onto the class's
+    /// class-method table so the steady state costs no walk. CRuby has no such
+    /// copy, so each of these is retired at boot and installed at the
+    /// statement (`runtime_meta::defer_extended_class_method`).
+    ///
+    /// A name the class also defines itself is NOT here: its own `def self.x`
+    /// won the materialization, and `class_method_install_node` reports that
+    /// `def` rather than an `extend`.
+    pub fn class_methods_deferred_by_extend(&self, class: ClassId) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for entry in &self.classes[class.0 as usize].class_methods {
+            let name = self.scope(entry.def).name.clone();
+            let installed_at = self.class_method_install_node(class, &name);
+            if installed_at.is_some_and(|at| self.extend_sites.values().any(|&site| site == at)) {
+                names.push(name);
+            }
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+
     /// WHERE class method `name` became available on `class` -- the node whose
     /// span says when the program installed it.
     ///

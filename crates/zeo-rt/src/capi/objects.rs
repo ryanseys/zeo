@@ -741,6 +741,20 @@ pub unsafe extern "C" fn zeo_rt_raise_private_constant(
     STATUS_SIGNAL
 }
 
+/// A class body's `extend M` performed at its own statement -- see
+/// `runtime_meta::class_extend_at`. Fallible only through the mixin
+/// primitive itself, which raises for a frozen receiver.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_class_extend_at(class: u32, module: u32) -> i32 {
+    match crate::runtime_meta::class_extend_at(ClassId(class), ClassId(module)) {
+        Ok(()) => zeo_abi::abi::STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            zeo_abi::abi::STATUS_SIGNAL
+        }
+    }
+}
+
 /// A method REDEFINITION applied at its document position: `f` becomes
 /// the class's current body of `name` in the overlay, so code running
 /// between two same-name `def`s dispatches to the earlier one (ruby's

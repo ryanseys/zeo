@@ -434,6 +434,13 @@ pub const REG_SINGLETON_SUPER_TARGET: u8 = 5;
 /// table still carries the trampoline.
 pub const REG_ACCESSOR_SLOT: u8 = 18;
 
+/// `RegRow.kind`: class method `a` on `class` is a MATERIALIZED copy of an
+/// `extend`ed module's row, retired until the `extend` statement seats the
+/// module. CRuby has no such copy -- `rb_extend_object` puts the module in
+/// the singleton chain where the statement stands -- so the name must not
+/// answer, and a hook it supplies must not fire, above the `extend`.
+pub const REG_DEFER_EXTENDED_CLASS_METHOD: u8 = 19;
+
 /// `RegRow.kind`: a NAME-indirection alias whose source is a builtin
 /// method (`a` = new name, `b` = old/terminal name) -- the send miss paths
 /// rewrite through it; `validate_class_aliases` raises `NameError` for a

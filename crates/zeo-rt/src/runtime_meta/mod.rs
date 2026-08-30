@@ -165,6 +165,15 @@ struct OverlayEntry {
     /// [`OverlayEntry::removed`]'s class-method twin, keyed on the OWNER for
     /// the same reason [`OverlayEntry::class_undefs`] is.
     class_removed: FSet<Symbol>,
+    /// Class-method names this class carries a MATERIALIZED copy of that no
+    /// `extend` has seated yet -- see `api::defer_extended_class_method`.
+    ///
+    /// Read exactly like [`OverlayEntry::class_removed`] (both empty the
+    /// class's own position without ending the walk), kept apart from it
+    /// because they are cleared by different things: an `extend` seating the
+    /// module clears only what it supplies, and must not resurrect a name
+    /// `remove_method` took out of `class << self`.
+    class_deferred: FSet<Symbol>,
     /// The address the anonymous `#<Class:0x...>` rendering reports -- a real
     /// leaked allocation, so it is unique, stable, and 16 hex digits wide like
     /// every other object's. Not `ancestors.as_ptr()`: `include`/`prepend`
@@ -213,6 +222,7 @@ impl Default for OverlayEntry {
             undefs: FSet::default(),
             removed: FSet::default(),
             class_removed: FSet::default(),
+            class_deferred: FSet::default(),
             class_undefs: FSet::default(),
             addr: Box::leak(Box::new(0u8)) as *const u8 as usize,
             uninitialized: false,
@@ -385,6 +395,22 @@ const GATE_ARITY_DEBUG: u16 = 8;
 /// the gate word for exactly the reason the pending and moved gates do: the
 /// word is loaded once and masked. The ninth gate widened `GATES` to a
 /// `u16` -- a new gate widens the word, never adds a second one.
+/// Some class body's `extend` has not been seated yet, so a class method
+/// materialized from it must not answer and must not be CACHED as the answer.
+///
+/// The second clearable bit, and for the same reason [`GATE_PENDING`] is one:
+/// it marks a WINDOW, not a fact about the whole run. The window is class
+/// definition time -- from the first deferred `extend` row at boot to the
+/// last `extend` statement -- after which every site caches exactly as it did
+/// before. A monotone latch here cost 77x on a loop calling a class method an
+/// extended module supplies, because `GATE_LIVE_MASK` turns off every inline
+/// cache in the process.
+///
+/// [`PENDING_EXTEND_NAMES`] counts the retired names; the bit clears when the
+/// last one is seated. A class body that never RUNS (`if false; class C;
+/// extend M; end; end`) never seats its edge, so the window stays open for
+/// that program -- correct, if slow: the extend genuinely has not happened.
+const GATE_PENDING_EXTENDS: u16 = 1024;
 const GATE_PATCHED_ANY: u16 = 16;
 const GATE_ANY_SINGLETONS: u16 = 32;
 const GATE_ANCESTRY_MUTATED: u16 = 64;
@@ -404,7 +430,8 @@ const GATE_MRO_DUPLICATES: u16 = 256;
 /// orthogonal to dispatch caching. The VALUE is ABI -- the emitter bakes
 /// the same bit into every prologue's test.
 const GATE_FRAMES_INDIRECT: u16 = zeo_abi::abi::GATE_FRAMES_INDIRECT_BIT;
-const GATE_LIVE_MASK: u16 = GATE_OVERLAY | GATE_PENDING | GATE_MRO_DUPLICATES;
+const GATE_LIVE_MASK: u16 =
+    GATE_OVERLAY | GATE_PENDING | GATE_MRO_DUPLICATES | GATE_PENDING_EXTENDS;
 /// What forbids a fused-iterator splice, apart from the receiver's own
 /// patched state.
 const GATE_ITER_BLOCKED: u16 = GATE_ANY_SINGLETONS | GATE_ANCESTRY_MUTATED | GATE_MOVED;
@@ -617,6 +644,35 @@ pub fn mro_duplicates() -> bool {
 
 fn mark_live() {
     GATES.fetch_or(GATE_OVERLAY, Ordering::Release);
+}
+
+/// Class-method names still retired waiting for their `extend` -- see
+/// [`GATE_PENDING_EXTENDS`], whose window this counts.
+static PENDING_EXTEND_NAMES: AtomicU32 = AtomicU32::new(0);
+
+/// One more retired name; opens the window if it was shut.
+pub(super) fn mark_extend_pending() {
+    PENDING_EXTEND_NAMES.fetch_add(1, Ordering::Relaxed);
+    GATES.fetch_or(GATE_PENDING_EXTENDS, Ordering::Release);
+}
+
+/// `seated` names are live again; shuts the window when the last one is.
+///
+/// The subtraction saturates rather than wrapping: an `extend` that seats a
+/// name no boot row retired (a module whose row this class also defines
+/// itself) must not take the count negative and leave the window open for
+/// the rest of the run.
+pub(super) fn mark_extends_seated(seated: u32) {
+    if seated == 0 {
+        return;
+    }
+    let left = PENDING_EXTEND_NAMES
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+            Some(n.saturating_sub(seated))
+        });
+    if left.is_ok_and(|before| before.saturating_sub(seated) == 0) {
+        GATES.fetch_and(!GATE_PENDING_EXTENDS, Ordering::Release);
+    }
 }
 
 /// The object identity a per-object singleton table is keyed by: the `Arc`'s

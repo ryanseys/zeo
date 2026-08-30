@@ -695,6 +695,29 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
                 flag: u8::from(*singleton) | (vis_byte(*vis) << 1),
             }),
     );
+    // A class method that is really an `extend`ed module's row, flattened
+    // onto the class for the steady state. It is retired until the `extend`
+    // statement seats the module, so a call above the `extend` raises and a
+    // hook it supplies does not fire for a `def` written earlier -- which is
+    // where ruby's singleton chain gains the module.
+    for (idx, _) in analyzed.compiler.classes.iter().enumerate() {
+        let class = crate::compiler::ClassId(idx as u32);
+        reg_rows.extend(
+            analyzed
+                .compiler
+                .class_methods_deferred_by_extend(class)
+                .into_iter()
+                .map(|name| statics::RegRowSpec {
+                    kind: zeo_abi::abi::REG_DEFER_EXTENDED_CLASS_METHOD,
+                    class: class.0,
+                    a: name,
+                    b: String::new(),
+                    f: None,
+                    ids: vec![],
+                    flag: 0,
+                }),
+        );
+    }
     // A definition hook written on `Module`/`Class`/`BasicObject` itself
     // answers for every class, and no per-class owner scan can see one.
     {

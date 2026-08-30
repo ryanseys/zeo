@@ -435,14 +435,19 @@ pub fn overlay_is_removed(id: ClassId, name: Symbol) -> bool {
         .is_some_and(|e| e.removed.contains(&name))
 }
 
-/// [`overlay_is_removed`]'s class-method twin.
+/// [`overlay_is_removed`]'s class-method twin -- true for a name
+/// `remove_method` took out of `class << self`, and for one whose
+/// materialized copy no `extend` has seated yet. Both empty the class's own
+/// position without ending the walk, which is the same answer every reader
+/// needs; see [`OverlayEntry::class_deferred`] for why the two sets are kept
+/// apart.
 pub fn overlay_class_removed(id: ClassId, name: Symbol) -> bool {
     maps()
         .classes
         .read()
         .unwrap()
         .get(&id.0)
-        .is_some_and(|e| e.class_removed.contains(&name))
+        .is_some_and(|e| e.class_removed.contains(&name) || e.class_deferred.contains(&name))
 }
 
 /// Reverse of [`overlay_class_name`]: the runtime class id whose Ruby-visible

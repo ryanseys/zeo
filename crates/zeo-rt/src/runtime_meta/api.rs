@@ -1883,6 +1883,81 @@ fn carry_module_visibility(recv: &RubyValue, mid: ClassId, copied: &[Symbol]) {
     }
 }
 
+/// A class body's own `extend M`, performed AT THE STATEMENT.
+///
+/// CRuby's `rb_extend_object` is `rb_include_module(rb_singleton_class(obj),
+/// module)` -- it seats the module in the singleton chain where the `extend`
+/// stands, not where the class was opened. zeo knows the edge at compile
+/// time and keeps every compile-time fact on it (the materialized rows, the
+/// hook splices); this is the TIMELINE half, the same split
+/// `analyze::redefs` makes for a `def`.
+///
+/// It runs the ordinary mixin primitive, so a class body's `extend` and a
+/// run-time `C.extend(M)` are one code path. The `extended` notification is
+/// NOT sent here: codegen splices that at the same position, exactly as it
+/// does when a module overrides `extend_object`.
+pub fn class_extend_at(class: ClassId, module: ClassId) -> Result<(), Signal> {
+    let recv = RubyValue::Class(class);
+    // NOT `extend_object_default`: that copies the module's rows into the
+    // overlay, which a compile-time edge does not need -- `mro::materialize_
+    // class_methods` already flattened them onto this class, and an overlay
+    // copy would cost every later call the extend-source walk instead of the
+    // flat row. Measured at 3M calls: 0.27s flat, 20.9s through the copies.
+    //
+    // What IS needed is the seating itself, which is what the four marks and
+    // the ancestry refresh below are.
+    let supplied =
+        crate::dispatch::instance_method_names(module, crate::dispatch::VisFilter::All, false);
+    let seated = {
+        let mut w = maps().classes.write().unwrap();
+        let e = w.entry(class.0).or_insert_with(OverlayEntry::delta);
+        // The materialized copies this edge accounts for are live now. Only
+        // what THIS module supplies, so a name `remove_method` took out of
+        // `class << self` stays out.
+        supplied
+            .iter()
+            .filter(|name| e.class_deferred.remove(*name))
+            .count() as u32
+    };
+    record_extended(&recv, module);
+    refresh_singleton_ancestors(&recv);
+    mark_singletons();
+    mark_ancestry_mutated();
+    patch_class(class);
+    // NOT `mark_live`: that latch is monotone and sits in `GATE_LIVE_MASK`,
+    // so arming it here turned off every inline cache in the process for the
+    // rest of the run -- measured at 77x on a loop calling a class method an
+    // extended module supplies. The window this opens closes instead.
+    mark_extends_seated(seated);
+    Ok(())
+}
+
+/// A class method `class` carries a MATERIALIZED copy of that only a
+/// positional `extend` seats.
+///
+/// zeo flattens an extended module's instance methods onto the class's
+/// class-method table so the steady state costs no walk. CRuby has no such
+/// copy: `rb_extend_object` seats the module in the singleton chain where the
+/// `extend` STANDS, so the name is not callable above it and a hook it
+/// supplies does not fire for a `def` written earlier. The copy is retired
+/// until [`class_extend_at`] runs, which empties the class's own position
+/// without ending the walk -- exactly what `remove_method` in `class << self`
+/// does, and for the same reason: the row belongs to the module, not here.
+pub fn defer_extended_class_method(class: ClassId, name: Symbol) {
+    let fresh = {
+        let mut w = maps().classes.write().unwrap();
+        w.entry(class.0)
+            .or_insert_with(OverlayEntry::delta)
+            .class_deferred
+            .insert(name)
+    };
+    patch_class(class);
+    // The window, not the monotone overlay latch -- see `GATE_PENDING_EXTENDS`.
+    if fresh {
+        mark_extend_pending();
+    }
+}
+
 /// `Module#extend_object`'s default body -- the mixin itself, without the
 /// `extended` notification its caller owns. See [`runtime_extend`].
 pub fn extend_object_default(recv: &RubyValue, module_val: &RubyValue) -> Result<(), Signal> {

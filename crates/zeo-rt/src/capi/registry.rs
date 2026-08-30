@@ -238,6 +238,12 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             abi::REG_MARK_BOX_CLASS => {
                 crate::boxes::mark_box_class(ClassId(r.class), unsafe { *r.ids });
             }
+            abi::REG_DEFER_EXTENDED_CLASS_METHOD => {
+                crate::runtime_meta::defer_extended_class_method(
+                    ClassId(r.class),
+                    Symbol::intern(text(r.a)),
+                );
+            }
             abi::REG_MARK_GLOBAL_DEF_HOOK => {
                 crate::runtime_meta::mark_global_def_hook(text(r.a));
             }

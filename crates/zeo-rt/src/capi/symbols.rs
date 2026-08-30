@@ -60,6 +60,7 @@ capi_symbols!(
     procs::zeo_rt_cell_store,
     cext::zeo_rt_cext_load,
     frames::zeo_rt_check_ints,
+    objects::zeo_rt_class_extend_at,
     objects::zeo_rt_class_new_instance,
     objects::zeo_rt_class_new_instance_cached,
     dispatch::zeo_rt_class_new_sites_init,
