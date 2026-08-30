@@ -635,7 +635,20 @@ fn patched() -> &'static RwLock<PatchedSets> {
 /// How many class ids [`PATCHED_BITS`] covers. 8 KiB of BSS against a 29 MB
 /// binary, and every program the corpus compiles fits inside it; anything
 /// past it is correct but slow, which is the right way round.
-const PATCHED_BITS_IDS: u32 = 1 << 16;
+const PATCHED_BITS_IDS: u32 = zeo_abi::abi::PATCHED_BITS_IDS;
+
+/// The emitted typed-direct-call guard tests exactly the bits this module
+/// does NOT answer per class. Asserted rather than restated, so renumbering a
+/// gate breaks the build instead of the guard.
+const _: () = assert!(
+    zeo_abi::abi::GATE_TYPED_DIRECT_SLOW
+        == GATE_PENDING
+            | GATE_MOVED
+            | GATE_ARITY_DEBUG
+            | GATE_MRO_DUPLICATES
+            | GATE_FRAMES_INDIRECT
+            | GATE_PENDING_EXTENDS
+);
 
 /// One bit per frozen class id -- [`class_maybe_patched_gated`]'s read path,
 /// and the answer for every id below [`PATCHED_BITS_IDS`].
@@ -654,8 +667,13 @@ const PATCHED_BITS_IDS: u32 = 1 << 16;
 /// `Relaxed`, on the module's standing argument: a reader that misses a bit
 /// behaves as if it ran before the patch, which is what `Acquire` permits too
 /// -- acquire adds ordering, never freshness.
-static PATCHED_BITS: [AtomicU64; (PATCHED_BITS_IDS / 64) as usize] =
+/// Exported, because the emitted typed-direct-call guard reads its word
+/// inline: both the address and the mask are compile-time constants there.
+#[unsafe(no_mangle)]
+#[allow(non_upper_case_globals)]
+pub static zeo_rt_patched_bits: [AtomicU64; (PATCHED_BITS_IDS / 64) as usize] =
     [const { AtomicU64::new(0) }; (PATCHED_BITS_IDS / 64) as usize];
+use self::zeo_rt_patched_bits as PATCHED_BITS;
 
 /// Set `added`'s bits. Ids past the array's span stay set-only; the reader
 /// falls back to [`PATCHED`] for those.

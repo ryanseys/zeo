@@ -1240,7 +1240,11 @@ pub const CAPI: &[CapiSig] = &[
 /// Function imports above are calls; these are loads. The archive
 /// exports them from `zeo-rt`'s data section and the JIT resolves them
 /// through `symbols::data_addr`.
-pub const CAPI_DATA: &[&str] = &["zeo_rt_gates", "zeo_rt_pending_interrupts"];
+pub const CAPI_DATA: &[&str] = &[
+    "zeo_rt_gates",
+    "zeo_rt_patched_bits",
+    "zeo_rt_pending_interrupts",
+];
 
 /// The signature row for `name`.
 pub fn sig(name: &str) -> &'static CapiSig {

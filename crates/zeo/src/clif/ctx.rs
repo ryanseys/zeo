@@ -100,6 +100,8 @@ pub(crate) struct Fx<'e, 'f> {
     /// The gates word's global value, declared at most once per function.
     /// See [`Fx::gates_base`].
     pub gates_gv: Option<ir::GlobalValue>,
+    /// [`Fx::gates_base`]'s twin for the patched-class bitmap.
+    pub patched_bits_gv: Option<ir::GlobalValue>,
     pub prev_line: Option<u32>,
     /// The stamped statement's FILE, tracked beside `prev_line` for line
     /// coverage: a statement that begins a spliced file is what marks the
@@ -264,6 +266,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             branch_cond: None,
             frame_hot: None,
             gates_gv: None,
+            patched_bits_gv: None,
             prev_line: None,
             prev_file: None,
             self_ptr: None,
@@ -507,6 +510,26 @@ impl<'e, 'f> Fx<'e, 'f> {
             None => {
                 let gv = self.em.module.declare_data_in_func(self.em.gates_id, self.b.func);
                 self.gates_gv = Some(gv);
+                gv
+            }
+        };
+        let ptr = self.em.ptr;
+        self.b.ins().symbol_value(ptr, gv)
+    }
+
+    /// The patched-class bitmap's base address, on [`Fx::gates_base`]'s
+    /// declare-once/materialize-per-site rule.
+    pub fn patched_bits_base(&mut self) -> ir::Value {
+        use cranelift_codegen::ir::InstBuilder;
+        use cranelift_module::Module;
+        let gv = match self.patched_bits_gv {
+            Some(gv) => gv,
+            None => {
+                let gv = self
+                    .em
+                    .module
+                    .declare_data_in_func(self.em.patched_bits_id, self.b.func);
+                self.patched_bits_gv = Some(gv);
                 gv
             }
         };

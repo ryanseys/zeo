@@ -138,6 +138,30 @@ pub const FRAME_NO_MARK: u32 = u32::MAX;
 /// must go through capi (trace events, pending-label handover).
 pub const GATE_FRAMES_INDIRECT_BIT: u16 = 512;
 
+/// The `zeo_rt_gates` bits that stand a TYPED DIRECT CALL down whatever class
+/// it nominated: `GATE_PENDING` (2), `GATE_MOVED` (4), `GATE_ARITY_DEBUG` (8),
+/// `GATE_MRO_DUPLICATES` (256), `GATE_FRAMES_INDIRECT` (512) and
+/// `GATE_PENDING_EXTENDS` (1024).
+///
+/// The four narrowed latches are deliberately absent -- `GATE_PATCHED_ANY`,
+/// `GATE_ANY_SINGLETONS`, `GATE_ANCESTRY_MUTATED`, `GATE_ANY_EXTENDED` -- and
+/// [`PATCHED_BITS_SYM`]'s per-class bit is what replaces them. Testing the
+/// whole word for zero cost a program 54% on a loop of typed calls for one
+/// `define_method` on an unrelated class.
+///
+/// `zeo-rt` owns the bit numbering and asserts this mask against it at
+/// compile time.
+pub const GATE_TYPED_DIRECT_SLOW: u16 = 2 | 4 | 8 | 256 | 512 | 1024;
+
+/// The exported bitmap of classes whose method resolution may differ from the
+/// frozen registry -- one bit per class id, word `id / 64`, bit `id % 64`.
+/// Emitted code loads its word at a link-time-known address.
+pub const PATCHED_BITS_SYM: &str = "zeo_rt_patched_bits";
+
+/// How many class ids [`PATCHED_BITS_SYM`] covers. A nominated class at or
+/// above this takes the dispatch route; `zeo-rt` answers for it from the set.
+pub const PATCHED_BITS_IDS: u32 = 1 << 16;
+
 // --- The C-side program description -----------------------------------------
 //
 // Everything below crosses the boundary as `.rodata` tables pointed to by one

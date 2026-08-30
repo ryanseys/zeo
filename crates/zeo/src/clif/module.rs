@@ -185,8 +185,12 @@ pub(crate) struct Emitter {
     /// a program-local table) -- what `Fx::check_ints` loads inline.
     pub pending_id: DataId,
     /// The runtime's `zeo_rt_gates` word: an emitter fast path loads it
-    /// inline, and only ZERO takes the guard-free arm.
+    /// inline and masks it.
     pub gates_id: DataId,
+    /// The runtime's `zeo_rt_patched_bits` bitmap -- one bit per class id.
+    /// A typed direct call loads its own class's word inline, at an address
+    /// and with a mask both fixed at compile time.
+    pub patched_bits_id: DataId,
     pub reopen_flags_id: DataId,
     /// `(builtin class id, method name)` -> its byte in `zeo_reopen_flags`.
     /// See [`super::names::REOPEN_FLAGS`]; empty for a program that reopens no
@@ -418,7 +422,11 @@ impl Emitter {
         let gates_id = module
             .declare_data("zeo_rt_gates", Linkage::Import, true, false)
             .map_err(|e| CodegenError::internal(format!("declaring zeo_rt_gates: {e}")))?;
+        let patched_bits_id = module
+            .declare_data(zeo_abi::abi::PATCHED_BITS_SYM, Linkage::Import, true, false)
+            .map_err(|e| CodegenError::internal(format!("declaring zeo_rt_patched_bits: {e}")))?;
         Ok(Emitter {
+            patched_bits_id,
             module,
             ptr,
             rodata_id,

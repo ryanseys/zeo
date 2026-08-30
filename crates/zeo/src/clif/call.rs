@@ -814,16 +814,23 @@ fn dynamic_send_argv(
 /// emitter holds that class's compiled body (`Emitter::typed_methods`).
 /// `None` = the site does not qualify and the caller lowers as before.
 ///
-/// The guard is three questions, `indexed_send`'s ladder: the receiver
-/// tag must be Object; the GATE WORD must be zero (any armed gate --
-/// a runtime definition, a singleton, an ancestry splice, a Ractor
-/// move, a patched class, tracing -- routes to the dispatch arm for
-/// good, the CallSite-bypass posture); and `zeo_rt_class_of` must
-/// answer the nominated class EXACTLY -- a subclass instance takes the
-/// slow arm, so a wrong static type is a slow path, never a wrong
-/// answer. Visibility needs no runtime half: nomination proved the
-/// method compile-time public, and a runtime `private :m` arms the
-/// overlay gate, which the zero test already routes away.
+/// The guard is four questions, `indexed_send`'s ladder: the receiver
+/// tag must be Object; no gate in
+/// [`zeo_abi::abi::GATE_TYPED_DIRECT_SLOW`] may be armed; the NOMINATED
+/// CLASS's own bit in `zeo_rt_patched_bits` must be clear; and
+/// `zeo_rt_class_of` must answer the nominated class EXACTLY -- a
+/// subclass instance takes the slow arm, so a wrong static type is a
+/// slow path, never a wrong answer. Visibility needs no runtime half:
+/// nomination proved the method compile-time public, and a runtime
+/// `private :m` patches the class, which the bit test routes away.
+///
+/// The third question used to be part of the second: the guard tested the
+/// whole gate word for ZERO, so one `define_method` on an unrelated class
+/// -- one `attr_accessor`, one `alias_method` -- sent every typed call in
+/// the program down dispatch for good, measured at +54%. The bit test
+/// costs no more than the zero test did: `zeo_rt_patched_bits` is a fixed
+/// static array, so the word's address and the mask are both settled at
+/// compile time.
 ///
 /// Every operand is evaluated ONCE, in ruby's order, into the same
 /// argv both arms read -- the slow arm never re-lowers. The body pushes
@@ -845,6 +852,11 @@ pub(crate) fn typed_direct_send(
     let Some(&cid) = fx.an.compiler.typed_call_sites.get(&site) else {
         return Ok(None);
     };
+    // The guard reads this class's bit out of a fixed-size bitmap; a class id
+    // past its span has no bit to read, so the site keeps dispatch.
+    if cid.0 >= zeo_abi::abi::PATCHED_BITS_IDS {
+        return Ok(None);
+    }
     // A box may carry its own overlay patch; boxed callers keep dispatch.
     if fx.box_id != 0 {
         return Ok(None);
@@ -876,6 +888,7 @@ pub(crate) fn typed_direct_send(
     super::stmt::stamp_call_line(fx, site);
 
     let gates_chk = fx.b.create_block();
+    let patch_chk = fx.b.create_block();
     let class_chk = fx.b.create_block();
     let fast = fx.b.create_block();
     let slow = fx.b.create_block();
@@ -893,7 +906,20 @@ pub(crate) fn typed_direct_send(
     fx.b.switch_to_block(gates_chk);
     let gbase = fx.gates_base();
     let gates = fx.b.ins().load(types::I16, fl, gbase, 0);
-    fx.b.ins().brif(gates, slow, &[], class_chk, &[]);
+    let wide = fx
+        .b
+        .ins()
+        .band_imm_u(gates, i64::from(zeo_abi::abi::GATE_TYPED_DIRECT_SLOW));
+    fx.b.ins().brif(wide, slow, &[], patch_chk, &[]);
+
+    fx.b.switch_to_block(patch_chk);
+    let pbase = fx.patched_bits_base();
+    let word = fx
+        .b
+        .ins()
+        .load(types::I64, fl, pbase, ((cid.0 / 64) * 8) as i32);
+    let bit = fx.b.ins().band_imm_u(word, (1u64 << (cid.0 % 64)) as i64);
+    fx.b.ins().brif(bit, slow, &[], class_chk, &[]);
 
     fx.b.switch_to_block(class_chk);
     let live_cid = fx.call_status("zeo_rt_class_of", &[recv_ptr]);
