@@ -154,16 +154,22 @@ const BUNDLE_DRIVER: &str = "require \"bundler\"\nrequire \"bundler/friendly_err
      \x20 Bundler::CLI.start(args, debug: true)\n\
      end\n";
 
-/// The driver for a `zeo <name> ...` subcommand, if `name` is one.
+/// The driver for a `zeo <name> ...` subcommand, and whether the name itself
+/// stays in the driver's `ARGV`.
 ///
-/// `gem` and `bundle` are the two, and the rule is deliberately not "unless a
-/// file by that name exists": that would make the same command line mean
-/// different things in different directories. A script really called `gem`
-/// still runs as `zeo ./gem`.
-fn subcommand_driver(name: Option<&str>) -> Option<&'static str> {
+/// The rule is deliberately not "unless a file by that name exists": that
+/// would make the same command line mean different things in different
+/// directories. A script really called `gem` still runs as `zeo ./gem`.
+///
+/// `install` is `bundle install` under its own name -- the verb people reach
+/// for, and the one every other language's tool spells the same way. It keeps
+/// its name so Bundler still sees the subcommand it dispatches on; the other
+/// two name the library, which its `ARGV` must not contain.
+fn subcommand_driver(name: Option<&str>) -> Option<(&'static str, bool)> {
     match name? {
-        "gem" => Some(GEM_DRIVER),
-        "bundle" | "bundler" => Some(BUNDLE_DRIVER),
+        "gem" => Some((GEM_DRIVER, false)),
+        "bundle" | "bundler" => Some((BUNDLE_DRIVER, false)),
+        "install" => Some((BUNDLE_DRIVER, true)),
         _ => None,
     }
 }
@@ -258,9 +264,12 @@ subcommands:
                         both ask rubygems for an INSTALLED bundler gem,
                         and zeo carries bundler as a library. See
                         docs/COMPATIBILITY.md.
-                        A script really named `gem` or `bundle` still runs as
-                        `zeo ./gem`; the subcommand never depends on what is
-                        in the current directory.
+  install <args...>     `bundle install` under its own name, with the same
+                        arguments -- the verb the rest of the ecosystem
+                        spells the same way
+                        A script really named `gem`, `bundle` or `install`
+                        still runs as `zeo ./gem`; the subcommand never
+                        depends on what is in the current directory.
 
 options:
   -o <output>           where to write the compiled binary
@@ -366,10 +375,10 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     // is what keeps them its own: without it a `zeo gem --version` would read
     // as zeo's `--version` rather than rubygems'.
     let argv = match subcommand_driver(argv.first().map(String::as_str)) {
-        Some(driver) => std::iter::once("-e".to_string())
+        Some((driver, keeps_name)) => std::iter::once("-e".to_string())
             .chain(std::iter::once(driver.to_string()))
             .chain(std::iter::once("--".to_string()))
-            .chain(argv.into_iter().skip(1))
+            .chain(argv.into_iter().skip(usize::from(!keeps_name)))
             .collect(),
         None => argv,
     };
@@ -1258,6 +1267,16 @@ mod tests {
         // `bundler` is the same verb, which is what the binstub is called on
         // some installs.
         assert!(matches!(ok(&["bundler", "-v"]).source, Source::Eval(_)));
+
+        // `zeo install` is `bundle install`, and KEEPS its own name: Bundler
+        // dispatches on it, so dropping it the way `bundle` drops its would
+        // run bundler's default command instead.
+        let install = ok(&["install", "--local"]);
+        match &install.source {
+            Source::Eval(code) => assert!(code.contains("Bundler::CLI.start")),
+            _ => panic!("expected an eval source"),
+        }
+        assert_eq!(install.program_args, ["install", "--local"]);
 
         // The verb is only a verb in FIRST position. A file really called
         // `gem` is reachable, and a file whose name merely contains it is
