@@ -1623,10 +1623,10 @@ ruby_class! {
     def "reverse_each" arity 0 (recv, *_args, &block) { own_row!(recv, |s| enumerable::reverse_each_own(s, __args, block)) }
     def "freeze"(recv) { inherited_row!(kernel, "freeze", recv, __args, None) }
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
-    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
+    def "inspect"(recv) { Ok(RubyValue::Str(crate::string_new(recv.structural_inspect()?))) }
     // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
     // spell the two differently, so each goes to its own Kernel row.
-    def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
+    def "to_s"(recv) { Ok(RubyValue::Str(crate::string_new(recv.structural_to_s()?))) }
 }
 
 /// Coerces every argument of a variadic set op (`union`/`intersection`/

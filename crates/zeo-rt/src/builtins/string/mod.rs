@@ -2457,7 +2457,7 @@ ruby_class! {
     def "dup"(recv) { inherited_row!(kernel, "dup", recv, __args, None) }
     def "freeze"(recv) { inherited_row!(kernel, "freeze", recv, __args, None) }
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
-    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
+    def "inspect"(recv) { Ok(RubyValue::Str(crate::string_new(recv.structural_inspect()?))) }
 }
 
 /// CRuby's `rb_str_casecmp`: byte order with only the ASCII letter range

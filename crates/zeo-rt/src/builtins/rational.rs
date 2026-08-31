@@ -684,10 +684,10 @@ ruby_class! {
     // Each calls the very row it would otherwise have inherited, so `.owner`
     // and `instance_methods(false)` agree and there is still only one body.
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
-    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
+    def "inspect"(recv) { Ok(RubyValue::Str(crate::string_new(recv.structural_inspect()?))) }
     // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
     // spell the two differently, so each goes to its own Kernel row.
-    def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
+    def "to_s"(recv) { Ok(RubyValue::Str(crate::string_new(recv.structural_to_s()?))) }
     def "fdiv"(recv, _other) { inherited_row!(numeric, "fdiv", recv, __args, None) }
     def "quo"(recv, _other) { inherited_row!(numeric, "quo", recv, __args, None) }
     def "negative?"(recv) { inherited_row!(numeric, "negative?", recv, __args, None) }

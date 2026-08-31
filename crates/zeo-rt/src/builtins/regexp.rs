@@ -341,12 +341,12 @@ ruby_class! {
         live_re(recv)?;
         inherited_row!(kernel, "hash", recv, __args, None)
     }
-    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
+    def "inspect"(recv) { Ok(RubyValue::Str(crate::string_new(recv.structural_inspect()?))) }
     // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
     // spell the two differently, so each goes to its own Kernel row.
     def "to_s"(recv) {
         live_re(recv)?;
-        inherited_row!(kernel, "to_s", recv, __args, None)
+        Ok(RubyValue::Str(crate::string_new(recv.structural_to_s()?)))
     }
 }
 

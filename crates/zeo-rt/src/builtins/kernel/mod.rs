@@ -1490,12 +1490,26 @@ mod tests {
 
     #[test]
     fn to_s_and_inspect_render_like_puts_and_p() {
-        let s = imethod("to_s")(&RubyValue::Nil, &[], None).unwrap();
-        let RubyValue::Str(s) = s else { panic!() };
-        assert_eq!(&*s.lock().to_utf8_lossy(), "");
-        let i = imethod("inspect")(&RubyValue::Nil, &[], None).unwrap();
-        let RubyValue::Str(i) = i else { panic!() };
-        assert_eq!(&*i.lock().to_utf8_lossy(), "nil");
+        // KERNEL's rows, which are `rb_any_to_s`/`rb_obj_inspect` -- the class
+        // and an address, for EVERY receiver. Oracle-checked against ruby
+        // 4.0.6: `Kernel.instance_method(:inspect).bind(nil).call` answers
+        // `"#<NilClass:0x...>"`, not `"nil"`. `nil.inspect` is `"nil"`
+        // because NilClass carries its own row, which is a different
+        // question -- and the one a `super` out of a reopened row resumes
+        // past.
+        // The CLASS NAME is not asserted: no registry is installed in a bare
+        // unit test, so `class_name` falls back to "Object". The differential
+        // probe against ruby 4.0.6 covers the name; the shape is what this
+        // test can see.
+        for name in ["to_s", "inspect"] {
+            let v = imethod(name)(&RubyValue::Nil, &[], None).unwrap();
+            let RubyValue::Str(v) = v else { panic!() };
+            let v = v.lock().to_utf8_lossy().into_owned();
+            assert!(
+                v.starts_with("#<") && v.contains(":0x") && v.ends_with('>'),
+                "Kernel#{name} answered {v}"
+            );
+        }
     }
 
     #[test]

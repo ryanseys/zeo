@@ -273,7 +273,7 @@ pub fn observed_class_id(v: &RubyValue) -> zeo_abi::ClassId {
 /// primitive took the same path.
 pub(crate) fn default_inspect(v: &RubyValue) -> Result<String, crate::Signal> {
     let RubyValue::Object(o) = v else {
-        return v.try_inspect_string();
+        return Ok(value_object_repr(v));
     };
     let seen = &mut recursion::Visited::default();
     match o.builtin_payload() {
@@ -288,7 +288,7 @@ pub(crate) fn default_inspect(v: &RubyValue) -> Result<String, crate::Signal> {
 /// [`default_inspect`]'s `to_s` twin -- CRuby's `rb_any_to_s`.
 pub(crate) fn default_to_s(v: &RubyValue) -> Result<String, crate::Signal> {
     let RubyValue::Object(o) = v else {
-        return v.try_display_string();
+        return Ok(value_object_repr(v));
     };
     let seen = &mut recursion::Visited::default();
     match o.builtin_payload() {
@@ -307,6 +307,26 @@ pub(crate) fn default_to_s(v: &RubyValue) -> Result<String, crate::Signal> {
 /// never-assigned ivar, but our generated structs pre-declare every `@x` the
 /// class body mentions, so an unassigned one shows as `@x=nil` -- same root as
 /// `ivar_get_named`'s invented-ivar TODO.
+/// CRuby's `rb_obj_inspect`/`rb_any_to_s` for a receiver that is NOT an
+/// `RObj`: `#<Array:0x...>`, the class and an address, with no structure.
+///
+/// This is what `Kernel#inspect` answers, and it is only ever REACHED for a
+/// builtin through a `super` out of a reopened row -- every builtin with a
+/// rendering of its own carries it in its own `#inspect`. Ruby agrees:
+/// `class Array; def inspect = "A" + super; end` answers
+/// `"A#<Array:0x...>"`, because the `def` REPLACED the row that renders the
+/// elements.
+pub(crate) fn value_object_repr(v: &RubyValue) -> String {
+    let name = crate::dispatch::class_name(v.class_id()).unwrap_or_else(|| "Object".to_string());
+    // The identity a `RubyValue` already answers for `equal?`/`object_id`,
+    // so the address here and the one `#object_id` reports agree.
+    let addr = match crate::builtins::kernel::object_id_of(v) {
+        RubyValue::Int(i) => i as usize,
+        _ => 0,
+    };
+    format!("#<{name}:0x{addr:016x}>")
+}
+
 pub(crate) fn default_object_repr(
     o: &crate::RObj,
     with_ivars: bool,
@@ -505,6 +525,12 @@ impl RubyValue {
         if let Some(r) = self.reopen_render(crate::symbol::wk::to_s(), seen) {
             return r;
         }
+        self.display_body(seen)
+    }
+
+    /// [`Self::display_with`] minus the override probe -- see
+    /// [`Self::inspect_body`].
+    fn display_body(&self, seen: &mut recursion::Visited) -> Result<String, crate::Signal> {
         Ok(match self {
             RubyValue::Nil => String::new(),
             RubyValue::Bool(b) => b.to_string(),
@@ -627,6 +653,24 @@ impl RubyValue {
         self.inspect_with(&mut recursion::Visited::default())
     }
 
+    /// This value's OWN rendering, with the builtin-reopen probe skipped for
+    /// the receiver -- what a builtin's `#inspect` ROW does.
+    ///
+    /// The probe is what a plain `p x` needs (an override wins), and it is
+    /// exactly what the row must not do: the row IS the thing an override's
+    /// `super` resumes at, so asking again re-entered the override until the
+    /// stack ran out. Nested ELEMENTS keep their probe -- ruby's `rb_inspect`
+    /// dispatches per element, so `[5].inspect` still honours an
+    /// `Integer#inspect` override.
+    pub fn structural_inspect(&self) -> Result<String, crate::Signal> {
+        self.inspect_body(&mut recursion::Visited::default())
+    }
+
+    /// [`Self::structural_inspect`]'s `to_s` twin.
+    pub fn structural_to_s(&self) -> Result<String, crate::Signal> {
+        self.display_body(&mut recursion::Visited::default())
+    }
+
     /// `inspect_string`'s recursive worker -- same visited-STACK discipline
     /// as `display_with` (its docs explain the push/pop shape). The marker
     /// is chosen by the RECURRING container's own kind, so a cycle that
@@ -642,6 +686,13 @@ impl RubyValue {
         if let Some(r) = self.reopen_render(crate::symbol::wk::inspect(), seen) {
             return r;
         }
+        self.inspect_body(seen)
+    }
+
+    /// [`Self::inspect_with`] minus the override probe -- the per-variant
+    /// rendering itself. Split out so a builtin's own `#inspect` row can
+    /// reach it without re-asking the question the row is the answer to.
+    fn inspect_body(&self, seen: &mut recursion::Visited) -> Result<String, crate::Signal> {
         Ok(match self {
             RubyValue::Nil => "nil".to_string(),
             // A class renders by name -- plus the one suffix ruby's

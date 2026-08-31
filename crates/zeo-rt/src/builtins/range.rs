@@ -1175,10 +1175,10 @@ ruby_class! {
         Err(range_reinit_refusal(recv))
     }
     def "hash"(recv) { inherited_row!(kernel, "hash", recv, __args, None) }
-    def "inspect"(recv) { inherited_row!(kernel, "inspect", recv, __args, None) }
+    def "inspect"(recv) { Ok(RubyValue::Str(crate::string_new(recv.structural_inspect()?))) }
     // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
     // spell the two differently, so each goes to its own Kernel row.
-    def "to_s"(recv) { inherited_row!(kernel, "to_s", recv, __args, None) }
+    def "to_s"(recv) { Ok(RubyValue::Str(crate::string_new(recv.structural_to_s()?))) }
     // An unbounded range's count is `Infinity`, answered WITHOUT iterating --
     // `range.c`'s `range_count`, which takes the shortcut only for the bare
     // form. An argument or a block has to walk, and legitimately never
