@@ -31,6 +31,7 @@ use static_guards::*;
 use top_stmts::*;
 pub(crate) mod mro;
 pub(crate) mod alias_reveals;
+pub(crate) mod dyn_defs;
 pub(crate) mod redefs;
 
 use crate::analyze_error::AnalyzeError;
@@ -378,6 +379,10 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // the `at` of every later `def`, and the reveal has to land where the
     // redefinition splice left the position.
     alias_reveals::resolve(compiler);
+
+    // ...and every `def` in a class body that installs methods at run time,
+    // which is the third way a definition's position becomes observable.
+    dyn_defs::resolve(compiler);
 
     // Which compiled definitions announce themselves. Runs here because it
     // needs `class_methods` flattened over the ancestry to see the hook, and

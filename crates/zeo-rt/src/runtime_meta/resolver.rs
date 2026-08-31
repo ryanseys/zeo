@@ -192,6 +192,23 @@ pub fn overlay_class_method(id: ClassId, name: Symbol) -> Option<RProc> {
     c.get(&id.0).and_then(pick)
 }
 
+/// The classes a class-method lookup on `id` may inherit from: `id`'s own
+/// ancestry with every MODULE dropped.
+///
+/// A class method is inherited down the SUPERCLASS chain alone. An included
+/// module contributes its instance methods, never its `def self.x` -- so
+/// walking the whole linearization made `Dir[...]` answer the `def self.[]`
+/// of a module that had been `include`d into `Object`, because `Dir`'s
+/// ancestry runs through `Object`. A module's class methods reach a class
+/// only through `extend`, which the overlay keeps in its own map.
+fn inherited_singleton_chain(id: ClassId, skip: usize) -> impl Iterator<Item = ClassId> {
+    crate::dispatch::ancestors_of_value(id)
+        .iter()
+        .copied()
+        .skip(skip)
+        .filter(|&a| !crate::dispatch::class_is_module(a).unwrap_or(false))
+}
+
 /// A module prepended into an ANCESTOR's singleton class, for a receiver that
 /// inherits it.
 ///
@@ -205,7 +222,7 @@ pub fn overlay_class_method(id: ClassId, name: Symbol) -> Option<RProc> {
 /// `None` as soon as a nearer ancestor defines the name itself: that row is
 /// closer than any prepend further up, and the flat path already serves it.
 pub fn inherited_singleton_prepend(id: ClassId, name: Symbol) -> Option<RProc> {
-    for &anc in crate::dispatch::ancestors_of_value(id).iter() {
+    for anc in inherited_singleton_chain(id, 0) {
         if let Some(p) = maps()
             .classes
             .read()
@@ -238,7 +255,7 @@ pub fn inherited_singleton_prepend(id: ClassId, name: Symbol) -> Option<RProc> {
 /// `None` as soon as a nearer ancestor DEFINES the name itself: that row is
 /// closer than any overlay further up, and the flat path already serves it.
 pub fn inherited_overlay_class_method(id: ClassId, name: Symbol) -> Option<(ClassId, RProc)> {
-    for &anc in crate::dispatch::ancestors_of_value(id).iter().skip(1) {
+    for anc in inherited_singleton_chain(id, 1) {
         if let Some(p) = overlay_class_method(anc, name) {
             return Some((anc, p));
         }
