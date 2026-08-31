@@ -72,6 +72,7 @@ pub(crate) mod names;
 pub mod parse;
 pub mod progcache;
 pub mod ruby_features;
+pub mod subcommand;
 pub mod types;
 
 /// What a compile is FOR.

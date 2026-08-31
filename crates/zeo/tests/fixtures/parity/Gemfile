@@ -1,0 +1,10 @@
+# The parity probe's Gemfile. Both engines resolve THIS, from `vendor/cache`
+# alone -- `bundle install --local` never opens a socket, so the probe is
+# hermetic and the two sides cannot disagree because one of them reached the
+# network and the other did not.
+#
+# `puretop` depends on `pureleaf`, so the install has an order to get right and
+# a binstub to write.
+source "https://rubygems.org"
+
+gem "puretop"

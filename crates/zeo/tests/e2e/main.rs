@@ -22,6 +22,7 @@ mod zeo_bin;
 
 mod blocks_procs;
 mod boxes;
+mod bundler_parity;
 mod cext_build;
 mod classes;
 mod codegen;
