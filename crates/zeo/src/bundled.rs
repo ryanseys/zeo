@@ -72,7 +72,9 @@ pub const NOT_SHIPPED: &[(&str, &str)] = &[(
      `rbs_extension`, which the bundled tier has no way to build, so the \
      Ruby half cannot run. Shipping it is pure cost -- it also carries a \
      computed require, so every program that touches rdoc drags all 850 of \
-     its files in, and task #121 then leaks their top-level defs into main.",
+     its files in for nothing. (Those files no longer LEAK: a unit's `def`s \
+     are concealed until the unit runs. The extension is what still \
+     stands.)",
 )];
 
 /// Every library the dev tree ships, in precedence order: zeo's own first, so

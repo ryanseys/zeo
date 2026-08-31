@@ -117,6 +117,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         alias_rows,
         undef_rows,
         conceal,
+        conceal_methods,
         singleton_surrogates,
         redefs,
         boot_redefs,
@@ -136,6 +137,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         collected.alias_rows,
         collected.undef_rows,
         collected.conceal,
+        collected.conceal_methods,
         collected.singleton_surrogates,
         collected.redefs,
         collected.boot_redefs,
@@ -666,6 +668,21 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         ids: vec![],
         flag: 0,
     }));
+    // ...and so do the rows a compiled-in unit's `def`s own, until the
+    // unit's own function reveals them.
+    reg_rows.extend(
+        conceal_methods
+            .iter()
+            .map(|(class, name, class_side, unit)| statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_CONCEAL_METHOD,
+                class: *class,
+                a: name.clone(),
+                b: String::new(),
+                f: None,
+                ids: vec![*unit],
+                flag: u8::from(*class_side),
+            }),
+    );
     // The verb byte `zeo_rt_runtime_set_visibility` and
     // `zeo_rt_install_positional_visibility` both read.
     fn vis_byte(v: crate::hir::Visibility) -> u8 {

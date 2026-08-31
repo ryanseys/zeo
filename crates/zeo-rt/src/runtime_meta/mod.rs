@@ -413,6 +413,17 @@ const GATE_ARITY_DEBUG: u16 = 8;
 /// extend M; end; end`) never seats its edge, so the window stays open for
 /// that program -- correct, if slow: the extend genuinely has not happened.
 const GATE_PENDING_EXTENDS: u16 = 1024;
+/// Some compiled-in UNIT's method rows are still concealed -- see
+/// [`crate::dispatch::concealed`]. The third clearable bit, and a WINDOW
+/// like the two above it: it opens at boot and closes when the last
+/// concealing unit's file has run.
+///
+/// Deliberately NOT in [`GATE_LIVE_MASK`] or [`GATE_CACHE_WIDE`]. A unit's
+/// names already join the compiler's `runtime_patches`, so their call sites
+/// dispatch dynamically with no cache to spoil; and a program that never
+/// requires a swept file keeps this bit for its whole run, which through the
+/// live mask would turn every inline cache in the process off.
+const GATE_CONCEALED: u16 = 2048;
 const GATE_PATCHED_ANY: u16 = 16;
 const GATE_ANY_SINGLETONS: u16 = 32;
 const GATE_ANCESTRY_MUTATED: u16 = 64;
@@ -545,6 +556,24 @@ pub(crate) fn arm_arity_debug() {
 /// consumes the label; the inline stores do neither.
 pub(crate) fn arm_frames_indirect() {
     GATES.fetch_or(GATE_FRAMES_INDIRECT, Ordering::Release);
+}
+
+/// Whether some compiled-in unit still holds method rows back
+/// ([`GATE_CONCEALED`]) -- the gate in front of every concealment probe.
+#[inline(always)]
+pub fn any_concealed() -> bool {
+    GATES.load(Ordering::Relaxed) & GATE_CONCEALED != 0
+}
+
+/// Open the concealment window -- once, from `register_program`, and only
+/// when the program really carries concealed rows.
+pub(crate) fn arm_concealed() {
+    GATES.fetch_or(GATE_CONCEALED, Ordering::Release);
+}
+
+/// Close it, when the last concealing unit's file has run.
+pub(crate) fn disarm_concealed() {
+    GATES.fetch_and(!GATE_CONCEALED, Ordering::Release);
 }
 
 /// Whether any `Ractor` move has ever poisoned an object -- the cheap gate

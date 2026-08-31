@@ -499,6 +499,13 @@ pub const REG_MARK_UNDEFINED: u8 = 8;
 /// guarded body reveals it.
 pub const REG_CONCEAL_CLASS: u8 = 9;
 
+/// `RegRow.kind`: `a` names a method of `class` a compiled-in UNIT wrote --
+/// registered so the MRO walk can find the body once the unit loads, and
+/// CONCEALED until it does. `flag` is the channel (0 instance, 1 class),
+/// `ids[0]` the unit that reveals it. The method twin of
+/// [`REG_CONCEAL_CLASS`].
+pub const REG_CONCEAL_METHOD: u8 = 20;
+
 /// A builtin reopen that CHANGED the class's ancestry (`class Array;
 /// include M; end`): `ids` = the full ancestor chain, patched over the
 /// entry `register_builtins` already made rather than replacing it (a

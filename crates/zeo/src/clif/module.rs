@@ -285,6 +285,12 @@ pub(crate) struct MethodDecl {
     /// would jump straight past it -- and the row would answer from program
     /// start, which is the thing the guard exists to prevent.
     pub reopen_flagged: bool,
+    /// Whether a compiled-in UNIT wrote this `def`, so its row is CONCEALED
+    /// until the unit's file runs. Same reason as `reopen_flagged`: the
+    /// concealment is a registry question the dynamic send asks, and a
+    /// direct call never asks it -- so `leaked_helper(1, 2)` answered from
+    /// program start for a file nothing had required.
+    pub concealed: bool,
 }
 
 impl Emitter {

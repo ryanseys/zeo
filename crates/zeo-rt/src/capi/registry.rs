@@ -170,6 +170,9 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
     // body's row. Collected and applied after.
     let mut boot_metas: Vec<u32> = Vec::new();
     let mut boot_redefs: Vec<&abi::RegRow> = Vec::new();
+    // The rows a compiled-in unit wrote. Collected here and installed in one
+    // call below, so the concealment gate arms once rather than per row.
+    let mut conceal_methods: Vec<(u32, Symbol, bool, u32)> = Vec::new();
     for r in unsafe { rows(desc.reg_rows, desc.n_reg_rows) } {
         let ids = || {
             unsafe { rows(r.ids, r.n_ids) }
@@ -235,6 +238,12 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 value_fn(r.f.expect("a super-target row carries its fn")),
             ),
             abi::REG_CONCEAL_CLASS => crate::constants::conceal_class(r.class),
+            abi::REG_CONCEAL_METHOD => conceal_methods.push((
+                r.class,
+                Symbol::intern(text(r.a)),
+                r.flag != 0,
+                unsafe { *r.ids },
+            )),
             // Both handled in the pre-pass above.
             abi::REG_REGISTER_BUILTIN | abi::REG_SET_ANCESTORS => {}
             abi::REG_MARK_REFINEMENT => {
@@ -321,6 +330,9 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
         .map(|r| (r.class, text(r.name), r.verb))
         .collect();
     registry.mark_visibility_rows(&vis);
+    // Before the registry goes live, so no lookup can answer from a row
+    // whose unit has not run.
+    crate::dispatch::concealed::install(conceal_methods);
     crate::dispatch::install_class_registry(registry);
 
     // The FIRST body of every observable redefinition timeline, installed

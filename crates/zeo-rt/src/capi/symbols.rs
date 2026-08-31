@@ -225,6 +225,7 @@ capi_symbols!(
     values::zeo_rt_retain,
     signals::zeo_rt_return_targets_here,
     objects::zeo_rt_reveal_class,
+    objects::zeo_rt_reveal_unit_methods,
     objects::zeo_rt_runtime_class_method_visibility,
     objects::zeo_rt_runtime_replace_class_method,
     objects::zeo_rt_runtime_replace_method,

@@ -245,6 +245,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         let sites_before = compiler.class_body_sites.len();
         let defs_before = compiler.top_level_defs.len();
         let classes_before = compiler.classes.len();
+        let scopes_before = compiler.scopes.len();
         for stmt in unit.body {
             if let Err(e) = process_top_stmt(compiler, stmt, false, &mut stmts, &mut unit_pre_exec)
             {
@@ -271,6 +272,14 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
                 for c in &mut compiler.classes[classes_before..] {
                     if c.unit == Some(crate::compiler::Compiler::UNIT_UNRESOLVED) {
                         c.unit = Some(uidx);
+                    }
+                }
+                // ...and the same for its METHODS, wherever they landed: a
+                // unit reopening a class the main file already defined adds
+                // rows to a class outside the range above.
+                for s in &mut compiler.scopes[scopes_before..] {
+                    if s.unit == Some(crate::compiler::Compiler::UNIT_UNRESOLVED) {
+                        s.unit = Some(uidx);
                     }
                 }
                 unit_pre_exec.append(&mut stmts);

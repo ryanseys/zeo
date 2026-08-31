@@ -750,8 +750,16 @@ pub(super) fn define_toplevel(
     );
     fx.self_ptr = Some(self_addr);
 
-    if let TopScope::Main { hoisted } = scope {
-        super::emit::main_installs(&mut fx, analyzed, hoisted)?;
+    match scope {
+        TopScope::Main { hoisted } => super::emit::main_installs(&mut fx, analyzed, hoisted)?,
+        // The unit's `def`s registered at startup and were CONCEALED there
+        // (`REG_CONCEAL_METHOD`); their file is running now, so they answer
+        // from here on. Emitted unconditionally -- the runtime call is a
+        // no-op for a unit that concealed nothing.
+        TopScope::Unit { index, .. } => {
+            let u = fx.b.ins().iconst(types::I32, *index as i64);
+            fx.call("zeo_rt_reveal_unit_methods", &[u]);
+        }
     }
     // Defs registered through the row tables run nothing in statement
     // position (registration precedes the

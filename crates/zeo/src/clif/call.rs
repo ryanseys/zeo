@@ -867,7 +867,12 @@ pub(crate) fn typed_direct_send(
     // Plain positional bodies only, count-matched -- the receiverless
     // direct path's own gate. An arity MISMATCH must raise through
     // dispatch (the runtime owns the error), not bind wrong.
-    if !decl.plain || decl.reopen_flagged || decl.arity != args.len() || decl.kw_direct.is_some() {
+    if !decl.plain
+        || decl.reopen_flagged
+        || decl.concealed
+        || decl.arity != args.len()
+        || decl.kw_direct.is_some()
+    {
         return Ok(None);
     }
     let (body_id, has_blk) = (decl.body, decl.has_blk);

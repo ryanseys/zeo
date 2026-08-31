@@ -965,6 +965,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_reveal_unit_methods",
+        params: &[U32],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_runtime_class_method_visibility",
         params: &[U32, U32, U8],
         ret: Some(I32),

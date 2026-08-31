@@ -86,6 +86,7 @@ pub(super) fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 kw_direct: layout.kw_direct.clone(),
                 has_blk,
                 reopen_flagged,
+                concealed: scope.unit.is_some(),
             },
         );
         out.push(DefSpec {

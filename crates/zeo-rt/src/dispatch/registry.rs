@@ -546,7 +546,18 @@ impl ClassRegistry {
             }
             map
         });
-        Some(map.get(&name).copied())
+        let hit = map.get(&name).copied();
+        // The flattened winner may be a row whose UNIT has not run. The map
+        // is fill-once, so it cannot be filtered as it is built -- answering
+        // "cannot say" instead sends the caller down the real walk, which
+        // skips the concealed position and finds whatever ancestor genuinely
+        // defines the name.
+        if let Some(h) = hit
+            && super::concealed::is_concealed(h.owner.0, name, false)
+        {
+            return None;
+        }
+        Some(hit)
     }
 
     /// `flat_value_hit`'s class-receiver twin: user `def self.x` rows over
@@ -559,6 +570,11 @@ impl ClassRegistry {
     ) -> Option<(ValueImpl, Option<&'static str>)> {
         let entry = self.entries.get(&id.0)?;
         flattenable(std::slice::from_ref(&id)).then_some(())?;
+        // See `flat_value_hit`: this map is keyed on `id` alone, so one
+        // question answers for the whole of it.
+        if super::concealed::is_concealed(id.0, name, true) {
+            return None;
+        }
         let map = entry.flat_class.get_or_init(|| {
             let mut map = crate::FMap::default();
             // The rows every caller may see: the shared ones, plus -- when
@@ -1144,6 +1160,9 @@ impl ClassRegistry {
     }
 
     pub(super) fn lookup(&self, id: ClassId, name: Symbol) -> Option<&MethodImpl> {
+        if super::concealed::is_concealed(id.0, name, false) {
+            return None;
+        }
         self.entries.get(&id.0)?.methods.get(&name)
     }
 
@@ -1185,7 +1204,12 @@ impl ClassRegistry {
         // any value rows at all, which no ordinary user class does.
         let shadowed =
             |e: &ClassEntry| !e.own_value_names.is_empty() && e.own_value_names.contains(&name);
-        if let Some(e) = self.entries.get(&id.0).filter(|_| !removed(id)) {
+        // A row a compiled-in UNIT wrote, whose file has not run: the
+        // position contributes nothing at all, so the walk carries past it
+        // to the ancestor that really defines the name -- which is what
+        // ruby's walk finds while the `require` is still ahead.
+        let hidden = |cid: ClassId| super::concealed::is_concealed(cid.0, name, false);
+        if let Some(e) = self.entries.get(&id.0).filter(|_| !removed(id) && !hidden(id)) {
             if let Some(m) = e.methods.get(&name) {
                 // The flattened row may have come from an ANCESTOR that a
                 // runtime `undef_method` has since retired -- `module M; def
@@ -1208,7 +1232,7 @@ impl ClassRegistry {
             if tombstoned(anc) {
                 return None;
             }
-            if removed(anc) {
+            if removed(anc) || hidden(anc) {
                 continue;
             }
             let Some(e) = self.entries.get(&anc.0) else {
@@ -1260,6 +1284,7 @@ impl ClassRegistry {
         // `instance_methods(false)` and the `super` walk each ask.
         (e.own_methods.contains(&name) || e.own_value_names.contains(&name))
             && !e.foreign_value_names.contains(&name)
+            && !super::concealed::is_concealed(id.0, name, false)
     }
 
     /// This class's registered instance-method names, each tagged private/not,
@@ -1282,7 +1307,12 @@ impl ClassRegistry {
         let consider = |name: Symbol,
                         seen: &mut HashSet<Symbol>,
                         out: &mut Vec<(Symbol, MethodVisibility)>| {
-            if e.undefined_methods.contains(&name) || !seen.insert(name) {
+            // A row whose unit has not run is not a method yet, and
+            // `instance_methods`/`respond_to?` must not report one.
+            if e.undefined_methods.contains(&name)
+                || super::concealed::is_concealed(id.0, name, false)
+                || !seen.insert(name)
+            {
                 return;
             }
             let vis = if e.protected_methods.contains(&name) {
@@ -1349,6 +1379,7 @@ impl ClassRegistry {
                     .keys()
                     .filter(|(bx, _)| *bx == 0 || *bx == effective)
                     .map(|&(_, sym)| sym)
+                    .filter(|&sym| !super::concealed::is_concealed(id.0, sym, true))
                     .collect()
             }
         }
@@ -1384,6 +1415,9 @@ impl ClassRegistry {
         // `class << self` asked about the overlay id and was told the method
         // did not exist.
         let id = ClassId(crate::boxes::overlay_root(id.0));
+        if super::concealed::is_concealed(id.0, name, true) {
+            return None;
+        }
         let entry = self.entries.get(&id.0)?;
         let effective = effective_box(id, box_id);
         if effective != 0
@@ -1400,6 +1434,9 @@ impl ClassRegistry {
         box_id: u32,
         name: Symbol,
     ) -> Option<ValueImpl> {
+        if super::concealed::is_concealed(id.0, name, false) {
+            return None;
+        }
         let entry = self.entries.get(&id.0)?;
         if box_id != 0
             && let Some(f) = entry.value_methods.get(&(box_id, name))

@@ -15,6 +15,7 @@ use std::sync::{Arc, OnceLock};
 mod alloc;
 mod caches;
 mod classmeta;
+pub(crate) mod concealed;
 mod define;
 mod errors;
 mod impls;

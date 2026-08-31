@@ -110,6 +110,14 @@ pub struct Scope {
     ///
     /// See `analyze::register_conditional_defs`.
     pub runtime_conditional: bool,
+    /// The compiled-in unit whose file wrote this `def`, if any -- the
+    /// method twin of [`ClassInfo::unit`]. A unit is a load-path file
+    /// nothing has required yet, so CRuby has no such method until the file
+    /// runs. The row registers at startup all the same (the static MRO
+    /// needs a shape) and is CONCEALED until the unit's function reveals
+    /// it. Materialization clones the scope, so a module method carries the
+    /// mark onto every class that mixed it in.
+    pub unit: Option<u32>,
     /// The `ruby2_keywords` directive marked this `def` -- see
     /// [`crate::hir::NodeFlag::RUBY2_KEYWORDS`].
     pub ruby2_keywords: bool,

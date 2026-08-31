@@ -1290,6 +1290,15 @@ pub unsafe extern "C" fn zeo_rt_reveal_class(cid: u32) {
     crate::constants::reveal_class(cid);
 }
 
+/// The method twin: unit `unit`'s file is running now, so the `def`s it
+/// wrote answer from here on. Emitted at the head of every unit function
+/// and idempotent -- one feature reachable under two spellings runs one
+/// function, and a unit that concealed nothing is simply not in the table.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_reveal_unit_methods(unit: u32) {
+    crate::dispatch::concealed::reveal_unit(unit);
+}
+
 /// A reference to a runtime-CONDITIONAL class: `NameError` while the
 /// guarded body has not run (`uninitialized constant Foo`), the Class
 /// value once it has.

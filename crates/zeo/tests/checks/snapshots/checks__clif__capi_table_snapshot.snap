@@ -187,6 +187,7 @@ zeo_rt_rescue_matches_any ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_retain ([Ptr]) -> None
 zeo_rt_return_targets_here ([]) -> Some(U8)
 zeo_rt_reveal_class ([U32]) -> None
+zeo_rt_reveal_unit_methods ([U32]) -> None
 zeo_rt_runtime_class_method_visibility ([U32, U32, U8]) -> Some(I32)
 zeo_rt_runtime_replace_class_method ([U32, Ptr, Usize, Ptr]) -> None
 zeo_rt_runtime_replace_method ([U32, Ptr, Usize, Ptr]) -> None

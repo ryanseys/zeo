@@ -903,6 +903,12 @@ pub(super) fn register_method(
         // Set by `register_conditional_defs`, the one caller that registers a
         // `def` whose branch may not run.
         runtime_conditional: false,
+        // The sentinel `ClassInfo::unit` uses: the real index lands when the
+        // unit survives, and a DECLINED unit keeps it -- that unit never
+        // runs, so its methods stay concealed for the whole program.
+        unit: compiler
+            .unit_walk
+            .then_some(crate::compiler::Compiler::UNIT_UNRESOLVED),
         // `ruby2_keywords def fwd(*a)`: the directive marked the `def` node at
         // lowering; carry it onto the scope, where codegen reads it.
         ruby2_keywords: def_node.is_some_and(|n| {

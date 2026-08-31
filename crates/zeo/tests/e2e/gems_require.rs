@@ -1743,3 +1743,103 @@ fn an_autoload_and_a_guarded_require_of_one_file_share_its_unit() {
         out.stderr
     );
 }
+
+#[test]
+fn a_swept_units_definitions_wait_for_the_unit_to_run() {
+    // A computed `require` anywhere in a package sweeps every `.rb` in it
+    // into feature units, so a run-time `require <var>` can reach any of
+    // them. Their `def`s register at startup all the same -- the static MRO
+    // needs a shape -- and used to ANSWER from startup, inventing methods on
+    // Object, on a reopened builtin, on a user class, on a module and on the
+    // class-method channel. ruby has none of them until the file runs.
+    //
+    // Oracle-verified against ruby 4.0.6 (`ruby -Ipackages/leaky/lib`), both
+    // halves: every probe raises before, and every probe answers after.
+    let files = &[
+        (
+            "packages/leaky/leaky.gemspec",
+            "Gem::Specification.new do |s|\n  s.name = \"leaky\"\n  s.version = \"1.0.0\"\nend\n",
+        ),
+        (
+            "packages/leaky/lib/leaky.rb",
+            r#"
+                module Leaky
+                  def self.load_one(name)
+                    require name
+                  end
+                end
+            "#,
+        ),
+        (
+            "packages/leaky/lib/leaky/script.rb",
+            r#"
+                def leaked_helper(a, b) = [a, b]
+                class String; def leaked_on_string = :from_unit; end
+                class MainClass; def leaked_on_main_class = :from_unit; end
+                module MainMod; def leaked_on_main_mod = :from_unit; end
+                class MainClass; def self.leaked_class_method = :from_unit; end
+                LEAKED_CONST = :from_unit
+            "#,
+        ),
+    ];
+    let probes = r#"
+        def t(label)
+          print label, ": "
+          begin
+            p(yield)
+          rescue => e
+            p e.class
+          end
+        end
+        def probe_all
+          t("toplevel") { leaked_helper(1, 2) }
+          t("builtin") { "x".leaked_on_string }
+          t("user class") { MainClass.new.leaked_on_main_class }
+          t("module") { Host.new.leaked_on_main_mod }
+          t("class method") { MainClass.leaked_class_method }
+          t("constant") { LEAKED_CONST }
+          t("respond_to?") { MainClass.new.respond_to?(:leaked_on_main_class) }
+          t("instance_methods") { MainClass.instance_methods(false) }
+          t("module methods") { MainMod.instance_methods(false) }
+        end
+    "#;
+
+    let preamble = "class MainClass; end\nmodule MainMod; end\nclass Host; include MainMod; end\nrequire \"leaky\"\n";
+    let before_src = format!("{preamble}{probes}\nprobe_all\n");
+    let mut before = files.to_vec();
+    before.push(("main.rb", &before_src));
+    let result = run_ruby_packages(&before, "main.rb", &[], &["packages"]);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "toplevel: NoMethodError\n\
+         builtin: NoMethodError\n\
+         user class: NoMethodError\n\
+         module: NoMethodError\n\
+         class method: NoMethodError\n\
+         constant: NameError\n\
+         respond_to?: false\n\
+         instance_methods: []\n\
+         module methods: []\n"
+    );
+
+    // ...and the other half: requiring the file makes every one of them real.
+    let after_src =
+        format!("{preamble}{probes}\nLeaky.load_one(\"leaky/script\")\nprobe_all\n");
+    let mut after = files.to_vec();
+    after.push(("main.rb", &after_src));
+    let result = run_ruby_packages(&after, "main.rb", &[], &["packages"]);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "toplevel: [1, 2]\n\
+         builtin: :from_unit\n\
+         user class: :from_unit\n\
+         module: :from_unit\n\
+         class method: :from_unit\n\
+         constant: :from_unit\n\
+         respond_to?: true\n\
+         instance_methods: [:leaked_on_main_class]\n\
+         module methods: [:leaked_on_main_mod]\n"
+    );
+}

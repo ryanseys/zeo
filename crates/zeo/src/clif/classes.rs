@@ -230,6 +230,72 @@ pub(crate) struct CollectedClasses {
     /// method materialized onto the builtin) -- marked foreign so a
     /// `super` walk skips them at that position (`mark_foreign_value_rows`).
     pub foreign: Vec<(u32, String)>,
+    /// `(class, name, class_side, unit)` -- rows a compiled-in UNIT wrote,
+    /// concealed until that unit runs. See [`conceal_unit_methods`].
+    pub conceal_methods: Vec<(u32, String, bool, u32)>,
+}
+
+/// The rows a compiled-in unit's `def`s own, which must not answer until
+/// that unit's file has run.
+///
+/// A unit is a load-path file nothing has required yet, and CRuby has no
+/// such method until the `require` reaches it. zeo registers the row at
+/// startup all the same -- the static MRO needs a shape, and the walk has to
+/// find the real body once the unit loads -- so the row is CONCEALED
+/// instead, exactly as [`Compiler::class_waits_for_its_unit`] conceals the
+/// class's own constant, and the unit's function reveals it.
+///
+/// Two rules keep the set honest:
+///
+/// * a class the unit itself DEFINES contributes nothing -- its constant is
+///   already concealed, so nothing can name it to reach a method;
+/// * a name this class also writes OUTSIDE a unit is left alone. There is
+///   one row per name, carrying the last-`def`-wins winner, and concealing
+///   it would take the earlier body away too. `analyze::redefs` already owns
+///   that timeline.
+///
+/// Materialization stores the ancestor's own `ScopeId` on the descendant, so
+/// a module method a unit wrote is concealed on every class that mixed it
+/// in without any extra bookkeeping.
+fn conceal_unit_methods(compiler: &crate::compiler::Compiler) -> Vec<(u32, String, bool, u32)> {
+    let mut out = Vec::new();
+    for (idx, class) in compiler.classes.iter().enumerate() {
+        if class.unit.is_some() {
+            continue;
+        }
+        // The row's owner: a per-box overlay registers on the root builtin's
+        // entry, which is where the conceal has to land too.
+        let owner = class.builtin_overlay.map_or(idx as u32, |root| root.0);
+        let written_here: crate::compiler::FSet<(&str, bool)> = class
+            .method_history
+            .iter()
+            .filter(|(_, _, _, sid)| compiler.scope(*sid).unit.is_none())
+            .map(|(name, class_side, _, _)| (name.as_str(), *class_side))
+            .collect();
+        // `methods` is the flattened dispatch set and `class_methods` its
+        // class-side twin. `own_methods` is the third, and for a MODULE the
+        // only one -- a module's instance methods live on its includers, so
+        // its own table stays empty and this list is what names them. A
+        // module method a unit wrote reached dispatch through the module's
+        // own value row while every includer's copy was already concealed.
+        let entries = class
+            .methods
+            .iter()
+            .map(|e| (e.def, false))
+            .chain(class.class_methods.iter().map(|e| (e.def, true)))
+            .chain(class.own_methods.iter().map(|&sid| (sid, false)));
+        for (sid, class_side) in entries {
+            let scope = compiler.scope(sid);
+            let Some(unit) = scope.unit else {
+                continue;
+            };
+            if written_here.contains(&(scope.name.as_str(), class_side)) {
+                continue;
+            }
+            out.push((owner, scope.name.clone(), class_side, unit));
+        }
+    }
+    out
 }
 
 /// Collect + declare every user class and its methods; refusals are loud
@@ -1276,6 +1342,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                         kw_direct: layout.kw_direct.clone(),
                         has_blk,
                         reopen_flagged: false,
+                        concealed: false,
                     },
                 );
             }
@@ -1569,6 +1636,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
         alias_rows,
         undef_rows,
         conceal,
+        conceal_methods: conceal_unit_methods(compiler),
         singleton_surrogates,
         redefs,
         boot_redefs,
