@@ -403,6 +403,7 @@ fn track_node(
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
         | HirNode::MethodRedefine { .. }
+            | HirNode::MethodReveal(..)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }

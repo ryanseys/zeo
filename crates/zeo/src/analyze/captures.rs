@@ -1145,6 +1145,7 @@ fn walk(
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
         | HirNode::MethodRedefine { .. }
+            | HirNode::MethodReveal(..)
         | HirNode::ClassDef {
             name: _,
             superclass: _,

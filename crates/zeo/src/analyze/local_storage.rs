@@ -449,6 +449,7 @@ pub(crate) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Locals) 
         | HirNode::Using(_)
         | HirNode::DefHook { .. }
         | HirNode::MethodRedefine { .. }
+            | HirNode::MethodReveal(..)
         | HirNode::ClassDef {
             name: _,
             superclass: _,

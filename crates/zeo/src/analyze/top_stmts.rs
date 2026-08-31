@@ -997,6 +997,7 @@ fn for_each_nested_stmt(
         | HirNode::ClassMethodPrepend(_)
         | HirNode::DefHook { .. }
         | HirNode::MethodRedefine { .. }
+            | HirNode::MethodReveal(..)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::Break(_)

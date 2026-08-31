@@ -30,6 +30,7 @@ pub(crate) use scans::*;
 use static_guards::*;
 use top_stmts::*;
 pub(crate) mod mro;
+pub(crate) mod alias_reveals;
 pub(crate) mod redefs;
 
 use crate::analyze_error::AnalyzeError;
@@ -371,6 +372,12 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // their document position. Before `def_hooks::resolve`: its `at` bumps
     // are what order a redefinition's install before its own hook report.
     redefs::resolve(compiler);
+
+    // ...and which definitions a RUNTIME alias makes positional for the same
+    // reason. After `redefs`: both splice into a site's statements and bump
+    // the `at` of every later `def`, and the reveal has to land where the
+    // redefinition splice left the position.
+    alias_reveals::resolve(compiler);
 
     // Which compiled definitions announce themselves. Runs here because it
     // needs `class_methods` flattened over the ancestry to see the hook, and

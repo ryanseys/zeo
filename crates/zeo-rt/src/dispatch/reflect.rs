@@ -468,7 +468,14 @@ pub(crate) fn scan_class_method_owner(
             // copies were recorded in can.
             let copied = crate::runtime_meta::is_live()
                 && crate::runtime_meta::overlay_class_method_is_extended(anc, name);
+            // A CONCEALED row is not a definition yet, so it does not end the
+            // walk either -- the ancestor that really defines the name answers,
+            // which is what ruby does with a `def` that has not run. Without
+            // this the owner scan named the class whose row was held back and
+            // the lookup behind it found nothing at all.
+            let concealed = super::concealed::is_concealed(anc.0, name, true);
             let own = !copied
+                && !concealed
                 && ((crate::runtime_meta::is_live()
                     && crate::runtime_meta::overlay_class_method(anc, name).is_some())
                     || REGISTRY

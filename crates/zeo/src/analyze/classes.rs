@@ -1244,6 +1244,7 @@ fn walk_class_body(
             | HirNode::Lambda { .. }
             | HirNode::DefHook { .. }
             | HirNode::MethodRedefine { .. }
+            | HirNode::MethodReveal(..)
             | HirNode::While { .. }
             | HirNode::Loop { .. }
             | HirNode::For { .. }

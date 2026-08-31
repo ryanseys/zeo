@@ -945,6 +945,14 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
         // A redefinition applied at its document position: the install
         // replaces the overlay body, and the definition's own
         // `method_added` report is a separate `DefHook` right after it.
+        // The `def`'s own line, for a row a RUNTIME alias made positional:
+        // until here the name answered whatever the ancestors said, which is
+        // what an alias taken above it copies.
+        HirNode::MethodReveal(group) => {
+            let g = fx.b.ins().iconst(types::I32, i64::from(*group));
+            fx.call("zeo_rt_reveal_unit_methods", &[g]);
+            Ok(())
+        }
         HirNode::MethodRedefine {
             class,
             name,

@@ -74,6 +74,7 @@ impl HirNode {
             | HirNode::ClassMethodPrepend(..)
             | HirNode::DefHook { .. }
             | HirNode::MethodRedefine { .. }
+            | HirNode::MethodReveal(..)
             | HirNode::Refine { .. }
             | HirNode::Using(..)
             | HirNode::While { .. }
@@ -590,6 +591,11 @@ pub enum HirNode {
         /// class-method channel, whose overlay row is a different map.
         singleton: bool,
     },
+    /// Lifts one REVEAL GROUP's concealment, spliced at the position of the
+    /// `def` whose row it holds back -- `analyze::alias_reveals`. Groups are
+    /// numbered past the units', which use the same runtime table. Never
+    /// produced by lowering.
+    MethodReveal(u32),
     /// `refine Target do ... end` in a module body. The block's `def`s lower
     /// into a HOLDER module (a `ClassDef` pushed immediately before this
     /// marker, named `#refinement:Target` so it claims no Ruby constant);
@@ -1209,6 +1215,7 @@ impl HirNode {
             // exactly what the runtime-class-body rewrite wants of it.
             | HirNode::DefHook { .. }
             | HirNode::MethodRedefine { .. }
+            | HirNode::MethodReveal(..)
             | HirNode::FlipFlop { .. } => false,
         }
     }
@@ -1487,6 +1494,7 @@ impl HirNode {
             | HirNode::FeatureLoaded { .. }
             | HirNode::CExtLoaded { .. }
             | HirNode::MethodRedefine { .. }
+            | HirNode::MethodReveal(..)
             | HirNode::Undef(_)
             | HirNode::ClassMethodUndef(_)
             | HirNode::AliasGlobal(_, _)
