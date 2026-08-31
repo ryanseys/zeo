@@ -2541,8 +2541,12 @@ fn overlay_prepended_methods(cid: ClassId, mid: ClassId) {
     if installs.is_empty() {
         return;
     }
+    let key = crate::boxes::box_record_for_write(
+        crate::boxes::current_box(),
+        crate::boxes::overlay_root(cid.0),
+    );
     let mut w = maps().classes.write().unwrap();
-    let e = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
+    let e = w.entry(key).or_insert_with(OverlayEntry::delta);
     for (name, m) in installs {
         e.prepended.insert(name, m);
     }

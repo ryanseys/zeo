@@ -249,12 +249,23 @@ fn splice_into_chain(
 /// `ancestors_of_value` (overlay-first); one write installs them all. Old
 /// slices leak, matching this runtime's no-GC policy for interned ancestries.
 pub(super) fn splice_module_into(cid: ClassId, mid: ClassId, placement: Placement) {
+    // A per-box builtin overlay patches the ROOT: the chain every reader
+    // walks names the root, and the overlay id appears in no chain at all.
+    let cid = ClassId(crate::boxes::overlay_root(cid.0));
+    let this_box = crate::boxes::current_box();
     let fresh_src: Vec<ClassId> = ancestors_of_value(mid).to_vec();
     let mut candidates: Vec<u32> = vec![cid.0];
     {
         let r = maps().classes.read().unwrap();
-        for (&id, e) in r.iter() {
-            if id != cid.0 && e.ancestors.contains(&cid) {
+        for (&key, e) in r.iter() {
+            // A shadow key is a (box, class) record, not a class -- the class
+            // it stands for is the candidate, and only for the running box.
+            let id = match crate::boxes::shadow_owner(key) {
+                Some((b, owner)) if b == this_box => owner,
+                Some(_) => continue,
+                None => key,
+            };
+            if id != cid.0 && e.ancestors.contains(&cid) && !candidates.contains(&id) {
                 candidates.push(id);
             }
         }
@@ -276,7 +287,8 @@ pub(super) fn splice_module_into(cid: ClassId, mid: ClassId, placement: Placemen
     }
     let mut w = maps().classes.write().unwrap();
     for (id, leaked) in updates {
-        w.entry(id).or_insert_with(OverlayEntry::delta).ancestors = leaked;
+        let key = crate::boxes::box_record_for_write(this_box, id);
+        w.entry(key).or_insert_with(OverlayEntry::delta).ancestors = leaked;
     }
 }
 

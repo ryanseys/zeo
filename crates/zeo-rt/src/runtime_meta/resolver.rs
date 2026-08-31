@@ -2,6 +2,24 @@
 
 use super::*;
 
+/// The two record keys a read consults for class `id`, closest first: the
+/// running box's own record (when it has ever written to the class), then the
+/// shared one. A per-box builtin overlay resolves to the ROOT it patches, so
+/// the write and the read name one class. See `boxes::box_record_for_write`.
+fn box_first(id: u32) -> (Option<u32>, u32) {
+    let root = crate::boxes::overlay_root(id);
+    (
+        crate::boxes::box_record_for_read(crate::boxes::current_box(), root),
+        root,
+    )
+}
+
+/// One overlay entry's row for `name` -- a `prepend`ed copy first, since that
+/// is what has to outrank the host's own.
+fn overlay_row(e: &super::OverlayEntry, name: Symbol) -> Option<&MethodImpl> {
+    e.prepended.get(&name).or_else(|| e.methods.get(&name))
+}
+
 /// Resolve an instance method for a `send_in` receiver through the overlay:
 /// a per-object singleton first, then (for a runtime class) an ancestor walk
 /// that consults both overlay entries and the frozen registry, else (for a
@@ -48,9 +66,11 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
         // filed under the HOST, which sits BEHIND the module it spliced in.
         let mut trusted = true;
         for (at, anc) in chain.iter().enumerate() {
-            if let Some(m) = c
-                .get(&anc.0)
-                .and_then(|e| e.prepended.get(&name).or_else(|| e.methods.get(&name)))
+            let (mine, shared) = box_first(anc.0);
+            if let Some(m) = mine
+                .and_then(|k| c.get(&k))
+                .and_then(|e| overlay_row(e, name))
+                .or_else(|| c.get(&shared).and_then(|e| overlay_row(e, name)))
             {
                 return Some(m.clone());
             }
@@ -69,13 +89,26 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
 /// methods per ancestor, then that ancestor's frozen materialized method.
 pub(super) fn walk_runtime_class(id: ClassId, name: Symbol) -> Option<MethodImpl> {
     let chain: &'static [ClassId] = {
+        let (mine, shared) = box_first(id.0);
         let c = maps().classes.read().unwrap();
-        c.get(&id.0)?.ancestors
+        mine.and_then(|k| c.get(&k))
+            .map(|e| e.ancestors)
+            .filter(|a| !a.is_empty())
+            .or_else(|| c.get(&shared).map(|e| e.ancestors))?
     };
     for &anc in chain {
         {
             let c = maps().classes.read().unwrap();
-            let entry = c.get(&anc.0);
+            let (mine, shared) = box_first(anc.0);
+            let entry = mine
+                .and_then(|k| c.get(&k))
+                .filter(|e| {
+                    e.undefs.contains(&name)
+                        || e.removed.contains(&name)
+                        || e.prepended.contains_key(&name)
+                        || e.methods.contains_key(&name)
+                })
+                .or_else(|| c.get(&shared));
             // An undef here terminates the walk -- an ancestor's still-live
             // definition must not answer past it.
             if entry.is_some_and(|e| e.undefs.contains(&name)) {
@@ -386,20 +419,26 @@ pub fn object_has_singleton_method(recv: &RubyValue, name: Symbol) -> bool {
 /// runtime `define_method` delta on a frozen class, or a runtime class's own
 /// method. `respond_to?`'s ancestor walk consults this per ancestor.
 pub fn overlay_has_instance_method(id: ClassId, name: Symbol) -> bool {
-    maps()
-        .classes
-        .read()
-        .unwrap()
-        .get(&id.0)
-        .is_some_and(|e| e.methods.contains_key(&name) || e.prepended.contains_key(&name))
+    let id = crate::boxes::overlay_root(id.0);
+    let c = maps().classes.read().unwrap();
+    let has =
+        |key: u32| c.get(&key).is_some_and(|e| e.methods.contains_key(&name) || e.prepended.contains_key(&name));
+    crate::boxes::box_record_for_read(crate::boxes::current_box(), id).is_some_and(has) || has(id)
 }
 
 /// A runtime class's leaked ancestor chain -- `None` for a frozen id or a pure
 /// method-delta (empty ancestors). Feeds `ancestors_of_value`.
 pub fn overlay_ancestors(id: ClassId) -> Option<&'static [ClassId]> {
+    // A box's own chain first, then the shared one. A per-box builtin overlay
+    // is a patch container, so its ancestry -- like its class ivars -- is the
+    // ROOT's, keyed by box: `class Array; include M; end` inside a box must
+    // reach `[1, 2].ancestors`, which names the root.
+    let id = crate::boxes::overlay_root(id.0);
     let c = maps().classes.read().unwrap();
-    let anc = c.get(&id.0)?.ancestors;
-    if anc.is_empty() { None } else { Some(anc) }
+    let chain = |key: u32| c.get(&key).map(|e| e.ancestors).filter(|a| !a.is_empty());
+    crate::boxes::box_record_for_read(crate::boxes::current_box(), id)
+        .and_then(chain)
+        .or_else(|| chain(id))
 }
 
 /// A runtime class's Ruby-visible name (or the anonymous `#<Class:ID>` form).

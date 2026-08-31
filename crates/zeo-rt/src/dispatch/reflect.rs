@@ -653,7 +653,7 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
             if r.is_undefined(anc, name) {
                 return false;
             }
-            if r.lookup(anc, name).is_some() || r.lookup_value_method(anc, 0, name).is_some() {
+            if r.lookup(anc, name).is_some() || r.lookup_value_method(anc, crate::boxes::current_box(), name).is_some() {
                 // ...unless the row was FLATTENED in from an ancestor a runtime
                 // `undef_method` has since retired. Same question `lookup_mro`
                 // asks before trusting its own flattened hit.

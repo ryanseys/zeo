@@ -341,6 +341,21 @@ pub fn box_record_for_read(box_id: u32, owner: u32) -> Option<u32> {
         .copied()
 }
 
+/// The (box, class) a shadow key stands for, or `None` when `key` is a real
+/// class id. A table keyed by class id holds both kinds side by side, so a
+/// walk over its keys needs this to tell them apart.
+pub fn shadow_owner(key: u32) -> Option<(u32, u32)> {
+    if key < SHADOW_BASE {
+        return None;
+    }
+    shadows()
+        .read()
+        .expect("no poisoned shadow readers")
+        .0
+        .iter()
+        .find_map(|(&(b, owner), &s)| (s == key).then_some((b, owner)))
+}
+
 /// A per-box builtin OVERLAY class -> the shared class it patches.
 static OVERLAY_ROOTS: OnceLock<RwLock<crate::FMap<u32, u32>>> = OnceLock::new();
 

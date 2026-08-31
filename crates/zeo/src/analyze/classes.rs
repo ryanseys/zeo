@@ -861,7 +861,7 @@ fn walk_class_body(
                         // codegen sends `append_features` at this position instead.
                         if compiler.overrides_mixin_primitive(target, "append_features") {
                             defer_mixin_to_runtime(compiler, target);
-                        } else if is_reopen_site(compiler, class_id, site_idx) {
+                        } else if is_positional_mixin_site(compiler, class_id, site_idx) {
                             // The edge belongs to the INCLUDE, not to how the
                             // mixin is staged, so it is recorded on this path
                             // too. `class Bundler::Thor; include Thor::Base`
@@ -1127,7 +1127,7 @@ fn walk_class_body(
                         // codegen sends `prepend_features` at this position instead.
                         if compiler.overrides_mixin_primitive(target, "prepend_features") {
                             defer_mixin_to_runtime(compiler, target);
-                        } else if is_reopen_site(compiler, class_id, site_idx) {
+                        } else if is_positional_mixin_site(compiler, class_id, site_idx) {
                             defer_positional_mixin(compiler, site_idx, stmt, target);
                             continue;
                         } else {
@@ -1665,6 +1665,19 @@ fn is_reopen_site(compiler: &Compiler, class_id: ClassId, site_idx: usize) -> bo
     compiler.class_body_sites[..site_idx]
         .iter()
         .any(|s| s.class == class_id)
+}
+
+/// Whether this mixin has to be spliced at RUN time rather than recorded in
+/// the compile-time tables.
+///
+/// A reopen is the general reason (see [`is_reopen_site`]). A per-box builtin
+/// OVERLAY is the second: it registers no entry of its own, so a compile-time
+/// chain written against it names a class the runtime never hears of, and the
+/// mixin was simply lost. The runtime splice keys the ROOT's chain by box,
+/// which is where every reader looks.
+fn is_positional_mixin_site(compiler: &Compiler, class_id: ClassId, site_idx: usize) -> bool {
+    compiler.class(class_id).builtin_overlay.is_some()
+        || is_reopen_site(compiler, class_id, site_idx)
 }
 
 /// Sets [`crate::hir::NodeFlag::RUBY2_KEYWORDS`] on every `def` a
