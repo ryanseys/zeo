@@ -947,6 +947,22 @@ fn walk_class_body(
             // `mro::materialize_methods`. See `HirNode::Undef`.
             HirNode::Undef(names) => {
                 let names = names.clone();
+                // A FEATURE UNIT's body may never run, and its `undef` of an
+                // INHERITED row would otherwise retire that row from program
+                // start -- a debug tracer nobody required took
+                // `Module#method_added` away from every program. Same rule
+                // the visibility arms below use: in a unit the retirement
+                // stays positional and runs if and when the unit loads.
+                let in_unit = compiler.unit_walk;
+                if in_unit {
+                    for n in &names {
+                        compiler.runtime_patches.insert(n.clone());
+                    }
+                    let send =
+                        crate::lower::defs::runtime_directive_spelling(&mut compiler.hir, stmt)?
+                            .expect("`undef` has a runtime spelling");
+                    compiler.class_body_sites[site_idx].stmts.push(send);
+                }
                 let at = compiler.class_body_sites[site_idx].stmts.len();
                 for name in &names {
                     let def = crate::compiler::SiteDef {
@@ -963,9 +979,11 @@ fn walk_class_body(
                         .push(def.name.clone());
                     compiler.class_body_sites[site_idx].defs.push(def);
                 }
-                compiler.classes[class_id.0 as usize]
-                    .undefined
-                    .extend(names);
+                if !in_unit {
+                    compiler.classes[class_id.0 as usize]
+                        .undefined
+                        .extend(names);
+                }
             }
             // The class-method half. See `HirNode::ClassMethodUndef`. No
             // `SiteDef` rows: those drive the instance-side `method_undefined`

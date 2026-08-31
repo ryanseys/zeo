@@ -850,9 +850,15 @@ impl ClassRegistry {
         name: Symbol,
     ) -> Option<MethodVisibility> {
         let e = self.entries.get(&id.0)?;
-        let defines = e.own_methods.contains(&name)
+        // A row whose UNIT has not run is not a method yet, and its
+        // visibility is not this class's answer -- the walk must carry on to
+        // the builtin table behind it. Without this a unit nobody required
+        // made `Module#method_added` read as a public user method, so
+        // `private_method_defined?(:method_added)` was false.
+        let defines = (e.own_methods.contains(&name)
             || e.methods.contains_key(&name)
-            || e.own_value_names.contains(&name);
+            || e.own_value_names.contains(&name))
+            && !super::concealed::is_concealed(id.0, name, false);
         if !defines {
             return None;
         }
