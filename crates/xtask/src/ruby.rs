@@ -46,7 +46,7 @@ impl Oracle {
     /// process cheaper. The `None`s unset: whatever anybody has `gem
     /// install`ed, or points RUBYLIB at, must not reach a comparison.
     ///
-    /// Needs `make install-deps` to have run.
+    /// Needs `make deps` to have run.
     pub fn env(&self) -> Vec<(&'static str, Option<&str>)> {
         vec![
             ("BUNDLE_GEMFILE", Some(self.gemfile.as_str())),

@@ -7,10 +7,10 @@
 - A real Ruby matching the oracle version pinned in `mise.toml`
   (via `mise install`) — only needed when re-blessing golden output from the
   oracle (`cargo xtask bless`); the committed snapshots cover ordinary runs.
-- Network access on a fresh clone, once, for `make install-deps`.
+- Network access on a fresh clone, once, for `make deps`.
 
 ```console
-$ make install-deps   # bundle install: Gemfile.lock -> vendor/bundle
+$ make deps   # bundle install: Gemfile.lock -> vendor/bundle
 $ make                # cargo build --workspace
 ```
 

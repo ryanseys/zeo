@@ -52,14 +52,14 @@ You need:
 
 - A Rust toolchain, **1.94+** (`rust-toolchain.toml` pins the exact version).
 - A **C compiler** (for Prism, Oniguruma, and the link step).
-- **Ruby 4.0.6** — for `make install-deps`, which resolves the bundled stdlib
+- **Ruby 4.0.6** — for `make deps`, which resolves the bundled stdlib
   out of `Gemfile.lock`, and to re-record test goldens. `mise.toml` pins it.
 
 Build and run:
 
 ```console
 $ git clone https://github.com/ryanseys/zeo && cd zeo
-$ make                       # install-deps, then cargo build --workspace
+$ make                       # deps, then cargo build --workspace
 $ target/debug/zeo -e 'puts "hello"'
 hello
 ```
@@ -577,7 +577,7 @@ docs/        BINARY_SIZE, CLIF, COMPATIBILITY, EVAL, EXTENSIONS,
              ROADMAP
 tests/       example goldens, the spinel corpus, the gaps tracker
 lib/ruby/    rubygems and bundler, the one tier that must be committed
-Gemfile      every other bundled library, pinned; `make install-deps`
+Gemfile      every other bundled library, pinned; `make deps`
 bench/       61 benchmark programs; read bench/README.md
 vendor/      the resolved gems and fetched test trees (gitignored)
 exe/zeo      the gem's launcher; zeo.gemspec is beside it

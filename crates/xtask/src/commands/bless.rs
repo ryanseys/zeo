@@ -33,7 +33,7 @@ use crate::{Error, root, root_join};
 /// Everything a bless can write.
 const WATCHED: &str = "tests";
 
-/// Where `make install-deps` resolves Gemfile.lock.
+/// Where `make deps` resolves Gemfile.lock.
 const BUNDLE: &str = "vendor/bundle";
 
 /// How a suite's cases sit under its root.

@@ -25,13 +25,13 @@ BUNDLE ?= bundle
 # Every target here is a verb, not a file. One list, so a new target cannot
 # be half-declared: the old one omitted `ci-features` and `ci-size`, and a
 # file of either name would have turned that target into a silent no-op.
-.PHONY: all help install-deps test test-jit test-aot test-memcheck \
+.PHONY: all help deps test test-jit test-aot test-memcheck \
         test-typed test-milestones test-config test-platform test-size \
         lint check-batch gate bench pgo install linux clean
 
 .DEFAULT_GOAL := all
 
-all: install-deps  ## build the workspace
+all: deps  ## build the workspace
 	$(CARGO) build --workspace
 
 # Two columns, read off the targets themselves, which is the whole point.
@@ -44,7 +44,7 @@ help:  ## list every target
 # cannot disagree about a version. Needs the network the first time and
 # nothing after it. `.bundle/config` sets the path and refuses to rewrite the
 # lock during an install; changing the Gemfile means `bundle lock` on purpose.
-install-deps:  ## resolve Gemfile.lock into vendor/bundle (needs network once)
+deps:  ## resolve Gemfile.lock into vendor/bundle (needs network once)
 	@$(BUNDLE) install --quiet
 
 # --- The dev loop. ---------------------------------------------------------

@@ -160,7 +160,7 @@ fn every_resolved_gem_is_unpacked_in_the_store() {
         .collect();
     assert!(
         missing.is_empty(),
-        "vendor/bundle is behind Gemfile.lock -- run `make install-deps`. \
+        "vendor/bundle is behind Gemfile.lock -- run `make deps`. \
          Missing: {missing:?}"
     );
 }

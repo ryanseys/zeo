@@ -8,7 +8,7 @@
 # `pending/rspec_reports_a_failure.rb`.
 #
 # Both engines read the SAME rspec, from `vendor/bundle` -- the Gemfile.lock
-# set that `make install-deps` resolves. The oracle reaches it through
+# set that `make deps` resolves. The oracle reaches it through
 # bundler, zeo through `-I` on each gem's `lib/`. That makes this a true
 # differential rather than a recording: neither engine has rspec of its own,
 # and comparing zeo against nothing would prove nothing.

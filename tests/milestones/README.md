@@ -41,5 +41,5 @@ difference that means nothing. Print `Gem::VERSION.is_a?(String)`, not
 
 For the same reason, do not print anything that reads the machine's own gem
 store: a milestone must answer the same on a developer's laptop and on a bare
-CI runner. Both engines resolve `Gemfile.lock` (`make install-deps`), so the
+CI runner. Both engines resolve `Gemfile.lock` (`make deps`), so the
 gems themselves agree.

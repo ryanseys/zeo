@@ -9,7 +9,7 @@ target/
 zeo-gems.json
 
 # Resolved and fetched, never authored: `vendor/bundle` is what
-# `make install-deps` writes out of Gemfile.lock, and the rest is upstream
+# `make deps` writes out of Gemfile.lock, and the rest is upstream
 # sources fetched on demand. The lock is the committed half.
 /vendor/
 

@@ -71,7 +71,7 @@ fn every_bundled_gem_compiles() {
     assert!(
         gems.len() > 40,
         "expected the full bundled stdlib, found {} gems -- has `bundle \
-         install` run? (`make install-deps`)",
+         install` run? (`make deps`)",
         gems.len()
     );
 

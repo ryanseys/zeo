@@ -70,7 +70,7 @@ fn libraries() -> Result<Vec<zeo::bundled::Library>, Error> {
         return Err(Error::new(format!(
             "{} locked librar{} are not unpacked under vendor/bundle, so a \
              distribution built now would silently ship without them. Run \
-             `make install-deps`.\n  {}",
+             `make deps`.\n  {}",
             missing.len(),
             if missing.len() == 1 { "y" } else { "ies" },
             missing.join(" ")

@@ -671,7 +671,7 @@ fn resolve_ruby(cwd: &Path) -> PathBuf {
 /// The removals matter as much as the additions: whatever anybody has `gem
 /// install`ed, or points RUBYLIB at, must not decide what a golden records.
 ///
-/// Needs `make install-deps` to have run.
+/// Needs `make deps` to have run.
 fn point_oracle_at_the_bundle(cmd: &mut Command) {
     cmd.env("BUNDLE_GEMFILE", workspace_root().join("Gemfile"))
         .env("RUBYOPT", "-rbundler/setup")

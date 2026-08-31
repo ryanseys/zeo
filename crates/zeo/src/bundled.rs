@@ -79,7 +79,7 @@ pub const NOT_SHIPPED: &[(&str, &str)] = &[(
 /// a name both tiers carry resolves to zeo's implementation.
 ///
 /// A resolved-tier gem whose directory is missing is SKIPPED rather than
-/// fatal -- a fresh clone has no `vendor/bundle` until `make install-deps`
+/// fatal -- a fresh clone has no `vendor/bundle` until `make deps`
 /// runs, and a compile that needs none of those libraries should still work.
 /// `crates/zeo/tests/checks/gem_versions.rs` asserts the set is complete, so
 /// a stale install is loud in the suite rather than silent in a compile.
