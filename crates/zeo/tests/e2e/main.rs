@@ -50,6 +50,7 @@ mod metaprog;
 mod methods;
 mod numerics;
 mod object_protocol;
+mod packages;
 mod pattern_match;
 mod process_exit;
 mod regexp;
