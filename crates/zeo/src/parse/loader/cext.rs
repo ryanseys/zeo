@@ -37,6 +37,24 @@ impl Loader {
             if let Some(nodes) = self.build_cext(hir, bare)? {
                 return Ok(nodes);
             }
+            // Already compiled, and simply on a `-I` root: dlopen it at the
+            // require. AFTER `build_cext`, so a store gem shipping the same
+            // name still gets built from ITS source.
+            if let Some((library, init)) = self.resolve_native_root(bare) {
+                let library = library.display().to_string();
+                // Under the BARE FEATURE, which is the only name this route
+                // has -- there is no gem behind it. `cext_already_loaded`
+                // reads the same table, so the second require answers `false`.
+                self.built_cexts
+                    .insert(bare.to_string(), (library.clone(), init.clone()));
+                self.record_gem(crate::gem_report::GemRecord {
+                    name: bare.to_string(),
+                    by: crate::gem_report::SatisfiedBy::CompiledExt {
+                        library: library.clone(),
+                    },
+                });
+                return Ok(loaded_cext(hir, &library, init));
+            }
             // A gem the external store locked but zeo can't provide gets its
             // precise reason (which native layout, why), not the generic miss.
             if let Some(reason) = self.store_exclusions.get(bare) {
@@ -152,9 +170,10 @@ impl Loader {
             .or_else(|| feature.strip_suffix(".o"))
             .unwrap_or(feature);
         !self.builtin_wins(bare)
-            && self
-                .cext_gem(bare)
-                .is_some_and(|gem| self.built_cexts.contains_key(gem))
+            && (self.built_cexts.contains_key(bare)
+                || self
+                    .cext_gem(bare)
+                    .is_some_and(|gem| self.built_cexts.contains_key(gem)))
     }
 
     /// Which store gem, if any, would build `feature`.

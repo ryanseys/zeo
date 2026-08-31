@@ -126,9 +126,47 @@ impl Loader {
                         // A gem shipping its C as source: zeo builds it, so
                         // the require HAS a compile-time verdict.
                         || self.cext_gem(bare).is_some()
+                        // A compiled extension already sitting on a `-I` root.
+                        || self.resolve_native_root(bare).is_some()
                 }
             }
         }
+    }
+
+    /// The compiled extension `feature` names on a `-I` root, and the stem its
+    /// `Init_` is named after.
+    ///
+    /// The compile-time half of `features::resolve_native_on_disk`. A store
+    /// gem's extension reaches the loader through its `extensions` entry
+    /// (`build_cext`); an extension that is simply ON the load path -- what
+    /// `-I` and a hand-built `.bundle` give -- had no compile-time route at
+    /// all, so the require deferred to the runtime loader. That loader then
+    /// refused it, because a program publishes the C API only when its COMPILE
+    /// saw an extension load. Seeing it here is what publishes it.
+    ///
+    /// Roots only. A gem root is `build_cext`'s to answer, and searching them
+    /// here would load a prebuilt `.so` from a store gem whose source zeo
+    /// wants to compile itself.
+    pub(super) fn resolve_native_root(&self, feature: &str) -> Option<(PathBuf, String)> {
+        let named = |p: PathBuf| {
+            let stem = p.file_stem()?.to_str()?.to_string();
+            Some((p, stem))
+        };
+        if is_native_feature(feature) {
+            return self
+                .roots
+                .iter()
+                .map(|r| r.join(feature))
+                .find(|c| c.is_file())
+                .and_then(named);
+        }
+        NATIVE_SUFFIXES
+            .iter()
+            .find_map(|s| {
+                let fname = format!("{feature}.{s}");
+                self.roots.iter().map(|r| r.join(&fname)).find(|c| c.is_file())
+            })
+            .and_then(named)
     }
 
     /// `require "feature"` -> the first `<root>/<feature>.rb` that exists:

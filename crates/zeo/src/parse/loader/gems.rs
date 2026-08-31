@@ -399,6 +399,16 @@ pub(super) fn is_native_feature(feature: &str) -> bool {
     feature.ends_with(".so") || feature.ends_with(".o") || feature.ends_with(".bundle")
 }
 
+/// The suffixes a compiled extension wears on this platform, DLEXT first.
+/// Must stay the runtime's list (`zeo_rt::features::NATIVE_SUFFIXES`): the
+/// compile decides whether to publish the C API and the run answers the
+/// require, so a suffix only one of them tries is a require that resolves in
+/// one build mode and not the other.
+#[cfg(target_vendor = "apple")]
+pub(super) const NATIVE_SUFFIXES: &[&str] = &["bundle", "so"];
+#[cfg(not(target_vendor = "apple"))]
+pub(super) const NATIVE_SUFFIXES: &[&str] = &["so"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
