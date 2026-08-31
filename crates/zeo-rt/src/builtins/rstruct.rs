@@ -596,6 +596,34 @@ ruby_class! {
         bind_members(recv, args, false)?;
         Ok(RubyValue::Nil)
     }
+    // What a COMPILE-TIME `S = Struct.new(:a, :b)` class's `initialize` calls:
+    // the two halves of the call shape, already separated by the calling
+    // convention, handed to the one kernel.
+    //
+    // The compiled class used to bind its members in synthesized RUBY, which
+    // counted its own arguments with `args.size` and reached nine more
+    // user-visible sends -- so a program that patched any of them broke every
+    // Struct construction (#128). It cannot forward to `initialize` directly
+    // either: that row reads the call shape off a kw-MARKED trailing hash, and
+    // the mark does not survive the fused `Klass.new` path. Taking the halves
+    // apart removes the question.
+    private def "__zeo_struct_init"(recv, args, kw) {
+        let (RubyValue::Array(args), RubyValue::Hash(kw)) = (args, kw) else {
+            return Err(type_error!("__zeo_struct_init takes an Array and a Hash"));
+        };
+        let mut all: Vec<RubyValue> = args.lock().iter().cloned().collect();
+        if !kw.lock().is_empty() {
+            // Re-marked, because `bind_members` reads CRuby's
+            // `rb_keyword_given_p` off the hash: a caller that WROTE keywords
+            // binds by member name, a positional Hash does not.
+            let pairs = kw.lock().values().cloned().collect();
+            let h = crate::hash_new(pairs);
+            h.lock().kw_marked = true;
+            all.push(RubyValue::Hash(h));
+        }
+        bind_members(recv, &all, false)?;
+        Ok(RubyValue::Nil)
+    }
     // `initialize_copy` -- the slot vector and nothing else, and only
     // between instances of the SAME struct class (CRuby's
     // "initialize_copy should take same class object").
@@ -777,7 +805,11 @@ pub(crate) fn bind_members(
                 // Collected, not raised on the spot: ruby reports what is
                 // MISSING before what it did not recognise, so `P.new(y: 1)`
                 // on `Data.define(:x)` is "missing keyword: :x".
-                None => unknown.push(format!(":{}", s.name())),
+                // Ruby spells the two differently: Data names the keyword as a
+                // SYMBOL (`unknown keyword: :z`), a Struct as a bare name
+                // (`unknown keywords: z`). Oracle-checked on 4.0.6.
+                None if is_data => unknown.push(format!(":{}", s.name())),
+                None => unknown.push(s.name().to_string()),
             }
         }
         // Data requires every member; a plain keyword_init Struct nil-fills.
@@ -798,10 +830,11 @@ pub(crate) fn bind_members(
             }
         }
         if !unknown.is_empty() {
-            let word = if unknown.len() == 1 {
-                "keyword"
-            } else {
-                "keywords"
+            // ...and a Struct's word is ALWAYS plural, however many there are
+            // (`unknown keywords: z`), where Data agrees its number.
+            let word = match unknown.len() == 1 && is_data {
+                true => "keyword",
+                false => "keywords",
             };
             return Err(arg_error!("unknown {word}: {}", unknown.join(", ")));
         }

@@ -191,40 +191,29 @@ pub(crate) fn synthesize_struct_class(
         .map(|m| format!(":{m}"))
         .collect::<Vec<_>>()
         .join(", ");
-    // `initialize` binds by CALL SHAPE, as `rstruct::bind_members` does on the
-    // runtime path (the F-C rule: one semantic kernel, and this synthesized
-    // body is its compiled spelling). Keywords bind by member name only when
-    // they arrive ALONE -- CRuby's `rb_keyword_given_p && argc == 1` rule --
-    // so a positional Hash and the mixed form both stay positional, a short
-    // arg list nil-fills, and too many positionals report ruby's exact
-    // `struct size differs`.
-    let n = members.len();
-    let member_syms = members
-        .iter()
-        .map(|m| format!(":{m}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let pos_assigns = members
-        .iter()
-        .enumerate()
-        .map(|(i, m)| format!("      @{m} = args[{i}]\n"))
-        .collect::<String>();
-    let kw_assigns = members
-        .iter()
-        .map(|m| format!("      @{m} = kw[:{m}]\n"))
-        .collect::<String>();
+    // NO synthesized `initialize`. `Struct#initialize` is a native row over
+    // `rstruct::bind_members` -- the one semantic kernel -- and the class
+    // inherits it.
+    //
+    // It used to be spelled here as Ruby, for the speed of a compiled body.
+    // That body counted its own arguments with `args.size` and reached nine
+    // more user-visible sends besides, so ANY program that patched one of them
+    // broke every Struct and Data construction: `module M; def size = super *
+    // 10; end; class Array; prepend M; end` made `Struct.new(:a).new(1)` raise
+    // `struct size differs`. CRuby's `rb_struct_initialize` is C and reads
+    // `argc`, which no monkeypatch can reach. See #128.
+    // The `def` is still needed: a compiled class's method table is FLATTENED
+    // from ancestors that carry a user `Scope`, and `Struct#initialize` is a
+    // native row -- an omitted `initialize` resolved all the way to
+    // `BasicObject#initialize`, which refused its arguments.
+    //
+    // The body is one call into the runtime kernel, with the call SHAPE
+    // already split by the calling convention. A `super` would not do: the
+    // native `initialize` reads the shape off a kw-marked trailing hash, and
+    // the mark does not survive the fused `Klass.new` path.
     let src = format!(
         "class {name} < Struct\n  attr_accessor {accessors}\n  \
-         def initialize(*args, **kw)\n    \
-         if kw.empty? || !args.empty?\n      \
-         args = args + [kw] unless kw.empty?\n      \
-         raise ArgumentError, \"struct size differs\" if args.size > {n}\n\
-         {pos_assigns}    \
-         else\n      \
-         bad = kw.keys.reject {{ |k| [{member_syms}].include?(k) }}\n      \
-         raise ArgumentError, \"unknown keywords: #{{bad.join(', ')}}\" unless bad.empty?\n\
-         {kw_assigns}    \
-         end\n  end\nend\n"
+         def initialize(*args, **kw)\n    __zeo_struct_init(args, kw)\n  end\nend\n"
     );
     // The offsets `parse_and_lower_into` produces index `src`, not the file
     // being lowered, so the class would claim a position it never occupied --
