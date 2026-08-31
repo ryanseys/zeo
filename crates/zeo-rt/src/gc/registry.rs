@@ -150,6 +150,18 @@ impl Strong {
         }
     }
 
+    /// [`kind_label`](Self::kind_label) plus the one fact that tells two
+    /// rings of the same kind apart: how many elements a container holds.
+    /// Only `ZEO_RT_GCRINGS=1` asks, so the census line the `.gccheck`
+    /// sidecars gate on never changes shape.
+    pub(crate) fn ring_label(&self) -> String {
+        match self {
+            Strong::Array(a) => format!("Array[{}]", a.lock().len()),
+            Strong::Hash(h) => format!("Hash[{}]", h.lock().len()),
+            other => other.kind_label(),
+        }
+    }
+
     /// Cell addresses this node owns a reference to. Only a Proc has any: a
     /// cell is not a `RubyValue` and cannot travel [`Strong::gc_visit`].
     pub(crate) fn gc_cells(&self, out: &mut Vec<usize>) {

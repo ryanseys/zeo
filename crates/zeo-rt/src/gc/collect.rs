@@ -168,12 +168,37 @@ pub(crate) fn collect_census(mut census: Option<&mut Vec<String>>) -> usize {
         .map(|(n, _)| n.downgrade())
         .collect();
 
+    // Read once: the census walk asks per reclaimed node.
+    let rings = std::env::var_os("ZEO_RT_GCRINGS").is_some_and(|v| !v.is_empty());
     let mut drained: Vec<RubyValue> = Vec::new();
     let mut reclaimed = 0;
     for (i, node) in nodes.iter().enumerate() {
         if !live[i] {
             if let Some(c) = census.as_deref_mut() {
-                c.push(node.kind_label());
+                // The kind ALONE says a program built a cycle and nothing
+                // about WHICH one. Under `ZEO_RT_GCRINGS=1` each row names
+                // its ring instead -- the reclaimed nodes pointing at this
+                // one, the ones it points at, and a container's size -- and
+                // "Array[2] held by Array[2], holds Array[2]" is a
+                // self-referential pair, findable by reading the program.
+                // The dial is off by default so the census line the
+                // `.gccheck` sidecars gate on keeps its shape; a bisect over
+                // the source was the alternative, and it took a day.
+                c.push(match rings {
+                    false => node.kind_label(),
+                    true => {
+                        let held_by =
+                            ring_labels(&nodes, &live, |j| targets_of(j).contains(&(i as u32)));
+                        let holds =
+                            ring_labels(&nodes, &live, |j| targets_of(i).contains(&(j as u32)));
+                        format!(
+                            "{} (held by {}, holds {})",
+                            node.ring_label(),
+                            join_or_none(&held_by),
+                            join_or_none(&holds),
+                        )
+                    }
+                });
             }
             node.gc_visit(&mut drained, true);
             reclaimed += 1;
@@ -303,5 +328,29 @@ mod tests {
         let (a, b) = garbage_cycle();
         assert_eq!(collect(), 0);
         assert!(a.upgrade().is_some() && b.upgrade().is_some());
+    }
+}
+
+/// The kinds of the RECLAIMED nodes `pick` selects -- one half of a census
+/// row's ring description. Only reclaimed nodes are named: a live holder
+/// would have made this node live too, so every node in the ring is here.
+fn ring_labels(
+    nodes: &[registry::Strong],
+    live: &[bool],
+    mut pick: impl FnMut(usize) -> bool,
+) -> Vec<String> {
+    let mut out: Vec<String> = (0..nodes.len())
+        .filter(|&j| !live[j] && pick(j))
+        .map(|j| nodes[j].ring_label())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn join_or_none(labels: &[String]) -> String {
+    match labels.is_empty() {
+        true => "nothing".to_string(),
+        false => labels.join("+"),
     }
 }
