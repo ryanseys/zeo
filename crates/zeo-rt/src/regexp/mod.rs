@@ -178,6 +178,11 @@ pub enum Engine {
 /// (`build_match_data`, `scan`, `split`, `gsub`/`sub`) is engine-agnostic.
 pub struct Caps {
     spans: Vec<Option<(usize, usize)>>,
+    /// Where the search that produced this match BEGAN, which `\K` divorces
+    /// from `spans[0]`: `/a\Kb/` against `"ab"` starts at 0 and reports a
+    /// match of `"b"` at 1. This is what `onig_search` answers and what
+    /// `Regexp#=~` returns; every other reader wants `spans[0]`.
+    start: usize,
 }
 
 impl Caps {
@@ -243,10 +248,13 @@ impl Engine {
     /// The leftmost match whose start is at or after `start`, with group spans.
     fn captures_at(&self, haystack: &str, start: usize) -> Option<Caps> {
         match self {
+            // Neither Rust engine has `\K`, so the search start and the whole
+            // match's start are the same position there.
             Engine::Fast(r) => r.captures_at(haystack, start).map(|c| Caps {
                 spans: (0..c.len())
                     .map(|i| c.get(i).map(|m| (m.start(), m.end())))
                     .collect(),
+                start: c.get(0).map_or(start, |m| m.start()),
             }),
             Engine::Fancy(r) => r
                 .captures_from_pos(haystack, start)
@@ -256,6 +264,7 @@ impl Engine {
                     spans: (0..c.len())
                         .map(|i| c.get(i).map(|m| (m.start(), m.end())))
                         .collect(),
+                    start: c.get(0).map_or(start, |m| m.start()),
                 }),
             // Search the WHOLE `haystack` starting at byte `start` (not a
             // `haystack[start..]` slice): Onig reads the real character before
@@ -264,9 +273,10 @@ impl Engine {
             // spans of every group (`None` for a non-participating group).
             Engine::Onig(r) => {
                 let mut region = onig::Region::new();
-                onig_search(r, haystack, start, Some(&mut region))?;
+                let at = onig_search(r, haystack, start, Some(&mut region))?;
                 Some(Caps {
                     spans: (0..region.len()).map(|i| region.pos(i)).collect(),
+                    start: at,
                 })
             }
             Engine::Unmatchable => None,
@@ -664,9 +674,33 @@ pub fn regexp_match_index(
     haystack: &str,
     enc: crate::encoding::EncodingId,
 ) -> RubyValue {
+    match_index(re, haystack, enc, |c| {
+        c.get(0).expect("group 0 always exists on a match").0
+    })
+}
+
+/// `Regexp#=~`/`String#=~`, which report the SEARCH start rather than the
+/// match start. The two differ only under `\K`: ruby's `rb_reg_match` hands
+/// back `rb_reg_search`'s own answer, so `/a\Kb/ =~ "ab"` is `0` while
+/// `$~.begin(0)` is `1`. `String#index` and `String#split` keep the match
+/// start, which is why this is a separate entry.
+pub fn regexp_search_index(
+    re: &RRegexp,
+    haystack: &str,
+    enc: crate::encoding::EncodingId,
+) -> RubyValue {
+    match_index(re, haystack, enc, |c| c.start)
+}
+
+fn match_index(
+    re: &RRegexp,
+    haystack: &str,
+    enc: crate::encoding::EncodingId,
+    pick: fn(&Caps) -> usize,
+) -> RubyValue {
     match re.engine.captures_first(haystack) {
         Some(caps) => {
-            let start = caps.get(0).expect("group 0 always exists on a match").0;
+            let start = pick(&caps);
             crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, enc)));
             RubyValue::Int(char_index(haystack, start))
         }
@@ -726,6 +760,7 @@ fn anchored_caps_at(re: &RRegexp, haystack: &str, byte_start: usize) -> Option<C
             .iter()
             .map(|s| s.map(|(a, b)| (a + byte_start, b + byte_start)))
             .collect(),
+        start: caps.start + byte_start,
     })
 }
 

@@ -421,7 +421,11 @@ fn needs_onig(source: &str) -> bool {
             // in UTF-8 they see a boundary either side of a Japanese word. The
             // Rust engines have no such rule and the ASCII-scoped stand-in the
             // translation used got it backwards.
-            if matches!(bytes.get(i + 1), Some(b'b' | b'B')) && !in_class {
+            // `\K` divorces the match start from the SEARCH start, and only
+            // onig reports the second one -- `/a\Kb/ =~ "ab"` is 0 while
+            // `$~.begin(0)` is 1. fancy-regex matches `\K` but answers one
+            // position for both, so these patterns go to onig.
+            if matches!(bytes.get(i + 1), Some(b'b' | b'B' | b'K')) && !in_class {
                 return true;
             }
             i += 2; // an escaped char is never an anchor / group opener

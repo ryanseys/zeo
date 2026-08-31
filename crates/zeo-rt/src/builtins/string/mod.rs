@@ -2331,7 +2331,7 @@ ruby_class! {
                     (b.encoding(), b.ascii_only())
                 };
                 crate::builtins::encoding::guard_regexp_haystack(re, enc, ascii_only)?;
-                Ok(crate::regexp_match_index(re, &rstr.lock().to_utf8_lossy(), enc))
+                Ok(crate::regexp_search_index(re, &rstr.lock().to_utf8_lossy(), enc))
             }
             // Only a STRING operand is the TypeError. Ruby's `rb_str_match`
             // hands anything else back to the operand's own `=~`, so

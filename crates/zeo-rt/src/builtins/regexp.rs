@@ -253,7 +253,7 @@ ruby_class! {
     }
     def "=~" (recv, other) {
         let Some((h, enc)) = subject_arg(live_re(recv)?, other)? else { return Ok(RubyValue::Nil) };
-        Ok(crate::regexp_match_index(re_of(recv), &h, enc))
+        Ok(crate::regexp_search_index(re_of(recv), &h, enc))
     }
     // `casefold?` reports the `/i` flag.
     def "casefold?" (recv) {
