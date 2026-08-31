@@ -4,12 +4,14 @@
 //! `rb_alias` -- so an alias taken above a `def` binds whatever the name meant
 //! THEN, and a later `def` of the same name does not change it:
 //!
-//!     class T1; end
-//!     T1.class_eval { alias_method :eql?, :== }   # copies BasicObject#==
-//!     class T1
-//!       def ==(other) = true                      # does NOT reach the alias
-//!     end
-//!     T1.new.eql?(T1.new)                         # false
+//! ```text
+//! class T1; end
+//! T1.class_eval { alias_method :eql?, :== }   # copies BasicObject#==
+//! class T1
+//!   def ==(other) = true                      # does NOT reach the alias
+//! end
+//! T1.new.eql?(T1.new)                         # false
+//! ```
 //!
 //! zeo registers a compiled `def` at program START, so at the alias's line the
 //! class already answered `==` with the later body and the alias copied that.
