@@ -169,9 +169,10 @@ pub(super) fn const_multi_write(
     let (nptr, nlen) = super::stmt::name_pair(fx, name);
     let (fptr, flen) = super::stmt::name_pair(fx, &file);
     let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
+    let fxbox = fx.box_v();
     fx.call(
         "zeo_rt_const_set_at",
-        &[owner_v, nptr, nlen, addr, fptr, flen, line_v],
+        &[owner_v, nptr, nlen, addr, fptr, flen, line_v, fxbox],
     );
     fx.call("zeo_rt_release", &[addr]);
     fx.owned_consumed += 1;

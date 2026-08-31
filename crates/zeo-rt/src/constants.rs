@@ -143,12 +143,8 @@ pub fn const_get_master(name: &str) -> Option<RubyValue> {
 /// class is a constant of its namespace too, and lives in the class registry
 /// rather than this table, so it is checked alongside.
 pub fn const_get_own(owner_class_id: u32, name: &str) -> Option<RubyValue> {
-    if let Some(v) = CONSTANTS
-        .lock()
-        .get(&owner_class_id)
-        .and_then(|m| m.get(name))
-    {
-        return Some(v.clone());
+    if let Some(v) = own_const(owner_class_id, name) {
+        return Some(v);
     }
     nested_class_of(crate::ClassId(owner_class_id), name).map(RubyValue::Class)
 }
@@ -162,10 +158,10 @@ pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
 /// between ruby's two constant searches (`variable.c`'s `exclude`), so both
 /// spellings share this walk and cannot drift.
 fn const_search(owner_class_id: u32, name: &str, skip_object: bool) -> Option<RubyValue> {
-    let map = CONSTANTS.lock();
-    if let Some(v) = map.get(&owner_class_id).and_then(|m| m.get(name)) {
-        return Some(v.clone());
+    if let Some(v) = own_const(owner_class_id, name) {
+        return Some(v);
     }
+    let map = CONSTANTS.lock();
     // The owner's OWN nested class, before any ancestor is consulted: a
     // subclass that redefines a nested name (`class L < B; class H`) owns it,
     // and reaching `B::H` first answered the base's class for `L::H` /
@@ -432,9 +428,49 @@ pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
     }
     CONSTANTS
         .lock()
-        .entry(owner_class_id)
+        .entry(write_owner(owner_class_id))
         .or_default()
         .insert(Box::from(name), value);
+}
+
+/// `owner`'s own constant `name` in `box_id`'s record, and nowhere else.
+///
+/// The box's copy of a SHARED class -- `Object` above all. A box's cref chain
+/// ends at its surrogate and falls back to the MASTER constants, so without
+/// this its own `Object.const_set` would be unreachable from inside it, while
+/// CRuby gives the box its own `Object` to write into and read back.
+pub fn const_get_in_box(box_id: u32, owner_class_id: u32, name: &str) -> Option<RubyValue> {
+    let record = crate::boxes::box_record_for_read(box_id, owner_class_id)?;
+    CONSTANTS
+        .lock()
+        .get(&record)
+        .and_then(|m| m.get(name))
+        .cloned()
+}
+
+/// The table row a WRITE from the running box lands in: its own per-(box,
+/// class) record for a SHARED class, and the plain owner otherwise (box 0,
+/// or a class the box owns outright). See `boxes::box_record_for_write`.
+fn write_owner(owner_class_id: u32) -> u32 {
+    crate::boxes::box_record_for_write(
+        crate::boxes::current_box(),
+        crate::boxes::overlay_root(owner_class_id),
+    )
+}
+
+/// `owner`'s own constant `name` as the running box sees it: the box's record
+/// first, then the shared one. Every read of the table goes through this, so
+/// the two-record rule is stated once.
+fn own_const(owner_class_id: u32, name: &str) -> Option<RubyValue> {
+    let owner_class_id = crate::boxes::overlay_root(owner_class_id);
+    let map = CONSTANTS.lock();
+    if let Some(mine) =
+        crate::boxes::box_record_for_read(crate::boxes::current_box(), owner_class_id)
+        && let Some(v) = map.get(&mine).and_then(|m| m.get(name))
+    {
+        return Some(v.clone());
+    }
+    map.get(&owner_class_id).and_then(|m| m.get(name)).cloned()
 }
 
 /// Where each constant was assigned -- `(owner, name) -> (file, line)`, the

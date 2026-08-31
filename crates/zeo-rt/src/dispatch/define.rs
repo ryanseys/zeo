@@ -249,10 +249,9 @@ pub(super) fn builtin_class_row(
 /// See `ClassEntry::aliases`.
 pub(crate) fn alias_target(id: ClassId, name: Symbol) -> Option<Symbol> {
     let r = REGISTRY.get()?;
+    let box_id = crate::boxes::current_box();
     for &anc in ancestors_of_value(id) {
-        if let Some(e) = r.entries.get(&anc.0)
-            && let Some(&old) = e.aliases.get(&name)
-        {
+        if let Some(old) = r.alias_target(anc, box_id, name, false) {
             return Some(old);
         }
     }
@@ -265,10 +264,9 @@ pub(crate) fn alias_target(id: ClassId, name: Symbol) -> Option<Symbol> {
 /// always beats an `alias [] new`. See `ClassEntry::class_aliases`.
 pub(crate) fn class_alias_target(id: ClassId, name: Symbol) -> Option<Symbol> {
     let r = REGISTRY.get()?;
+    let box_id = crate::boxes::current_box();
     for &anc in ancestors_of_value(id) {
-        if let Some(e) = r.entries.get(&anc.0)
-            && let Some(&old) = e.class_aliases.get(&name)
-        {
+        if let Some(old) = r.alias_target(anc, box_id, name, true) {
             return Some(old);
         }
     }

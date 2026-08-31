@@ -1397,9 +1397,12 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
             let (nptr, nlen) = rodata_name(fx, &name);
             let (fptr, flen) = rodata_name(fx, file);
             let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
+            // The box the assignment is WRITTEN in: a box's constant lands in
+            // its own record, so main keeps the pristine one.
+            let fxbox = fx.box_v();
             fx.call(
                 "zeo_rt_const_set_at",
-                &[owner_v, nptr, nlen, ptr, fptr, flen, line_v],
+                &[owner_v, nptr, nlen, ptr, fptr, flen, line_v, fxbox],
             );
             // Ruby announces the constant AFTER the write, so the hook body
             // can already read it -- and on every assignment, re-assignment

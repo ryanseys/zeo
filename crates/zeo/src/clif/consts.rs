@@ -121,6 +121,10 @@ fn const_cref_call(
     let (qptr, qlen) = super::expr::rodata_name(fx, qualified);
     let flags = u8::from(hook) | if fx.box_id == 0 { 0 } else { 2 };
     let hook_v = fx.b.ins().iconst(types::I8, i64::from(flags));
+    // Which box, not merely whether. The `flags` bit above says a box is
+    // reading; the read also has to reach that box's OWN record for a shared
+    // owner (its `Object`), which needs the id.
+    let box_v = fx.box_v();
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     // Per-site epoch-validated cache: a hit is two atomic loads and a
@@ -129,7 +133,7 @@ fn const_cref_call(
     let site = fx.const_site_ptr();
     let status = fx.call_status(
         "zeo_rt_const_get_cref_cached",
-        &[site, ids_ptr, n_ids, nptr, nlen, qptr, qlen, hook_v, out],
+        &[site, ids_ptr, n_ids, nptr, nlen, qptr, qlen, hook_v, box_v, out],
     );
     fx.fallible(status);
     fx.owned_created += 1;
@@ -265,11 +269,12 @@ pub(super) fn scoped_const_read(
     let (nptr, nlen) = super::expr::rodata_name(fx, name);
     let (qptr, qlen) = super::expr::rodata_name(fx, &qualified);
     let hook_v = fx.b.ins().iconst(types::I8, i64::from(hook));
+    let fxbox = fx.box_v();
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = fx.call_status(
         "zeo_rt_const_get_scoped",
-        &[owner_v, nptr, nlen, qptr, qlen, hook_v, out],
+        &[owner_v, nptr, nlen, qptr, qlen, hook_v, fxbox, out],
     );
     fx.fallible(status);
     fx.owned_created += 1;

@@ -239,7 +239,7 @@ pub const CAPI: &[CapiSig] = &[
     },
     CapiSig {
         name: "zeo_rt_const_get_cref_cached",
-        params: &[Ptr, Ptr, Usize, Ptr, Usize, Ptr, Usize, U8, Ptr],
+        params: &[Ptr, Ptr, Usize, Ptr, Usize, Ptr, Usize, U8, U32, Ptr],
         ret: Some(I32),
     },
     CapiSig {
@@ -254,7 +254,7 @@ pub const CAPI: &[CapiSig] = &[
     },
     CapiSig {
         name: "zeo_rt_const_get_scoped",
-        params: &[U32, Ptr, Usize, Ptr, Usize, U8, Ptr],
+        params: &[U32, Ptr, Usize, Ptr, Usize, U8, U32, Ptr],
         ret: Some(I32),
     },
     CapiSig {
@@ -264,7 +264,7 @@ pub const CAPI: &[CapiSig] = &[
     },
     CapiSig {
         name: "zeo_rt_const_set_at",
-        params: &[U32, Ptr, Usize, Ptr, Ptr, Usize, U32],
+        params: &[U32, Ptr, Usize, Ptr, Ptr, Usize, U32, U32],
         ret: None,
     },
     CapiSig {

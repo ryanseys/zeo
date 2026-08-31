@@ -191,6 +191,12 @@ impl CivarSite {
 /// Oracle-checked: `class C; def self.probe = @never_written; end; C.probe`
 /// is `nil`.
 pub fn class_ivar_get(class_id: u32, name: &str) -> RubyValue {
+    let class_id = crate::boxes::overlay_root(class_id);
+    if let Some(mine) = crate::boxes::box_record_for_read(crate::boxes::current_box(), class_id)
+        && let Some(slot) = CIVARS.lock().get(&mine).and_then(|m| m.get(name)).copied()
+    {
+        return slot.get();
+    }
     let slot = CIVARS
         .lock()
         .get(&class_id)
@@ -208,6 +214,8 @@ pub fn class_ivar_set(class_id: u32, name: &str, value: RubyValue) -> Result<(),
             class_id,
         )));
     }
+    let class_id =
+        crate::boxes::box_record_for_write(crate::boxes::current_box(), crate::boxes::overlay_root(class_id));
     intern(class_id, name).put(value);
     Ok(())
 }

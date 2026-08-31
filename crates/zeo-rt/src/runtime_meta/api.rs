@@ -917,7 +917,14 @@ fn runtime_remove_class_method(
         }
         {
             let mut w = maps().classes.write().unwrap();
-            let e = w.entry(owner.0).or_insert_with(OverlayEntry::delta);
+            // The root the box's overlay patches, in the box's own record:
+            // the tombstone has to land where the READ looks, and a box's
+            // removal must not retire the row for main.
+            let target = crate::boxes::box_record_for_write(
+                crate::boxes::current_box(),
+                crate::boxes::overlay_root(owner.0),
+            );
+            let e = w.entry(target).or_insert_with(OverlayEntry::delta);
             e.class_methods.remove(&name);
             e.extended_class_methods.remove(&name);
             e.class_methods_vis.remove(&name);
@@ -1824,7 +1831,7 @@ pub fn runtime_define_singleton_method(
             );
             {
                 let mut w = maps().classes.write().unwrap();
-                let e = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
+                let e = w.entry(crate::boxes::box_record_for_write(crate::boxes::current_box(), cid.0)).or_insert_with(OverlayEntry::delta);
                 e.class_methods.insert(name, body);
                 e.extended_class_methods.remove(&name);
             }

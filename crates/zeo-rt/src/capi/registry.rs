@@ -243,7 +243,9 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 registry.mark_refinement(ClassId(r.class), ClassId(module), ClassId(target));
             }
             abi::REG_MARK_BOX_CLASS => {
-                crate::boxes::mark_box_class(ClassId(r.class), unsafe { *r.ids });
+                let ids = unsafe { std::slice::from_raw_parts(r.ids, 2) };
+                crate::boxes::mark_box_class(ClassId(r.class), ids[0]);
+                crate::boxes::mark_overlay_root(ClassId(r.class), ClassId(ids[1]));
             }
             abi::REG_DEFER_EXTENDED_CLASS_METHOD => {
                 crate::runtime_meta::defer_extended_class_method(
@@ -273,10 +275,12 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 registry.mark_undefined(ClassId(r.class), Symbol::intern(text(r.a)));
             }
             abi::REG_ALIAS => {
-                registry.register_alias(ClassId(r.class), text(r.a), text(r.b));
+                let box_id = unsafe { *r.ids };
+                registry.register_alias(ClassId(r.class), box_id, text(r.a), text(r.b));
             }
             abi::REG_CLASS_ALIAS => {
-                registry.register_class_alias(ClassId(r.class), text(r.a), text(r.b));
+                let box_id = unsafe { *r.ids };
+                registry.register_class_alias(ClassId(r.class), box_id, text(r.a), text(r.b));
             }
             abi::REG_SINGLETON_SUPER_TARGET => {
                 let module = unsafe { *r.ids };

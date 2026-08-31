@@ -455,10 +455,17 @@ pub unsafe extern "C" fn zeo_rt_const_set_at(
     file: *const u8,
     file_len: usize,
     line: u32,
+    box_id: u32,
 ) {
     let name = unsafe { super::str_slice(name, name_len) };
     let file = unsafe { super::static_str(file, file_len) };
-    crate::constants::const_set_at(owner, name, unsafe { &*v }.clone(), file, line);
+    // The box the assignment was WRITTEN in, published for the write. A class
+    // body is not a send, so the ambient box a send would have installed is
+    // not set here -- without this a box's `class Array; C = 1; end` landed on
+    // the shared record and main could read it.
+    crate::boxes::in_box(box_id, || {
+        crate::constants::const_set_at(owner, name, unsafe { &*v }.clone(), file, line);
+    });
 }
 
 /// `private_constant :A` / `public_constant :A` running at its DOCUMENT
@@ -536,7 +543,12 @@ fn autoload_retry(owners: &[u32], name: &str) -> Result<bool, crate::Signal> {
 /// The PURE half of the cref walk: the chain's own tables, then -- inside
 /// a box -- the master tail. No autoload, no `const_missing`, no raise:
 /// exactly the part a [`crate::constants::ConstSite`] may cache.
-fn cref_table_probe(ids: &[u32], name: &str, flags: u8) -> Option<RubyValue> {
+fn cref_table_probe(ids: &[u32], name: &str, flags: u8, box_id: u32) -> Option<RubyValue> {
+    // The whole walk runs in the reading box. A constant read is not a send,
+    // so nothing else publishes it -- and the WRITE side already stores under
+    // the box (`const_set_at`), so a read under box 0 misses what the same
+    // box just wrote. That is what broke a run-time box's own constant.
+    let _box = crate::boxes::BoxGuard::enter(box_id);
     for &id in ids {
         if let Some(v) = crate::constants::const_get(id, name) {
             return Some(v);
@@ -548,6 +560,15 @@ fn cref_table_probe(ids: &[u32], name: &str, flags: u8) -> Option<RubyValue> {
     // the box main's own top-level constants, which a box (a copy of
     // master) never sees.
     if flags & CONST_CREF_MASTER != 0 {
+        // The box's OWN copy of a shared owner comes first. A box's
+        // `Object.const_set(:X, 1)` writes into its record for `Object`, and
+        // the chain above never reaches `Object` -- so without this the box
+        // could not read back what it just wrote, while main (correctly)
+        // still cannot see it at all.
+        // `Object` is class id 0, the owner every top-level `const_set` names.
+        if let Some(v) = crate::constants::const_get_in_box(box_id, 0, name) {
+            return Some(v);
+        }
         return crate::constants::const_get_master(name);
     }
     None
@@ -568,17 +589,18 @@ pub unsafe extern "C" fn zeo_rt_const_get_cref_cached(
     qualified: *const u8,
     qualified_len: usize,
     flags: u8,
+    box_id: u32,
     out: *mut RubyValue,
 ) -> i32 {
     let name_s = unsafe { super::str_slice(name, name_len) };
     let ids_s = unsafe { std::slice::from_raw_parts(ids, n_ids) };
-    if let Some(v) = site.get(|| cref_table_probe(ids_s, name_s, flags)) {
+    if let Some(v) = site.get(|| cref_table_probe(ids_s, name_s, flags, box_id)) {
         super::leakcheck::created(&v);
         unsafe { out.write(v) };
         return STATUS_OK;
     }
     unsafe {
-        zeo_rt_const_get_cref(ids, n_ids, name, name_len, qualified, qualified_len, flags, out)
+        zeo_rt_const_get_cref(ids, n_ids, name, name_len, qualified, qualified_len, flags, box_id, out)
     }
 }
 
@@ -599,11 +621,12 @@ pub unsafe extern "C" fn zeo_rt_const_get_cref(
     qualified: *const u8,
     qualified_len: usize,
     flags: u8,
+    box_id: u32,
     out: *mut RubyValue,
 ) -> i32 {
     let name = unsafe { super::str_slice(name, name_len) };
     let ids = unsafe { std::slice::from_raw_parts(ids, n_ids) };
-    if let Some(v) = cref_table_probe(ids, name, flags) {
+    if let Some(v) = cref_table_probe(ids, name, flags, box_id) {
         super::leakcheck::created(&v);
         unsafe { out.write(v) };
         return STATUS_OK;
@@ -648,9 +671,14 @@ pub unsafe extern "C" fn zeo_rt_const_get_scoped(
     qualified: *const u8,
     qualified_len: usize,
     hook: u8,
+    box_id: u32,
     out: *mut RubyValue,
 ) -> i32 {
     let name = unsafe { super::str_slice(name, name_len) };
+    // `Array::X` read from inside a box has to reach the box's own record
+    // for `Array`. A scope operator is not a send, so nothing else installs
+    // the ambient box here.
+    let _box = crate::boxes::BoxGuard::enter(box_id);
     match crate::constants::const_get_scoped(owner, name) {
         Some(v) => {
             super::leakcheck::created(&v);

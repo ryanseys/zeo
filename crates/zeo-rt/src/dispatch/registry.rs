@@ -133,7 +133,7 @@ pub(super) struct ClassEntry {
     /// `validate_aliases` raises `NameError` at program start for a source
     /// that resolves nowhere (real Ruby's timing -- the class body
     /// executing).
-    pub(super) aliases: FMap<Symbol, Symbol>,
+    pub(super) aliases: FMap<(u32, Symbol), Symbol>,
     /// This class's own CLASS methods (`def self.x`, `class << self`,
     /// `extend`) -- reached when a `RubyValue::Class` receiver is sent to
     /// dynamically (`handler.run(...)`, where `handler` holds a class), the
@@ -169,7 +169,7 @@ pub(super) struct ClassEntry {
     /// Separate from `aliases` because the two tables are consulted with
     /// different receivers: `aliases` answers for INSTANCES of this class,
     /// this one for the class OBJECT itself.
-    pub(super) class_aliases: FMap<Symbol, Symbol>,
+    pub(super) class_aliases: FMap<(u32, Symbol), Symbol>,
     /// Per-POSITION singleton-chain super targets, keyed `(module id,
     /// name)`: one emitted copy of every `extend`ed module's method (winner
     /// AND shadowed -- the flattened `class_methods` above keeps only
@@ -929,18 +929,31 @@ impl ClassRegistry {
     /// comes back with its SOURCE beside it -- reflection has to know which
     /// row to ask about.
     pub(super) fn alias_rows(&self, id: ClassId) -> Vec<(Symbol, Symbol)> {
+        let effective = effective_box(id, crate::boxes::current_box());
         self.entries
             .get(&id.0)
-            .map(|e| e.aliases.iter().map(|(&n, &o)| (n, o)).collect())
+            .map(|e| {
+                e.aliases
+                    .iter()
+                    .filter(|((bx, _), _)| *bx == 0 || *bx == effective)
+                    .map(|(&(_, n), &o)| (n, o))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
-    pub fn register_alias(&mut self, id: ClassId, new: &str, old: &str) {
-        self.entries
-            .get_mut(&id.0)
-            .expect("class must be registered before aliasing methods on it")
+    pub fn register_alias(&mut self, id: ClassId, box_id: u32, new: &str, old: &str) {
+        let Some(entry) = self.entries.get_mut(&id.0) else {
+            // NEVER an `expect`. This runs from `zeo_rt_main`, across an
+            // `extern "C"` boundary that cannot unwind, so a panic here
+            // aborts the process rather than raising -- which is what a
+            // box's `class << self; alias_method ...; end` used to do.
+            tracing::warn!(class = id.0, box_id, new, old, "alias on an unregistered class");
+            return;
+        };
+        entry
             .aliases
-            .insert(Symbol::intern(new), Symbol::intern(old));
+            .insert((box_id, Symbol::intern(new)), Symbol::intern(old));
     }
 
     /// Whether `id`'s own body `undef`'d `name` -- the lookup TERMINATOR
@@ -953,12 +966,31 @@ impl ClassRegistry {
 
     /// [`Registry::register_alias`]'s singleton-side twin -- see
     /// `ClassEntry::class_aliases`.
-    pub fn register_class_alias(&mut self, id: ClassId, new: &str, old: &str) {
-        self.entries
-            .get_mut(&id.0)
-            .expect("class must be registered before aliasing class methods on it")
+    pub fn register_class_alias(&mut self, id: ClassId, box_id: u32, new: &str, old: &str) {
+        let Some(entry) = self.entries.get_mut(&id.0) else {
+            tracing::warn!(class = id.0, box_id, new, old, "class alias on an unregistered class");
+            return;
+        };
+        entry
             .class_aliases
-            .insert(Symbol::intern(new), Symbol::intern(old));
+            .insert((box_id, Symbol::intern(new)), Symbol::intern(old));
+    }
+
+    /// The alias indirection `box_id` sees for `id`, by the same rule the
+    /// method tables use: the box's own, then the shared one.
+    pub(super) fn alias_target(&self, id: ClassId, box_id: u32, name: Symbol, class_side: bool) -> Option<Symbol> {
+        let entry = self.entries.get(&id.0)?;
+        let table = match class_side {
+            true => &entry.class_aliases,
+            false => &entry.aliases,
+        };
+        let effective = effective_box(id, box_id);
+        if effective != 0
+            && let Some(&old) = table.get(&(effective, name))
+        {
+            return Some(old);
+        }
+        table.get(&(0, name)).copied()
     }
 
     /// Registers one `def self.x` for dynamic dispatch -- see
@@ -1297,8 +1329,28 @@ impl ClassRegistry {
             return Vec::new();
         };
         match own_only {
-            true => e.own_class_methods.iter().copied().collect(),
-            false => e.class_methods.keys().map(|&(_, sym)| sym).collect(),
+            // `own_class_methods` is a name set with no box axis, so a name
+            // only a BOX defined would be reported to main. Keep the names
+            // this caller can actually resolve, which is the same question
+            // asked once rather than a second table to keep in step.
+            true => {
+                let box_id = crate::boxes::current_box();
+                e.own_class_methods
+                    .iter()
+                    .copied()
+                    .filter(|&n| self.lookup_class_method(id, box_id, n).is_some())
+                    .collect()
+            }
+            // Only the rows this caller may SEE, or `singleton_methods` and
+            // `methods` report a box's `def self.x` to main.
+            false => {
+                let effective = effective_box(id, crate::boxes::current_box());
+                e.class_methods
+                    .keys()
+                    .filter(|(bx, _)| *bx == 0 || *bx == effective)
+                    .map(|&(_, sym)| sym)
+                    .collect()
+            }
         }
     }
 
@@ -1326,6 +1378,12 @@ impl ClassRegistry {
         box_id: u32,
         name: Symbol,
     ) -> Option<ValueImpl> {
+        // A per-box builtin overlay registers no entry, and its rows live on
+        // the root it patches -- so every class-method question normalizes
+        // here rather than at each caller. `remove_method` inside a box's
+        // `class << self` asked about the overlay id and was told the method
+        // did not exist.
+        let id = ClassId(crate::boxes::overlay_root(id.0));
         let entry = self.entries.get(&id.0)?;
         let effective = effective_box(id, box_id);
         if effective != 0

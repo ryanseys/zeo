@@ -283,3 +283,111 @@ pub fn in_box<T>(b: u32, f: impl FnOnce() -> T) -> T {
     let _restore = Restore(swap_current_box(b));
     f()
 }
+
+/// Where a per-(box, class) record is keyed.
+///
+/// CRuby gives a class a PRIME `rb_classext_t` and, on a box's first write,
+/// copies it into a per-box table (`box_classext_tbl`, `internal/class.h`).
+/// zeo keeps the same one-record-per-(box, class) shape but names the record
+/// with a SHADOW class id, so a table already keyed by class id gains the box
+/// axis without widening its key type.
+///
+/// The shadow ids live above every real class id and are never handed to Ruby:
+/// they are table keys only. Asking `ancestors_of_value` or `class_name` about
+/// one is a bug, so nothing may return a shadow as a class.
+const SHADOW_BASE: u32 = 0xF000_0000;
+
+static SHADOWS: OnceLock<RwLock<(crate::FMap<(u32, u32), u32>, u32)>> = OnceLock::new();
+
+fn shadows() -> &'static RwLock<(crate::FMap<(u32, u32), u32>, u32)> {
+    SHADOWS.get_or_init(|| RwLock::new((crate::FMap::default(), SHADOW_BASE)))
+}
+
+/// The record key `box_id` writes `owner`'s state into, minting one if this
+/// is the box's first write to that class.
+///
+/// Box 0 writes the shared record, and so does a box writing to a class it
+/// OWNS -- such a class has no shared version to protect, and giving it a
+/// shadow would hide its state from main (the `box::Thrower` case).
+pub fn box_record_for_write(box_id: u32, owner: u32) -> u32 {
+    if box_id == MAIN || class_box(crate::ClassId(owner)) != 0 {
+        return owner;
+    }
+    let key = (box_id, owner);
+    if let Some(&s) = shadows().read().expect("no poisoned shadow readers").0.get(&key) {
+        return s;
+    }
+    let mut w = shadows().write().expect("no poisoned shadow writers");
+    if let Some(&s) = w.0.get(&key) {
+        return s;
+    }
+    w.1 += 1;
+    let s = w.1;
+    w.0.insert(key, s);
+    s
+}
+
+/// The record key `box_id` READS `owner`'s state from, or `None` when the box
+/// has never written to that class and only the shared record applies.
+pub fn box_record_for_read(box_id: u32, owner: u32) -> Option<u32> {
+    if box_id == MAIN {
+        return None;
+    }
+    shadows()
+        .read()
+        .expect("no poisoned shadow readers")
+        .0
+        .get(&(box_id, owner))
+        .copied()
+}
+
+/// A per-box builtin OVERLAY class -> the shared class it patches.
+static OVERLAY_ROOTS: OnceLock<RwLock<crate::FMap<u32, u32>>> = OnceLock::new();
+
+fn overlay_roots() -> &'static RwLock<crate::FMap<u32, u32>> {
+    OVERLAY_ROOTS.get_or_init(Default::default)
+}
+
+/// Records that `cid` is box `box_id`'s overlay of `root` (`root == cid` when
+/// it overlays nothing).
+pub fn mark_overlay_root(cid: crate::ClassId, root: crate::ClassId) {
+    if cid != root {
+        overlay_roots()
+            .write()
+            .expect("no poisoned overlay-root writers")
+            .insert(cid.0, root.0);
+    }
+}
+
+/// The SHARED class `cid` patches, or `cid` itself.
+///
+/// A per-box builtin overlay is a patch container, never a class of its own:
+/// its methods register on the root keyed by box, so any other state written
+/// against it -- a class ivar is the case that showed this -- has to land on
+/// the root too, or the write and the read name different classes.
+pub fn overlay_root(cid: u32) -> u32 {
+    let table = overlay_roots()
+        .read()
+        .expect("no poisoned overlay-root readers");
+    if table.is_empty() {
+        return cid;
+    }
+    table.get(&cid).copied().unwrap_or(cid)
+}
+
+/// A scoped ambient-box change for code that is not a send, and so gets no
+/// box published for it -- a class body's constant write, a `Scope::NAME`
+/// read. Restores on drop, an early return or a raise included.
+pub struct BoxGuard(u32);
+
+impl BoxGuard {
+    pub fn enter(b: u32) -> Option<BoxGuard> {
+        (b != MAIN).then(|| BoxGuard(swap_current_box(b)))
+    }
+}
+
+impl Drop for BoxGuard {
+    fn drop(&mut self) {
+        swap_current_box(self.0);
+    }
+}

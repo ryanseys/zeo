@@ -764,7 +764,15 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
                 a: String::new(),
                 b: String::new(),
                 f: None,
-                ids: vec![class.box_id],
+                // The box, then the SHARED class this one overlays (itself
+                // when it overlays nothing). A per-box builtin overlay
+                // registers no entry of its own, so state written against it
+                // -- a class ivar is the case -- has to normalize to the
+                // root, or the write and the read name different classes.
+                ids: vec![
+                    class.box_id,
+                    class.builtin_overlay.map_or(idx as u32, |root| root.0),
+                ],
                 flag: 0,
             });
         }
@@ -797,7 +805,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     reg_rows.extend(
         alias_rows
             .iter()
-            .map(|(class, new, old, is_class)| statics::RegRowSpec {
+            .map(|(class, new, old, is_class, box_id)| statics::RegRowSpec {
                 kind: if *is_class {
                     zeo_abi::abi::REG_CLASS_ALIAS
                 } else {
@@ -807,7 +815,10 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
                 a: new.clone(),
                 b: old.clone(),
                 f: None,
-                ids: vec![],
+                // The box the alias was WRITTEN in, so a box's
+                // `class << self; alias_method :x, :y; end` on a shared
+                // class does not rename anything for main.
+                ids: vec![*box_id],
                 flag: 0,
             }),
     );
@@ -1040,9 +1051,10 @@ pub(super) fn main_installs(
         let (fptr, flen) = super::expr::rodata_name(fx, "<main>");
         let owner = fx.b.ins().iconst(types::I32, 0);
         let line = fx.b.ins().iconst(types::I32, 0);
+        let fxbox = fx.box_v();
         fx.call(
             "zeo_rt_const_set_at",
-            &[owner, nptr, nlen, vp, fptr, flen, line],
+            &[owner, nptr, nlen, vp, fptr, flen, line, fxbox],
         );
     }
     // Class bodies whose markers sit inside `def`s run ONCE here, before

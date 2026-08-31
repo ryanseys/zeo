@@ -142,11 +142,21 @@ pub(crate) fn runtime_class_method(id: ClassId, name: Symbol) -> Option<MethodIm
 /// layering (see [`OverlayEntry::prepended_class_methods`]).
 pub fn overlay_class_method(id: ClassId, name: Symbol) -> Option<RProc> {
     let c = maps().classes.read().unwrap();
-    let e = c.get(&id.0)?;
-    e.prepended_class_methods
-        .get(&name)
-        .or_else(|| e.class_methods.get(&name))
-        .cloned()
+    let pick = |e: &super::OverlayEntry| {
+        e.prepended_class_methods
+            .get(&name)
+            .or_else(|| e.class_methods.get(&name))
+            .cloned()
+    };
+    // The running box's own record first. A run-time write from a box --
+    // `Array.singleton_class.define_method(:x)` -- lands there, and main
+    // reads only the shared record, so it never sees it.
+    if let Some(mine) = crate::boxes::box_record_for_read(crate::boxes::current_box(), id.0)
+        && let Some(hit) = c.get(&mine).and_then(pick)
+    {
+        return Some(hit);
+    }
+    c.get(&id.0).and_then(pick)
 }
 
 /// A module prepended into an ANCESTOR's singleton class, for a receiver that
@@ -454,12 +464,18 @@ pub fn overlay_is_removed(id: ClassId, name: Symbol) -> bool {
 /// needs; see [`OverlayEntry::class_deferred`] for why the two sets are kept
 /// apart.
 pub fn overlay_class_removed(id: ClassId, name: Symbol) -> bool {
-    maps()
-        .classes
-        .read()
-        .unwrap()
-        .get(&id.0)
-        .is_some_and(|e| e.class_removed.contains(&name) || e.class_deferred.contains(&name))
+    let id = crate::boxes::overlay_root(id.0);
+    let c = maps().classes.read().unwrap();
+    let gone = |e: &super::OverlayEntry| {
+        e.class_removed.contains(&name) || e.class_deferred.contains(&name)
+    };
+    // A box's own removal retires the row for that box alone; main keeps it.
+    if let Some(mine) = crate::boxes::box_record_for_read(crate::boxes::current_box(), id)
+        && c.get(&mine).is_some_and(gone)
+    {
+        return true;
+    }
+    c.get(&id).is_some_and(gone)
 }
 
 /// Reverse of [`overlay_class_name`]: the runtime class id whose Ruby-visible

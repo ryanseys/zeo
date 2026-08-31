@@ -220,7 +220,7 @@ pub(crate) struct CollectedClasses {
     pub register_builtin: Vec<(u32, String, bool, Vec<u32>)>,
     /// `(class, new, old, is_class_side)` -- builtin-source alias rows
     /// (`register_alias` / `register_class_alias` name indirections).
-    pub alias_rows: Vec<(u32, String, String, bool)>,
+    pub alias_rows: Vec<(u32, String, String, bool, u32)>,
     /// `(class, module, name, trampoline)` -- singleton-chain super
     /// targets: every `extend`ed method copy (winner AND shadowed) plus
     /// inherited class methods a subclass's own `def self.x` shadowed
@@ -268,7 +268,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
     let mut vis = Vec::new();
     let mut extends: Vec<(u32, Vec<u32>)> = Vec::new();
     let mut sst: Vec<(u32, u32, String, cranelift_module::FuncId)> = Vec::new();
-    let mut alias_rows: Vec<(u32, String, String, bool)> = Vec::new();
+    let mut alias_rows: Vec<(u32, String, String, bool, u32)> = Vec::new();
     let mut conceal: Vec<u32> = Vec::new();
     let mut singleton_surrogates: Vec<(u32, u32)> = Vec::new();
     let mut redefs: Vec<RedefSpec> = Vec::new();
@@ -299,11 +299,19 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
         {
             continue;
         }
+        // A per-box builtin OVERLAY registers no entry of its own, so an
+        // alias naming it named a class the runtime has never heard of --
+        // and the registrar's `expect` on that lookup ABORTED the process.
+        // The method rows already redirect to the root the overlay patches
+        // (`target`, below); these have to as well.
+        let owner = class
+            .builtin_overlay
+            .map_or(idx as u32, |root| root.0);
         for (new, old) in &class.builtin_aliases {
-            alias_rows.push((idx as u32, new.clone(), old.clone(), false));
+            alias_rows.push((owner, new.clone(), old.clone(), false, class.box_id));
         }
         for (new, old) in &class.class_aliases {
-            alias_rows.push((idx as u32, new.clone(), old.clone(), true));
+            alias_rows.push((owner, new.clone(), old.clone(), true, class.box_id));
         }
     }
 

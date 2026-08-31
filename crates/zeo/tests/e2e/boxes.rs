@@ -174,3 +174,179 @@ fn a_boxs_required_file_patches_a_shared_class_privately() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "false\n\"go\"\n");
 }
+
+/// The CONSTANT channel, both halves. A box's `Object.const_set` is
+/// unreachable from main, and reachable from the box -- which needs its own
+/// record for `Object`, since a box's cref chain ends at its surrogate and
+/// otherwise never consults `Object` at all.
+#[test]
+fn a_boxs_constant_is_its_own() {
+    let result = run_ruby_boxed(
+        r#"
+        b = Ruby::Box.new
+        b.eval("Object.const_set(:BOXCONST, 5)")
+        p(begin; Object.const_get(:BOXCONST); rescue NameError; :namee; end)
+        p b.eval("BOXCONST")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, ":namee\n5\n");
+}
+
+/// A constant written on a SHARED class inside a box, read back by path.
+/// `Array::BOXC` is a scope-operator read rather than a cref walk, so it is
+/// a different path into the same table.
+#[test]
+fn a_boxs_constant_on_a_shared_class_is_its_own() {
+    let result = run_ruby_boxed(
+        r#"
+        b = Ruby::Box.new
+        b.eval("class Array; BOXC = 11; end")
+        p(begin; Array::BOXC; rescue NameError; :namee; end)
+        p b.eval("Array::BOXC")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, ":namee\n11\n");
+}
+
+/// Class ivars and class variables, which live in tables of their own.
+#[test]
+fn a_boxs_class_ivar_and_class_variable_are_its_own() {
+    let result = run_ruby_boxed(
+        r#"
+        b = Ruby::Box.new
+        b.eval("class Array; @civ = 7; def self.civ = @civ; end")
+        b.eval("class Array; @@cv = 3; def self.cv = @@cv; end")
+        p(begin; Array.civ; rescue NoMethodError; :nome; end)
+        p b.eval("Array.civ")
+        p b.eval("Array.cv")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, ":nome\n7\n3\n");
+}
+
+/// A RUN-TIME `define_method` on a shared class's singleton. The compiled
+/// half and this one land in different tables -- the frozen registry and the
+/// runtime overlay -- so both need saying.
+#[test]
+fn a_boxs_runtime_singleton_define_method_stays_in_the_box() {
+    let result = run_ruby_boxed(
+        r#"
+        b = Ruby::Box.new
+        b.eval("Array.singleton_class.define_method(:dyn) { 42 }")
+        p Array.respond_to?(:dyn)
+        p b.eval("Array.dyn")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "false\n42\n");
+}
+
+/// A class-method ALIAS written in a box's `class << self`. This ABORTED the
+/// process before: the alias named the box's overlay class, which registers
+/// no entry, and the registrar's `expect` on that lookup is reached across an
+/// `extern "C"` boundary that cannot unwind.
+#[test]
+fn a_boxs_singleton_alias_is_its_own_and_does_not_abort() {
+    let result = run_ruby_boxed(
+        r#"
+        b = Ruby::Box.new
+        b.eval("class Array; class << self; alias_method :zz2, :new; end; end")
+        p Array.respond_to?(:zz2)
+        p b.eval("Array.zz2(1, 5)")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "false\n[5]\n");
+}
+
+/// `remove_method` in a box's `class << self` retires the box's own row and
+/// leaves main's alone. The removal has to find the row first -- it asked
+/// about the overlay id and was told the method did not exist.
+#[test]
+fn a_box_removes_only_its_own_class_method() {
+    let result = run_ruby_boxed(
+        r#"
+        b = Ruby::Box.new
+        b.eval("class String; def self.zz = 1; end")
+        b.eval("class String; class << self; remove_method :zz; end; end")
+        p(begin; b.eval("String.zz"); rescue NoMethodError; :nome; end)
+        p String.respond_to?(:zz)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, ":nome\nfalse\n");
+}
+
+/// Reflection agrees with dispatch. A name the box defined must not appear
+/// in main's `singleton_methods`, which reads a name set with no box axis of
+/// its own.
+#[test]
+fn a_boxs_class_method_is_absent_from_mains_reflection() {
+    let result = run_ruby_boxed(
+        r#"
+        b = Ruby::Box.new
+        b.eval("class Array; def self.zzz = 1; end")
+        p Array.singleton_methods(false).include?(:zzz)
+        p b.eval("Array.singleton_methods(false).include?(:zzz)")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "false\ntrue\n");
+}
+
+/// `include` from inside a box reaches the class's ancestry rather than its
+/// own tables, and stays the box's.
+#[test]
+fn a_boxs_include_is_invisible_to_main() {
+    let result = run_ruby_boxed(
+        r#"
+        b = Ruby::Box.new
+        b.eval("module BoxMix; def mixed = 'm'; end; class Array; include BoxMix; end")
+        p [].respond_to?(:mixed)
+        p b.eval("[].mixed")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "false\n\"m\"\n");
+}
+
+/// `prepend`, which has to beat the builtin row for the box and leave main's
+/// alone.
+///
+/// Deliberately its OWN box, not the one above. An `include` FOLLOWED BY a
+/// prepend in the same box loses the prepend -- a real divergence, filed as
+/// `tests/gaps/a_box_prepend_after_an_include_is_lost.rb`. Main gets that
+/// pair right, so it is the box path specifically.
+#[test]
+fn a_boxs_prepend_is_invisible_to_main() {
+    let result = run_ruby_boxed(
+        r#"
+        b = Ruby::Box.new
+        b.eval("module BoxPre; def size = 99; end; class Array; prepend BoxPre; end")
+        p [1, 2].size
+        p b.eval("[1, 2].size")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n99\n");
+}
+
+/// A box minted at RUN TIME, whose id the compiler never saw. Its constant
+/// has to be written and read under the same box, which is the case that
+/// broke when the write learned the box before the read did.
+#[test]
+fn a_run_time_box_reads_back_its_own_constant() {
+    let result = run_ruby_boxed(
+        r#"
+        d = [Ruby::Box.new].first
+        d.eval("RUNTIME_BOX_CONST = 7")
+        p d.eval("RUNTIME_BOX_CONST")
+        p defined?(RUNTIME_BOX_CONST)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\nnil\n");
+}
