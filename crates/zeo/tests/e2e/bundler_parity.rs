@@ -366,3 +366,65 @@ fn one_gemfile_installs_the_same_way_under_both_engines() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The vendored libraries compile to STANDALONE artifacts, not just to
+/// something `zeo` runs in-process.
+///
+/// `zeo bundle` is a driver zeo compiles and runs each time; `zeo -o zbundle`
+/// makes the same driver a binary that carries Bundler and needs neither zeo
+/// nor a ruby to start. Bundler is the harder of the two graphs, so it is the
+/// one asserted: the artifact has to answer its own version and read a real
+/// Gemfile, because a binary that links and then cannot find its own library
+/// would pass a "did it build" check and nothing else.
+#[test]
+fn the_bundler_driver_compiles_to_a_standalone_artifact() {
+    let zeo = crate::zeo_bin::zeo_cli().unwrap_or_else(|e| panic!("{e}"));
+    let dir = scratch("standalone");
+    let src = dir.join("zbundle.rb");
+    std::fs::write(&src, zeo::subcommand::BUNDLE_DRIVER).expect("writing the driver");
+
+    let artifact = dir.join("zbundle");
+    let built = Command::new(&zeo)
+        .arg("-o")
+        .arg(&artifact)
+        .arg(&src)
+        .env("ZEO_CACHE_DIR", dir.join("zeo-cache"))
+        .output()
+        .expect("compiling the driver");
+    assert!(
+        built.status.success(),
+        "`zeo -o` on the bundler driver:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    // A Gemfile with nothing to resolve, so the artifact is asked to read one
+    // without needing a store.
+    std::fs::create_dir_all(dir.join("home")).expect("a scratch HOME");
+    std::fs::write(dir.join("Gemfile"), "source \"https://rubygems.org\"\n").expect("a Gemfile");
+    let mut cmd = Command::new(&artifact);
+    cmd.arg("--version");
+    hermetic(&mut cmd, &dir);
+    let ran = cmd.output().expect("running the artifact");
+    assert!(
+        ran.status.success(),
+        "the standalone artifact did not run:\n{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let version = String::from_utf8_lossy(&ran.stdout).trim().to_owned();
+    assert!(
+        version.starts_with(char::is_numeric),
+        "the artifact must answer BUNDLER's version, got {version:?}"
+    );
+
+    let mut cmd = Command::new(&artifact);
+    cmd.arg("list");
+    hermetic(&mut cmd, &dir);
+    let listed = cmd.output().expect("running the artifact");
+    assert!(
+        listed.status.success(),
+        "the artifact could not read a Gemfile:\n{}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
