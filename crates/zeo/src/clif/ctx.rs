@@ -523,6 +523,19 @@ impl<'e, 'f> Fx<'e, 'f> {
         self.b.ins().symbol_value(ptr, gv)
     }
 
+    /// The ONE place a compile-time class id becomes a machine value.
+    ///
+    /// Today every id is an immediate. The Packaged id mode (M2 of the
+    /// separate-compilation plan) swaps THIS body for a load from the
+    /// package's link-time id-translation table -- for ids in the
+    /// package's own band -- and no call site moves. Sentinels
+    /// (`u32::MAX`) and fixed builtin ids pass through as immediates in
+    /// both modes, so any class-id-shaped value may route here.
+    pub fn cid_value(&mut self, cid: u32) -> ir::Value {
+        use cranelift_codegen::ir::InstBuilder;
+        self.b.ins().iconst(ir::types::I32, i64::from(cid))
+    }
+
     /// The patched-class bitmap's base address, on [`Fx::gates_base`]'s
     /// declare-once/materialize-per-site rule.
     pub fn patched_bits_base(&mut self) -> ir::Value {

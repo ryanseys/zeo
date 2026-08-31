@@ -184,14 +184,14 @@ fn emit_private_constant_guard(fx: &mut Fx, scope_cid: crate::compiler::ClassId,
         return;
     }
     let path = format!("{}::{name}", compiler.fq_name(owner_cid));
-    let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner_cid.0));
+    let owner_v = fx.cid_value(owner_cid.0);
     let (nptr, nlen) = super::expr::rodata_name(fx, name);
     let private = fx.call_status("zeo_rt_const_private", &[owner_v, nptr, nlen]);
     let hidden = fx.b.create_block();
     let go = fx.b.create_block();
     fx.b.ins().brif(private, hidden, &[], go, &[]);
     fx.b.switch_to_block(hidden);
-    let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner_cid.0));
+    let owner_v = fx.cid_value(owner_cid.0);
     let (nptr, nlen) = super::expr::rodata_name(fx, name);
     let (pptr, plen) = super::expr::rodata_name(fx, &path);
     let st = fx.call_status(
@@ -261,11 +261,11 @@ pub(super) fn scoped_const_read(
     // precisely -- it looks the exact `(owner, name)` pair up -- and the call
     // is one relaxed load when no autoload is pending anywhere. This arm is a
     // full run-time constant lookup already.
-    let owner_touch = fx.b.ins().iconst(types::I32, i64::from(scope_cid.0));
+    let owner_touch = fx.cid_value(scope_cid.0);
     let (tnptr, tnlen) = super::expr::rodata_name(fx, name);
     let st = fx.call_status("zeo_rt_autoload_touch", &[owner_touch, tnptr, tnlen]);
     fx.fallible(st);
-    let owner_v = fx.b.ins().iconst(types::I32, i64::from(scope_cid.0));
+    let owner_v = fx.cid_value(scope_cid.0);
     let (nptr, nlen) = super::expr::rodata_name(fx, name);
     let (qptr, qlen) = super::expr::rodata_name(fx, &qualified);
     let hook_v = fx.b.ins().iconst(types::I8, i64::from(hook));
@@ -353,7 +353,7 @@ fn emit_named_autoload_touch(fx: &mut Fx, owner: crate::compiler::ClassId, leaf:
     if !fx.an.compiler.hir.loader.autoload_consts.contains(leaf) {
         return;
     }
-    let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner.0));
+    let owner_v = fx.cid_value(owner.0);
     let (nptr, nlen) = super::expr::rodata_name(fx, leaf);
     let st = fx.call_status("zeo_rt_autoload_touch", &[owner_v, nptr, nlen]);
     fx.fallible(st);
@@ -411,7 +411,7 @@ pub(super) fn autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
         // ASKS for its autoload is the first question a "constant that should
         // exist does not" investigation has, and it is invisible otherwise.
         tracing::debug!(%fq, owner = owner.0, %leaf, "clif: autoload touch emitted");
-        let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner.0));
+        let owner_v = fx.cid_value(owner.0);
         let (nptr, nlen) = super::expr::rodata_name(fx, &leaf);
         let st = fx.call_status("zeo_rt_autoload_touch", &[owner_v, nptr, nlen]);
         fx.fallible(st);
@@ -442,9 +442,9 @@ fn class_value_of(
             .unwrap_or(crate::compiler::OBJECT_CLASS);
         let ss = fx.temp_slot();
         let dst = fx.slot_addr(ss, 0);
-        let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid.0));
+        let cid_v = fx.cid_value(cid.0);
         let (nptr, nlen) = super::expr::rodata_name(fx, &fq);
-        let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner.0));
+        let owner_v = fx.cid_value(owner.0);
         let st = fx.call_status(
             "zeo_rt_conditional_class_ref",
             &[cid_v, nptr, nlen, owner_v, dst],
@@ -497,7 +497,7 @@ pub(crate) fn class_immediate(fx: &mut Fx, cid: crate::compiler::ClassId) -> Ope
         fx.b.ins()
             .iconst(types::I8, i64::from(ValueTag::Class as u8));
     fx.b.ins().store(fl, tag, dst, TAG_OFFSET as i32);
-    let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid.0));
+    let cid_v = fx.cid_value(cid.0);
     fx.b.ins().store(fl, cid_v, dst, PAYLOAD_OFFSET as i32);
     Operand::Slot {
         ss,

@@ -322,7 +322,7 @@ pub(crate) fn construct_compiled(
     let blk_ptr = blk.open(fx, site)?;
     super::stmt::stamp_call_line(fx, site);
     let site_ptr = fx.new_site_ptr();
-    let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid.0));
+    let cid_v = fx.cid_value(cid.0);
     let argc_v = fx.b.ins().iconst(fx.em.ptr, args.len() as i64);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
@@ -672,8 +672,8 @@ pub(crate) fn caller_class(fx: &mut Fx, bypass: bool) -> cranelift_codegen::ir::
         let slf = fx.self_ptr.expect("self_ptr is set in the prologue");
         return fx.call_status("zeo_rt_class_of", &[slf]);
     }
-    let cid = i64::from(lexical_caller(fx));
-    fx.b.ins().iconst(types::I32, cid)
+    let cid = lexical_caller(fx);
+    fx.cid_value(cid)
 }
 
 /// An explicit-receiver dynamic send through the uncached entry.
@@ -768,8 +768,8 @@ fn dynamic_send_argv(
     let status = match (class_cached, caller) {
         (Some((cid, caller)), _) => {
             let site = fx.cm_site_ptr();
-            let cid_v = fx.b.ins().iconst(types::I32, i64::from(cid));
-            let caller_v = fx.b.ins().iconst(types::I32, i64::from(caller));
+            let cid_v = fx.cid_value(cid);
+            let caller_v = fx.cid_value(caller);
             fx.call(
                 "zeo_rt_send_class_cached",
                 &[

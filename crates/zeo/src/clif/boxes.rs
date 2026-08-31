@@ -213,7 +213,7 @@ pub(super) fn explicit_accessor(
     };
     super::stmt::stamp_call_line(fx, id);
     let sym = fx.sym_id(name);
-    let cid_v = fx.b.ins().iconst(types::I32, i64::from(site.cid.0));
+    let cid_v = fx.cid_value(site.cid.0);
     let slot_v = fx.b.ins().iconst(fx.em.ptr, i64::from(site.slot));
     let caller = super::call::caller_class(fx, bypass);
     let ss = fx.temp_slot();

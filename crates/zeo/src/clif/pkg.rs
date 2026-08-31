@@ -269,6 +269,8 @@ pub(crate) fn merge_rows(
     // `warn_on_colliding_unit_features` already emits.
     let host_spellings: std::collections::HashSet<&str> =
         unit_rows.iter().map(|(s, _)| s.as_str()).collect();
+    let host_class_names: std::collections::HashSet<&str> =
+        class_specs.iter().map(|c| c.name.as_str()).collect();
     for m in &manifests {
         for (spelling, _) in &m.units {
             if host_spellings.contains(spelling.as_str()) {
@@ -277,6 +279,22 @@ pub(crate) fn merge_rows(
                         "feature '{spelling}' is provided by both package '{}' and this \
                          program; rename one or drop the package",
                         m.feature
+                    ),
+                    None,
+                ));
+            }
+        }
+        // A shared namespace (`module Rack` in both objects) is ordinary
+        // Ruby, but merging it needs the id-translation tier's ALIASING
+        // (M2): two ClassSpecs under one name would resolve by
+        // registration order, silently. Refuse it by name until then.
+        for c in &m.classes {
+            if host_class_names.contains(c.name.as_str()) {
+                return Err(CodegenError::unsupported(
+                    format!(
+                        "class {} is defined by both package '{}' and this program; \
+                         a cross-object reopen needs the id-translation tier (M2)",
+                        c.name, m.feature
                     ),
                     None,
                 ));

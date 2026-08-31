@@ -119,6 +119,27 @@ fn a_precompiled_gem_links_and_answers_like_the_spliced_one() {
 }
 
 #[test]
+fn every_exported_package_symbol_carries_the_package_prefix() {
+    // The host's merged desc names a package's bodies, so they are EXPORTED
+    // -- and an exported name without the prefix would collide the moment a
+    // host (or a second package) defines the same Ruby class and method.
+    let dir = scratch("symbols");
+    let object = build_package(&dir);
+    let out = run(Command::new("nm").arg("-gU").arg(&object));
+    assert!(out.status.success(), "nm runs");
+    let listing = String::from_utf8_lossy(&out.stdout);
+    let stray: Vec<&str> = listing
+        .lines()
+        .filter_map(|l| l.split_whitespace().last())
+        .filter(|sym| !sym.trim_start_matches('_').starts_with("zeo_pkg_pureleaf_"))
+        .collect();
+    assert!(
+        stray.is_empty(),
+        "every export is package-prefixed; strays: {stray:?}\n{listing}"
+    );
+}
+
+#[test]
 fn a_bootstrap_mismatch_is_refused_by_name() {
     let dir = scratch("mismatch");
     let object = build_package(&dir);

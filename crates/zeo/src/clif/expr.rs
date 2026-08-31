@@ -600,7 +600,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
                         .0
                 }
             };
-            let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
+            let owner_v = fx.cid_value(owner);
             let (nptr, nlen) = rodata_name(fx, &name);
             let ss = fx.temp_slot();
             let out = fx.slot_addr(ss, 0);
@@ -1272,7 +1272,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
         HirNode::ClassVarRead(name) => {
             let name = name.clone();
             let owner = super::ivars::cvar_owner(fx, &name);
-            let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
+            let owner_v = fx.cid_value(owner);
             let (nptr, nlen) = rodata_name(fx, &name);
             let ss = fx.temp_slot();
             let out = fx.slot_addr(ss, 0);
@@ -1330,7 +1330,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
             if op.owned() {
                 ownership::pool_owned(fx, ptr, tag);
             }
-            let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
+            let owner_v = fx.cid_value(owner);
             let (nptr, nlen) = rodata_name(fx, &name);
             let status = fx.call_status("zeo_rt_cvar_set", &[owner_v, nptr, nlen, ptr]);
             fx.fallible(status);
@@ -1393,7 +1393,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
             if op.owned() {
                 ownership::pool_owned(fx, ptr, tag);
             }
-            let owner_v = fx.b.ins().iconst(types::I32, i64::from(owner));
+            let owner_v = fx.cid_value(owner);
             let (nptr, nlen) = rodata_name(fx, &name);
             let (fptr, flen) = rodata_name(fx, file);
             let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
@@ -2688,9 +2688,7 @@ pub(crate) fn binding_value_with_self(
     let owner = fx
         .defining_class
         .or_else(|| fx.self_is_class.then_some(fx.method_class).flatten());
-    let cref =
-        fx.b.ins()
-            .iconst(types::I32, i64::from(owner.map_or(u32::MAX, |c| c.0)));
+    let cref = fx.cid_value(owner.map_or(u32::MAX, |c| c.0));
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     fx.call(
@@ -2852,7 +2850,7 @@ fn runtime_def(
             fx.b.ins()
                 .iconst(types::I8, i64::from(ValueTag::Class as u8));
         fx.b.ins().store(fl, tag, cref, TAG_OFFSET as i32);
-        let cid = fx.b.ins().iconst(types::I32, i64::from(cref_cid.0));
+        let cid = fx.cid_value(cref_cid.0);
         fx.b.ins()
             .store(fl, cid, cref, zeo_abi::abi::PAYLOAD_OFFSET as i32);
     }

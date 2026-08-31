@@ -510,6 +510,22 @@ impl Emitter {
         self.ffi_sites - 1
     }
 
+    /// A compiled body/trampoline symbol, package-prefixed when this
+    /// emission is a package: `zeo_t_X_y` becomes `zeo_pkg_<name>_t_X_y`.
+    /// Every such symbol is EXPORTED from a package object (the host's
+    /// merged desc names it), so the prefix is what keeps two objects
+    /// defining the same Ruby class/method from colliding at link.
+    pub(crate) fn pkg_symbol(&self, base: String) -> String {
+        match &self.pkg {
+            Some(p) => format!(
+                "{}_{}",
+                p.prefix(),
+                base.strip_prefix("zeo_").unwrap_or(&base)
+            ),
+            None => base,
+        }
+    }
+
     /// `bytes`' offset in the rodata blob (deduplicated).
     pub(crate) fn intern_rodata(&mut self, bytes: &[u8]) -> u32 {
         if let Some(&off) = self.rodata_offsets.get(bytes) {

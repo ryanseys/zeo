@@ -930,8 +930,8 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             // ruby's order (`rb_obj_extend`: `extend_object`, then
             // `extended`).
             for (class, module_id) in fx.an.compiler.extends_installed_at(stmt) {
-                let cid = fx.b.ins().iconst(types::I32, i64::from(class.0));
-                let mid = fx.b.ins().iconst(types::I32, i64::from(module_id.0));
+                let cid = fx.cid_value(class.0);
+                let mid = fx.cid_value(module_id.0);
                 let status = fx.call_status("zeo_rt_class_extend_at", &[cid, mid]);
                 fx.fallible(status);
             }
@@ -966,7 +966,7 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             let tramp = fx.em.redef_tramps[&(class, scope)];
             let f_ref = fx.em.module.declare_func_in_func(tramp, fx.b.func);
             let f_addr = fx.b.ins().func_addr(fx.em.ptr, f_ref);
-            let cid = fx.b.ins().iconst(types::I32, i64::from(class));
+            let cid = fx.cid_value(class);
             let (nptr, nlen) = super::expr::rodata_name(fx, &name);
             // The two channels are different overlay maps, and a class method
             // must not land on the instance one -- `C.t` would keep answering
@@ -1028,7 +1028,7 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             // definition in a class pays nothing.
             if !pending.is_empty() {
                 let (ptr, n) = sym_id_array(fx, &pending);
-                let cid_v = fx.b.ins().iconst(types::I32, i64::from(class));
+                let cid_v = fx.cid_value(class);
                 fx.call("zeo_rt_pending_defs_begin", &[cid_v, ptr, n]);
             }
             let ss = fx.temp_slot();
@@ -1787,7 +1787,7 @@ fn class_body_site_run(
     if !call.freeze_guard.is_empty() {
         let names: Vec<&str> = call.freeze_guard.iter().map(String::as_str).collect();
         let (ptr, n) = super::statics::str_array(fx, &names);
-        let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
+        let cid = fx.cid_value(call.class);
         let st = fx.call_status("zeo_rt_guard_class_reopen", &[cid, ptr, n]);
         fx.fallible(st);
     }
@@ -1810,7 +1810,7 @@ fn class_body_site_run(
     // constant exists from here on, before any declaration bookkeeping and
     // at EVERY site (whichever branch runs must reveal).
     if call.reveal {
-        let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
+        let cid = fx.cid_value(call.class);
         fx.call("zeo_rt_reveal_class", &[cid]);
     }
     // The constant is set, so ruby announces it -- before `inherited` and
@@ -1819,7 +1819,7 @@ fn class_body_site_run(
         super::consts::const_added_announce(fx, *owner, name)?;
     }
     if let Some((owner, name, file, line)) = &call.const_loc {
-        let owner_v = fx.b.ins().iconst(types::I32, i64::from(*owner));
+        let owner_v = fx.cid_value(*owner);
         let (nptr, nlen) = name_pair(fx, name);
         let (fptr, flen) = name_pair(fx, file);
         let line_v = fx.b.ins().iconst(types::I32, i64::from(*line));
@@ -1865,7 +1865,7 @@ fn class_body_site_run(
             .builtin_aliases
             .is_empty();
         if has {
-            let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
+            let cid = fx.cid_value(call.class);
             let st = fx.call_status("zeo_rt_validate_class_aliases", &[cid]);
             fx.fallible(st);
         }
@@ -1887,7 +1887,7 @@ fn class_body_site_run(
             .iconst(types::I8, i64::from(zeo_abi::abi::ValueTag::Class as u8));
     fx.b.ins()
         .store(fl, tag, self_addr, zeo_abi::abi::TAG_OFFSET as i32);
-    let cid = fx.b.ins().iconst(types::I32, i64::from(call.class));
+    let cid = fx.cid_value(call.class);
     fx.b.ins()
         .store(fl, cid, self_addr, zeo_abi::abi::PAYLOAD_OFFSET as i32);
     let out_ss = fx.temp_slot();

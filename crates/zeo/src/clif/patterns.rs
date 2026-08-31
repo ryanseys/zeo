@@ -288,7 +288,7 @@ fn class_check(
         return record_class_miss(fx, name, matched, scrut, fail);
     }
     if let Some(cid) = super::boxes::resolve_class_here(fx, name) {
-        let id = fx.b.ins().iconst(types::I32, i64::from(cid.0));
+        let id = fx.cid_value(cid.0);
         let matched = fx.call_status("zeo_rt_pat_is_a", &[scrut, id]);
         return record_class_miss(fx, name, matched, scrut, fail);
     }
@@ -328,7 +328,7 @@ fn record_class_miss(
             fx.b.ins()
                 .iconst(types::I8, i64::from(ValueTag::Class as u8));
         fx.b.ins().store(fl, tag, addr, TAG_OFFSET as i32);
-        let id = fx.b.ins().iconst(types::I32, i64::from(cid.0));
+        let id = fx.cid_value(cid.0);
         fx.b.ins()
             .store(fl, id, addr, zeo_abi::abi::PAYLOAD_OFFSET as i32);
         fx.call("zeo_rt_pat_fail_case_eq", &[addr, scrut]);

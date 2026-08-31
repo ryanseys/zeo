@@ -56,7 +56,7 @@ pub(super) fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
         let body_id = em
             .module
             .declare_function(
-                &super::names::method_symbol("Object", &name),
+                &em.pkg_symbol(super::names::method_symbol("Object", &name)),
                 Linkage::Local,
                 &body_sig,
             )
@@ -65,7 +65,7 @@ pub(super) fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
         let tramp_id = em
             .module
             .declare_function(
-                &super::names::trampoline_symbol("Object", &name),
+                &em.pkg_symbol(super::names::trampoline_symbol("Object", &name)),
                 Linkage::Local,
                 &tramp_sig,
             )

@@ -1125,7 +1125,7 @@ pub(super) fn main_installs(
         .map(|(i, _)| i as u32)
         .collect();
     for id in unbodied {
-        let cid = fx.b.ins().iconst(types::I32, i64::from(id));
+        let cid = fx.cid_value(id);
         let st = fx.call_status("zeo_rt_validate_class_aliases", &[cid]);
         fx.fallible(st);
     }

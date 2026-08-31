@@ -471,7 +471,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             let tramp = em
                 .module
                 .declare_function(
-                    &names::trampoline_symbol(&sym, &scope.name),
+                    &em.pkg_symbol(names::trampoline_symbol(&sym, &scope.name)),
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
@@ -677,7 +677,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             let tramp = em
                 .module
                 .declare_function(
-                    &names::trampoline_symbol(&sym, &mname),
+                    &em.pkg_symbol(names::trampoline_symbol(&sym, &mname)),
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
@@ -685,7 +685,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             let sig = params::body_sig(em, layout.n_slots, has_blk);
             let body_fn = em
                 .module
-                .declare_function(&names::method_symbol(&sym, &mname), Linkage::Local, &sig)
+                .declare_function(&em.pkg_symbol(names::method_symbol(&sym, &mname)), Linkage::Local, &sig)
                 .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
             match scope.visibility {
                 crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
@@ -776,7 +776,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             let tramp = em
                 .module
                 .declare_function(
-                    &names::class_trampoline_symbol(&sym, &mname),
+                    &em.pkg_symbol(names::class_trampoline_symbol(&sym, &mname)),
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
@@ -785,7 +785,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             let body_fn = em
                 .module
                 .declare_function(
-                    &names::class_method_symbol(&sym, &mname),
+                    &em.pkg_symbol(names::class_method_symbol(&sym, &mname)),
                     Linkage::Local,
                     &sig,
                 )
@@ -1057,7 +1057,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 let tramp = em
                     .module
                     .declare_function(
-                        &names::trampoline_symbol(&sym, &mname),
+                        &em.pkg_symbol(names::trampoline_symbol(&sym, &mname)),
                         Linkage::Local,
                         &params::value_fn_sig(em),
                     )
@@ -1067,7 +1067,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 let sig = params::body_sig(em, layout.n_slots, has_blk);
                 let body_fn = em
                     .module
-                    .declare_function(&names::method_symbol(&sym, &mname), Linkage::Local, &sig)
+                    .declare_function(&em.pkg_symbol(names::method_symbol(&sym, &mname)), Linkage::Local, &sig)
                     .map_err(|e| {
                         CodegenError::internal(format!("declaring {name}#{mname}: {e}"))
                     })?;
@@ -1276,7 +1276,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             let tramp = em
                 .module
                 .declare_function(
-                    &names::trampoline_symbol(&sym, &mname),
+                    &em.pkg_symbol(names::trampoline_symbol(&sym, &mname)),
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
@@ -1291,7 +1291,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 let sig = params::body_sig(em, layout.n_slots, has_blk);
                 Some(
                     em.module
-                        .declare_function(&names::method_symbol(&sym, &mname), Linkage::Local, &sig)
+                        .declare_function(&em.pkg_symbol(names::method_symbol(&sym, &mname)), Linkage::Local, &sig)
                         .map_err(|e| {
                             CodegenError::internal(format!("declaring {name}#{mname}: {e}"))
                         })?,
@@ -1430,7 +1430,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 let tramp = em
                     .module
                     .declare_function(
-                        &names::trampoline_symbol(&sym, &format!("__own_{mname}")),
+                        &em.pkg_symbol(names::trampoline_symbol(&sym, &format!("__own_{mname}"))),
                         Linkage::Local,
                         &params::value_fn_sig(em),
                     )
@@ -1442,7 +1442,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     Some(
                         em.module
                             .declare_function(
-                                &names::method_symbol(&sym, &format!("__own_{mname}")),
+                                &em.pkg_symbol(names::method_symbol(&sym, &format!("__own_{mname}"))),
                                 Linkage::Local,
                                 &sig,
                             )
@@ -1506,7 +1506,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             let tramp = em
                 .module
                 .declare_function(
-                    &names::class_trampoline_symbol(&sym, &mname),
+                    &em.pkg_symbol(names::class_trampoline_symbol(&sym, &mname)),
                     Linkage::Local,
                     &params::value_fn_sig(em),
                 )
@@ -1515,7 +1515,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             let body_fn = em
                 .module
                 .declare_function(
-                    &names::class_method_symbol(&sym, &mname),
+                    &em.pkg_symbol(names::class_method_symbol(&sym, &mname)),
                     Linkage::Local,
                     &sig,
                 )
@@ -1705,7 +1705,7 @@ fn collect_redef_scopes(
         let tramp = em
             .module
             .declare_function(
-                &names::trampoline_symbol(&sym, &suffix),
+                &em.pkg_symbol(names::trampoline_symbol(&sym, &suffix)),
                 Linkage::Local,
                 &params::value_fn_sig(em),
             )
@@ -1713,7 +1713,7 @@ fn collect_redef_scopes(
         let body_fn = em
             .module
             .declare_function(
-                &names::method_symbol(&sym, &suffix),
+                &em.pkg_symbol(names::method_symbol(&sym, &suffix)),
                 Linkage::Local,
                 &params::body_sig(em, layout.n_slots, has_blk),
             )
@@ -1781,7 +1781,7 @@ fn emit_singleton_super_targets(
         let tramp = em
             .module
             .declare_function(
-                &names::class_trampoline_symbol(sym, &format!("__sst_{}_{mname}", m.0)),
+                &em.pkg_symbol(names::class_trampoline_symbol(sym, &format!("__sst_{}_{mname}", m.0))),
                 Linkage::Local,
                 &params::value_fn_sig(em),
             )
@@ -1790,7 +1790,7 @@ fn emit_singleton_super_targets(
         let body_fn = em
             .module
             .declare_function(
-                &names::class_method_symbol(sym, &format!("__sst_{}_{mname}", m.0)),
+                &em.pkg_symbol(names::class_method_symbol(sym, &format!("__sst_{}_{mname}", m.0))),
                 Linkage::Local,
                 &sig,
             )
