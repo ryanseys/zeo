@@ -12,9 +12,11 @@
 //! This doc used to call four things "documented divergences". THREE OF
 //! THEM WERE BUGS, and they are fixed: an alias resolved to `nil` (silent
 //! data loss), a tag was ignored outright (a wrong type AND a defeated
-//! `safe_load` gate), and a `<<` merge key stayed literal. What remains a
-//! real divergence is `Psych::SyntaxError`'s problem TEXT -- see
-//! `tests/psych_syntax_error_carries_marks.rb`.
+//! `safe_load` gate), and a `<<` merge key stayed literal. A
+//! `Psych::SyntaxError` now carries the six marks CRuby's does, and its
+//! message is built the same way -- what still differs is the WORDING
+//! yaml-rust2 and libyaml choose for the same complaint, and the position a
+//! block-indentation error is attributed to.
 //!
 //! # One tree, three entry points
 //!
@@ -121,31 +123,126 @@ fn load_opts(opts: Option<&RubyValue>) -> loader::LoadOpts {
     o
 }
 
+/// Whether byte `at` sits inside an unclosed flow collection -- a `[` or `{`
+/// with no partner before it, counted outside quotes and comments.
+fn in_flow_context(text: &str, at: usize) -> bool {
+    let mut depth = 0i32;
+    let mut quote: Option<u8> = None;
+    let mut comment = false;
+    for &b in &text.as_bytes()[..at.min(text.len())] {
+        match (quote, comment, b) {
+            (_, _, b'\n') => comment = false,
+            (Some(q), _, c) if c == q => quote = None,
+            (Some(_), ..) | (_, true, _) => {}
+            (None, false, b'"' | b'\'') => quote = Some(b),
+            (None, false, b'#') => comment = true,
+            (None, false, b'[' | b'{') => depth += 1,
+            (None, false, b']' | b'}') => depth -= 1,
+            _ => {}
+        }
+    }
+    depth > 0
+}
+
+/// A `Psych::SyntaxError` carrying the marks CRuby's does.
+///
+/// Its six readers are the interface -- rubygems and bundler both report
+/// `e.line`. The message is built here rather than in the Ruby half so that
+/// the one `raise_error` path still names the class, and the ivars are set on
+/// the raised object afterwards, which is what fills the readers.
+///
+/// yaml-rust2 writes the two halves as one `info` string, CONTEXT first
+/// (`"while parsing a node, did not find expected node content"`), where
+/// psych keeps them apart. The split is that comma. The context WORDING is
+/// still yaml-rust2's, not libyaml's -- see the module docs.
+fn syntax_error(text: &str, file: Option<&str>, err: &yaml_rust2::ScanError) -> Signal {
+    let mark = err.marker();
+    let (context, problem) = match err.info().split_once(", ") {
+        Some((c, p)) if c.starts_with("while ") => (Some(c), p),
+        _ => (None, err.info()),
+    };
+    // libyaml names the two node kinds apart and yaml-rust2 does not. Only
+    // the FLOW half can be proved from the source -- an unclosed `[`/`{`
+    // before the mark -- so only that half is renamed; the block case keeps
+    // yaml-rust2's wording rather than risking a wrong claim.
+    let flow_context = "while parsing a flow node";
+    let context = match context {
+        Some("while parsing a node") if in_flow_context(text, mark.index()) => Some(flow_context),
+        other => other,
+    };
+    let joined = match context {
+        Some(c) => format!("{problem} {c}"),
+        None => problem.to_string(),
+    };
+    // yaml-rust2's `col` is 0-based despite its doc comment; psych's is 1-based.
+    let column = mark.col() + 1;
+    let sig = raise_error(
+        "Psych::SyntaxError",
+        format!(
+            "({}): {joined} at line {} column {column}",
+            file.unwrap_or("<unknown>"),
+            mark.line(),
+        ),
+    );
+    let Signal::Raise(exc) = &sig else {
+        return sig;
+    };
+    let str_or_nil = |s: Option<&str>| match s {
+        Some(s) => RubyValue::Str(string_new(s.to_string())),
+        None => RubyValue::Nil,
+    };
+    let marks: [(&str, RubyValue); 6] = [
+        ("file", str_or_nil(file)),
+        ("line", RubyValue::Int(mark.line() as i64)),
+        ("column", RubyValue::Int(column as i64)),
+        ("offset", RubyValue::Int(mark.index() as i64)),
+        ("problem", str_or_nil(Some(problem))),
+        ("context", str_or_nil(context)),
+    ];
+    for (name, v) in marks {
+        let _ = crate::dispatch::ivar_set_dyn(exc, name, v);
+    }
+    sig
+}
+
 /// Parse `text` into the node tree every entry point reads.
 ///
 /// The anchor NAMES come from a second pass over the scanner -- see
 /// [`nodes::anchor_names`] for why the events cannot supply them -- and the
 /// directives from the same place, because the parser applies `%YAML` and
 /// `%TAG` without reporting them.
-fn parse_tree(text: &str) -> Result<Vec<nodes::Document>, Signal> {
+fn parse_tree(
+    text: &str,
+    file: Option<&str>,
+    aliases: bool,
+) -> Result<Vec<nodes::Document>, Signal> {
     let names = nodes::anchor_names(text);
     let mut builder = nodes::TreeBuilder::new(text, Some(&names));
     yaml_rust2::parser::Parser::new_from_str(text)
         .load(&mut builder, true)
         .map_err(|e| {
-            let message = format!("{e}");
             // yaml-rust2 refuses an undefined anchor while SCANNING, so the
             // walk's own `Alias` arm never sees it -- but psych names it, and
             // a program rescues that name.
-            match message.contains("unknown anchor") {
-                true => raise_error(
+            match (e.info().contains("unknown anchor"), aliases) {
+                // With aliases OFF, ruby refuses the alias itself before it
+                // ever asks what it points at, so an alias to an anchor that
+                // does not exist reports the DIAL and not the anchor. zeo's
+                // parser refuses first, which had it the other way round.
+                (true, false) => raise_error(
+                    "Psych::AliasesNotEnabled",
+                    "Alias parsing was not enabled. To enable it, pass `aliases: true` to \
+                     `Psych::load` or `Psych::safe_load`."
+                        .to_string(),
+                ),
+                (true, true) => raise_error(
                     "Psych::AnchorNotDefined",
                     format!(
                         "An alias referenced an unknown anchor: {}",
-                        anchor_name_at(text, &message)
+                        anchor_name_at(text, &format!("{e}"))
                     ),
                 ),
-                false => raise_error("Psych::SyntaxError", message),
+                (false, _) => syntax_error(text, file, &e),
             }
         })?;
     let mut docs = builder.finish();
@@ -161,9 +258,19 @@ fn parse_tree(text: &str) -> Result<Vec<nodes::Document>, Signal> {
 }
 
 /// Every document in `text`, as Ruby values.
-fn load_documents(text: &str, opts: &loader::LoadOpts) -> Result<Vec<RubyValue>, Signal> {
-    let docs = parse_tree(text)?;
+fn load_documents(
+    text: &str,
+    file: Option<&str>,
+    opts: &loader::LoadOpts,
+) -> Result<Vec<RubyValue>, Signal> {
+    let docs = parse_tree(text, file, opts.aliases)?;
     loader::Revive::new(opts).documents(&docs)
+}
+
+/// The `filename:` a load/parse entry was given -- what a `Psych::SyntaxError`
+/// from it reports as its `file`.
+fn file_opt(opts: Option<&RubyValue>) -> Option<String> {
+    opt(opts, "filename").map(|v| v.to_display_string())
 }
 
 /// The FIRST document, which is what every `load` entry answers.
@@ -174,10 +281,11 @@ fn load_documents(text: &str, opts: &loader::LoadOpts) -> Result<Vec<RubyValue>,
 /// `fallback:`. Probed -- it is not derivable from anything.
 fn first_document(
     text: &str,
+    file: Option<&str>,
     opts: &loader::LoadOpts,
     fallback: RubyValue,
 ) -> Result<RubyValue, Signal> {
-    Ok(load_documents(text, opts)?
+    Ok(load_documents(text, file, opts)?
         .into_iter()
         .next()
         .unwrap_or(fallback))
@@ -232,12 +340,12 @@ ruby_module! {
     def self."safe_load" (_recv, yaml, **opts) {
         let text = load_text(yaml)?;
         let fallback = opt(opts.as_ref().copied(), "fallback").unwrap_or(RubyValue::Nil);
-        first_document(&text, &safe_opts(opts.as_ref().copied()), fallback)
+        first_document(&text, file_opt(opts.as_ref().copied()).as_deref(), &safe_opts(opts.as_ref().copied()), fallback)
     }
     def self."load" (_recv, yaml, **opts) {
         let text = load_text(yaml)?;
         let fallback = opt(opts.as_ref().copied(), "fallback").unwrap_or(RubyValue::Nil);
-        first_document(&text, &load_opts(opts.as_ref().copied()), fallback)
+        first_document(&text, file_opt(opts.as_ref().copied()).as_deref(), &load_opts(opts.as_ref().copied()), fallback)
     }
     def self."unsafe_load" (_recv, yaml, **opts) {
         let text = load_text(yaml)?;
@@ -246,7 +354,7 @@ ruby_module! {
         o.aliases = true;
         let fallback =
             opt(opts.as_ref().copied(), "fallback").unwrap_or(RubyValue::Bool(false));
-        first_document(&text, &o, fallback)
+        first_document(&text, file_opt(opts.as_ref().copied()).as_deref(), &o, fallback)
     }
     // Only the compact string form; an `io`/`opts` argument is ignored.
     def self."dump" (_recv, obj, io?, options?) {
@@ -282,13 +390,16 @@ ruby_module! {
             format!("No such file or directory - {path} ({e})"),
         ))?;
         let fallback = opt(opts.as_ref().copied(), "fallback").unwrap_or(RubyValue::Nil);
-        first_document(&text, &load_opts(opts.as_ref().copied()), fallback)
+        // The PATH is the filename a syntax error reports, unless the caller
+        // named its own -- CRuby's `load_file` passes it the same way.
+        let file = file_opt(opts.as_ref().copied()).unwrap_or_else(|| path.clone());
+        first_document(&text, Some(&file), &load_opts(opts.as_ref().copied()), fallback)
     }
     // `Psych.load_stream(yaml)` -- EVERY document; an Array, or yielded one by
     // one to a block (then the receiver's nil, matching CRuby's block form).
     def self."load_stream" (_recv, arg1, **opts, &block) {
         let text = load_text(arg1)?;
-        let docs = load_documents(&text, &load_opts(opts.as_ref().copied()))?;
+        let docs = load_documents(&text, file_opt(opts.as_ref().copied()).as_deref(), &load_opts(opts.as_ref().copied()))?;
         if let Some(RubyValue::Proc(p)) = &block {
             for doc in &docs {
                 p.call(std::slice::from_ref(doc))?;
@@ -303,7 +414,7 @@ ruby_module! {
     // own answer: a document with no root would be a node a caller cannot use.
     def self."parse" (_recv, yaml, **opts) {
         let text = load_text(yaml)?;
-        let docs = parse_tree(&text)?;
+        let docs = parse_tree(&text, file_opt(opts.as_ref().copied()).as_deref(), true)?;
         // An empty stream answers FALSE, not nil -- which is `parse`'s own
         // fallback and differs from `load`'s. Measured, not derived.
         let fallback =
@@ -320,7 +431,7 @@ ruby_module! {
     def self."parse_stream" (_recv, yaml, **opts, &block) {
         let _ = &opts;
         let text = load_text(yaml)?;
-        let docs = parse_tree(&text)?;
+        let docs = parse_tree(&text, file_opt(opts.as_ref().copied()).as_deref(), true)?;
         if let Some(RubyValue::Proc(p)) = &block {
             for doc in tree_api::to_ruby_documents(&docs)? {
                 p.call(&[doc])?;

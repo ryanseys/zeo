@@ -12,11 +12,16 @@ module Psych
 
   # CRuby's error hierarchy (oracle-verified against ruby 4.0.5):
   # `Exception < RuntimeError`; `SyntaxError`/`DisallowedClass`/`BadAlias` under
-  # it; `AliasesNotEnabled`/`AnchorNotDefined` under `BadAlias`. (CRuby's
-  # SyntaxError also carries file/line/column readers; those need the parser to
-  # report positions, which this runtime's YAML backend does not surface.)
+  # it; `AliasesNotEnabled`/`AnchorNotDefined` under `BadAlias`.
   class Exception < RuntimeError; end
-  class SyntaxError < Exception; end
+
+  # The six marks CRuby's carries. The native half fills them on the raised
+  # object, so there is no `initialize` here to disagree with it -- and a
+  # program that rescues one reads `e.line`, which is what rubygems and
+  # bundler both report.
+  class SyntaxError < Exception
+    attr_reader :file, :line, :column, :offset, :problem, :context
+  end
   class DisallowedClass < Exception; end
   class BadAlias < Exception; end
   class AliasesNotEnabled < BadAlias; end

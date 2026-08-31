@@ -1,0 +1,6 @@
+[3, 1, nil]
+(<unknown>): did not find expected node content while parsing a flow node at line 3 column 1
+["f.yml", 2, 1]
+[2, 3, "found unexpected end of stream"]
+["Psych::AliasesNotEnabled", "Alias parsing was not enabled. To enable it, pass `aliases: true` to `Psych::load` or `Psych::safe_load`."]
+[:column, :context, :file, :line, :offset, :problem]
