@@ -542,6 +542,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         .filter(|m| m.cm_row)
         .map(|m| statics::CmRowSpec {
             class: m.owner.0,
+            box_id: m.box_id,
             name: m.name.clone(),
             f: m.tramp,
         })

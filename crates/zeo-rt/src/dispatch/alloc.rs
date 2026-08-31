@@ -79,7 +79,7 @@ pub(crate) fn own_class_method_fn(id: ClassId, name: Symbol) -> Option<ValueImpl
         .entries
         .get(&id.0)?
         .class_methods
-        .get(&name)
+        .get(&(crate::boxes::current_box(), name))
         .copied()
 }
 

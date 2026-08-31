@@ -160,6 +160,25 @@ fn cached_send_core(
     block: Option<RubyValue>,
     miss: impl FnOnce(Option<RubyValue>) -> Result<RubyValue, Signal>,
 ) -> Result<RubyValue, Signal> {
+    // The caller's box, published for the whole send. A cache hit resolves
+    // WITHOUT reaching `send_value_in_reason`, which is the other place this
+    // is installed -- so a boxed body's `Array.zzz` looked its own row up
+    // under box 0 and did not find it. Free for box 0.
+    crate::boxes::in_box(box_id, || {
+        cached_send_core_inner(site, box_id, recv, name, args, block, miss)
+    })
+}
+
+#[expect(clippy::too_many_arguments)]
+fn cached_send_core_inner(
+    site: &'static CallSite,
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    miss: impl FnOnce(Option<RubyValue>) -> Result<RubyValue, Signal>,
+) -> Result<RubyValue, Signal> {
     // A cache HIT calls the target without ever reaching
     // `send_value_in_reason`, which is where the dynamic entry's stack
     // check lives -- so the check has to happen here too, or a recursion
@@ -397,7 +416,13 @@ pub fn send_class_cached(
             // `initialize` belongs to `Class#new` -- see
             // `builtin_new_gave_way`. Decided BEFORE the site fills, so the
             // cache never remembers the fused row.
-            let target = match crate::dispatch::builtin_new_gave_way(ClassId(cid), name) {
+            // Box 0 only. The emitter already refuses this cache inside a box
+            // (`call.rs` requires `fx.box_id == 0`), and this keeps the rule
+            // true at the point that depends on it: the site remembers ONE
+            // target, so a boxed row must never fill it.
+            let target = match crate::dispatch::builtin_new_gave_way(ClassId(cid), name)
+                || crate::boxes::current_box() != 0
+            {
                 true => None,
                 false => REGISTRY
                     .get()

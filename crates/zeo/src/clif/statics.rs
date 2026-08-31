@@ -692,6 +692,8 @@ pub(crate) fn define_param_desc(
 /// the class-method channel.
 pub(crate) struct CmRowSpec {
     pub class: u32,
+    /// The box the `def self.x` was written in; 0 is main.
+    pub box_id: u32,
     pub name: String,
     pub f: FuncId,
 }
@@ -760,7 +762,10 @@ fn define_cm_rows(em: &mut Emitter, rows: &[CmRowSpec]) -> CResult<Option<DataId
         RowCells {
             strs: vec![(std::mem::offset_of!(CmRow, name), r.name.clone())],
             funcs: vec![(std::mem::offset_of!(CmRow, f), r.f)],
-            scalars: vec![(std::mem::offset_of!(CmRow, class), 4, u64::from(r.class))],
+            scalars: vec![
+                (std::mem::offset_of!(CmRow, class), 4, u64::from(r.class)),
+                (std::mem::offset_of!(CmRow, box_id), 4, u64::from(r.box_id)),
+            ],
         }
     })
 }

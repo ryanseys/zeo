@@ -211,8 +211,15 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
         .collect();
     registry.mark_foreign_value_rows(&foreign);
     for r in unsafe { rows(desc.cm_rows, desc.n_cm_rows) } {
+        tracing::trace!(
+            class = r.class,
+            box_id = r.box_id,
+            name = text(r.name),
+            "class-method row"
+        );
         registry.define_class_method_c(
             ClassId(r.class),
+            r.box_id,
             Symbol::intern(text(r.name)),
             value_fn(r.f),
         );

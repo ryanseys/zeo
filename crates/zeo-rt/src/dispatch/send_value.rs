@@ -342,12 +342,16 @@ pub(super) fn send_value_in_reason(
     block: Option<RubyValue>,
     reason: MissingReason,
 ) -> Result<RubyValue, Signal> {
-    match matches!(recv, RubyValue::Class(_)) {
+    // Publish the caller's box for the duration of the send. The rows this
+    // reaches -- `respond_to?`, `methods`, the `method_missing` probe -- take
+    // no box argument of their own, so without this they answer main's view
+    // from inside a box. Free for box 0, which is every program with no box.
+    crate::boxes::in_box(box_id, || match matches!(recv, RubyValue::Class(_)) {
         true => with_ordinary_class_dispatch(|| {
             send_value_in_reason_inner(box_id, recv, name, args, block, reason)
         }),
         false => send_value_in_reason_inner(box_id, recv, name, args, block, reason),
-    }
+    })
 }
 
 /// [`send_value_in_reason`] past the resume guard.
@@ -487,11 +491,29 @@ fn send_value_in_reason_inner(
         let class_removed_here = crate::runtime_meta::gates_live(g)
             && crate::runtime_meta::overlay_class_removed(*cid, name);
         let fused_new = crate::dispatch::builtin_new_gave_way(*cid, name);
+        // Box 0 only, the same gate the value side puts on `flat_value_hit`:
+        // the flat map is filled once and holds the SHARED rows, so a boxed
+        // caller must take the full walk or it never sees its own
+        // `def self.x` (and would answer NoMethodError for a row it owns).
         if !class_removed_here
             && !fused_new
+            && box_id == 0
             && let Some((f, label)) = REGISTRY.get().and_then(|r| r.flat_class_hit(*cid, name))
         {
             return with_c_frame(label, || f.call(recv, args, block));
+        }
+        // The receiver's OWN row, for a boxed caller. The flat map above is
+        // what probes it for box 0, and the ancestor walk below starts at
+        // `skip(1)` precisely because of that -- so without this a box's own
+        // `def self.x` is probed by nobody and raises NoMethodError.
+        if !class_removed_here
+            && !fused_new
+            && box_id != 0
+            && let Some(f) = REGISTRY
+                .get()
+                .and_then(|r| r.lookup_class_method(*cid, box_id, name))
+        {
+            return with_c_frame_ids(*cid, name, '.', || f.call(recv, args, block));
         }
         // A module the class EXTENDED, whose row is its own INSTANCE method:
         // CRuby seats the module in the singleton ancestry, just past the
@@ -573,7 +595,10 @@ fn send_value_in_reason_inner(
                 let e = registry().entries.get(&anc.0)?;
                 match e.is_module {
                     true => None,
-                    false => e.class_methods.get(&name).copied().map(|f| (anc, f)),
+                    // The caller's box first, then the shared row.
+                    false => registry()
+                        .lookup_class_method(anc, box_id, name)
+                        .map(|f| (anc, f)),
                 }
             });
             if let Some((anc, f)) = flattened {
@@ -821,7 +846,10 @@ pub(super) fn class_defines_user_hook(recv_class: ClassId, name: Symbol) -> bool
         if live && crate::runtime_meta::overlay_class_method(anc, name).is_some() {
             return true;
         }
-        if entry.is_some_and(|e| e.class_methods.contains_key(&name)) {
+        if registry()
+            .lookup_class_method(anc, crate::boxes::current_box(), name)
+            .is_some()
+        {
             return true;
         }
     }

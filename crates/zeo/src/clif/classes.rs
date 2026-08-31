@@ -82,6 +82,10 @@ pub(crate) struct CmMethodSpec {
     /// copy): compiled and registered under `(module, name)`, but no
     /// `CmRow` on the class-method channel.
     pub cm_row: bool,
+    /// The box this `def self.x` was WRITTEN in; 0 is main. A box reopening
+    /// a shared class keeps its class methods to itself, the way its
+    /// instance methods already do.
+    pub box_id: u32,
     /// The class the `def` was WRITTEN in -- the class itself for a
     /// `def self.x`, the MODULE for an `extend`ed copy. A class-method
     /// `super` resumes the singleton chain after it.
@@ -709,6 +713,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             }
             class_methods.push(CmMethodSpec {
                 cm_row: true,
+                box_id: class.box_id,
                 alias_of: scope.alias_of.clone(),
                 // A `def` written in a `class << self` body was written in
                 // the SINGLETON, so that is its cref -- which is where a
@@ -1439,6 +1444,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             cm_def_tramps.push((entry.def, tramp));
             class_methods.push(CmMethodSpec {
                 cm_row: true,
+                box_id: class.box_id,
                 alias_of: scope.alias_of.clone(),
                 // A `def` written in a `class << self` body was written in
                 // the SINGLETON, so that is its cref -- which is where a
@@ -1704,6 +1710,9 @@ fn emit_singleton_super_targets(
         sst.push((owner.0, m.0, mname.clone(), tramp));
         class_methods.push(CmMethodSpec {
             cm_row: false,
+            // No `CmRow` is emitted for a super-target-only body, so this
+            // is never a lookup key; main is the honest default.
+            box_id: 0,
             alias_of: scope.alias_of.clone(),
             defining_class: scope.defining_class,
             lexical_home: scope.lexical_home,

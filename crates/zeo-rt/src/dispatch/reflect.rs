@@ -227,16 +227,17 @@ pub(super) fn class_receiver_responds(cid: ClassId, name: Symbol) -> bool {
     // the walk runs for exactly the entry-less case.
     if let Some(r) = REGISTRY.get() {
         match r.entries.get(&cid.0) {
-            Some(e) => {
-                if e.class_methods.contains_key(&name) {
+            Some(_) => {
+                if r.lookup_class_method(cid, crate::boxes::current_box(), name)
+                    .is_some()
+                {
                     return true;
                 }
             }
             None => {
                 if ancestors_of_value(cid).iter().any(|&anc| {
-                    r.entries
-                        .get(&anc.0)
-                        .is_some_and(|e| e.class_methods.contains_key(&name))
+                    r.lookup_class_method(anc, crate::boxes::current_box(), name)
+                        .is_some()
                 }) {
                     return true;
                 }
@@ -302,10 +303,10 @@ pub fn class_defines_own_instance_method_if_registered(cid: ClassId, name: Symbo
 pub fn class_defines_own_class_method(cid: ClassId, name: Symbol) -> bool {
     (crate::runtime_meta::is_live()
         && crate::runtime_meta::overlay_class_method(cid, name).is_some())
-        || REGISTRY
-            .get()
-            .and_then(|r| r.entries.get(&cid.0))
-            .is_some_and(|e| e.class_methods.contains_key(&name))
+        || REGISTRY.get().is_some_and(|r| {
+            r.lookup_class_method(cid, crate::boxes::current_box(), name)
+                .is_some()
+        })
 }
 
 /// The class in `cid`'s ancestry whose `def self.<name>` a `cid.<name>` call
@@ -394,9 +395,7 @@ fn extended_class_method_owner(cid: ClassId, name: Symbol) -> Option<ClassId> {
 pub(crate) fn class_method_fn(cid: ClassId, name: Symbol) -> Option<ValueImpl> {
     let owner = class_method_owner(cid, name)?;
     registry()
-        .entries
-        .get(&owner.0)
-        .and_then(|e| e.class_methods.get(&name).copied())
+        .lookup_class_method(owner, crate::boxes::current_box(), name)
         .or_else(|| {
             crate::builtins::class_method_table(owner)
                 .and_then(|l| l(name.name_str()))

@@ -152,10 +152,8 @@ fn resolve_at(pos: SingletonPos, name: Symbol) -> Option<ClassHit> {
             // taking the nearest copy would step over a module seated in an
             // ancestor's singleton further up.
             if registry().class_method_is_own(anc, name)
-                && let Some(f) = registry()
-                    .entries
-                    .get(&anc.0)
-                    .and_then(|e| e.class_methods.get(&name).copied())
+                && let Some(f) =
+                    registry().lookup_class_method(anc, crate::boxes::current_box(), name)
             {
                 return Some(ClassHit::Row(f));
             }
@@ -546,11 +544,7 @@ fn call_singleton_super_target_at(
                 p.call_with_self_and_block(&recv, args, block)
             });
         }
-        if let Some(f) = registry()
-            .entries
-            .get(&target.0)
-            .and_then(|e| e.class_methods.get(&name).copied())
-        {
+        if let Some(f) = registry().lookup_class_method(target, crate::boxes::current_box(), name) {
             return with_class_resume(resume(target), || f.call(&recv, args, block));
         }
         if let Some(f) = crate::builtins::class_method_table(target).and_then(|t| t(&method_name)) {

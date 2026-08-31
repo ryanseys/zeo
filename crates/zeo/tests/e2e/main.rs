@@ -21,6 +21,7 @@ mod paths;
 mod zeo_bin;
 
 mod blocks_procs;
+mod boxes;
 mod cext_build;
 mod classes;
 mod codegen;

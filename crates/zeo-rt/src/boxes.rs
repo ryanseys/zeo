@@ -241,3 +241,45 @@ pub fn class_box(cid: crate::ClassId) -> u32 {
     }
     table.get(&cid.0).copied().unwrap_or(0)
 }
+
+thread_local! {
+    /// The box whose code is RUNNING, as opposed to the box a class was
+    /// defined in. Every send out of a boxed body carries its `box_id`
+    /// already, but the reflection rows those sends reach
+    /// (`respond_to?`, `methods`, `method_missing` probing) take no such
+    /// argument and would otherwise answer main's view from inside a box.
+    ///
+    /// `0` (main) at rest, and per-thread; it rides the `Ec` so a fiber
+    /// switch does not inherit another fiber's box.
+    static CURRENT: std::cell::Cell<u32> = const { std::cell::Cell::new(MAIN) };
+}
+
+/// The box whose code is running. See [`CURRENT`].
+pub fn current_box() -> u32 {
+    CURRENT.with(std::cell::Cell::get)
+}
+
+/// Install `b` as the running box, answering the one it replaced.
+pub fn swap_current_box(b: u32) -> u32 {
+    CURRENT.with(|c| c.replace(b))
+}
+
+/// Runs `f` with `b` as the running box, restoring the previous one however
+/// `f` leaves -- a raise included, which a bare set/restore pair around a
+/// fallible call would leak.
+///
+/// Box 0 is the overwhelming case and does no work at all: a program with no
+/// box never touches the cell.
+pub fn in_box<T>(b: u32, f: impl FnOnce() -> T) -> T {
+    if b == MAIN {
+        return f();
+    }
+    struct Restore(u32);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            swap_current_box(self.0);
+        }
+    }
+    let _restore = Restore(swap_current_box(b));
+    f()
+}

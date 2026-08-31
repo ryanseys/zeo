@@ -150,7 +150,12 @@ pub(super) struct ClassEntry {
     /// here is always this exact class's own entry. That is also what keeps
     /// class-level `@x` storage correct through this path -- each copy
     /// carries its own class id (see `civars`' docs).
-    pub(super) class_methods: FMap<Symbol, ValueImpl>,
+    /// Keyed `(box_id, name)`, for the reason `value_methods` above is: a
+    /// class reopened INSIDE a `Ruby::Box` registers its rows under that
+    /// box, and main must not see them. The instance channel had this axis
+    /// from the start and the class channel did not, which is exactly how a
+    /// box's `def self.x` on a shared class reached main.
+    pub(super) class_methods: FMap<(u32, Symbol), ValueImpl>,
     /// [`ClassEntry::aliases`]'s singleton-side twin: `new -> old` name
     /// indirections for an alias written inside `class << self` whose source is
     /// a builtin class method rather than a user `def self.x`.
@@ -202,12 +207,31 @@ pub(super) struct ClassEntry {
     pub(super) flat_value: OnceLock<crate::FMap<Symbol, FlatHit>>,
     /// The class-receiver twin (`File.read`, `Math.sqrt`): the frozen
     /// `class_methods` rows over the builtin class-method table, flattened.
-    /// Frozen-layer-only like `flat_value`, but box-free (class methods are
-    /// not box-scoped) so it serves every box; the runtime overlay is still
-    /// probed ahead of it when live. The label rides along for BUILTIN rows
+    /// Frozen-layer-only like `flat_value`, and BOX 0's rows only: it is
+    /// filled once and shared, so a box's own `def self.x` must not enter it
+    /// (a boxed caller takes the ordinary walk instead). The runtime overlay
+    /// is still probed ahead of it when live. The label rides along for BUILTIN rows
     /// (`'File.read'` -- see [`FlatHit::frame_label`]); user `def self.x`
     /// rows push their own compiled frames and carry `None`.
     pub(super) flat_class: OnceLock<crate::FMap<Symbol, (ValueImpl, Option<&'static str>)>>,
+}
+
+/// Which box's rows answer for `id`, asked by a caller running in `box_id`.
+///
+/// Two cases, and CRuby draws the same line with one mechanism (a class
+/// carries its box in its classext, and a box's write copies the classext):
+///
+///   - a class the box DEFINED (`class Thrower` inside a box) is that box's
+///     class outright. Its rows are its own for every caller, which is what
+///     makes `box::Thrower.go` work from main.
+///   - a SHARED class the box merely reopened (`class Array` inside a box)
+///     answers its patch only to code running in that box, and main keeps
+///     the pristine rows.
+fn effective_box(id: ClassId, box_id: u32) -> u32 {
+    match crate::boxes::class_box(id) {
+        0 => box_id,
+        owner => owner,
+    }
 }
 
 /// Whether a chain may be flattened into a fill-once map.
@@ -537,8 +561,21 @@ impl ClassRegistry {
         flattenable(std::slice::from_ref(&id)).then_some(())?;
         let map = entry.flat_class.get_or_init(|| {
             let mut map = crate::FMap::default();
-            for (&sym, &f) in &entry.class_methods {
-                map.entry(sym).or_insert((f, None));
+            // The rows every caller may see: the shared ones, plus -- when
+            // the CLASS itself belongs to a box -- that box's, which for such
+            // a class are the only ones it has. `box::Thrower.go` called from
+            // main is exactly this, and a strict `bx == 0` filter answered
+            // NoMethodError for a class's own method.
+            //
+            // What must NOT enter is a box's patch of a SHARED class
+            // (`class Array` inside a box): that class's own box is 0, so
+            // its `(N, name)` rows are filtered out here and a boxed caller
+            // reads them through the ordinary walk instead.
+            let owner_box = crate::boxes::class_box(id);
+            for (&(bx, sym), &f) in &entry.class_methods {
+                if bx == 0 || bx == owner_box {
+                    map.entry(sym).or_insert((f, None));
+                }
             }
             if let Some(lookup) = crate::builtins::class_method_table(id) {
                 for &n in crate::builtins::class_method_table_names(id) {
@@ -931,17 +968,25 @@ impl ClassRegistry {
             .get_mut(&id.0)
             .expect("class must be registered before defining class methods on it")
             .class_methods
-            .insert(name, ValueImpl::Rust(f));
+            .insert((0, name), ValueImpl::Rust(f));
     }
 
     /// [`define_class_method`](Self::define_class_method)'s C twin: a
-    /// Cranelift-compiled `def self.x` row (`CmRow`).
-    pub fn define_class_method_c(&mut self, id: ClassId, name: Symbol, f: crate::capi::ValueFn) {
+    /// Cranelift-compiled `def self.x` row (`CmRow`). `box_id` is the box the
+    /// definition was WRITTEN in, so a box's reopen of a shared class stays
+    /// its own -- the class-method twin of `define_value_method_c`.
+    pub fn define_class_method_c(
+        &mut self,
+        id: ClassId,
+        box_id: u32,
+        name: Symbol,
+        f: crate::capi::ValueFn,
+    ) {
         self.entries
             .get_mut(&id.0)
             .expect("class must be registered before defining class methods on it")
             .class_methods
-            .insert(name, ValueImpl::C(f));
+            .insert((box_id, name), ValueImpl::C(f));
     }
 
     /// Registers one `extend`ed-module method copy as a singleton-chain
@@ -1253,7 +1298,7 @@ impl ClassRegistry {
         };
         match own_only {
             true => e.own_class_methods.iter().copied().collect(),
-            false => e.class_methods.keys().copied().collect(),
+            false => e.class_methods.keys().map(|&(_, sym)| sym).collect(),
         }
     }
 
@@ -1271,6 +1316,26 @@ impl ClassRegistry {
     /// The `(caller's box, name)` probe with the root fallback -- CRuby's
     /// def->box resolution rule: a box's own patch wins inside the box,
     /// root patches are visible everywhere, and nothing else is.
+    /// One class-method row, the box's own before main's. Same rule as
+    /// [`lookup_value_method`](Self::lookup_value_method): a box sees its own
+    /// definition, then falls back to the shared one, and box 0 sees only
+    /// the shared one.
+    pub(super) fn lookup_class_method(
+        &self,
+        id: ClassId,
+        box_id: u32,
+        name: Symbol,
+    ) -> Option<ValueImpl> {
+        let entry = self.entries.get(&id.0)?;
+        let effective = effective_box(id, box_id);
+        if effective != 0
+            && let Some(f) = entry.class_methods.get(&(effective, name))
+        {
+            return Some(*f);
+        }
+        entry.class_methods.get(&(0, name)).copied()
+    }
+
     pub(super) fn lookup_value_method(
         &self,
         id: ClassId,

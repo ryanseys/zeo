@@ -103,6 +103,14 @@ puts File.executable?(RbConfig.ruby)
     assert_eq!(lines[3], "true", "RbConfig.ruby names a file that runs");
 }
 
+/// FLAKY under a loaded machine, observed 2026-08-31: one full `-p zeo` run
+/// failed here with "extconf.rb did not produce a Makefile" after 1.5s, where
+/// a passing run takes 8-19s. It passes on its own every time, and the same
+/// run's other 6,104 tests passed. Cause NOT established -- note the scratch
+/// directory is keyed on the pid alone, which is the shape of the collision
+/// that caused this repo's long-standing one-random-failure-per-run flake
+/// before, so that is where to look first. Re-run before believing a failure
+/// here names a real defect.
 #[test]
 fn an_extension_configures_compiles_and_links() {
     // `make` and a C compiler are what an extension build IS. A machine

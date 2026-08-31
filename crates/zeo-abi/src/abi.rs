@@ -292,6 +292,10 @@ pub struct ForeignRow {
 #[repr(C)]
 pub struct CmRow {
     pub class: u32,
+    /// The box the `def self.x` was WRITTEN in; 0 is main. A box reopening a
+    /// shared class registers its rows under itself, so main never sees them
+    /// -- the class-method twin of the box key `VmRow` rows already carry.
+    pub box_id: u32,
     pub name: Str,
     pub f: ValueFn,
 }
