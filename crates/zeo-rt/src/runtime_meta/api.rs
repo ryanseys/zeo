@@ -1028,7 +1028,30 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
                 crate::dispatch::class_method_fn(owner, old)
                     .map(|f| RProc::with_self_and_block(f.into_fn(), RubyValue::Nil, -1, true))
             })
-            .or_else(|| extended_class_method(owner, old));
+            // The EXTENDED modules, latest first -- `extended_class_method`
+            // takes the module, and handing it the class instead read the
+            // class's own INSTANCE table, so `alias_method :str, :to_s` on a
+            // singleton copied `Kernel#to_s` and rendered `#<Q5:0x...>`
+            // where ruby renders `Q5`.
+            .or_else(|| {
+                extended_modules(&RubyValue::Class(owner))
+                    .into_iter()
+                    .rev()
+                    .find_map(|m| extended_class_method(m, old))
+            })
+            // The rows a class object carries because it IS an instance of
+            // `Class`/`Module` -- `Class#new`, `Module#name`, `Kernel#frozen?`.
+            // They are not class methods of `owner`, so nothing above sees
+            // them, and every one of them raised NameError here. Last,
+            // because it is the furthest seat: ruby puts the singleton chain
+            // and every extended module ahead of `Class`.
+            .or_else(|| {
+                let as_instance_of = match crate::dispatch::class_is_module(owner) {
+                    Some(true) => zeo_abi::MODULE_CLASS,
+                    _ => zeo_abi::CLASS_CLASS,
+                };
+                snapshot_value_body(as_instance_of, old)
+            });
         let Some(source) = source else {
             return Err(name_error!(
                 "undefined method '{}' for class '{}'",
