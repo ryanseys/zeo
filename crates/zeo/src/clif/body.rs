@@ -642,15 +642,26 @@ pub(super) fn define_toplevel(
             0,
         ),
         TopScope::Unit { index, file } => (
-            format!("zeo_unit_{index}"),
+            // A package's units are EXPORTED under its prefix: the host's
+            // merged desc names them, so the natural local spelling would
+            // collide with the host's own `zeo_unit_{i}`.
+            match &em.pkg {
+                Some(pkg) => format!("{}_unit_{index}", pkg.prefix()),
+                None => format!("zeo_unit_{index}"),
+            },
             "<top (required)>".to_string(),
             Some(file.clone()),
             em.next_fn_index(),
         ),
     };
+    let linkage = if em.pkg.is_some() && matches!(scope, TopScope::Unit { .. }) {
+        Linkage::Export
+    } else {
+        Linkage::Local
+    };
     let func_id = em
         .module
-        .declare_function(&sym, Linkage::Local, &sig)
+        .declare_function(&sym, linkage, &sig)
         .map_err(|e| CodegenError::internal(format!("declaring {sym}: {e}")))?;
 
     let mut locals = crate::analyze::local_storage::Locals::default();
@@ -757,7 +768,8 @@ pub(super) fn define_toplevel(
         // from here on. Emitted unconditionally -- the runtime call is a
         // no-op for a unit that concealed nothing.
         TopScope::Unit { index, .. } => {
-            let u = fx.b.ins().iconst(types::I32, *index as i64);
+            let group = i64::from(fx.em.unit_base) + *index as i64;
+            let u = fx.b.ins().iconst(types::I32, group);
             fx.call("zeo_rt_reveal_unit_methods", &[u]);
         }
     }

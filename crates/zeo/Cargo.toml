@@ -18,6 +18,10 @@ default-run = "zeo"
 include = ["/src", "/build.rs", "/README.md", "/gems.pregen.tar.gz"]
 
 [dependencies]
+# The package row manifest (`package.rs`): a separately compiled gem's
+# registration rows as data.
+serde.workspace = true
+serde_json.workspace = true
 zeo-abi.workspace = true
 # The runtime, linked INTO the compiler (plan decision 9, reversed
 # 2026-08-18): the `zeo` binary hosts the Cranelift JIT run path, and the

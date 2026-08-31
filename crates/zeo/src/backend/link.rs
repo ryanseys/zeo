@@ -372,6 +372,7 @@ pub fn host_triple() -> &'static str {
 /// the whole runtime in every hello-world.
 pub fn link_binary(
     object: &std::path::Path,
+    extra_objects: &[std::path::PathBuf],
     output: &std::path::Path,
     debuginfo: bool,
     loads_cext: bool,
@@ -380,6 +381,9 @@ pub fn link_binary(
     let natlibs = natlibs_for(host_triple())?;
     let mut cmd = std::process::Command::new("cc");
     cmd.arg("-o").arg(output).arg(object);
+    // EXPERIMENTAL (M0): separately compiled package objects, before the
+    // runtime archive so their imports resolve the same way the program's do.
+    cmd.args(extra_objects);
     if cfg!(target_os = "macos") {
         cmd.arg(format!("-Wl,-force_load,{}", archive.display()));
         cmd.args(natlibs);

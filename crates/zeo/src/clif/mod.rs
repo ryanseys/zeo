@@ -31,6 +31,7 @@ pub(crate) mod operand;
 pub(crate) mod ownership;
 pub(crate) mod params;
 pub(crate) mod patterns;
+pub(crate) mod pkg;
 pub(crate) mod refine;
 pub(crate) mod statics;
 pub(crate) mod stmt;

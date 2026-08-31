@@ -102,6 +102,7 @@ pub fn run_program(
                 &compiled.object,
                 compiled.debuginfo,
                 compiled.loads_cext,
+                &compiled.extra_objects,
                 &bin,
             )?;
             let status = std::process::Command::new(&bin)
@@ -122,6 +123,7 @@ pub fn build_artifact(compiled: &CompiledProgram<'_>, output: &Path) -> Result<(
             &compiled.object,
             compiled.debuginfo,
             compiled.loads_cext,
+            &compiled.extra_objects,
             output,
         ),
     }

@@ -196,6 +196,16 @@ pub(crate) struct Emitter {
     /// See [`super::names::REOPEN_FLAGS`]; empty for a program that reopens no
     /// builtin, which is almost all of them.
     pub reopen_flags: HashMap<(u32, String), u32>,
+    /// EXPERIMENTAL (M0): the package build this emission is, when it is
+    /// one -- names the unit machinery `{prefix}_unit_*`, exports the
+    /// row-referenced bodies, and swaps the desc for a manifest.
+    pub pkg: Option<crate::package::PackageBuild>,
+    /// EXPERIMENTAL (M0): the first reveal-group id THIS compile may use.
+    /// Merged packages own `[0, unit_base)`; every unit index and
+    /// alias-reveal group this program bakes -- the reveal calls and the
+    /// `REG_CONCEAL_METHOD` rows both -- is offset by it. Zero when no
+    /// packages merge, which keeps today's output byte-identical.
+    pub unit_base: u32,
     pub syms: super::statics::SymPool,
     rodata: Vec<u8>,
     rodata_offsets: HashMap<Vec<u8>, u32>,
@@ -440,6 +450,8 @@ impl Emitter {
             callsites_id,
             reopen_flags_id,
             reopen_flags: HashMap::new(),
+            pkg: None,
+            unit_base: 0,
             callsites: Vec::new(),
             cm_sites_id,
             cm_sites: 0,

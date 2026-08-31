@@ -68,7 +68,7 @@ pub fn compile(analyzed: &Analyzed, spec: &EvalSpec<'_>) -> CResult<EvalProgram>
     let mut em = Emitter::new(true)?;
     em.eval_sites = true;
     let entry_id = define_entry(&mut em, analyzed, spec)?;
-    let unit_init = statics::define_unit_init(&mut em)?;
+    let unit_init = statics::define_unit_init(&mut em, &[])?;
     statics::define_syms(&mut em)?;
     statics::define_callsites(&mut em)?;
     statics::define_cm_sites(&mut em)?;

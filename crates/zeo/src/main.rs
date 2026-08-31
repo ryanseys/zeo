@@ -50,6 +50,13 @@ struct Args {
     /// `--strict-static-require`: a `require`/`load` target the compiler
     /// cannot resolve is an error HERE, not at run time.
     strict_static_require: bool,
+    /// EXPERIMENTAL (M0): `--experimental-pkg <feature>` -- compile the
+    /// positional file as a separately linked package for that feature
+    /// spelling; `-o` names the object, `<object>.zman` gets the manifest.
+    experimental_pkg: Option<String>,
+    /// EXPERIMENTAL (M0): `--experimental-use-pkg <object>` (repeatable) --
+    /// merge that package (manifest at `<object>.zman`) into this program.
+    experimental_use_pkgs: Vec<PathBuf>,
     /// `--root-gem <name>`: the distinguished root package -- it outranks
     /// every other provider for an ambiguous feature (Bundler-root
     /// semantics). The gem probe names its subject here.
@@ -370,6 +377,8 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut package_dirs = Vec::new();
     let mut embed_sources = Vec::new();
     let mut strict_static_require = false;
+    let mut experimental_pkg: Option<String> = None;
+    let mut experimental_use_pkgs: Vec<PathBuf> = Vec::new();
     let mut root_gem: Option<String> = None;
     let mut report = Report::Off;
     let mut gem_paths: Vec<PathBuf> = Vec::new();
@@ -445,6 +454,12 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "irb" => irb = true,
                 "backend" => backend = Some(zeo::backend::Backend::parse(&value("--backend")?)?),
                 "gems" => package_dirs.push(PathBuf::from(value("--gems")?)),
+                "experimental-pkg" => {
+                    experimental_pkg = Some(value("--experimental-pkg")?);
+                }
+                "experimental-use-pkg" => {
+                    experimental_use_pkgs.push(PathBuf::from(value("--experimental-use-pkg")?));
+                }
                 "embed-sources" => {
                     embed_sources.push(PathBuf::from(value("--embed-sources")?));
                 }
@@ -757,6 +772,8 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     Ok(Parsed::Run(Box::new(Args {
         embed_sources,
         strict_static_require,
+        experimental_pkg,
+        experimental_use_pkgs,
         source,
         output,
         compile,
@@ -886,6 +903,14 @@ fn run() -> Result<(), MainError> {
         Source::Eval(code) => (code.clone(), None),
         Source::Irb => (IRB_DRIVER.to_string(), None),
     };
+    // EXPERIMENTAL (M0): a package build compiles its entry as a FEATURE
+    // UNIT, not as `<main>` -- the main source is empty and the entry rides
+    // `CompileOptions::package_build` into the loader.
+    let source = if args.experimental_pkg.is_some() {
+        String::new()
+    } else {
+        source
+    };
     // Armed before the compile, not inside it: the ceiling covers the whole
     // compile, emission, and link. The
     // library entry point deliberately does NOT arm one -- an in-process
@@ -930,6 +955,50 @@ fn run() -> Result<(), MainError> {
             Some(dir.join("zeo-gems.json"))
         }
     };
+    // EXPERIMENTAL (M0): the package options. A package build takes the
+    // positional file as its ENTRY and `-o` as its object; the manifest
+    // lands beside the object as `<output>.zman`. A host names package
+    // objects with `--experimental-use-pkg`; their manifests are read here
+    // so the compile is a function of their TEXT (and the object digest
+    // keeps the program cache honest about a body-only rebuild).
+    let package_build = match &args.experimental_pkg {
+        Some(feature) => {
+            let Source::File(entry) = &args.source else {
+                return Err("--experimental-pkg needs a gem entry file".to_string().into());
+            };
+            let Some(out) = &args.output else {
+                return Err("--experimental-pkg needs -o <object path>".to_string().into());
+            };
+            Some(zeo::package::PackageBuild {
+                entry: entry.clone(),
+                feature: feature.clone(),
+                manifest_out: out.with_extension("zman"),
+            })
+        }
+        None => None,
+    };
+    let use_packages: Vec<zeo::package::UsePackage> = args
+        .experimental_use_pkgs
+        .iter()
+        .map(|obj| {
+            let manifest_path = obj.with_extension("zman");
+            let manifest_text = std::fs::read_to_string(&manifest_path)
+                .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
+            let bytes = std::fs::read(obj).map_err(|e| format!("reading {}: {e}", obj.display()))?;
+            let object_digest = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::hash::DefaultHasher::new();
+                bytes.hash(&mut h);
+                h.finish()
+            };
+            Ok(zeo::package::UsePackage {
+                manifest_path,
+                manifest_text,
+                object: obj.clone(),
+                object_digest,
+            })
+        })
+        .collect::<Result<_, String>>()?;
     let opts = zeo::CompileOptions {
         input_path: input_path.clone(),
         file_name: None,
@@ -944,6 +1013,8 @@ fn run() -> Result<(), MainError> {
         embed_sources: args.embed_sources.clone(),
         strict_static_require: args.strict_static_require,
         required_libraries: args.required_libraries.clone(),
+        package_build,
+        use_packages,
     };
     // Parse only, then say so -- ruby's `Syntax OK`, byte for byte. A syntax
     // error reports itself the way every other compile error does, so the
@@ -987,6 +1058,16 @@ fn run() -> Result<(), MainError> {
     // The JIT is run-in-place by definition: compile into this process and
     // exit with the program's status. An artifact request needs a backend
     // that produces one.
+    // EXPERIMENTAL (M0): a package build writes its OBJECT (the compile
+    // already wrote the manifest beside it) and stops -- there is nothing
+    // to run or link.
+    if opts.package_build.is_some() {
+        let compiled = zeo::compile_to_object_with(&source, &opts, false)?;
+        let out = args.output.as_ref().expect("--experimental-pkg checked -o above");
+        std::fs::write(out, &compiled.object)
+            .map_err(|e| format!("writing {}: {e}", out.display()))?;
+        return Ok(());
+    }
     if backend == zeo::backend::Backend::Jit {
         // Silently honouring nothing is the one answer that would be
         // wrong: DWARF describes an artifact, and the in-process JIT
@@ -1016,6 +1097,14 @@ fn run() -> Result<(), MainError> {
         };
         if args.backend.is_none() && zeo::progcache::enabled() {
             run_from_cache(&source, &opts, &program_name, &args.program_args);
+        }
+        if !opts.use_packages.is_empty() {
+            return Err(
+                "--experimental-use-pkg needs the AOT path: the in-process JIT cannot \
+                 link a package object (use -o/--compile, or leave the program cache on)"
+                    .to_string()
+                    .into(),
+            );
         }
         match zeo::run_jit_with(&source, &opts, &program_name, &args.program_args)? {}
     }

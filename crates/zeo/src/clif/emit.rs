@@ -99,6 +99,18 @@ pub fn compile_jit(analyzed: &Analyzed) -> CResult<Jitted> {
 /// mode-blind. Returns the emitted C `main`.
 fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     em.cov_active = crate::analyze::coverage::active(&analyzed.compiler);
+    // EXPERIMENTAL (M0): a package build swaps the desc for a manifest at
+    // the end of this function; a host merging packages offsets every
+    // reveal-group id it bakes past theirs. Zero/None on an ordinary
+    // compile, which keeps the output byte-identical.
+    em.pkg = analyzed.compiler.hir.pkg_build.clone();
+    em.unit_base = analyzed
+        .compiler
+        .hir
+        .pkg_merge
+        .iter()
+        .map(|m| m.n_units)
+        .sum();
     super::collect::collect_reopen_flags(em, analyzed);
     let defs = super::collect::collect_methods(em, analyzed)?;
     let collected = super::classes::collect_classes(em, analyzed)?;
@@ -466,12 +478,18 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         .filter(|cb| !cb.inline)
         .map(|cb| cb.call.clone())
         .collect();
-    let toplevel = super::body::define_toplevel(
-        em,
-        analyzed,
-        &super::body::TopScope::Main { hoisted: &hoisted },
-        &analyzed.main_statements,
-    )?;
+    // A package has no `<main>`: its top-level code is its unit's body, and
+    // the host program owns the one real main.
+    let toplevel = if em.pkg.is_none() {
+        Some(super::body::define_toplevel(
+            em,
+            analyzed,
+            &super::body::TopScope::Main { hoisted: &hoisted },
+            &analyzed.main_statements,
+        )?)
+    } else {
+        None
+    };
     // One fn per compiled-in load-path file, registered under BOTH spellings
     // a program can build: the load-path-relative feature name and the
     // absolute path `File.expand_path("x", __dir__)` produces.
@@ -489,7 +507,15 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         unit_rows.extend(features.iter().map(|name| (name.clone(), f)));
         unit_rows.push((absolute.clone(), f));
     }
-    let unit_init = statics::define_unit_init(em)?;
+    // A merged package's exported initializer chains onto this object's.
+    let extra_inits: Vec<String> = analyzed
+        .compiler
+        .hir
+        .pkg_merge
+        .iter()
+        .filter_map(|m| m.unit_init.clone())
+        .collect();
+    let unit_init = statics::define_unit_init(em, &extra_inits)?;
     statics::define_syms(em)?;
     statics::define_callsites(em)?;
     statics::define_cm_sites(em)?;
@@ -679,7 +705,8 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
                 a: name.clone(),
                 b: String::new(),
                 f: None,
-                ids: vec![*unit],
+                // Reveal groups [0, unit_base) belong to merged packages.
+                ids: vec![em.unit_base + *unit],
                 flag: u8::from(*class_side),
             }),
     );
@@ -933,13 +960,56 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     // The JIT never needs the reference: the `zeo` process it runs in
     // installed the compiler itself. A LINKED program names the installer
     // so the linker keeps the compiler for it -- and only for it.
+    // EXPERIMENTAL (M0): a host merging packages appends their manifest
+    // rows to its own before the one desc is emitted; a no-op without any.
+    let mut class_specs = class_specs;
+    let mut vm_rows = vm_rows;
+    let mut obj_rows = obj_rows;
+    let mut cm_rows = cm_rows;
+    let mut unit_rows = unit_rows;
+    super::pkg::merge_rows(
+        em,
+        analyzed,
+        &mut class_specs,
+        &mut vm_rows,
+        &mut vis_rows,
+        &mut obj_rows,
+        &mut cm_rows,
+        &mut reg_rows,
+        &mut foreign,
+        &mut meta_rows,
+        &mut unit_rows,
+    )?;
+    // EXPERIMENTAL (M0): a package build writes those same rows to a
+    // MANIFEST beside its object instead of a desc, and emits no `main`.
+    if em.pkg.is_some() {
+        let f = super::pkg::finish_package(
+            em,
+            analyzed,
+            &statics::DescRows {
+                vm: &vm_rows,
+                vis: &vis_rows,
+                classes: &class_specs,
+                obj: &obj_rows,
+                cm: &cm_rows,
+                reg: &reg_rows,
+                foreign: &foreign,
+                meta: &meta_rows,
+                redef_metas: &redef_metas,
+                unit: &unit_rows,
+            },
+            unit_init,
+        )?;
+        statics::define_rodata(em)?;
+        return Ok(f);
+    }
     let eval_install =
         matches!(em.module, ClifModule::Object(_)) && analyzed.compiler.compiles_at_runtime();
     let desc = statics::define_desc(
         em,
         analyzed,
         &statics::DescSpec {
-            toplevel,
+            toplevel: toplevel.expect("a non-package compile defines <main>"),
             unit_init,
             eval_install,
             rows: statics::DescRows {

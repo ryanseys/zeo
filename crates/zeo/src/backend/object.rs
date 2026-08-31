@@ -16,6 +16,7 @@ pub fn object_to_binary(
     object: &[u8],
     debuginfo: bool,
     loads_cext: bool,
+    extra_objects: &[std::path::PathBuf],
     output: &Path,
 ) -> Result<(), String> {
     let obj_path = if debuginfo {
@@ -30,7 +31,7 @@ pub fn object_to_binary(
     };
     std::fs::write(&obj_path, object)
         .map_err(|e| format!("writing {}: {e}", obj_path.display()))?;
-    let linked = super::link::link_binary(&obj_path, output, debuginfo, loads_cext);
+    let linked = super::link::link_binary(&obj_path, extra_objects, output, debuginfo, loads_cext);
     if !debuginfo {
         let _ = std::fs::remove_file(&obj_path);
     }

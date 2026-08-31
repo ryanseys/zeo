@@ -284,21 +284,43 @@ pub(crate) fn define_proc_shapes(em: &mut Emitter) -> CResult<()> {
 /// Every array goes through ONE bulk capi call over a rodata table --
 /// the old per-symbol/per-site unrolled bodies were the largest cold
 /// text in small programs (~4 instructions per symbol).
-pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
+pub(crate) fn define_unit_init(
+    em: &mut Emitter,
+    extra_inits: &[String],
+) -> CResult<Option<FuncId>> {
     if em.syms.is_empty()
         && em.callsites.is_empty()
         && em.cm_sites == 0
         && em.const_sites == 0
         && em.new_sites == 0
         && em.dyn_sites == 0
+        && extra_inits.is_empty()
     {
         return Ok(None);
     }
+    // A package's initializer is EXPORTED under its prefix: the host's own
+    // unit_init calls it, so its local site tables fill at the same moment
+    // the host's do.
+    let (init_sym, linkage) = match &em.pkg {
+        Some(pkg) => (format!("{}_unit_init", pkg.prefix()), Linkage::Export),
+        None => (names::UNIT_INIT.to_string(), Linkage::Local),
+    };
     let sig = em.module.make_signature();
     let func_id = em
         .module
-        .declare_function(names::UNIT_INIT, Linkage::Local, &sig)
-        .map_err(|e| CodegenError::internal(format!("declaring {}: {e}", names::UNIT_INIT)))?;
+        .declare_function(&init_sym, linkage, &sig)
+        .map_err(|e| CodegenError::internal(format!("declaring {init_sym}: {e}")))?;
+    // A merged package's exported initializer, called after this object's
+    // own tables fill.
+    let extra_ids: Vec<FuncId> = extra_inits
+        .iter()
+        .map(|name| {
+            let esig = em.module.make_signature();
+            em.module
+                .declare_function(name, Linkage::Import, &esig)
+                .map_err(|e| CodegenError::internal(format!("declaring {name}: {e}")))
+        })
+        .collect::<CResult<_>>()?;
 
     // Interning may grow rodata, so collect (offset, len) rows first.
     let rows: Vec<(u32, usize)> = {
@@ -389,6 +411,10 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
     let new_init = em.module.declare_func_in_func(f_new_init, &mut func);
     let dyn_gv = em.module.declare_data_in_func(em.dyn_sites_id, &mut func);
     let dyn_init = em.module.declare_func_in_func(f_dyn_init, &mut func);
+    let extra_refs: Vec<ir::FuncRef> = extra_ids
+        .iter()
+        .map(|&id| em.module.declare_func_in_func(id, &mut func))
+        .collect();
     let cfg = em.module.target_config();
     let mut fbc = FunctionBuilderContext::new();
     let mut b = FunctionBuilder::new(&mut func, &mut fbc);
@@ -426,12 +452,15 @@ pub(crate) fn define_unit_init(em: &mut Emitter) -> CResult<Option<FuncId>> {
         let n_v = b.ins().iconst(em.ptr, n_dyn as i64);
         b.ins().call(dyn_init, &[base, n_v]);
     }
+    for extra in extra_refs {
+        b.ins().call(extra, &[]);
+    }
     b.ins().return_(&[]);
     b.seal_all_blocks();
     b.finalize(cfg);
 
-    em.record_clif(names::UNIT_INIT, &func);
-    em.define(func_id, func, names::UNIT_INIT, false)?;
+    em.record_clif(&init_sym, &func);
+    em.define(func_id, func, &init_sym, false)?;
     Ok(Some(func_id))
 }
 
@@ -1990,7 +2019,7 @@ fn define_class_tables(em: &mut Emitter, analyzed: &Analyzed) -> CResult<Option<
 /// A program that can compile code at RUN time gets everything: `eval` and an
 /// unresolved `require` both reach the embedded compiler, which can name any
 /// class at all.
-fn needed_class_tables(analyzed: &Analyzed) -> Vec<&'static str> {
+pub(crate) fn needed_class_tables(analyzed: &Analyzed) -> Vec<&'static str> {
     let all = crate::builtin_surface::CLASS_TABLE_SYMBOLS;
     // The measurement hatch: drop the named tables so a link can price them.
     // See `debug_flags::dropped_tables` -- the miss is loud, not silent.
@@ -1999,8 +2028,20 @@ fn needed_class_tables(analyzed: &Analyzed) -> Vec<&'static str> {
     if analyzed.compiler.compiles_at_runtime() {
         return all.iter().map(|(_, sym)| *sym).filter(keep).collect();
     }
+    // A merged package's reachable set unions in: `-dead_strip` prunes any
+    // table nothing NAMES, and the package's code reaches its tables
+    // through this program's desc.
+    let pkg_tables: std::collections::HashSet<&str> = analyzed
+        .compiler
+        .hir
+        .pkg_merge
+        .iter()
+        .flat_map(|m| m.class_tables.iter().map(String::as_str))
+        .collect();
     all.iter()
-        .filter(|(id, _)| analyzed.compiler.builtin_is_reachable(*id))
+        .filter(|(id, sym)| {
+            analyzed.compiler.builtin_is_reachable(*id) || pkg_tables.contains(sym)
+        })
         .map(|(_, sym)| *sym)
         .filter(keep)
         .collect()

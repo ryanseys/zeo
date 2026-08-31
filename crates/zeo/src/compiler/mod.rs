@@ -178,6 +178,12 @@ pub struct Compiler {
     pub hir: Hir,
     pub classes: Vec<ClassInfo>,
     pub scopes: Vec<Scope>,
+    /// EXPERIMENTAL (M0): `classes.len()` right after the shared bootstrap
+    /// (builtins + exception tail) -- the first id a program or package
+    /// mints for itself. Recorded by `pin_builtin_exceptions_tail`; a
+    /// package manifest carries it, and a host merging packages asserts
+    /// its own matches before padding past their bands.
+    pub first_program_class_id: u32,
     /// Interned method names -- see [`NameId`].
     pub names: Names,
     /// Set when a class/module definition was refused for a reason ruby has an
@@ -601,6 +607,7 @@ impl Compiler {
     pub fn new(hir: Hir) -> Compiler {
         let mut compiler = Compiler {
             hir,
+            first_program_class_id: 0,
             classes: vec![ClassInfo {
                 name: "Object".to_string(),
                 box_id: 0,

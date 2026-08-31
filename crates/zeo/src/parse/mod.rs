@@ -226,6 +226,22 @@ pub fn parse_and_lower_with(
     // handful of folds (see `Hir::cvar_is_toplevel`).
     hir.mode = opts.mode;
     hir.builtin_exceptions_len = exceptions_len;
+    // EXPERIMENTAL (M0): the package options ride the Hir, because neither
+    // analyze nor emit sees `CompileOptions` -- see `Hir::pkg_build`.
+    hir.pkg_build = opts.package_build.clone();
+    for up in &opts.use_packages {
+        let m = crate::package::Manifest::parse(&up.manifest_text).map_err(|e| {
+            CompileError::analyze(format!("{}: {e}", up.manifest_path.display()))
+        })?;
+        hir.pkg_merge.push(m);
+    }
+    // Every package was compiled ALONE, so each claims the same class-id
+    // band; two would collide. The id-translation tier (M2) lifts this.
+    if hir.pkg_merge.len() > 1 {
+        return Err(CompileError::analyze(
+            "M0 supports one --experimental-use-pkg per program",
+        ));
+    }
     // A snippet is its own compile and would otherwise have never heard of an
     // FFI type an earlier one -- or the program -- declared.
     if opts.mode.is_eval() {

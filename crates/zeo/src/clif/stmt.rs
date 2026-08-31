@@ -949,7 +949,10 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
         // until here the name answered whatever the ancestors said, which is
         // what an alias taken above it copies.
         HirNode::MethodReveal(group) => {
-            let g = fx.b.ins().iconst(types::I32, i64::from(*group));
+            let g = fx
+                .b
+                .ins()
+                .iconst(types::I32, i64::from(fx.em.unit_base + *group));
             fx.call("zeo_rt_reveal_unit_methods", &[g]);
             Ok(())
         }

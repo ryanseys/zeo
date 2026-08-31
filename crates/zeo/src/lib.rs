@@ -36,6 +36,7 @@ static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 pub mod analyze;
 pub mod analyze_error;
+pub mod package;
 pub mod backend;
 pub mod builtin_surface;
 pub mod bundled;
@@ -175,6 +176,14 @@ pub struct CompileOptions {
     /// every line number the program reports, and ruby's own `-r` runs in a
     /// file of its own.
     pub required_libraries: Vec<String>,
+    /// EXPERIMENTAL (M0): compile ONE gem entry file as a separately linked
+    /// package -- an object whose bodies are exported plus a row manifest --
+    /// instead of a runnable program. See [`package`].
+    pub package_build: Option<package::PackageBuild>,
+    /// EXPERIMENTAL (M0): packages to merge into this program. Each
+    /// contributes its manifest rows to THIS compile's one `ProgramDesc`;
+    /// the caller links each package's object beside the emitted one.
+    pub use_packages: Vec<package::UsePackage>,
 }
 
 /// A gem named by the caller -- the public identity type `CompileOptions`
@@ -222,6 +231,9 @@ pub struct ObjectOutput {
     ///
     /// Collecting them costs an `Arc` bump per file, not a copy.
     pub inputs: Vec<progcache::Input>,
+    /// EXPERIMENTAL (M0): package objects the LINK must include beside this
+    /// one (`--experimental-use-pkg`). Empty for every ordinary compile.
+    pub extra_objects: Vec<std::path::PathBuf>,
 }
 
 /// The Cranelift pipeline: front end, then `clif::emit`.
@@ -366,6 +378,7 @@ fn compile_object_on_this_thread(
         debuginfo,
         loads_cext,
         inputs,
+        extra_objects: opts.use_packages.iter().map(|p| p.object.clone()).collect(),
     })
 }
 
