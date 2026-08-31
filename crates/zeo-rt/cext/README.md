@@ -138,18 +138,28 @@ gem with an `extensions` entry runs its `extconf.rb`, compiles and links the
 Ruby. `crates/zeo/src/parse/loader/cext.rs` is that path and
 `crates/zeo/tests/e2e/cext_build.rs` gates the build half of it.
 
-What is missing now is the INSTRUMENT, not the loader. A gap file is a Ruby
-program run under zeo and under the oracle ruby, and `tests/harness/golden.rs`
-has no step that builds a C extension for either side -- so a golden that
-requires one would compare zeo against a ruby that raises `LoadError`.
-Building the extension twice, once per set of headers, is what these rows are
-waiting on. When that lands, every row below that is a BUG rather than a
-decided divergence becomes an ordinary gap file, and this table keeps only the
-ones zeo means to keep answering differently.
+The instrument now exists. A golden carries a `.cext` sidecar naming an
+extension directory under `tests/cext/`, and the extension is built TWICE:
+`tests/harness/golden.rs` builds it against zeo's vendored headers for the
+zeo side, and `cargo xtask bless` builds it against the oracle ruby's own
+headers, through its mkmf and `make`, for the recorded answer. Two builds and
+not one, because an extension is linked against a runtime -- the oracle
+cannot load a bundle built for zeo, and zeo cannot load one built for MRI's
+ABI. A `.cext` golden must therefore be blessed; the harness refuses one with
+no committed `.expected`, because the live-oracle path would compare zeo
+against a ruby raising `LoadError` and a gap would pass proving nothing.
+
+`tests/gaps/a_dup_of_a_c_data_object.rb` is the first row promoted. Promoting
+it found something wider than the row itself, filed as task #122: `Klass.new`
+does not run the allocator `rb_define_alloc_func` registered, though
+`Klass.allocate` does -- so the ordinary construction path of every TypedData
+extension raises before `dup` is even reached. The rows below that are BUGS
+rather than decided divergences become gap files the same way, one at a time,
+since each needs its own small `.c`.
 
 | Divergence | Why |
 |---|---|
-| `dup` on a `T_DATA` object gives a copy whose `DATA_PTR` is NULL | CRuby calls the class's allocator and copies into a fresh zeroed struct. zeo has no allocator table until `rb_define_alloc_func`. A shallow copy is not an option: two objects sharing one pointer means `dfree` runs twice on it. |
+| `dup` on a `T_DATA` object gives a copy whose `DATA_PTR` is NULL | CRuby runs the class's ALLOCATOR, so the copy gets a fresh ZEROED struct -- it does not copy the original's, because `rb_obj_init_copy` leaves a TypedData payload alone. Measured against ruby 4.0.6: a `DupData` holding 7 dups to one holding 0. zeo has no allocator table until `rb_define_alloc_func`, and a shallow copy is not an option either -- two objects sharing one pointer means `dfree` runs twice on it. `tests/gaps/a_dup_of_a_c_data_object.rb`, blocked behind #122. |
 | A cycle closed through a C struct is never reclaimed | A `dmark` enumerates edges and cannot clear one, so `CData::gc_visit` reports on the walk and nothing on the sweep. The asymmetry rule makes this the safe direction: an omitted edge leaks, a reported one that cannot be released can clear a live object. A cycle that merely passes THROUGH a `T_DATA` object is still reclaimed, at its Ruby links. |
 | `RB_FLONUM_P` is true for the same doubles as MRI, but an `Integer` outside the Fixnum range is a fresh handle each time | Which is what CRuby does with a Bignum too, so two equal ones are correctly not `equal?`. |
 | A store through a refilled view does not reach the object | `RSTRING(s)->len = 3`, `ROBJECT_FIELDS(o)[0] = v` and `fp->fd = n` all change the view alone. The one exception is the BYTES `RSTRING_PTR` answers: those are the String's own, and a write through them is written back at the scope pop. Nothing in the 23-gem census stores through any of the others. |

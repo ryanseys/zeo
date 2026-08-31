@@ -232,10 +232,11 @@ fn record(rb: &Path, suite: &Suite, oracle: &Oracle) -> Result<(), Error> {
         .map(|b| String::from_utf8_lossy(&b).split_whitespace().map(str::to_string).collect())
         .unwrap_or_default();
     let stdin = sidecar(rb, ".stdin")?;
+    let cext = cext_fixture(rb)?;
     let out = if suite.records_zeo {
         run_zeo(rb, &source, &argv, stdin.as_deref(), suite)?
     } else {
-        run_oracle(rb, &source, &argv, stdin.as_deref(), oracle)?
+        run_oracle(rb, &source, &argv, stdin.as_deref(), oracle, cext.as_deref())?
     };
     // A golden whose answer is the PLATFORM's rather than ruby's -- a tie
     // broken by libc's `qsort_r`, a last-ulp difference in libm -- carries a
@@ -269,6 +270,72 @@ fn with_suffix(rb: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(format!("{}{suffix}", rb.display()))
 }
 
+/// A `.cext` sidecar's extension directory, resolved against the `.rb`'s own.
+fn cext_fixture(rb: &Path) -> Result<Option<PathBuf>, Error> {
+    let Some(bytes) = sidecar(rb, ".cext")? else {
+        return Ok(None);
+    };
+    let named = String::from_utf8_lossy(&bytes).trim().to_string();
+    let dir = rb.parent().unwrap_or(Path::new(".")).join(named);
+    let dir = std::fs::canonicalize(&dir)
+        .map_err(|e| Error::new(format!("{}: .cext names {}: {e}", rb.display(), dir.display())))?;
+    Ok(Some(dir))
+}
+
+/// Build a `.cext` fixture against the ORACLE ruby's own headers, through its
+/// own mkmf and `make`, and answer the directory to put on its `-I`.
+///
+/// A golden that requires a C extension compares two BUILDS, not one library:
+/// an extension is compiled against a set of headers and linked against a
+/// runtime, so the oracle cannot load a bundle built for zeo, and zeo cannot
+/// load one built for MRI's ABI. zeo's side is built by the test harness
+/// (`tests/harness/golden.rs`); this is the other one, and it lives here
+/// because recording is the only thing that ever runs ruby.
+///
+/// Built into `target/cext-goldens/<name>/oracle`, cleared first, so a
+/// product left by an earlier run can never be what a golden records.
+fn build_cext_for_the_oracle(fixture: &Path, oracle: &Oracle) -> Result<PathBuf, Error> {
+    let name = fixture
+        .file_name()
+        .ok_or_else(|| Error::new(format!("{}: not a directory name", fixture.display())))?;
+    let dir = root_join("target/cext-goldens").join(name).join("oracle");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| Error::new(format!("creating {}: {e}", dir.display())))?;
+    // An extension directory is an `extconf.rb` beside its `.c`, flat, which
+    // is the shape mkmf expects to be run in.
+    let entries = std::fs::read_dir(fixture)
+        .map_err(|e| Error::new(format!("reading {}: {e}", fixture.display())))?;
+    for entry in entries.flatten() {
+        let from = entry.path();
+        if from.is_file() {
+            std::fs::copy(&from, dir.join(entry.file_name()))
+                .map_err(|e| Error::new(format!("copying {}: {e}", from.display())))?;
+        }
+    }
+
+    // The oracle's own env, so an ambient gem set cannot decide what the
+    // extension is built against any more than it decides what a golden
+    // records.
+    let env = oracle.env();
+    let extconf = oracle.argv(&["extconf.rb"]);
+    let make = vec!["make".to_string()];
+    for argv in [&extconf, &make] {
+        let out = exec::run(argv, &dir, &env, Capture::Both)?;
+        if !out.success() {
+            return Err(Error::new(format!(
+                "{}: oracle `{}` failed in {}:\n{}\n{}",
+                fixture.display(),
+                argv.join(" "),
+                dir.display(),
+                out.stdout_text().trim(),
+                out.stderr_text().trim()
+            )));
+        }
+    }
+    Ok(dir)
+}
+
 /// `".linux"` for a golden that already carries a linux record and is being
 /// blessed on linux; `""` -- the ordinary single record -- everywhere else.
 /// See the note at the write site for why the file has to exist first.
@@ -299,12 +366,19 @@ fn run_oracle(
     argv: &[String],
     stdin: Option<&[u8]>,
     oracle: &Oracle,
+    cext: Option<&Path>,
 ) -> Result<exec::Output, Error> {
     let mut flags: Vec<&str> = Vec::new();
     if source.contains("Ruby::Box") {
         flags.push("-W:no-experimental");
     }
     let mut cmd: Vec<String> = oracle.argv(&flags);
+    let built;
+    if let Some(fixture) = cext {
+        built = build_cext_for_the_oracle(fixture, oracle)?;
+        cmd.push("-I".into());
+        cmd.push(built.display().to_string());
+    }
     cmd.push(rb.display().to_string());
     cmd.extend(argv.iter().cloned());
     let mut env = oracle.env();

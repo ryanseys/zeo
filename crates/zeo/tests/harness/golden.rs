@@ -5,6 +5,10 @@
 //! **ruby-oracle** golden `.expected` (+ `.err.expected`/`.args`/`.stdin`
 //! sidecars).
 //!
+//! A `.cext` sidecar names an extension directory under `tests/cext/` that
+//! the case requires. It is built TWICE, once per engine's headers -- see
+//! [`cext_root`] for that half and why the other one lives in `xtask bless`.
+//!
 //! **A golden's contract is its DIRECTORY**, which is what the suite passes
 //! in as a [`Mode`]:
 //!
@@ -370,6 +374,9 @@ struct Sidecars {
     stdin: Option<Vec<u8>>,
     expected_out: Option<PathBuf>,
     expected_err: Option<PathBuf>,
+    /// A `.cext` sidecar's extension directory, resolved against the `.rb`'s
+    /// own -- see [`cext_root`].
+    cext: Option<PathBuf>,
 }
 
 /// The tag a per-platform golden carries. Empty everywhere but linux, so the
@@ -407,11 +414,20 @@ fn sidecars(rb: &Path) -> std::io::Result<Sidecars> {
         Some(p) => Some(std::fs::read(p)?),
         None => None,
     };
+    let cext = match side(".cext") {
+        Some(p) => {
+            let named = std::fs::read_to_string(p)?.trim().to_owned();
+            let dir = rb.parent().unwrap_or(Path::new(".")).join(named);
+            Some(std::fs::canonicalize(&dir).unwrap_or(dir))
+        }
+        None => None,
+    };
     Ok(Sidecars {
         args,
         stdin,
         expected_out,
         expected_err,
+        cext,
     })
 }
 
@@ -527,10 +543,14 @@ fn compile_and_run_typed(
     env: &SuiteEnv,
     typed_off: bool,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let mut load_roots = env.load_roots.clone();
+    if let Some(fixture) = &env.cext {
+        load_roots.push(cext_root(fixture)?);
+    }
     let opts = zeo::CompileOptions {
         input_path: Some(rb.to_path_buf()),
         package_dirs: env.package_dirs.clone(),
-        load_roots: env.load_roots.clone(),
+        load_roots,
         ..Default::default()
     };
     run_via_cli(
@@ -543,6 +563,79 @@ fn compile_and_run_typed(
         run_cwd,
         typed_off,
     )
+}
+
+// ---- C extensions, built for the zeo side ----
+
+/// Build a `.cext` fixture against zeo's headers and answer the directory to
+/// put on zeo's `require` path.
+///
+/// A golden that requires a C extension compares two BUILDS, not one library.
+/// An extension is compiled against a set of headers and linked against a
+/// runtime, so each engine needs its own: the oracle cannot load a bundle
+/// linked against zeo's runtime, and zeo cannot load one built for MRI's ABI.
+/// Pointing both at one build would prove nothing, and that is why the twelve
+/// `crates/zeo-rt/cext/README.md` divergences had no instrument until now.
+///
+/// This side is here; the ORACLE side is built by `cargo xtask bless`, which
+/// is the only thing that ever runs ruby (recording moved out of the test
+/// binary for speed -- see that module's docs). The split is why
+/// [`run_golden_env`] refuses a `.cext` golden with no committed `.expected`:
+/// the live-oracle path would otherwise compare zeo against a ruby raising
+/// `LoadError`, which is exactly the wrong answer to record.
+///
+/// Built ONCE PER PROCESS, into a scratch tree cleared first, so a stale
+/// product from an earlier run can never be the thing under test.
+fn cext_root(fixture: &Path) -> Result<PathBuf, String> {
+    type Memo = std::collections::HashMap<PathBuf, Result<PathBuf, String>>;
+    static BUILDS: std::sync::Mutex<Option<Memo>> = std::sync::Mutex::new(None);
+
+    let mut guard = BUILDS.lock().expect("the cext build memo is never poisoned");
+    let memo = guard.get_or_insert_with(Memo::default);
+    if let Some(hit) = memo.get(fixture) {
+        return hit.clone();
+    }
+    let built = build_cext_for_zeo(fixture);
+    memo.insert(fixture.to_path_buf(), built.clone());
+    built
+}
+
+fn build_cext_for_zeo(fixture: &Path) -> Result<PathBuf, String> {
+    let name = fixture
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .ok_or_else(|| format!("{}: not a directory name", fixture.display()))?;
+    // The same convention `cargo xtask bless` uses for the oracle side, one
+    // directory over. Cleared first: a product left by an earlier run must
+    // never be the thing under test.
+    let dir = workspace_root()
+        .join("target/cext-goldens")
+        .join(&name)
+        .join("zeo");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    // An extension directory is an `extconf.rb` beside its `.c`, flat, which
+    // is the shape mkmf expects to be run in.
+    let entries =
+        std::fs::read_dir(fixture).map_err(|e| format!("reading {}: {e}", fixture.display()))?;
+    for entry in entries.flatten() {
+        let from = entry.path();
+        if from.is_file() {
+            std::fs::copy(&from, dir.join(entry.file_name()))
+                .map_err(|e| format!("copying {}: {e}", from.display()))?;
+        }
+    }
+
+    // `zeo::cext::configure` re-enters the zeo binary as a subprocess and
+    // exports the header directories, which is the whole path an installed
+    // zeo takes. `build_extension` then drives the compile and the link
+    // itself; `make` is not on this path.
+    let zeo = zeo_cli().map_err(|e| e.to_string())?;
+    zeo::cext::configure(&zeo, &dir, Path::new("extconf.rb"), &[])
+        .map_err(|e| format!("{}: zeo extconf failed: {e}", fixture.display()))?;
+    zeo::cext::build_extension(&dir, 4)
+        .map_err(|e| format!("{}: zeo build failed: {e}", fixture.display()))?;
+    Ok(dir)
 }
 
 // ---- ruby oracle (bless) ----
@@ -695,6 +788,10 @@ pub struct SuiteEnv {
     /// Extra `-I` roots for the zeo compile (`CompileOptions::load_roots`).
     pub load_roots: Vec<PathBuf>,
     pub oracle_includes: Vec<PathBuf>,
+    /// A C-extension fixture directory this case needs on both sides, set
+    /// from the `.cext` sidecar rather than by a suite. Each side builds it
+    /// against its own headers -- see [`cext_root`].
+    pub cext: Option<PathBuf>,
 }
 
 fn suite_env_default() -> &'static SuiteEnv {
@@ -722,6 +819,37 @@ pub fn run_golden_env(
 
     let source = std::fs::read_to_string(rb)?;
     let sc = sidecars(rb)?;
+
+    // A `.cext` sidecar is per CASE, not per suite, so it overlays the
+    // suite's environment rather than living in it.
+    let overlay;
+    let env = match &sc.cext {
+        None => env,
+        // The oracle side of an extension is built by `cargo xtask bless`
+        // alone, so a `.cext` golden's answer has to be RECORDED. Without a
+        // committed one the live-oracle path would run a ruby that cannot
+        // load the extension and compare zeo against its `LoadError` -- a
+        // green-looking gap that proves nothing.
+        Some(_) if sc.expected_out.is_none() => {
+            return Err(format!(
+                "{}: a `.cext` golden must carry a committed `.expected` -- run \
+                 `cargo xtask bless {}`. The live oracle has no build of the \
+                 extension and would answer LoadError.",
+                rb.display(),
+                rb.file_stem().unwrap_or_default().to_string_lossy()
+            )
+            .into());
+        }
+        Some(fixture) => {
+            overlay = SuiteEnv {
+                package_dirs: env.package_dirs.clone(),
+                load_roots: env.load_roots.clone(),
+                oracle_includes: env.oracle_includes.clone(),
+                cext: Some(fixture.clone()),
+            };
+            &overlay
+        }
+    };
 
     if std::env::var_os("ZEO_BLESS_FROM_TOOL").is_some() {
         return bless(rb, &source, &sc, mode, run_cwd, env);
