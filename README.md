@@ -499,7 +499,7 @@ Narrower runs go through cargo and the dev CLI directly:
 $ cargo nextest run -p zeo --test goldens       # every golden corpus
 $ cargo xtask bless spinel::                  # re-record goldens from ruby
 $ make bench                                    # the performance suite (criterion)
-$ make ci-size                                   # the linked-binary size gate
+$ make test-size                                   # the linked-binary size gate
 ```
 
 Suites are [`datatest-stable`](https://crates.io/crates/datatest-stable)

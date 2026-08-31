@@ -152,7 +152,7 @@ five with it.
 
 ## How to measure it
 
-`make ci-size` links `puts 1` with the release compiler and compares it
+`make test-size` links `puts 1` with the release compiler and compares it
 against a committed baseline, so a regression is loud rather than prose.
 
 The per-table columns below were measured by linking `puts 1` once per class

@@ -1,8 +1,8 @@
 //! What a linked binary costs, defended as a number rather than as prose.
 //!
 //! `#[ignore]`d: it builds the RELEASE compiler and links a program, which is
-//! minutes rather than milliseconds. `make ci-size` runs it, the same shape as
-//! `ci-natlibs` and `ci-anchor`.
+//! minutes rather than milliseconds. `make test-size` runs it, the same shape as
+//! `test-platform`.
 //!
 //! `docs/BINARY_SIZE.md` explains what dominates the number and why.
 

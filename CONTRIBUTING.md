@@ -60,7 +60,7 @@ $ cargo nextest run -p zeo -E 'test(example::)'  # one corpus
 $ cargo nextest run -p zeo -P full            # + the whole-gem cases
 $ cargo xtask bless <filter>              # re-record goldens from ruby
 $ make bench                                # the criterion perf bank (bench/README.md)
-$ make ci-size                              # the linked-binary size gate
+$ make test-size                              # the linked-binary size gate
 ```
 
 The default profile is the dev loop. `-P full` adds the cases that compile a
@@ -110,7 +110,7 @@ $ cargo nextest run -p zeo --test e2e                           # jit child (def
 $ ZEO_E2E_BACKEND=aot      cargo nextest run -p zeo --test e2e  # link per test
 ```
 
-A third leg is the typed differential oracle (`make ci-typed`, or
+A third leg is the typed differential oracle (`make test-typed`, or
 `ZEO_GOLDEN_DIFF_TYPED=1` on any golden suite): every case compiles and
 runs twice -- once as-is, once with `ZEO_DEBUG=no-typed-calls` turning
 every TyKind-driven emission off -- and the two zeo outputs must agree

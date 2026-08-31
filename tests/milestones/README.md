@@ -7,7 +7,7 @@ line inside a bigger suite. `require "rubygems"` is the headline.
 | | |
 |---|---|
 | harness | `crates/zeo/tests/goldens.rs` |
-| run it | `make ci-milestones` (also in `make gate` and CI) |
+| run it | `make test-milestones` (also in `make gate` and CI) |
 | re-record | `cargo xtask bless milestone::` |
 
 ## Two tiers, the same contract the rest of the corpus carries

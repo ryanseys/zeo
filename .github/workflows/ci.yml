@@ -27,7 +27,7 @@ jobs:
       # No `cargo fmt --check` gate, deliberately. The tree IS rustfmt-clean
       # (a5fc1ca0), but holding it clean is not worth failing a build over --
       # style drift is a review comment, not a red X. See CONTRIBUTING.md.
-      - run: make check
+      - run: make lint
       # The lossy-UTF-8 ratchet: `to_utf8_lossy` in the runtime is a
       # DISPLAY-path convenience that silently corrupts non-UTF-8 semantic
       # operations; the audit migrates sites onto byte/encoding-aware paths
@@ -87,27 +87,24 @@ jobs:
       - run: make
 
       # Cranelift through the in-process JIT, one `zeo` child per golden.
-      - run: make ci-jit
+      - run: make test-jit
 
       # The same CLIF through an object file and a real link -- what SHIPS.
-      - run: make ci-aot
+      - run: make test-aot
 
       # One instrumented corpus pass: the compiled-ownership ledger AND the
       # cycle census together (the two compose; verified 2026-08-25). The
       # whole-gem half of the census belongs to `make gate`: the nextest
       # default-filter excludes those cases, so listing them here would
       # silently run nothing -- which is exactly what happened once.
-      - run: make ci-memcheck
+      - run: make test-memcheck
 
-      # The hand-written native-library table vs rustc's live answer.
-      # Linux only: it is where the table was wrong (`-lcrypt` missing)
-      # while macOS stayed green.
-      - run: make ci-natlibs
-        if: runner.os == 'Linux'
-
-      # The anchor-workspace claim about cargo. One platform is enough.
-      - run: make ci-anchor
-        if: runner.os == 'macOS'
+      # The one platform claim this runner can answer. The Makefile picks by
+      # `uname`: on Linux the hand-written native-library table diffed against
+      # rustc's live answer (where `-lcrypt` once went missing while macOS
+      # stayed green), on macOS the anchor-workspace claim about cargo. Two
+      # steps with two `if:` guards said the same thing twice.
+      - run: make test-platform
 
       # The umbrella entry points, one named case each (tests/milestones/).
       # `require "rubygems"` working is the point of a whole effort, so a
@@ -115,18 +112,18 @@ jobs:
       # a bigger suite. Each case splices a whole library's require graph, so
       # this is minutes rather than seconds and the nextest default-filter
       # excludes the binary -- the leg passes `-P full` for exactly that
-      # reason, the same trap `make ci-memcheck` fell into once.
-      - run: make ci-milestones
+      # reason, the same trap `make test-memcheck` fell into once.
+      - run: make test-milestones
 
-      # nextest doesn't run doctests; keep them covered.
-      - run: make ci-doc
-
-      # Every `ext-*` feature really is optional. The docs.rs configuration
-      # omits `ext-ffi` and had stopped compiling with nobody watching.
-      - run: make ci-features
+      # Two questions about the shapes the crates promise to build in, neither
+      # of which runs the corpus: doctests, which nextest does not run, and
+      # that every `ext-*` feature really is optional. The docs.rs
+      # configuration omits `ext-ffi`, and each half had stopped compiling
+      # with nobody watching.
+      - run: make test-config
 
       # The tests/ golden suites -- examples, the full ~3,010-test spinel corpus,
-      # and the gaps XFAIL tracker -- all run under `make ci-jit` above
+      # and the gaps XFAIL tracker -- all run under `make test-jit` above
       # (datatest-stable targets tests/{examples,spinel,gaps}.rs) --
       # committed ruby-oracle .expected, no ruby in CI. The `golden` test-group
       # (.config/nextest.toml) caps their concurrency. A fixed gap fails CI as
@@ -179,7 +176,7 @@ jobs:
       # number someone measured once and typed. `puts 1` is the floor every
       # program pays, and a table added to the always-on set moves it for
       # every program at once -- silently, because nothing fails.
-      - run: make ci-size
+      - run: make test-size
 
       # A file this large in the working tree is almost always a build
       # artifact committed by mistake. History was rewritten to strip blobs

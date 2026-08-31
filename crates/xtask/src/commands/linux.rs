@@ -144,7 +144,7 @@ fn script_for(name: &str) -> Result<String, Error> {
         "jit" => format!(
             "cargo nextest run {profile} -p zeo --test-threads {threads} --no-fail-fast"
         ),
-        // The SMOKE tier, matching macOS ci-aot: the feature-diverse examples
+        // The SMOKE tier, matching macOS test-aot: the feature-diverse examples
         // plus gaps and e2e under a real link. The full spinel corpus takes
         // the linked path only in `aot-full` (release boundaries) -- it is the
         // container loop's dominant cost and JIT already runs it here.

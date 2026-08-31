@@ -1,23 +1,14 @@
 # The one entry point for building and verifying zeo. Every recipe is one
 # blessed invocation -- the Makefile decides nothing a recipe's own tool does
-# not. CI's test legs call the ci-* targets here, so `make gate` and CI run
-# the same commands by construction and cannot drift.
+# not. CI calls these same targets, so a workflow and a local run cannot
+# drift.
 #
-# `make install-deps`
-#                   resolve Gemfile.lock into vendor/bundle (needs network
-#                   once); the gem set both the compiler and the oracle read
-# `make`            build the workspace
-# `make test`       the dev loop: unit + e2e + golden suites, default profile
-# `make check`      clippy at CI's severity
-# `make check-batch` the mid-tier between batches inside a phase: the
-#                   workspace suites, the AOT smoke tier, and one
-#                   instrumented corpus pass (~4 min)
-# `make gate`       the boundary: every CI leg, the whole-gem cases,
-#                   doctests, the milestone entry points, and the
-#                   full-spinel AOT corpus. Bench is NOT in the gate --
-#                   numbers are recorded on their own cadence
-#                   (`make bench`), never a gate
-# `make linux`      the Linux container verification loop (needs podman)
+# A target is named for the QUESTION IT ASKS, never for who calls it. The
+# legs were `ci-*` for as long as CI was their only caller; `check-batch` and
+# `gate` compose them locally too, so the name had stopped being true.
+#
+# `make help` lists everything, generated from the `##` comments below. The
+# block that used to live here was hand-maintained and had already drifted.
 #
 # Suites spawn compile children and the golden group bounds their memory;
 # running two cargo invocations at once defeats that, so this file refuses
@@ -31,36 +22,44 @@ CARGO ?= cargo
 NEXTEST ?= $(CARGO) nextest run
 BUNDLE ?= bundle
 
-.PHONY: all test check check-batch gate bench pgo install linux clean ci-typed \
-        ci-jit ci-aot ci-memcheck ci-doc ci-natlibs ci-anchor ci-milestones \
-        install-deps
+# Every target here is a verb, not a file. One list, so a new target cannot
+# be half-declared: the old one omitted `ci-features` and `ci-size`, and a
+# file of either name would have turned that target into a silent no-op.
+.PHONY: all help install-deps test test-jit test-aot test-memcheck \
+        test-typed test-milestones test-config test-platform test-size \
+        lint check-batch gate bench pgo install linux clean
 
-all: install-deps
+.DEFAULT_GOAL := all
+
+all: install-deps  ## build the workspace
 	$(CARGO) build --workspace
+
+# Two columns, read off the targets themselves, which is the whole point.
+help:  ## list every target
+	@grep -hE '^[a-z][a-z-]*:.*?##' $(MAKEFILE_LIST) | sort | \
+	  awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
 # Resolve `Gemfile.lock` into `vendor/bundle`. One committed lock decides both
 # what the compiler vendors and what the ruby oracle resolves, so the two
 # cannot disagree about a version. Needs the network the first time and
 # nothing after it. `.bundle/config` sets the path and refuses to rewrite the
 # lock during an install; changing the Gemfile means `bundle lock` on purpose.
-install-deps:
+install-deps:  ## resolve Gemfile.lock into vendor/bundle (needs network once)
 	@$(BUNDLE) install --quiet
 
-test: all
+# --- The dev loop. ---------------------------------------------------------
+
+test: all  ## the dev loop: unit + e2e + golden suites, stops at the first failure
 	$(NEXTEST) --workspace
 
-check:
+lint:  ## clippy at CI's severity
 	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
 
-# The mid-tier for batch boundaries INSIDE a phase: cheaper than the gate,
-# broader than `make test`. One workspace pass, the AOT smoke tier, one
-# instrumented corpus pass.
-check-batch: ci-jit ci-aot ci-memcheck
+# --- The verification legs. `check-batch` and `gate` compose them. ----------
 
-# --- The CI legs. ci.yml calls these; `make gate` composes them. -----------
-
-# Cranelift through the in-process JIT, one `zeo` child per golden.
-ci-jit: all
+# The same command as `test`, run to the end. Two names because the questions
+# differ: a dev wants the first failure, a batch wants the whole list.
+test-jit: all  ## every suite through the in-process JIT, to the end
 	$(NEXTEST) --workspace --no-fail-fast
 
 # The same CLIF through an object file and a real link -- what ships. A
@@ -68,7 +67,7 @@ ci-jit: all
 # AOT-only bugs have been link/artifact-shaped, which the feature-diverse
 # zeo-authored examples plus the e2e suite catch. The full spinel corpus
 # takes this leg only in `make gate`.
-ci-aot: all
+test-aot: all  ## the AOT smoke tier: goldens minus spinel, plus e2e, really linked
 	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --no-fail-fast -E 'binary(goldens) - test(spinel::)'
 	ZEO_E2E_BACKEND=aot $(NEXTEST) -p zeo --test e2e --no-fail-fast
 
@@ -78,7 +77,7 @@ ci-aot: all
 # CHANGE against each program's `.gccheck` sidecar). The two compose:
 # verified 4,393/4,393 with both armed, 2026-08-25. Emitted code only,
 # so golden corpora only. The whole-gem compile lives in `gate`.
-ci-memcheck: all
+test-memcheck: all  ## one corpus pass under the ownership ledger and the cycle census
 	ZEO_RT_LEAKCHECK=1 ZEO_GC=1 ZEO_RT_GCCHECK=1 $(NEXTEST) -p zeo --test goldens --no-fail-fast
 
 # The typed differential oracle: every golden compiles and runs TWICE --
@@ -87,7 +86,7 @@ ci-memcheck: all
 # byte-for-byte. Ruby is not consulted; this catches a typed fold
 # changing ANY observable behavior, including behavior the CRuby oracle
 # could not distinguish. Run it on any change to typed emission.
-ci-typed: all
+test-typed: all  ## every golden twice, with typed emission on and off, diffed
 	ZEO_GOLDEN_DIFF_TYPED=1 $(NEXTEST) -p zeo --test goldens --no-fail-fast
 
 # The umbrella entry points, one named case each (tests/milestones/). Each
@@ -95,77 +94,88 @@ ci-typed: all
 # seconds and the default profile opts the binary out; it gets its own leg
 # instead of slowing the dev loop. A `pending/` case is an XFAIL and says so
 # the day it starts matching ruby.
-ci-milestones: all
+test-milestones: all  ## the umbrella entry points, one whole require graph each
 	$(NEXTEST) -p zeo -P full --no-fail-fast -E 'test(milestone::)'
 
-# nextest doesn't run doctests.
-ci-doc: all
-	$(CARGO) test --workspace --doc
-
-# Every `ext-*` feature really is optional. Two configurations are enough:
-# the empty set is the strictest, and the docs.rs set is the one that ships
-# -- it omits `ext-ffi` and `ext-openssl` (both build vendored C), and it
-# silently stopped compiling once. `check`, not `build`: this asks whether
-# the cfgs are right, not for an artifact.
+# Two questions about the SHAPES the crates promise to build in, neither of
+# which runs the corpus. They were separate legs only because they arrived
+# separately.
+#
+# Doctests, because nextest does not run them.
+#
+# Then: every `ext-*` feature really is optional. Two configurations are
+# enough -- the empty set is the strictest, and the docs.rs set is the one
+# that ships (it omits `ext-ffi` and `ext-openssl`, both of which build
+# vendored C). Each has silently stopped compiling once. `check`, not
+# `build`: this asks whether the cfgs are right, not for an artifact.
 DOCS_RS_FEATURES := $(shell sed -n '/\[package.metadata.docs.rs\]/,/^\[dependencies\]/p' \
 	crates/zeo-rt/Cargo.toml | sed -n 's/^ *"\(ext-[a-z0-9]*\)",*/\1/p' | paste -sd, -)
-ci-features:
+test-config: all  ## doctests, and that every ext-* feature is really optional
+	$(CARGO) test --workspace --doc
 	$(CARGO) check -p zeo-rt --no-default-features
 	$(CARGO) check -p zeo-rt --no-default-features --features '$(DOCS_RS_FEATURES)'
 
-# `puts 1` is the floor every program pays, and a table joining the always-on
-# set moves it for every program at once. Ignored by default: it builds the
-# release compiler and links a program.
-ci-size:
-	$(NEXTEST) -p zeo --test checks --run-ignored all -E 'test(binary_size::)'
-
-# The native-library table an AOT link names is HAND-WRITTEN
-# (backend/link.rs); this asks rustc for the live answer and diffs it.
-# Meaningful on Linux (where `-lcrypt` once went missing while macOS stayed
-# green). Ignored by default: it compiles the lib in a probe target dir.
-ci-natlibs: all
-	$(CARGO) test -p zeo --lib -- --ignored natlibs_table_matches_rustc --nocapture
-
-# `cargo install` ships no runtime archive; an installed zeo builds one on
-# first `zeo -o` through an anchor workspace, standing on undocumented
-# cargo behaviour. One platform is enough -- the claim is about cargo.
-ci-anchor: all
-	$(CARGO) test -p zeo --lib -- --ignored a_dependency_position_zeo --nocapture
-
-# --- The phase-boundary gate. ----------------------------------------------
-
-# The gate runs the OS-appropriate one of the two ignored unit tests above.
+# One target, whichever of the two ignored unit tests this OS can answer.
+# Both ask a question about the platform's own toolchain, so they are one
+# leg wearing two hats rather than two legs.
+#
+# Linux -- the native-library table an AOT link names is HAND-WRITTEN
+# (backend/link.rs); this asks rustc for the live answer and diffs it. This
+# is where `-lcrypt` once went missing while macOS stayed green.
+#
+# macOS -- `cargo install` ships no runtime archive, so an installed zeo
+# builds one on first `zeo -o` through an anchor workspace, standing on
+# undocumented cargo behaviour. One platform is enough: the claim is about
+# cargo, not about the OS.
 UNAME := $(shell uname -s)
 ifeq ($(UNAME),Darwin)
-PLATFORM_CI_LEG := ci-anchor
+PLATFORM_TEST := a_dependency_position_zeo
 else
-PLATFORM_CI_LEG := ci-natlibs
+PLATFORM_TEST := natlibs_table_matches_rustc
 endif
 
-# The boundary gate: the CI legs, the whole-gem compile the default profile
-# opts out of (`-P full`), and the AOT leg over the full spinel corpus (CI
+test-platform: all  ## the one platform claim this OS can answer (natlibs | anchor)
+	$(CARGO) test -p zeo --lib -- --ignored $(PLATFORM_TEST) --nocapture
+
+# `puts 1` is the floor every program pays, and a table joining the always-on
+# set moves it for every program at once. Its own target, and its own CI job:
+# it builds the release compiler and links a program.
+test-size:  ## the binary-size floor (builds the release compiler)
+	$(NEXTEST) -p zeo --test checks --run-ignored all -E 'test(binary_size::)'
+
+# --- The composed tiers. ---------------------------------------------------
+
+# The mid-tier for batch boundaries INSIDE a phase: cheaper than the gate,
+# broader than `make test`. One workspace pass, the AOT smoke tier, one
+# instrumented corpus pass.
+check-batch: test-jit test-aot test-memcheck  ## the mid-tier between batches (~4 min)
+
+# The boundary: every leg, plus the whole-gem compile the default profile
+# opts out of (`-P full`) and the AOT leg over the full spinel corpus (CI
 # runs only the AOT smoke tier).
 # Bench is deliberately NOT here: perf numbers are recorded on their own
 # cadence (`make bench` after perf commits and at re-banks), never gated.
-gate: ci-jit ci-aot ci-memcheck ci-doc ci-milestones ci-features $(PLATFORM_CI_LEG)
+gate: test-jit test-aot test-memcheck test-config test-milestones test-platform  ## the phase boundary: every leg, plus full-spinel AOT
 	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --no-fail-fast -E 'binary(goldens) & test(spinel::)'
 	$(NEXTEST) -p zeo -P full -E 'test(every_bundled_gem_compiles)'
 
-bench:
+# --- Measurement, packaging, platforms. ------------------------------------
+
+bench:  ## the criterion bench bank
 	$(CARGO) bench -p zeo --bench programs
 
 # The shipped-configuration bank: the same corpus timed against a full
 # `cargo xtask dist --pgo` snapshot (~15 min of setup). Release-boundary
 # measurements only; never rewrites the committed bench/results.tsv --
 # compare runs with --save-baseline + critcmp.
-pgo:
+pgo:  ## the bench bank against a PGO dist build (release boundaries)
 	ZEO_BENCH_DIST=pgo $(CARGO) bench -p zeo --bench programs
 
-install:
+install:  ## cargo install this working tree
 	$(CARGO) install --path crates/zeo
 
-linux:
+linux:  ## the Linux container verification loop (needs podman)
 	$(CARGO) xtask linux
 
-clean:
+clean:  ## cargo clean
 	$(CARGO) clean

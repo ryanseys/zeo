@@ -308,7 +308,7 @@ fn dlopen_extension(entry: &str, init: &str) -> Result<bool, Signal> {
 ///
 /// Unreachable in practice -- such a build exports no `rb_*` either, so
 /// `c_api_is_published` has already refused above. It exists so the feature
-/// really is optional, which `make ci-features` asks and this file used to
+/// really is optional, which `make test-config` asks and this file used to
 /// answer with a compile error.
 #[cfg(not(feature = "cext"))]
 fn dlopen_extension(entry: &str, _init: &str) -> Result<bool, Signal> {
