@@ -53,6 +53,7 @@ pub mod gvl;
 mod handling;
 
 mod lastmatch;
+pub mod log;
 mod method_meta;
 mod mt;
 pub mod pools;

@@ -414,6 +414,8 @@ pub fn const_remove(owner_class_id: u32, name: &str) -> Option<RubyValue> {
 }
 
 pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
+    // `trace`, not `debug`: boot seeds thousands of these before line 1.
+    tracing::trace!(owner = owner_class_id, name, "const_set");
     bump_const_epoch();
     // Naming an anonymous runtime class (`Foo = Class.new`): the FIRST
     // constant it's bound to becomes its name, matching CRuby -- so `Foo.name`

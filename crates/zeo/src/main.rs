@@ -362,10 +362,14 @@ environment:
   BUNDLE_GEMFILE        the Gemfile for --bundle-gemfile
   ZEO_BACKEND           `jit` or `aot` -- override the default backend (jit
                         for immediate runs, aot for -o/--compile)
-  ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for the compiler's
-                        internal logs, e.g. `zeo=debug` or
+  ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for zeo's internal
+                        logs, e.g. `zeo=debug` or
                         `zeo::analyze=debug,zeo::lower=trace`. --log-level is
-                        the flag spelling, and it wins
+                        the flag spelling, and it wins. `zeo_rt=debug` asks the
+                        RUNTIME instead -- what the program defined, aliased,
+                        required and loaded, and where each write landed. Pair
+                        it with ZEO_CACHE=0: a cached program runs the runtime
+                        it was built with, which may predate the logging
   ZEO_MEMORY_LIMIT      bytes of resident memory this compile may use before it
                         gives up (default: half the machine's RAM, capped at
                         8 GiB; 0 compiles unbounded, which can exhaust the

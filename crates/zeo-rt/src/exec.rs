@@ -87,6 +87,7 @@ where
     if std::env::var_os("ZEO_ARITY_DEBUG").is_some() {
         crate::runtime_meta::arm_arity_debug();
     }
+    crate::log::init();
     // A dedicated thread rather than the OS main: the main thread's stack is
     // a ulimit the program doesn't control (8MB typically), and unoptimized
     // native frames blow through it at recursion depths CRuby handles

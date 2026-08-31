@@ -73,6 +73,17 @@ fancy-regex.workspace = true
 # bindgen `generate` feature (pre-generated bindings) and builds the VENDORED C
 # library, never linking a system libonig.
 onig.workspace = true
+# Structured runtime logging. The FACADE only, and non-optional: with no
+# subscriber installed an event is one relaxed load of a global, so a shipped
+# program pays nothing measurable and the runtime can be instrumented freely.
+# The compiler's own `--log-level`/`ZEO_LOG` already names `zeo_rt` in its
+# filter (`main.rs` `widen_bare_level`), so a JIT run prints these today.
+#
+# The SUBSCRIBER is `runtime-logging`, off by default, because
+# tracing-subscriber + env-filter is far larger than the binary-size gate's
+# 256 KiB tolerance and every compiled program would carry it.
+tracing.workspace = true
+tracing-subscriber = { workspace = true, optional = true }
 # The coroutine/current-yielder shim under `crate::coroutine`. Pinned to the
 # 0.3.x line: the safety argument in
 # `coroutine.rs` relies on an implementation invariant of corosensei's Yielder
@@ -168,6 +179,11 @@ bindgen = "0.72"
 
 [features]
 default = ["ext-all"]
+# Install a `tracing` subscriber inside a COMPILED program, so
+# `ZEO_LOG=zeo_rt=debug ./prog` prints the runtime's own events. Off by
+# default: the subscriber is much larger than the binary-size gate allows,
+# and a `zeo prog.rb` run already gets one from the compiler's `main`.
+runtime-logging = ["dep:tracing-subscriber"]
 ext-all = [
     "ext-base64",
     "ext-monitor",

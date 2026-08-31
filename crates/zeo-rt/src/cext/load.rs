@@ -33,6 +33,7 @@ static LOADED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 /// Answers whether it loaded -- false for a library already in, which is what
 /// `require` answers for a feature already loaded.
 pub fn load(path: &str, init: &str) -> Result<bool, Signal> {
+    tracing::debug!(path, init, "load C extension");
     let already = LOADED
         .lock()
         .ok()

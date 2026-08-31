@@ -7,11 +7,24 @@
 
 use super::*;
 
+/// A class id as a log field: the name when one is known, else the bare id.
+/// Every mutation below reports the id it LANDS ON, which is the question
+/// asked whenever a write turns up somewhere it should not -- a per-box
+/// builtin overlay and the root builtin it patches are different ids under
+/// one name.
+pub(crate) fn class_label(id: ClassId) -> String {
+    match crate::dispatch::class_name(id) {
+        Some(n) => format!("{n}#{}", id.0),
+        None => format!("#{}", id.0),
+    }
+}
+
 /// `some_class.define_method(name) { body }` -- install/override an instance
 /// method on the class with id `id` (frozen or runtime). Returns the name.
 /// A `Foo.freeze`d class refuses (`can't modify frozen Class: Foo`,
 /// CRuby's guard on every method-table mutation).
 pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<RubyValue, Signal> {
+    tracing::debug!(class = %class_label(id), %name, "define_method");
     if crate::dispatch::class_frozen(id) {
         return Err(crate::dispatch::frozen_class_error(id));
     }
@@ -188,6 +201,7 @@ fn dispatches_by_value(id: ClassId) -> bool {
 /// [`runtime_replace_method`]'s Cranelift twin: the body is a compiled
 /// `ValueFn`, so the overlay entry is a `CValue`.
 pub fn runtime_replace_method_c(id: ClassId, name: Symbol, f: crate::capi::ValueFn) {
+    tracing::debug!(class = %class_label(id), %name, "replace instance method");
     let hosts = replace_method_impl(id, name, crate::dispatch::MethodImpl::CValue(f));
     // A BUILTIN's instances dispatch through `value_bodies`, not `methods` --
     // the two overlay maps serve the two receiver shapes, and `define_method`
@@ -224,6 +238,7 @@ pub fn runtime_replace_method_c(id: ClassId, name: Symbol, f: crate::capi::Value
 /// `def` is written, and `analyze::redefs` splices that report separately, at
 /// the same position.
 pub fn runtime_replace_class_method_c(id: ClassId, name: Symbol, f: crate::capi::ValueFn) {
+    tracing::debug!(class = %class_label(id), %name, "replace class method");
     let body = RProc::with_self_and_block(
         crate::dispatch::ValueImpl::C(f).into_fn(),
         RubyValue::Nil,
@@ -975,6 +990,7 @@ fn runtime_remove_singleton_method(
 /// not change the alias. Returns the new name's Symbol. The alias inherits
 /// `old`'s visibility (CRuby: the copied method entry keeps its flags).
 pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<RubyValue, Signal> {
+    tracing::debug!(class = %class_label(id), %new, %old, "alias_method");
     if crate::dispatch::class_frozen(id) {
         return Err(crate::dispatch::frozen_class_error(id));
     }

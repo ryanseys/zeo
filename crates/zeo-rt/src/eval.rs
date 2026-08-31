@@ -567,6 +567,12 @@ pub fn eval_string_in_box(
     self_val: RubyValue,
     box_id: u32,
 ) -> Result<RubyValue, Signal> {
+    tracing::debug!(
+        box_id,
+        surrogate = crate::boxes::surrogate_of(box_id),
+        len = src.len(),
+        "box eval"
+    );
     eval_string_entered(
         src,
         self_val,

@@ -519,6 +519,7 @@ pub fn process_gvl() -> &'static Arc<Gvl> {
 ///
 /// Answers whether the Gvl actually armed.
 pub fn arm_for_cext() -> bool {
+    tracing::debug!("a C extension armed the GVL; the lock-free path is off process-wide");
     clear_sole_thread();
     MULTI_THREADED.store(true, Ordering::Release);
     // A `false` here is not a failure: the program asked for the parallel

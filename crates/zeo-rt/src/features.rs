@@ -345,6 +345,7 @@ fn resolve_embedded(feature: &str) -> Option<(&'static str, &'static str)> {
 /// makes a require CYCLE terminate rather than recurse). `reload` is
 /// `Kernel#load`'s rule: run it again, and answer `true` either way.
 pub fn load_from_disk(feature: &str, box_id: u32, reload: bool) -> Option<Result<bool, Signal>> {
+    tracing::debug!(feature, box_id, reload, "require from disk");
     // `load` names an exact file; `require` appends `.rb` to a suffix-less
     // spelling, which is what makes `require "json"` and `require "json.rb"`
     // one feature.
