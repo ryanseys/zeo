@@ -72,6 +72,54 @@ fn report(what: &str) -> ! {
     panic!("ZEO_RT_LEAKCHECK: {what}");
 }
 
+/// `ZEO_RT_LEAKTRACE=<tag>`: which tag to track BY IDENTITY as well as by
+/// count. The counter says a tag is out of balance; this says WHICH value,
+/// and where it crossed in. Off unless the variable names a tag.
+static TRACE_TAG: std::sync::OnceLock<Option<u8>> = std::sync::OnceLock::new();
+
+/// value address -> (net crossings, a clone that KEEPS the address from being
+/// recycled under a later value, the backtrace of the first crossing).
+static TRACED: std::sync::Mutex<
+    Option<std::collections::HashMap<usize, (i64, RubyValue, String)>>,
+> = std::sync::Mutex::new(None);
+
+fn trace_tag() -> Option<u8> {
+    *TRACE_TAG.get_or_init(|| {
+        std::env::var("ZEO_RT_LEAKTRACE")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+    })
+}
+
+/// The heap address a value's ownership is counted against -- the payload
+/// pointer, which is stable for the value's whole life. `None` for a value
+/// kind this mode does not follow.
+fn trace_key(v: &RubyValue) -> Option<usize> {
+    match v {
+        RubyValue::Str(s) => Some(std::sync::Arc::as_ptr(s) as usize),
+        RubyValue::Array(a) => Some(std::sync::Arc::as_ptr(a) as usize),
+        RubyValue::Hash(h) => Some(std::sync::Arc::as_ptr(h) as usize),
+        _ => None,
+    }
+}
+
+fn note(v: &RubyValue, delta: i64) {
+    let Some(key) = trace_key(v) else { return };
+    let mut g = TRACED.lock().expect("no poisoned leaktrace writers");
+    let map = g.get_or_insert_with(std::collections::HashMap::new);
+    let e = map.entry(key).or_insert_with(|| {
+        (
+            0,
+            v.clone(),
+            format!("{}", std::backtrace::Backtrace::force_capture()),
+        )
+    });
+    e.0 += delta;
+    // The entry STAYS at zero: dropping it would free the clone, and the
+    // allocator would hand the same address to a later value whose crossings
+    // then merged with this one's.
+}
+
 /// An owned heap value crossed INTO compiled code.
 pub(crate) fn created(v: &RubyValue) {
     if !enabled() {
@@ -80,6 +128,9 @@ pub(crate) fn created(v: &RubyValue) {
     let t = tag_of(v);
     if t >= FIRST_HEAP_TAG {
         row(t, "created").fetch_add(1, Ordering::Relaxed);
+        if trace_tag() == Some(t) {
+            note(v, 1);
+        }
     }
 }
 
@@ -92,6 +143,9 @@ pub(crate) fn consumed(v: &RubyValue) {
     let t = tag_of(v);
     if t >= FIRST_HEAP_TAG {
         row(t, "consumed").fetch_sub(1, Ordering::Relaxed);
+        if trace_tag() == Some(t) {
+            note(v, -1);
+        }
     }
 }
 
@@ -132,6 +186,21 @@ pub(crate) fn check_at_exit() {
         }
     }
     if dirty {
+        report_traced();
         std::process::abort();
+    }
+}
+
+/// The `ZEO_RT_LEAKTRACE` half of the exit report: every value of the traced
+/// tag still owed, with the backtrace of the crossing that first claimed it.
+fn report_traced() {
+    let g = TRACED.lock().expect("no poisoned leaktrace readers");
+    let Some(map) = g.as_ref() else { return };
+    for (addr, (n, v, bt)) in map.iter().filter(|(_, (n, _, _))| *n != 0) {
+        let what = match v {
+            RubyValue::Str(s) => format!("{:?}", s.lock().to_utf8_lossy()),
+            other => format!("{other:?}"),
+        };
+        eprintln!("ZEO_RT_LEAKTRACE: {what} at {addr:#x} is {n:+}, first claimed at:\n{bt}");
     }
 }

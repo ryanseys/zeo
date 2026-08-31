@@ -77,6 +77,11 @@ pub(crate) struct Fx<'e, 'f> {
     /// Ordered: epilogues and capture walks iterate it, and emission must
     /// be a pure function of the source.
     pub locals: std::collections::BTreeMap<String, Local>,
+    /// The next number a SYNTHETIC local key takes (`r#blk3`, `#acc4`). A
+    /// monotone count, not `locals.len()`: two spliced loops in one scope
+    /// can reach the same map size, and the second's key then replaced the
+    /// first's -- which left the first's slot with no epilogue release.
+    pub synthetic_locals: usize,
     /// The names a `binding` taken in THIS scope reports, when the scope
     /// takes one (`analyze::captures::binding_scope_names`). Its presence is
     /// what promoted those locals to cells, which is the only storage a
@@ -259,6 +264,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             rodata_base,
             syms_base,
             locals: std::collections::BTreeMap::new(),
+            synthetic_locals: 0,
             frefs: HashMap::new(),
             temp_free: Vec::new(),
             temp_taken: Vec::new(),

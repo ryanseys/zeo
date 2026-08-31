@@ -280,7 +280,8 @@ pub(crate) fn lower_counted(
                 true => new_cell_local(fx),
                 false => super::ctx::Local::Slot(fx.new_value_slot()),
             };
-            let key = format!("{name}#blk{}", fx.locals.len());
+            fx.synthetic_locals += 1;
+            let key = format!("{name}#blk{}", fx.synthetic_locals);
             fx.locals.insert(key, local);
             let old = fx.locals.insert(name.to_string(), local);
             if matches!(local, super::ctx::Local::Slot(_)) {
@@ -340,7 +341,8 @@ pub(crate) fn lower_counted(
             // whatever the slot holds (nil once the normal exit has
             // moved the accumulator out; nil on the slow arm, which
             // never builds one).
-            let key = format!("#acc{}", fx.locals.len());
+            fx.synthetic_locals += 1;
+            let key = format!("#acc{}", fx.synthetic_locals);
             fx.locals.insert(key, super::ctx::Local::Slot(ss));
             let addr = fx.slot_addr(ss, 0);
             // A `break` abandons the accumulator IN the slot; a site
