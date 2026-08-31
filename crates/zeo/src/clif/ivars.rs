@@ -59,7 +59,8 @@ pub(super) fn name_keyed_ivar_read(fx: &mut Fx, name: &str) -> CResult<super::op
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let (nptr, nlen) = super::expr::rodata_name(fx, name);
-    let status = fx.call_status("zeo_rt_ivar_get_dyn", &[recv, nptr, nlen, out]);
+    let bx = fx.box_v();
+    let status = fx.call_status("zeo_rt_ivar_get_dyn", &[recv, nptr, nlen, bx, out]);
     fx.fallible(status);
     fx.owned_created += 1;
     Ok(super::operand::Operand::Slot {
@@ -87,7 +88,8 @@ pub(crate) fn ivar_write_op(fx: &mut Fx, name: &str, op: super::operand::Operand
             ownership::pool_owned(fx, ptr, tag);
         }
         let (nptr, nlen) = super::expr::rodata_name(fx, name);
-        let status = fx.call_status("zeo_rt_ivar_set_dyn", &[recv, nptr, nlen, ptr]);
+        let bx = fx.box_v();
+        let status = fx.call_status("zeo_rt_ivar_set_dyn", &[recv, nptr, nlen, bx, ptr]);
         fx.fallible(status);
         return Ok(());
     }

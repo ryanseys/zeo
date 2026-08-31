@@ -984,9 +984,14 @@ pub unsafe extern "C" fn zeo_rt_ivar_get_dyn(
     recv: *const RubyValue,
     name: *const u8,
     len: usize,
+    box_id: u32,
     out: *mut RubyValue,
 ) -> i32 {
     let name = unsafe { super::str_slice(name, len) };
+    // A CLASS receiver routes to `civars`, which is keyed by box. A class
+    // BODY is not a send, so nothing else publishes the box it was written
+    // in -- and without it a box's `class Array; @x = 1; end` wrote main's.
+    let _box = crate::boxes::BoxGuard::enter(box_id);
     status_out(
         crate::dispatch::ivar_get_dyn_isolated(unsafe { &*recv }, name),
         out,
@@ -1002,10 +1007,13 @@ pub unsafe extern "C" fn zeo_rt_ivar_set_dyn(
     recv: *const RubyValue,
     name: *const u8,
     len: usize,
+    box_id: u32,
     v: *const RubyValue,
 ) -> i32 {
     use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
     let name = unsafe { super::str_slice(name, len) };
+    // See `zeo_rt_ivar_get_dyn`: a class body publishes no box of its own.
+    let _box = crate::boxes::BoxGuard::enter(box_id);
     match crate::dispatch::ivar_set_dyn(unsafe { &*recv }, name, unsafe { &*v }.clone()) {
         Ok(_echo) => STATUS_OK,
         Err(sig) => {

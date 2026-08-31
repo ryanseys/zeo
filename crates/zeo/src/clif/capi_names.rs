@@ -659,7 +659,7 @@ pub const CAPI: &[CapiSig] = &[
     },
     CapiSig {
         name: "zeo_rt_ivar_get_dyn",
-        params: &[Ptr, Ptr, Usize, Ptr],
+        params: &[Ptr, Ptr, Usize, U32, Ptr],
         ret: Some(I32),
     },
     CapiSig {
@@ -669,7 +669,7 @@ pub const CAPI: &[CapiSig] = &[
     },
     CapiSig {
         name: "zeo_rt_ivar_set_dyn",
-        params: &[Ptr, Ptr, Usize, Ptr],
+        params: &[Ptr, Ptr, Usize, U32, Ptr],
         ret: Some(I32),
     },
     CapiSig {

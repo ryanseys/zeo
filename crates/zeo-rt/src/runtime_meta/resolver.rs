@@ -477,23 +477,19 @@ pub fn overlay_class_name(id: ClassId) -> Option<String> {
 /// Whether class `id`'s OWN entry undef'd `name` -- the terminator every MRO
 /// walk probes per ancestor, alongside `ClassRegistry::is_undefined`.
 pub fn overlay_is_undefined(id: ClassId, name: Symbol) -> bool {
-    maps()
-        .classes
-        .read()
-        .unwrap()
-        .get(&id.0)
-        .is_some_and(|e| e.undefs.contains(&name))
+    let (mine, shared) = box_first(id.0);
+    let c = maps().classes.read().unwrap();
+    let gone = |key: u32| c.get(&key).is_some_and(|e| e.undefs.contains(&name));
+    mine.is_some_and(gone) || gone(shared)
 }
 
 /// Whether class `id`'s OWN entry had `name` REMOVED -- the walk skips this
 /// ancestor's tables and keeps going, where [`overlay_is_undefined`] stops it.
 pub fn overlay_is_removed(id: ClassId, name: Symbol) -> bool {
-    maps()
-        .classes
-        .read()
-        .unwrap()
-        .get(&id.0)
-        .is_some_and(|e| e.removed.contains(&name))
+    let (mine, shared) = box_first(id.0);
+    let c = maps().classes.read().unwrap();
+    let gone = |key: u32| c.get(&key).is_some_and(|e| e.removed.contains(&name));
+    mine.is_some_and(gone) || gone(shared)
 }
 
 /// [`overlay_is_removed`]'s class-method twin -- true for a name

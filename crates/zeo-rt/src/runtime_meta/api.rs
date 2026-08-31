@@ -514,6 +514,10 @@ pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue
     {
         return runtime_undef_singleton_method(&owner, id, args);
     }
+    // See `runtime_remove_method`: a per-box builtin overlay's rows are the
+    // ROOT's, keyed by box, so the tombstone goes there too.
+    let id = ClassId(crate::boxes::overlay_root(id.0));
+    let write_key = crate::boxes::box_record_for_write(crate::boxes::current_box(), id.0);
     let mut undefined = Vec::with_capacity(args.len());
     for arg in args {
         let name = coerce_method_name(Some(arg))?;
@@ -526,7 +530,7 @@ pub fn runtime_undef_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValue
         }
         {
             let mut w = maps().classes.write().unwrap();
-            let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+            let e = w.entry(write_key).or_insert_with(OverlayEntry::delta);
             e.undefs.insert(name);
             e.methods.remove(&name);
         }
@@ -800,6 +804,12 @@ pub fn runtime_remove_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValu
     {
         return runtime_remove_singleton_method(&owner, id, args);
     }
+    // A per-box builtin OVERLAY holds no rows of its own -- they register on
+    // the ROOT keyed by box -- so both the existence check and the tombstone
+    // name the root, and the tombstone lands in the box's own record so a
+    // box's `remove_method` does not retire the row for main.
+    let id = ClassId(crate::boxes::overlay_root(id.0));
+    let write_key = crate::boxes::box_record_for_write(crate::boxes::current_box(), id.0);
     let mut removed_names = Vec::with_capacity(args.len());
     for arg in args {
         let name = coerce_method_name(Some(arg))?;
@@ -807,7 +817,7 @@ pub fn runtime_remove_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValu
             .classes
             .read()
             .unwrap()
-            .get(&id.0)
+            .get(&write_key)
             .is_some_and(|e| e.methods.contains_key(&name));
         if !in_overlay && !crate::dispatch::class_defines_own_instance_method(id, name) {
             return Err(name_error!(
@@ -832,7 +842,7 @@ pub fn runtime_remove_method(id: ClassId, args: &[RubyValue]) -> Result<RubyValu
     {
         let mut w = maps().classes.write().unwrap();
         for &name in &removed_names {
-            let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+            let e = w.entry(write_key).or_insert_with(OverlayEntry::delta);
             e.methods.remove(&name);
             e.value_bodies.remove(&name);
             e.methods_vis.remove(&name);

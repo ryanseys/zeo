@@ -706,7 +706,7 @@ pub(super) fn register_nested_class_defs_in(
     box_id: u32,
     conditional: Conditional,
 ) -> Result<(), String> {
-    for &(s, _) in nested {
+    for &(s, reach) in nested {
         let HirNode::ClassDef {
             name,
             superclass,
@@ -718,6 +718,13 @@ pub(super) fn register_nested_class_defs_in(
         };
         let (name, superclass, body, is_module) =
             (name.clone(), superclass.clone(), body.clone(), *is_module);
+        // A class written inside a `box.eval` belongs to that box, and its
+        // body is TOP-LEVEL there -- so it takes the box's id and an empty
+        // cref, exactly as the top-level `BoxScope` arm gives one.
+        let (cref, box_id) = match reach.box_id {
+            0 => (cref, box_id),
+            bx => (&[][..], bx),
+        };
         register_class_or_raise(
             compiler,
             &ClassRegistration {
@@ -817,6 +824,11 @@ pub(super) struct Reach {
     /// Through a body that runs later, never, or many times: a block, a
     /// lambda, a loop.
     pub(super) through_block: bool,
+    /// The `Ruby::Box` the walk has descended into, `0` for the enclosing
+    /// one. A `x = box.eval("class String; ...")` is a `BoxScope` in
+    /// EXPRESSION position, which the top-level arm never sees, and its class
+    /// registered in main -- so the box's reopen answered for main too.
+    pub(super) box_id: u32,
 }
 
 impl Reach {
@@ -824,7 +836,14 @@ impl Reach {
     pub(super) const DIRECT: Reach = Reach {
         conditional: false,
         through_block: false,
+        box_id: 0,
     };
+
+    /// Descended into a `Ruby::Box`'s body. Nesting cannot leave a box, so the
+    /// innermost one wins.
+    pub(super) fn in_box(self, box_id: u32) -> Reach {
+        Reach { box_id, ..self }
+    }
 
     pub(super) fn conditional(self) -> Reach {
         Reach {
@@ -936,6 +955,15 @@ fn for_each_nested_stmt(
         }
         HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => return,
         HirNode::Lambda { body, .. } => body.iter().map(|&s| (s, reach.through_block())).collect(),
+        // Everything below a `box.eval("...")` splice belongs to the BOX. The
+        // top-level statement arm registers a `BoxScope`'s classes itself; a
+        // nested one -- `x = box.eval("class String; ...")`, or one inside a
+        // block -- reaches registration only through this walk, and without
+        // the box on it the reopen landed on main's class.
+        HirNode::BoxScope { box_id, body } => body
+            .iter()
+            .map(|&s| (s, reach.in_box(*box_id)))
+            .collect(),
         other @ (HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::BigIntegerLit { .. }
@@ -976,7 +1004,6 @@ fn for_each_nested_stmt(
         | HirNode::Redo
         | HirNode::MultiWrite { .. }
         | HirNode::Ffi(_)
-        | HirNode::BoxScope { .. }
         | HirNode::BoxHandle(_)
         | HirNode::Return(_)
         | HirNode::Yield(_)

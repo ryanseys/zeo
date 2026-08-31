@@ -701,12 +701,16 @@ fn boxed_binop(
         // uncached walk per evaluation.
         let sym = fx.sym_id(name);
         let cache = fx.callsite_ptr(super::call::FCALL);
-        let zero = fx.b.ins().iconst(types::I32, 0);
+        // The site's OWN box, not 0: inside a `Ruby::Box` the operator has to
+        // walk that box's ancestry, or a box's `include Comparable` left
+        // `[1] < [2]` raising while `send(:<)` -- which threads the box --
+        // answered.
+        let bx = fx.box_v();
         let one = fx.b.ins().iconst(fx.em.ptr, 1);
         let null = fx.b.ins().iconst(fx.em.ptr, 0);
         let status = fx.call_status(
             "zeo_rt_send_value_cached",
-            &[cache, zero, pa, sym, pb, one, null, dst],
+            &[cache, bx, pa, sym, pb, one, null, dst],
         );
         fx.fallible(status);
         if branch {

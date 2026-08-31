@@ -1807,6 +1807,15 @@ pub(super) fn defer_mixin_to_runtime(compiler: &mut Compiler, module: ClassId) {
         }
         names.push(scope.name.clone());
     }
+    // A BUILTIN module (`include Comparable` at a reopen site, or inside a
+    // box) has no user scopes at all, so `own_methods` names nothing and the
+    // call sites stayed folded: `[1] < [2]` compiled to "Array has no `<`"
+    // and raised, while `send(:<)` -- which always asks the run time --
+    // answered. The surface table is what the compiler knows about a
+    // builtin's rows.
+    if let Some(surface) = crate::builtin_surface::surface_for(zeo_abi::ClassId(module.0)) {
+        names.extend(surface.instance_methods.iter().map(|n| (*n).to_string()));
+    }
     compiler.runtime_patches.extend(names);
 }
 

@@ -126,9 +126,9 @@ zeo_rt_int_shr ([Ptr, Ptr, Ptr]) -> Some(I32)
 zeo_rt_int_sub_slow ([Ptr, Ptr, Ptr]) -> None
 zeo_rt_is_live ([]) -> Some(I8)
 zeo_rt_iter_inline_ok_for ([U32, U32]) -> Some(I8)
-zeo_rt_ivar_get_dyn ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_ivar_get_dyn ([Ptr, Ptr, Usize, U32, Ptr]) -> Some(I32)
 zeo_rt_ivar_get_slot ([Ptr, Usize, Ptr]) -> None
-zeo_rt_ivar_set_dyn ([Ptr, Ptr, Usize, Ptr]) -> Some(I32)
+zeo_rt_ivar_set_dyn ([Ptr, Ptr, Usize, U32, Ptr]) -> Some(I32)
 zeo_rt_ivar_set_slot ([Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_kernel_puts ([Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_kw_splat_into ([Ptr, Ptr]) -> Some(I32)

@@ -569,7 +569,14 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 ))
             };
             let dc = entry.defined_class(compiler);
-            if !class.is_bootstrap && dc != target {
+            // Through the same redirect `target` took: a per-box OVERLAY's own
+            // `def` has the overlay as its defining class and registers on the
+            // root, which read as "a module's method materialized here" and
+            // marked the row FOREIGN -- so the box's own method was not its
+            // own, and `instance_methods(false)`, `#owner` and `remove_method`
+            // all said it did not exist.
+            let dc_root = compiler.class(dc).builtin_overlay.unwrap_or(dc);
+            if !class.is_bootstrap && dc_root != target {
                 // A module method materialized onto this builtin: the row
                 // registers here (compiled in this class's context) and is
                 // marked FOREIGN so `super` skips this position.

@@ -254,7 +254,10 @@ ruby_class! {
         ))
     }
     def "dig" cfunc (recv, key, *rest, &_block) {
-        let cur = crate::hash_get(rhash, key);
+        // CRuby's `rb_hash_dig` steps through `rb_hash_aref`, so a missing key
+        // answers the hash's DEFAULT (or runs its default proc) exactly as
+        // `h[key]` would -- `Hash.new(0).dig(:x)` is `0`, not `nil`.
+        let cur = crate::hash_index(rhash, key)?;
         if rest.is_empty() {
             return Ok(cur);
         }
