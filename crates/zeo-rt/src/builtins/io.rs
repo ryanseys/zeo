@@ -2367,6 +2367,7 @@ ruby_class! {
     // `IO#winsize` (from `require "io/console"`) -- `[rows, columns]`, or
     // `Errno::ENOTTY` when the stream isn't a terminal, as CRuby answers. The
     // rest of the console surface is in `io_console.rs`; this row predates it.
+    #[cfg(feature = "ext-io-console")]
     def "winsize" gated "io/console" (recv, &_blk) {
         let fd = raw_fd(recv)?;
         let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
@@ -3964,68 +3965,89 @@ ruby_class! {
 
     // `io/console`'s additions to IO. The rows are declared here, with the rest
     // of IO's surface, because one class owns one table; the termios work they
-    // stand on earns its own file. Unconditional -- the `require` is ceremony.
+    // stand on earns its own file.
+    //
+    // The `require` is ceremony -- the rows stand whether or not a program
+    // writes one, which is what `gated` says. The `cfg` is a different
+    // question: it asks whether the ext was COMPILED IN, and without it
+    // `crate::ext::io_console` does not exist to call.
 
+    #[cfg(feature = "ext-io-console")]
     def "winsize=" gated "io/console" (recv, _size) {
         crate::ext::io_console::winsize_set(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "raw" gated "io/console" (recv, *_args) {
         crate::ext::io_console::raw(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "raw!" gated "io/console" (recv, *_args) {
         crate::ext::io_console::raw_bang(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "cooked" gated "io/console" (recv) {
         crate::ext::io_console::cooked(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "cooked!" gated "io/console" (recv) {
         crate::ext::io_console::cooked_bang(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "echo?" gated "io/console" (recv) {
         crate::ext::io_console::echo_p(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "echo=" gated "io/console" (recv, _echo) {
         crate::ext::io_console::echo_set(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "noecho" gated "io/console" (recv) {
         crate::ext::io_console::noecho(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "getch" gated "io/console" (recv, *_args) {
         crate::ext::io_console::getch(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "getpass" gated "io/console" (recv, *_args) {
         crate::ext::io_console::getpass(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "iflush" gated "io/console" (recv) {
         crate::ext::io_console::iflush(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "oflush" gated "io/console" (recv) {
         crate::ext::io_console::oflush(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "ioflush" gated "io/console" (recv) {
         crate::ext::io_console::ioflush(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "ttyname" gated "io/console" (recv) {
         crate::ext::io_console::ttyname(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "console_mode" gated "io/console" (recv) {
         crate::ext::io_console::console_mode(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "console_mode=" gated "io/console" (recv, _mode) {
         crate::ext::io_console::console_mode_set(recv, __args, __block)
     }
@@ -4034,66 +4056,82 @@ ruby_class! {
     // take whatever they are given and always refuse. Measured: `pressed?`
     // with 0, 1 and 2 arguments is NotImplementedError every time, and
     // `respond_to?` answers false for both (see `reflect::responds_to_value`).
+    #[cfg(feature = "ext-io-console")]
     def "pressed?" gated "io/console" (recv, *_args) {
         crate::ext::io_console::pressed_p(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "check_winsize_changed" gated "io/console" (recv, *_args) {
         crate::ext::io_console::check_winsize_changed(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "beep" gated "io/console" (recv) {
         crate::ext::io_console::beep(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "clear_screen" gated "io/console" (recv) {
         crate::ext::io_console::clear_screen(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "erase_line" gated "io/console" (recv, _mode) {
         crate::ext::io_console::erase_line(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "erase_screen" gated "io/console" (recv, _mode) {
         crate::ext::io_console::erase_screen(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "goto" gated "io/console" (recv, _line, _column) {
         crate::ext::io_console::goto(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "goto_column" gated "io/console" (recv, _column) {
         crate::ext::io_console::goto_column(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "cursor" gated "io/console" (recv) {
         crate::ext::io_console::cursor(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "cursor=" gated "io/console" (recv, _position) {
         crate::ext::io_console::cursor_set(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "cursor_up" gated "io/console" (recv, _n) {
         crate::ext::io_console::cursor_up(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "cursor_down" gated "io/console" (recv, _n) {
         crate::ext::io_console::cursor_down(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "cursor_left" gated "io/console" (recv, _n) {
         crate::ext::io_console::cursor_left(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "cursor_right" gated "io/console" (recv, _n) {
         crate::ext::io_console::cursor_right(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "scroll_forward" gated "io/console" (recv, _n) {
         crate::ext::io_console::scroll_forward(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def "scroll_backward" gated "io/console" (recv, _n) {
         crate::ext::io_console::scroll_backward(recv, __args, __block)
     }
@@ -4101,16 +4139,19 @@ ruby_class! {
 
     // `IO.console` -- the controlling terminal, from `io/console`. Variadic:
     // `IO.console(:close)` and `IO.console(meth, *args)` are both real forms.
+    #[cfg(feature = "ext-io-console")]
     def self."console" cfunc gated "io/console" (recv, *_args) {
         crate::ext::io_console::io_class_console(recv, __args, __block)
     }
 
     // `io/console/size`'s two rows -- a separate require in ruby, so a
     // separate gate here. irb, debug and power_assert all reach for them.
+    #[cfg(feature = "ext-io-console")]
     def self."console_size" cfunc gated "io/console/size" (recv) {
         crate::ext::io_console::io_class_console_size(recv, __args, __block)
     }
 
+    #[cfg(feature = "ext-io-console")]
     def self."default_console_size" cfunc gated "io/console/size" (recv) {
         crate::ext::io_console::io_class_default_console_size(recv, __args, __block)
     }

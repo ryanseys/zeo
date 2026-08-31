@@ -289,7 +289,7 @@ pub fn load_native_from_disk(feature: &str, box_id: u32) -> Option<Result<bool, 
              compile time publishes it; a computed one cannot)"
         )));
     }
-    Some(crate::cext::load::load(&entry, &init).inspect(|&loaded| {
+    Some(dlopen_extension(&entry, &init).inspect(|&loaded| {
         // `$LOADED_FEATURES` names the LIBRARY, which is what makes the second
         // require answer `false`. `cext::load` is idempotent by path, so the
         // two records cannot drift.
@@ -297,6 +297,24 @@ pub fn load_native_from_disk(feature: &str, box_id: u32) -> Option<Result<bool, 
             feature_loaded(box_id, &entry, "");
         }
     }))
+}
+
+#[cfg(feature = "cext")]
+fn dlopen_extension(entry: &str, init: &str) -> Result<bool, Signal> {
+    crate::cext::load::load(entry, init)
+}
+
+/// A build with the `cext` feature off has no loader to reach.
+///
+/// Unreachable in practice -- such a build exports no `rb_*` either, so
+/// `c_api_is_published` has already refused above. It exists so the feature
+/// really is optional, which `make ci-features` asks and this file used to
+/// answer with a compile error.
+#[cfg(not(feature = "cext"))]
+fn dlopen_extension(entry: &str, _init: &str) -> Result<bool, Signal> {
+    Err(crate::builtins::load_error!(
+        "cannot load such file -- {entry}: this build has no C extension support"
+    ))
 }
 
 /// The `--embed-sources` pack: the ruby source that travelled inside the
