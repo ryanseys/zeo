@@ -954,9 +954,15 @@ fn struct_construct_inner(
     // accessors and its `initialize` were compiled against. Building a
     // `StructInstance` for it instead compiles fine and then reads every
     // member as nil.
-    let handle = crate::dispatch::allocate_instance_of(class_id).unwrap_or_else(|| {
-        StructInstance::new_robj(class_id, vec![RubyValue::Nil; meta.members.len()])
-    });
+    // The ANCESTOR's allocator, not this class's own: `Class.new(S1)` on a
+    // compiled struct mints a runtime id that registered nothing, and a
+    // `StructInstance` for it left every inherited accessor reading nil
+    // while `to_a` -- which walks the slots directly -- was right.
+    let handle = crate::dispatch::ancestor_allocator_of(class_id)
+        .map(|alloc| alloc(class_id))
+        .unwrap_or_else(|| {
+            StructInstance::new_robj(class_id, vec![RubyValue::Nil; meta.members.len()])
+        });
     // Dispatch `initialize` so a user override (and its `super`) resolve
     // normally; the default member-setter lives in the class_table.
     // A Data freezes inside its own `initialize` (see `builtins::data`), not

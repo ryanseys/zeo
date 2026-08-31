@@ -4,16 +4,6 @@
 
 use super::*;
 
-/// A fresh, uninitialized instance of `id` through its registered allocator,
-/// or `None` for a class that registered none (a module, a builtin, or a class
-/// minted at runtime). Does NOT run `initialize`.
-pub(crate) fn allocate_instance_of(id: ClassId) -> Option<RObj> {
-    match REGISTRY.get()?.allocate_instance(id) {
-        Some(RubyValue::Object(o)) => Some(o),
-        _ => None,
-    }
-}
-
 /// Whether `cid`'s chain defines a `const_missing` of its OWN -- anything
 /// but `Module`'s default row, which only raises. A miss dispatches the
 /// hook where one exists and takes the caller's pre-qualified NameError
