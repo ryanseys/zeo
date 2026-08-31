@@ -301,3 +301,34 @@ fn seed_ruby_constants() {
 fn rb_str(s: &str) -> RubyValue {
     RubyValue::Str(crate::collections::string_new(s.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    /// Every `Object` constant this file seeds must be in
+    /// `zeo_abi::SEEDED_OBJECT_CONSTANTS`, or the compiler folds
+    /// `defined?(NAME)` to nil for a name the running program has
+    /// (`CROSS_COMPILING` was the miss, task #133). The compiler cannot see
+    /// this crate, so the agreement is pinned here, over the source text
+    /// the seeding actually is.
+    #[test]
+    fn every_seeded_object_constant_is_in_the_abi_list() {
+        let src = include_str!("bootstrap.rs");
+        let mut missing = Vec::new();
+        for line in src.lines() {
+            let Some(rest) = line.trim().strip_prefix("const_set(object, \"") else {
+                continue;
+            };
+            let Some(name) = rest.split('"').next() else {
+                continue;
+            };
+            if !zeo_abi::SEEDED_OBJECT_CONSTANTS.contains(&name) {
+                missing.push(name.to_string());
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "seeded on Object but absent from zeo_abi::SEEDED_OBJECT_CONSTANTS \
+             (the compiler will fold defined?(..) to nil for these): {missing:?}"
+        );
+    }
+}

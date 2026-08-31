@@ -75,6 +75,10 @@ pub const RUBY_VERSION: &str = "4.0.6";
 pub const SEEDED_OBJECT_CONSTANTS: &[&str] = &[
     "ARGF",
     "ARGV",
+    // CRuby sets it at the VM level, `nil` for an ordinary build; mkmf
+    // gates on it at module-body level. Missing from this list, every
+    // `defined?(CROSS_COMPILING)` folded to nil (task #133).
+    "CROSS_COMPILING",
     "ENV",
     "RUBY_COPYRIGHT",
     "RUBY_DESCRIPTION",

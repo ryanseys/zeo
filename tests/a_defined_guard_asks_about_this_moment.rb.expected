@@ -14,6 +14,7 @@ false
 true
 ["ARGF", true]
 ["ARGV", true]
+["CROSS_COMPILING", true]
 ["ENV", true]
 ["RUBY_COPYRIGHT", true]
 ["RUBY_DESCRIPTION", true]
@@ -27,6 +28,8 @@ true
 ["STDERR", true]
 ["STDIN", true]
 ["STDOUT", true]
+"constant"
+nil
 "constant"
 "constant"
 "constant"

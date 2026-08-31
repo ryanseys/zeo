@@ -125,11 +125,17 @@ p Patch::APPLIED
 #
 # Every name the runtime seeds is listed here, so a name added to one side and
 # not the other shows up as a divergence rather than as a quiet nil.
-%w[ARGF ARGV ENV RUBY_COPYRIGHT RUBY_DESCRIPTION RUBY_ENGINE RUBY_ENGINE_VERSION
-   RUBY_PATCHLEVEL RUBY_PLATFORM RUBY_RELEASE_DATE RUBY_REVISION RUBY_VERSION
-   STDERR STDIN STDOUT].each do |name|
+%w[ARGF ARGV CROSS_COMPILING ENV RUBY_COPYRIGHT RUBY_DESCRIPTION RUBY_ENGINE
+   RUBY_ENGINE_VERSION RUBY_PATCHLEVEL RUBY_PLATFORM RUBY_RELEASE_DATE
+   RUBY_REVISION RUBY_VERSION STDERR STDIN STDOUT].each do |name|
   p [name, Object.const_defined?(name)]
 end
+
+# The mkmf gate itself: defined, and nil, before any require -- CRuby sets
+# it at the VM level. A fold that scans the program for `CROSS_COMPILING =`
+# finds nothing and must still answer "constant".
+p defined?(CROSS_COMPILING)
+p CROSS_COMPILING
 
 p defined?(RUBY_ENGINE)
 p defined?(RUBY_VERSION)
