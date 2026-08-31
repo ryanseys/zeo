@@ -62,7 +62,34 @@ thread_local! {
 /// The generated `main` prologue: at this point one Ruby thread exists.
 #[inline]
 pub fn mark_sole_thread() {
-    SOLE.with(|s| s.set(!MULTI_THREADED.load(Ordering::Acquire)));
+    SOLE.with(|s| s.set(!MULTI_THREADED.load(Ordering::Acquire) && !sole_thread_refused()));
+}
+
+/// `ZEO_RT_NO_SOLE_THREAD=1`: never claim the sole-thread path, so every
+/// ivar and container access takes its locking arm.
+///
+/// A MEASUREMENT dial, and it measures something the runtime does to itself:
+/// loading any C extension calls [`arm_for_cext`], which clears the same
+/// claim process-wide. So this is that cost with no gem in the way -- the
+/// alternative is to A/B a Rust ext against its real gem, where the two
+/// implementations differ by far more than the GVL and the number means
+/// nothing. (One such attempt, 2026-08-29, compared 340ms against 344ms and
+/// was invalid for a worse reason still: both runs had loaded zeo's builtin.)
+///
+/// MEASURED 2026-08-30, release bank, one subprocess per iteration:
+/// attr_accessor 510->856ms (+68%), getivar 53.6->88.4ms (+65%), setivar and
+/// setivar_object +17%, inline +9%. Every program that does not touch an ivar
+/// or a container is flat. So the cost is not diffuse -- it is the four
+/// `sole_thread()` sites, and it is why zeo keeps its own json/psych/date
+/// rather than loading the C gem.
+///
+/// Read ONCE, and never from `sole_thread()` -- that one is on the path of
+/// every container access, and a dial there would measure the dial.
+fn sole_thread_refused() -> bool {
+    static REFUSED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *REFUSED.get_or_init(|| {
+        std::env::var_os("ZEO_RT_NO_SOLE_THREAD").is_some_and(|v| !v.is_empty())
+    })
 }
 
 /// Whether the caller may take a lock-free path over data only Ruby threads
