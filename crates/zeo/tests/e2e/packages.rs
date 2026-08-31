@@ -64,7 +64,19 @@ fn build_package(dir: &Path) -> PathBuf {
 }
 
 const HOST: &str = r#"p defined?(Pureleaf)
+if defined?(PURELEAF_TAG)
+  p :guard_before_yes
+else
+  p :guard_before_no
+end
 p require "pureleaf"
+# The branch below must SURVIVE the compile: the host arena has no writer
+# of PURELEAF_TAG, only the package's manifest facts say one loads.
+if defined?(PURELEAF_TAG)
+  p :guard_after_yes
+else
+  p :guard_after_no
+end
 one = Pureleaf.new
 p one.leaf
 p one.tagged(2)
@@ -83,7 +95,7 @@ end
 /// The one output every road must produce -- verified against ruby 4.0.6
 /// by the sibling differential assertion below, then held here so a drift
 /// in EITHER road fails by name.
-const WANT: &str = "nil\ntrue\n\"leaf\"\n\"leaf-2\"\n:pure\n3\n7\nfalse\n[:leaf, :tagged]\nNoMethodError\n";
+const WANT: &str = "nil\n:guard_before_no\ntrue\n:guard_after_yes\n\"leaf\"\n\"leaf-2\"\n:pure\n3\n7\nfalse\n[:leaf, :tagged]\nNoMethodError\n";
 
 #[test]
 fn a_precompiled_gem_links_and_answers_like_the_spliced_one() {

@@ -189,7 +189,6 @@ pub(super) fn explicit_accessor(
     args: &[ArrayElem],
     site: crate::compiler::AccessorSite,
 ) -> CResult<Operand> {
-    use cranelift_codegen::ir::types;
     let bypass = super::expr::bypasses_visibility(fx, Some(recv));
     let later = super::expr::later_nodes(args, &[], None);
     let recv_op = super::expr::lower_expr(fx, recv)?;

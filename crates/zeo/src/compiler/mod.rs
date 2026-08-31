@@ -178,6 +178,10 @@ pub struct Compiler {
     pub hir: Hir,
     pub classes: Vec<ClassInfo>,
     pub scopes: Vec<Scope>,
+    /// EXPERIMENTAL (M2): globals a MERGED PACKAGE writes. Their writes
+    /// have no node in this arena, so the site-based guard analysis cannot
+    /// see them; the name set is consulted beside it.
+    pub external_global_writers: FSet<String>,
     /// EXPERIMENTAL (M0): `classes.len()` right after the shared bootstrap
     /// (builtins + exception tail) -- the first id a program or package
     /// mints for itself. Recorded by `pin_builtin_exceptions_tail`; a
@@ -607,6 +611,7 @@ impl Compiler {
     pub fn new(hir: Hir) -> Compiler {
         let mut compiler = Compiler {
             hir,
+            external_global_writers: FSet::default(),
             first_program_class_id: 0,
             classes: vec![ClassInfo {
                 name: "Object".to_string(),
@@ -959,6 +964,21 @@ impl Compiler {
     /// same thing per call through an inline cache -- `vm_opt_not` inlines
     /// only when the resolved entry is literally `rb_obj_not` -- and zeo
     /// decides it once, ahead of time.
+    /// EXPERIMENTAL (M2): a merged package already answered "yes" to one of
+    /// the memoized whole-program questions, so the memo is decided before
+    /// this arena is ever asked. Only a `true` seeds; `false` stays lazy.
+    pub fn seed_world_bits(&mut self, defines_bang: bool, blank_slate: bool, moved: bool) {
+        if defines_bang {
+            let _ = self.defines_bang.set(true);
+        }
+        if blank_slate {
+            let _ = self.blank_slate_possible.set(true);
+        }
+        if moved {
+            let _ = self.moved_receiver_possible.set(true);
+        }
+    }
+
     pub fn defines_bang(&self) -> bool {
         *self
             .defines_bang

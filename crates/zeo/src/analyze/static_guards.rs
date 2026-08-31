@@ -700,11 +700,15 @@ fn static_const_defined_in(
 /// "undecidable" answer), whereas missing a real definition would silently drop
 /// one of the two branches.
 fn const_defined_outside(compiler: &Compiler, guarded: &[NodeId], leaf: &str) -> bool {
-    any_site_outside(
-        compiler,
-        guarded,
-        write_sites(&compiler.const_write_sites, leaf),
-    )
+    // A merged package's write has no node in THIS arena -- the name rides
+    // in from its manifest via `unrun_unit_consts`, and it always counts as
+    // outside every branch here.
+    compiler.hir.loader.unrun_unit_consts.contains(leaf)
+        || any_site_outside(
+            compiler,
+            guarded,
+            write_sites(&compiler.const_write_sites, leaf),
+        )
 }
 
 /// The indexed sites for `name`, or an empty slice when there are none.
@@ -817,11 +821,14 @@ fn renames_each_entry(
 /// branches this guard decides assigns `$name`. Globals have one flat
 /// namespace, so the name alone is the whole question.
 fn global_assigned_outside(compiler: &Compiler, guarded: &[NodeId], name: &str) -> bool {
-    any_site_outside(
-        compiler,
-        guarded,
-        write_sites(&compiler.global_write_sites, name),
-    )
+    // A merged package's write has no node in THIS arena; its name alone
+    // says "assigned somewhere outside every branch".
+    compiler.external_global_writers.contains(name)
+        || any_site_outside(
+            compiler,
+            guarded,
+            write_sites(&compiler.global_write_sites, name),
+        )
 }
 
 /// [`const_defined_outside`] for a SCOPED name -- `defined?(HTTP::VERSION)`.

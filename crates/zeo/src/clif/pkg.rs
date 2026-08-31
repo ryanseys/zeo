@@ -223,6 +223,23 @@ pub(crate) fn finish_package(
             .iter()
             .map(|s| (*s).to_string())
             .collect(),
+        facts: {
+            let sorted = |it: Box<dyn Iterator<Item = String>>| -> Vec<String> {
+                let mut v: Vec<String> = it.collect();
+                v.sort();
+                v
+            };
+            crate::package::MFacts {
+                patched_names: sorted(Box::new(compiler.runtime_patches.iter().cloned())),
+                patches_any_name: compiler.runtime_patches_any_name,
+                freezes: compiler.program_freezes,
+                defines_bang: compiler.defines_bang(),
+                blank_slate_possible: compiler.blank_slate_possible(),
+                moved_receiver_possible: compiler.moved_receiver_possible(),
+                const_names: sorted(Box::new(compiler.assigned_const_names.iter().cloned())),
+                global_names: sorted(Box::new(compiler.global_write_sites.keys().cloned())),
+            }
+        },
     };
     std::fs::write(&pkg.manifest_out, manifest.to_json()).map_err(|e| {
         CodegenError::internal(format!(

@@ -58,6 +58,38 @@ pub struct Manifest {
     /// `zeo_ctable_*` name -- unioned into the host's list so
     /// `-dead_strip` keeps them.
     pub class_tables: Vec<String>,
+    /// What the package DOES to the shared world -- see [`MFacts`]. A host
+    /// unions these with its own arena facts before any fold fires.
+    pub facts: MFacts,
+}
+
+/// The package's whole-program facts, extracted from the same `Compiler`
+/// state the arena sweep fills. Every field is MONOTONE-CONSERVATIVE: a
+/// host that unions them can only fold less, never differently -- which is
+/// the correct failure direction for a fact someone forgets to carry.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MFacts {
+    /// Method names a runtime site in the package could (re)define or
+    /// re-scope -- `Compiler::runtime_patches`, sorted.
+    pub patched_names: Vec<String>,
+    /// A patch whose NAME is computed (`define_method(sym)`), which
+    /// suppresses every name-keyed fold at once.
+    pub patches_any_name: bool,
+    /// `Compiler::program_freezes`.
+    pub freezes: bool,
+    /// The package gives `!` a body somewhere.
+    pub defines_bang: bool,
+    /// A BasicObject-rooted receiver is possible in the package.
+    pub blank_slate_possible: bool,
+    /// A Ractor-moved husk is possible in the package.
+    pub moved_receiver_possible: bool,
+    /// Every constant name the package can assign when it loads --
+    /// `Compiler::assigned_const_names`, sorted. The host files them under
+    /// `unrun_unit_consts`, so `defined?` and the const folds ask the run
+    /// time instead of deciding from a body the host cannot see.
+    pub const_names: Vec<String>,
+    /// Global variables the package writes, sorted.
+    pub global_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -231,6 +263,10 @@ mod tests {
             units: vec![("pureleaf".into(), "zeo_pkg_pureleaf_unit_0".into())],
             unit_init: Some("zeo_pkg_pureleaf_unit_init".into()),
             class_tables: vec![],
+            facts: MFacts {
+                const_names: vec!["PURELEAF_TAG".into()],
+                ..MFacts::default()
+            },
         }
     }
 

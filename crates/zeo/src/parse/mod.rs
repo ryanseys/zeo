@@ -242,6 +242,15 @@ pub fn parse_and_lower_with(
             "M0 supports one --experimental-use-pkg per program",
         ));
     }
+    // A package's constants land when its units run -- exactly what
+    // `unrun_unit_consts` describes. Seeded BEFORE the main lowering,
+    // because the loader's own guard folder decides `defined?(NAME)`
+    // branches during splicing, ahead of analyze's fact union.
+    for m in &hir.pkg_merge {
+        hir.loader
+            .unrun_unit_consts
+            .extend(m.facts.const_names.iter().cloned());
+    }
     // A snippet is its own compile and would otherwise have never heard of an
     // FFI type an earlier one -- or the program -- declared.
     if opts.mode.is_eval() {

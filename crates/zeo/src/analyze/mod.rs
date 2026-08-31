@@ -149,6 +149,41 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     compiler.global_write_sites = facts.global_write_sites;
     compiler.const_set_sites = facts.const_set_sites;
 
+    // EXPERIMENTAL (M2): a merged package's whole-program facts union in
+    // BEFORE any fold fires -- its writers are as real as this arena's,
+    // they just have no nodes here. Every field is monotone-conservative:
+    // the union can only fold less, never differently.
+    let merged: Vec<crate::package::MFacts> = compiler
+        .hir
+        .pkg_merge
+        .iter()
+        .map(|m| m.facts.clone())
+        .collect();
+    for f in merged {
+        compiler.runtime_patches.extend(f.patched_names);
+        compiler.runtime_patches_any_name |= f.patches_any_name;
+        compiler.program_freezes |= f.freezes;
+        compiler.seed_world_bits(
+            f.defines_bang,
+            f.blank_slate_possible,
+            f.moved_receiver_possible,
+        );
+        // The package's constants land when its units run, exactly the
+        // shape `unrun_unit_consts` already describes (parse seeded that
+        // set for the loader's own folds); `assigned_const_names` is what
+        // `const_ever_written` and the existence folds consult, and
+        // over-collection is its safe direction.
+        compiler
+            .assigned_const_names
+            .extend(f.const_names.iter().cloned());
+        compiler
+            .hir
+            .loader
+            .unrun_unit_consts
+            .extend(f.const_names);
+        compiler.external_global_writers.extend(f.global_names);
+    }
+
     // Register native-extension constants (`Socket::AF_INET6`, ...) into their
     // builtin class's compile-time const table so `const_defined?`/`defined?`/
     // const-read/guard folding sees them exactly as the runtime `seed_*` will
