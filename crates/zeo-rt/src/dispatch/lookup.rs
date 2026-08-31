@@ -273,7 +273,7 @@ pub(crate) fn builtin_row_impl(id: ClassId, name: Symbol) -> Option<MethodImpl> 
     )))
 }
 
-fn value_fn_impl(f: ValueImpl) -> MethodImpl {
+pub(super) fn value_fn_impl(f: ValueImpl) -> MethodImpl {
     MethodImpl::Dynamic(std::sync::Arc::new(
         move |recv: &RObj, args: &[RubyValue], block: Option<RubyValue>| {
             f.call(&RubyValue::Object(recv.clone()), args, block)

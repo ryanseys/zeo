@@ -1,0 +1,7 @@
+[true, false, true]
+[:==, :eql?]
+"T1"
+"T1"
+false
+[true, false]
+["second", "first"]

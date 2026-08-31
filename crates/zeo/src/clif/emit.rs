@@ -822,7 +822,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     reg_rows.extend(
         alias_rows
             .iter()
-            .map(|(class, new, old, is_class, box_id)| statics::RegRowSpec {
+            .map(|(class, new, old, is_class, box_id, eager)| statics::RegRowSpec {
                 kind: if *is_class {
                     zeo_abi::abi::REG_CLASS_ALIAS
                 } else {
@@ -836,7 +836,10 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
                 // `class << self; alias_method :x, :y; end` on a shared
                 // class does not rename anything for main.
                 ids: vec![*box_id],
-                flag: 0,
+                // 1 = bind the ancestor's body once, at registration: the
+                // aliasing class writes the SOURCE name later, and a live
+                // indirection would follow that later `def`.
+                flag: u8::from(*eager),
             }),
     );
     // Reflection rows: one per emitted method scope, in the order the

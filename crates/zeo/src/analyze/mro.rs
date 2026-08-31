@@ -501,9 +501,30 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
                 .builtin_alias_target(class_id, &old_name)
                 .unwrap_or(&old_name)
                 .to_string();
-            compiler.classes[class_id.0 as usize]
-                .builtin_aliases
-                .push((new_name, terminal));
+            // The aliasing class writes `old` ITSELF, further down the same
+            // stream: `T1.class_eval { alias_method :eql?, :== }` before
+            // `class T1; def ==(o) = true; end`. A name indirection resolves
+            // LIVE, so it would follow that later `def`; ruby's `rb_alias`
+            // binds what exists at the alias, which here is the ancestor's
+            // native row. The row binds eagerly instead -- but only when this
+            // class has no body of its own for `new`, which would be the
+            // nearer definition and must keep winning.
+            let own = compiler.class(class_id);
+            let writes_old_later = own.method_history.iter().any(|(n, cm, seq, sid)| {
+                !*cm && !is_class_method
+                    && *n == old_name
+                    && *seq > alias_seq
+                    && compiler.scope_stream.get(sid).copied() == alias_stream
+            });
+            let writes_new = own
+                .method_history
+                .iter()
+                .any(|(n, cm, _, _)| *cm == is_class_method && *n == new_name);
+            compiler.classes[class_id.0 as usize].builtin_aliases.push((
+                new_name,
+                terminal,
+                writes_old_later && !writes_new,
+            ));
             continue;
         };
         let scope = compiler.scope(sid);

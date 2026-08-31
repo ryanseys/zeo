@@ -285,7 +285,7 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             }
             abi::REG_ALIAS => {
                 let box_id = unsafe { *r.ids };
-                registry.register_alias(ClassId(r.class), box_id, text(r.a), text(r.b));
+                registry.register_alias(ClassId(r.class), box_id, text(r.a), text(r.b), r.flag == 1);
             }
             abi::REG_CLASS_ALIAS => {
                 let box_id = unsafe { *r.ids };

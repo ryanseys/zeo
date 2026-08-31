@@ -183,7 +183,11 @@ pub struct ClassInfo {
     /// validated `register_alias` row for dynamic dispatch -- a source that
     /// resolves to nothing raises `NameError` at program start, real Ruby's
     /// timing (a class body executes at runtime). See `mro::resolve_aliases`.
-    pub builtin_aliases: Vec<(String, String)>,
+    /// The third field is EAGER: the aliasing class defines `old` itself
+    /// LATER, so a live name indirection would follow that later `def` --
+    /// which ruby's `rb_alias` does not do. An eager row binds the ancestor's
+    /// native body once, at registration. See `mro::resolve_aliases`.
+    pub builtin_aliases: Vec<(String, String, bool)>,
     /// [`ClassInfo::builtin_aliases`]'s singleton-side twin: an alias written
     /// inside `class << self` whose source is a builtin CLASS method. `class
     /// << self; alias [] new` -- the `Klass[...]` constructor shorthand rack,
@@ -885,8 +889,8 @@ impl Compiler {
             self.class(anc)
                 .builtin_aliases
                 .iter()
-                .find(|(new, _)| new == name)
-                .map(|(_, old)| old.as_str())
+                .find(|(new, _, _)| new == name)
+                .map(|(_, old, _)| old.as_str())
         })
     }
 

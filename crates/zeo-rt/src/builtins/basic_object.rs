@@ -22,8 +22,29 @@ ruby_class! {
     // The root class: no `< SUPER` (BasicObject has no superclass).
     BasicObject = zeo_abi::BASIC_OBJECT_CLASS;
 
+    // CRuby's `rb_obj_equal`: IDENTITY, nothing more. The row is only ever
+    // reached when no nearer `==` exists, so dispatching the receiver's own
+    // `==` here re-asked the question this row is the answer to -- which an
+    // `alias_method :eql?, :==` bound to it then followed into a `def ==`
+    // written later. `RubyValue::rb_eq` stays the polymorphic worker every
+    // container comparison recurses through.
     def "==" (recv, other) {
-        Ok(RubyValue::Bool(recv.rb_eq(other)))
+        // For a PLAIN object this row is CRuby's `rb_obj_equal`: identity, and
+        // nothing else. `rb_eq` would dispatch the receiver's own `==`, which
+        // is the very question this row is the fallback answer to -- so an
+        // `alias_method :eql?, :==` bound here followed a `def ==` written
+        // later in the class.
+        //
+        // Every other value kind still goes through `rb_eq`: zeo files a
+        // builtin's structural `==` (Regexp by pattern, Range by endpoints)
+        // in that walk rather than in a row of its own, so this IS their `==`.
+        let eq = match recv {
+            RubyValue::Object(o) if o.builtin_payload().is_none() => {
+                crate::builtins::basic_object::value_identity(recv, other)
+            }
+            _ => recv.rb_eq(other),
+        };
+        Ok(RubyValue::Bool(eq))
     }
     def "!=" (recv, other) {
         // CRuby's `!=` is `!(self == other)` -- it dispatches the receiver's

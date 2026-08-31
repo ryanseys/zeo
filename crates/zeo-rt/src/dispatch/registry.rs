@@ -958,7 +958,74 @@ impl ClassRegistry {
             .unwrap_or_default()
     }
 
-    pub fn register_alias(&mut self, id: ClassId, box_id: u32, new: &str, old: &str) {
+    /// Installs `new` on `id` from the first ancestor ABOVE `id` that supplies
+    /// `old` -- a compiled row, a registered value row, or a native builtin
+    /// table entry. `false` when nothing above it does, and the caller records
+    /// the ordinary name indirection instead.
+    ///
+    /// Only for the main box: `methods` is the table an object receiver reads
+    /// and it carries no box axis, so a boxed alias keeps the indirection.
+    fn bind_alias_above(&mut self, id: ClassId, box_id: u32, new: &str, old: &str) -> bool {
+        if box_id != 0 {
+            return false;
+        }
+        let (Some(entry), old_sym) = (self.entries.get(&id.0), Symbol::intern(old)) else {
+            return false;
+        };
+        // The class's OWN native row comes first: a builtin's `def` registers
+        // a value row that SHADOWS the native table rather than replacing it,
+        // so `class Array; alias_method :was_first, :first; end` then
+        // `def first` must keep the native body. Only the class's compiled
+        // rows are skipped, which is what a later `def` writes.
+        let mut chain = vec![id];
+        chain.extend(entry.ancestors.iter().skip_while(|&&a| a != id).skip(1));
+        let found = chain.into_iter().find_map(|anc| {
+            let e = self.entries.get(&anc.0);
+            let native = crate::builtins::class_table(anc)
+                .and_then(|t| t(old))
+                .map(super::ValueImpl::Rust);
+            if anc == id {
+                return native.map(|v| (None, Some(v)));
+            }
+            let compiled = e.and_then(|e| e.methods.get(&old_sym)).cloned();
+            let value = e
+                .and_then(|e| e.value_methods.get(&(0, old_sym)).copied())
+                .or(native);
+            (compiled.is_some() || value.is_some()).then_some((compiled, value))
+        });
+        let Some((compiled, value)) = found else {
+            return false;
+        };
+        let Some(m) = compiled.or_else(|| value.map(super::lookup::value_fn_impl)) else {
+            return false;
+        };
+        let new_sym = Symbol::intern(new);
+        let entry = self
+            .entries
+            .get_mut(&id.0)
+            .expect("the entry was just read above");
+        // Both channels: an object receiver reads `methods`, a bare Array or
+        // String reads `value_methods`, and the aliasing class may be either
+        // kind. A value row also has to exist for the reflection surface,
+        // which asks the value channel for a builtin.
+        entry.methods.insert(new_sym, m);
+        if let Some(v) = value {
+            entry.value_methods.insert((box_id, new_sym), v);
+        }
+        entry.own_methods.insert(new_sym);
+        true
+    }
+
+    /// `eager` binds the ancestor's body ONCE instead of recording the name.
+    /// The aliasing class writes `old` itself further down the program, and a
+    /// name indirection resolves live -- so it would follow that later `def`,
+    /// which ruby's `rb_alias` does not. Falls back to the indirection when
+    /// nothing above the class supplies `old`, so the `NameError` timing that
+    /// `validate_class_aliases` owns is unchanged.
+    pub fn register_alias(&mut self, id: ClassId, box_id: u32, new: &str, old: &str, eager: bool) {
+        if eager && self.bind_alias_above(id, box_id, new, old) {
+            return;
+        }
         let Some(entry) = self.entries.get_mut(&id.0) else {
             // NEVER an `expect`. This runs from `zeo_rt_main`, across an
             // `extern "C"` boundary that cannot unwind, so a panic here
