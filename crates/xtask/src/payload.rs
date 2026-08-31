@@ -12,7 +12,6 @@
 //! It already is one for the ruby oracle, and the alternative -- vendoring
 //! the trees again -- is the drift this replaced.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::{Error, root};
@@ -20,22 +19,47 @@ use crate::{Error, root};
 /// `("json/lib/json.rb", <abs path>)` pairs, sorted, for every library.
 /// Everything in a library directory ships -- gemspec, licence text, the
 /// `lib/` tree -- except the Rust a colocated half sits beside.
+///
+/// One substitution, and it is load-bearing. A gem unpacked into a RubyGems
+/// store keeps its own SOURCE gemspec, which is a Ruby program: abbrev's
+/// computes its name from `__FILE__` and reads its version out of another
+/// file. zeo parses gemspecs statically, so it refuses that one outright --
+/// in the store it never sees it, because the store's own
+/// `specifications/<name>-<version>.gemspec` is the serialized form and
+/// that is what the loader reads. The flattened payload has no
+/// `specifications/`, so the serialized spec must REPLACE the source one
+/// here, under the conventional `<name>/<name>.gemspec` name.
 pub fn files() -> Result<Vec<(String, PathBuf)>, Error> {
     let mut out = Vec::new();
-    for (name, dir) in library_dirs()? {
-        for rel in shipped(&dir)? {
-            let path = dir.join(&rel);
-            out.push((format!("{name}/{rel}"), path));
+    for lib in libraries()? {
+        let name = &lib.name;
+        for rel in shipped(&lib.dir)? {
+            // The source gemspec of a store gem, dropped in favour of the
+            // serialized one appended below.
+            if lib.gemspec.is_some() && rel.ends_with(".gemspec") && !rel.contains('/') {
+                continue;
+            }
+            out.push((format!("{name}/{rel}"), lib.dir.join(&rel)));
+        }
+        if let Some(spec) = &lib.gemspec {
+            out.push((format!("{name}/{name}.gemspec"), spec.clone()));
         }
     }
     out.sort();
     Ok(out)
 }
 
-/// Every library, name-keyed, with the tier precedence already applied -- so
-/// a name zeo implements resolves to zeo's own half, exactly as it does in a
-/// compile.
-pub fn library_dirs() -> Result<BTreeMap<String, PathBuf>, Error> {
+/// Every library the payload carries, with the tier precedence already
+/// applied -- so a name zeo implements resolves to zeo's own half, exactly as
+/// it does in a compile.
+///
+/// Refuses rather than shipping a short set: a locked library whose directory
+/// is missing means `vendor/bundle` is behind `Gemfile.lock`, and a payload
+/// assembled from that is not the locked set. Every path is
+/// `<name>-<version>` read out of the lock, so this is the whole of the
+/// reproducibility question -- there is no way for a stale disk to
+/// contribute a library at a version the lock does not name.
+fn libraries() -> Result<Vec<zeo::bundled::Library>, Error> {
     let libs = zeo::bundled::dev_tree_libraries(root());
     let missing: Vec<String> = zeo::bundled::vendored_names(root())
         .into_iter()
@@ -52,7 +76,7 @@ pub fn library_dirs() -> Result<BTreeMap<String, PathBuf>, Error> {
             missing.join(" ")
         )));
     }
-    Ok(libs.into_iter().map(|lib| (lib.name, lib.dir)).collect())
+    Ok(libs)
 }
 
 /// Every file in a library directory, as a `/`-joined relative path, except

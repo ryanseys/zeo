@@ -101,6 +101,7 @@ commands:
   cext            the vendored MRI C API headers and the rb_* census
   diff            compare a snippet across ruby and zeo, and file a gap
   dist            assemble the relocatable distribution
+  gem             build the platform gem from a dist staging
   linux           run the suites in the linux container
   promote-gap     move a fixed gap into the passing suite
   stage-publish   stage the artifacts the published crate ships
@@ -125,6 +126,7 @@ fn main() -> std::process::ExitCode {
         "cext" => commands::cext::run(rest),
         "diff" => commands::diff::run(rest),
         "dist" => commands::dist::run(rest),
+        "gem" => commands::gem::run(rest),
         "linux" => commands::linux::run(rest),
         "promote-gap" => commands::promote_gap::run(rest),
         "stage-publish" => commands::stage_publish::run(rest),

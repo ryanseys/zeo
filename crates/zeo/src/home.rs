@@ -407,11 +407,11 @@ mod tests {
     #[test]
     fn embedded_gems_extract_into_the_cache() {
         let cache = tempdir("registry-gems");
-        let dir = registry_gems_dir(&cache).expect("extraction succeeds");
+        let dir = registry_libraries_dir(&cache).expect("extraction succeeds");
         assert!(dir.join("uri/lib/uri.rb").is_file());
         assert!(dir.join("erb/lib/erb.rb").is_file());
         // Second call takes the already-extracted fast path.
-        assert_eq!(registry_gems_dir(&cache), Some(dir));
+        assert_eq!(registry_libraries_dir(&cache), Some(dir));
     }
 
     fn tempdir(tag: &str) -> PathBuf {

@@ -1,0 +1,43 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The gem's executable: a launcher, because RubyGems' binstub `load`s this
+# file as Ruby and zeo is a native binary. The real one sits in `libexec/`,
+# out of the binstub's way, and `exec` replaces this process with it -- so
+# there is no wrapper in the process tree, no extra pipe, and the exit status
+# and signals are zeo's own.
+#
+# `libexec/zeo`'s parent's parent is the gem directory, which is where the
+# payload sits (`share/zeo/`), so `zeo::home`'s executable-relative probe
+# finds it with no environment variable and no code that knows about gems.
+
+real = File.expand_path("../libexec/zeo", __dir__)
+
+unless File.executable?(real)
+  # A source gem: no binary was built for this platform. Say which platform,
+  # because the answer is "install the one that matches" and the user cannot
+  # guess the spelling. Building from source here would be a multi-minute
+  # surprise in the middle of `gem install`, so it is refused rather than
+  # attempted.
+  local = Gem::Platform.local
+  # `Gem::Platform.local` carries the OS VERSION (`arm64-darwin-23`); the
+  # published gems are version-less (`arm64-darwin`), because one build serves
+  # every macOS release. RubyGems matches the two, but a `--platform` written
+  # with the version would ask for a gem that does not exist.
+  platform = "#{local.cpu}-#{local.os}"
+  warn <<~MESSAGE
+    zeo: no binary for this platform (#{local}).
+
+    The zeo gem ships one prebuilt binary per platform and this install got
+    the source gem, which carries none. Either RubyGems found no match for
+    #{platform}, or the install forced the ruby platform.
+
+      gem install zeo --platform #{platform}
+
+    If there is no such build, the release tarballs and `cargo install zeo`
+    are the other two ways in: https://github.com/ryanseys/zeo
+  MESSAGE
+  exit 1
+end
+
+exec(real, *ARGV)

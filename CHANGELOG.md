@@ -61,6 +61,24 @@ The first public release, not yet cut.
   shared macro kit (declared parameter lists, `check_arity`, `arg_int!`,
   `arg_str!`).
 
+### Distribution
+
+- **One `Gemfile.lock` decides what Zeo ships.** The bundled stdlib is
+  resolved out of `vendor/bundle` at the version the lock states, and the
+  same lock is what the Ruby oracle resolves — so a golden can no longer
+  record a difference between two library versions and call it a Zeo bug.
+  `rubygems` and `bundler` stay committed under `lib/ruby/`, because
+  `bundle install` cannot supply the bundler that runs it.
+- **One payload, two published artifacts.** `cargo xtask dist` assembles the
+  release tarball; `cargo xtask gem` rearranges that same staging into a
+  per-platform gem. Neither the compiler nor the runtime knows what a gem
+  is: `exe/zeo` is a Ruby launcher that `exec`s `libexec/zeo`, and both sit
+  where the existing executable-relative payload probe already looks.
+- The gem declares **no runtime dependencies**. Zeo bundles a stdlib, and
+  bundling is not depending — `gem install zeo` must not force versions into
+  a user's store, and for the libraries Zeo reimplements a dependency would
+  be a false claim.
+
 ### Compatibility
 
 - Targets **CRuby 4.0.6**. `zeo-abi` is the single source of that version, so

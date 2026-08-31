@@ -219,6 +219,28 @@ jobs:
       # Rust still agree.
       - run: cargo xtask cext forward --check
 
+      # What `bundle install` builds extensions against: psych wants libyaml,
+      # openssl wants its headers.
+      - run: sudo apt-get update && sudo apt-get install -y libyaml-dev libssl-dev
+
+      # The payload is assembled from `vendor/bundle`, so the two steps below
+      # need it. That is what makes a published payload the LOCKED set rather
+      # than whatever was on the publisher's disk: every library's path is
+      # `<name>-<version>` read out of `Gemfile.lock`, so a stale or partial
+      # install is a MISSING directory and `payload::library_dirs` refuses,
+      # naming each one. Reproducibility by construction rather than by
+      # comparing two tarballs.
+      #
+      # The ruby version must match `mise.toml`: it is the one the lock was
+      # resolved with, and `.bundle/config` sets frozen, so any other version
+      # of bundler may refuse the lock outright. CI never runs the ORACLE
+      # (the goldens carry committed `.expected` files) -- this ruby exists
+      # only to unpack gems.
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0.6"
+          bundler-cache: true
+
       # The published `zeo` crate carries pregenerated artifacts that its
       # build script would otherwise derive from sibling crates absent from
       # the .crate file. This fails if they drift from their sources.

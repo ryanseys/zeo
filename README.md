@@ -52,13 +52,14 @@ You need:
 
 - A Rust toolchain, **1.94+** (`rust-toolchain.toml` pins the exact version).
 - A **C compiler** (for Prism, Oniguruma, and the link step).
-- **Ruby 4.0.6** — only if you re-record test goldens. `mise.toml` pins it.
+- **Ruby 4.0.6** — for `make install-deps`, which resolves the bundled stdlib
+  out of `Gemfile.lock`, and to re-record test goldens. `mise.toml` pins it.
 
 Build and run:
 
 ```console
 $ git clone https://github.com/ryanseys/zeo && cd zeo
-$ make                       # cargo build --workspace
+$ make                       # install-deps, then cargo build --workspace
 $ target/debug/zeo -e 'puts "hello"'
 hello
 ```
@@ -70,9 +71,26 @@ One cargo build produces two artifacts side by side:
 
 `cargo install zeo` and `gem install zeo` arrive with the 0.1.0 release. A
 `cargo install`ed zeo builds its runtime archive once, on the first `zeo -o`:
-`cargo install` copies binaries and nothing else, and the archive is 78 MB
+`cargo install` copies binaries and nothing else, and the archive is 152 MB
 against crates.io's 10 MB crate limit. The release tarball and the platform
-gems carry the archive and never do this.
+gems carry the archive and never do this — which is what makes them large:
+the 0.1.0 `arm64-darwin` gem is **65 MB**, almost all of it `libzeo.a`.
+
+The gem is one prebuilt binary per platform (`arm64-darwin`, `x86_64-darwin`,
+`x86_64-linux`, `aarch64-linux`), and it declares **no runtime dependencies**.
+That is deliberate rather than an omission: zeo bundles a stdlib, and
+bundling is not depending. `gem install zeo` must not force uri 1.1.1 into
+your store or collide with a project's own pins, and for the libraries zeo
+reimplements in Rust a dependency would be a false claim — zeo does not run
+that code. An unmatched platform gets the source gem, which refuses with the
+platform named rather than starting a multi-minute cargo build.
+
+**Which gems a compiled program uses** is worth stating plainly, because a
+gem-installed zeo sitting inside a Ruby installation invites the wrong
+assumption. By default: the libraries zeo ships, never the machine's. A
+project's own resolved gems are used only when `--bundle-gemfile` and
+`--gem-path` name them. `--report` writes down which copy answered each
+`require`.
 
 ---
 
@@ -128,10 +146,10 @@ Bundler already exports `BUNDLE_GEMFILE` and `GEM_PATH`, so under
 `bundle exec` the flags are optional. The lockfile (`Gemfile.lock` or
 `gems.locked`) selects the versions. Zeo never resolves versions itself.
 
-For some libraries Zeo substitutes its own implementation (`json` on
-serde_json, `psych` on yaml-rust2, `zlib` on flate2, `digest` on RustCrypto,
-`openssl` on a vendored OpenSSL 3). `--report` writes a `zeo-gems.json`
-record beside the artifact that names every substitution.
+For some libraries Zeo substitutes its own implementation (`json` on a
+hand-written parser and generator, `psych` on yaml-rust2, `zlib` on flate2,
+`digest` on RustCrypto, `openssl` on a vendored OpenSSL 3). `--report` writes
+a `zeo-gems.json` record beside the artifact that names every substitution.
 
 A gem that ships its **C extension as source** is compiled from that source:
 Zeo runs the gemspec's `extconf.rb`, reads the Makefile mkmf writes, and
@@ -512,7 +530,7 @@ $ tar xzf zeo-<version>-<triple>.tar.gz -C /usr/local
 ```
 zeo-<version>-<triple>/
   bin/zeo
-  share/zeo/{gems, lib/<triple>/libzeo.a, dist-manifest.json}
+  share/zeo/{lib/ruby, lib/<triple>/libzeo.a, dist-manifest.json}
   share/doc/zeo/
 ```
 
@@ -520,6 +538,14 @@ The binary finds its payload through `bin/../share/zeo`, so the tree
 relocates anywhere; `ZEO_HOME` overrides the search. Building a binary needs
 a linker (`cc`) on the target machine — the same requirement any native
 toolchain has.
+
+`cargo xtask gem` rearranges that same staging into a platform gem — `bin/`
+becomes `libexec/`, because RubyGems binstubs an executable by `load`ing it
+as Ruby and zeo is a native binary, so `exe/zeo` is the Ruby that gets
+loaded and `exec`s the real one. Both sit two levels above `share/zeo`, so
+the payload probe is the same code in both artifacts and neither the
+compiler nor the runtime knows what a gem is. One `dist` staging, two
+published artifacts.
 
 `libzeo.a` **is** the payload. `zeo -o` links a compiled program against it,
 so a tree without it can run programs but compile none. The two paths fail
@@ -554,6 +580,7 @@ lib/ruby/    rubygems and bundler, the one tier that must be committed
 Gemfile      every other bundled library, pinned; `make install-deps`
 bench/       61 benchmark programs; read bench/README.md
 vendor/      the resolved gems and fetched test trees (gitignored)
+exe/zeo      the gem's launcher; zeo.gemspec is beside it
 Makefile     the front door: make / test / check / gate / linux
 Dockerfile   the linux verification image (`cargo xtask linux`)
 ```

@@ -43,15 +43,32 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
 
-      # zeo-rt's C dependencies. macOS gets these from the SDK already.
+      # zeo-rt's C dependencies, plus the two libraries `bundle install`
+      # builds extensions against (psych wants libyaml, openssl wants its
+      # headers). macOS gets all of these from the SDK and Homebrew already.
       - name: Linux build deps
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev libyaml-dev libssl-dev
+
+      # The bundled stdlib is resolved out of `vendor/bundle`, so the payload
+      # cannot be staged without it. Pinned to `mise.toml`'s ruby, which is
+      # the version the lock was resolved with -- `.bundle/config` sets
+      # frozen, and another bundler may refuse the lock.
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0.6"
+          bundler-cache: true
 
       # Builds the tree and stages the payload, then proves the staged binary
       # works: it resolves its payload relative to bin/, links against the
       # staged libzeo.a, and compiles and runs a program.
       - run: cargo xtask dist --target ${{ matrix.target }}
+
+      # The same staging, rearranged into RubyGems' shape. One payload, two
+      # artifacts: the tarball above and this gem carry the same bytes.
+      - run: cargo xtask gem
 
       - uses: actions/upload-artifact@v4
         with:
@@ -59,6 +76,7 @@ jobs:
           path: |
             target/dist/*.tar.gz
             target/dist/*.sha256
+            target/gem/*/*.gem
           if-no-files-found: error
 
   release:
@@ -109,4 +127,9 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
             --notes "$notes" \
-            artifacts/*.tar.gz artifacts/*.sha256 artifacts/SHA256SUMS
+            artifacts/*.tar.gz artifacts/*.sha256 artifacts/SHA256SUMS \
+            artifacts/*.gem
+
+      # Nothing here pushes to rubygems.org or crates.io. The gems are
+      # attached to the GitHub Release so they can be inspected and installed
+      # from a file; `gem push` is a deliberate, separate act.

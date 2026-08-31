@@ -345,7 +345,13 @@ require search order (first gem with a given name wins):
   1. -I roots in the order given, then RUBYLIB entries
   2. --gems dirs in the order given
   3. the input file's sibling gems/ directory
-  4. zeo's own bundled gems, then the external gem store
+  4. zeo's own bundled libraries, then the external gem store
+
+Zeo carries its own stdlib -- uri, csv, json, rubygems, bundler and ~70 more
+-- and step 4 reaches THAT copy, not the machine's. Nothing a `gem install`
+put in a store is visible to a compile until --gem-path and --bundle-gemfile
+name it, so an installed zeo compiles the same program the same way on every
+machine. `--report` writes down which one answered each require.
 
 environment:
   RUBYOPT               extra leading options (only -I, -w and -W allowed)

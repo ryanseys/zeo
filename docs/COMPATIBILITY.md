@@ -1042,7 +1042,7 @@ object per library the program required (`--report=<path>` picks the path):
 ```json
 {
   "json":     {"by": "bundled-gem", "path": "crates/zeo-rt/ext/json/lib/json.rb",
-               "diverges": true, "note": "serde_json-backed; not the json gem"},
+               "diverges": true, "note": "a zeo parser/generator; not the json gem"},
   "optparse": {"by": "bundled-gem",
                "path": "vendor/bundle/ruby/4.0.0/gems/optparse-0.8.1/lib/optparse.rb"},
   "base64":   {"by": "builtin-ext", "feature": "base64",
