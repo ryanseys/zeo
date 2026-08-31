@@ -414,10 +414,14 @@ fn sidecars(rb: &Path) -> std::io::Result<Sidecars> {
         Some(p) => Some(std::fs::read(p)?),
         None => None,
     };
+    // Read against the TESTS ROOT, not the `.rb`'s own directory: a golden
+    // moves between `tests/` and `tests/gaps/` when it is promoted or filed,
+    // and a name relative to the file would silently point somewhere else
+    // afterwards. `tests/` is where every golden runs anyway.
     let cext = match side(".cext") {
         Some(p) => {
             let named = std::fs::read_to_string(p)?.trim().to_owned();
-            let dir = rb.parent().unwrap_or(Path::new(".")).join(named);
+            let dir = tests_run_cwd().join(named);
             Some(std::fs::canonicalize(&dir).unwrap_or(dir))
         }
         None => None,

@@ -178,7 +178,8 @@ fn every_cext_sidecar_names_a_fixture_and_a_recorded_answer() {
             }
             let named = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("{name} is readable: {e}"));
-            let fixture = dir.join(named.trim());
+            // Against the tests root, so the name survives a promotion.
+            let fixture = repo_root().join("tests").join(named.trim());
             if !fixture.join("extconf.rb").is_file() {
                 wrong.push(format!(
                     "{name}: names {}, which has no extconf.rb",

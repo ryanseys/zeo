@@ -120,25 +120,24 @@ reads all compile now**, and each is a line in `probe/layout.c`:
 than hand out a compiled pattern zeo's own engine may recompile.
 
 Measured end to end: `zeo gem install date` succeeds, native build included.
-What that does NOT yet prove is the `.bundle` running, because `require
-"date"` resolves to zeo's own Rust `date` extension by design, and the loader
-reaches a gem's C extension only through a store gem's `extensions` entry --
-not by an explicit path or a bare `-I`. Task #79 is the instrument for that.
+A built `.bundle` RUNNING is proved separately, by the `.cext` goldens below
+and by io-console's real extension under `ZEO_DISABLE_BUILTIN`. `require
+"date"` is not that proof: it resolves to zeo's own Rust `date` extension by
+design.
 
 ## Known divergences
 
-The rows below are the twelve places zeo's answer differs from MRI's for an
+The rows below are the eleven places zeo's answer differs from MRI's for an
 extension that has loaded.
 
-None of them is a gap file, and the reason has changed. It used to be that a C
-extension could not load; that is no longer true. `require "foo"` on a store
-gem with an `extensions` entry runs its `extconf.rb`, compiles and links the
-`.c` out of tree, and calls `Init_foo` -- measured end to end, a
-`rb_define_global_function` registered by a probe extension answers from
-Ruby. `crates/zeo/src/parse/loader/cext.rs` is that path and
+None of them is a gap file YET, and the reason is now only that each needs its
+own small `.c`. The loader has not been the obstacle for some time: `require
+"foo"` on a store gem with an `extensions` entry runs its `extconf.rb`,
+compiles and links the `.c` out of tree, and calls `Init_foo`.
+`crates/zeo/src/parse/loader/cext.rs` is that path and
 `crates/zeo/tests/e2e/cext_build.rs` gates the build half of it.
 
-The instrument now exists. A golden carries a `.cext` sidecar naming an
+The instrument exists too. A golden carries a `.cext` sidecar naming an
 extension directory under `tests/cext/`, and the extension is built TWICE:
 `tests/harness/golden.rs` builds it against zeo's vendored headers for the
 zeo side, and `cargo xtask bless` builds it against the oracle ruby's own
@@ -149,17 +148,21 @@ ABI. A `.cext` golden must therefore be blessed; the harness refuses one with
 no committed `.expected`, because the live-oracle path would compare zeo
 against a ruby raising `LoadError` and a gap would pass proving nothing.
 
-`tests/gaps/a_dup_of_a_c_data_object.rb` is the first row promoted. Promoting
-it found something wider than the row itself, filed as task #122: `Klass.new`
-does not run the allocator `rb_define_alloc_func` registered, though
-`Klass.allocate` does -- so the ordinary construction path of every TypedData
-extension raises before `dup` is even reached. The rows below that are BUGS
-rather than decided divergences become gap files the same way, one at a time,
-since each needs its own small `.c`.
+The first row it caught is FIXED rather than filed. `dup` on a `T_DATA`
+object used to hand back a copy whose `DATA_PTR` was NULL; it now runs the
+class's allocator, which is what CRuby does -- and which is also the safe
+answer, because a shallow copy would alias the struct and `dfree` would run
+twice on one pointer. Writing that gap found something wider on the way in:
+`Klass.new` ignored the allocator `rb_define_alloc_func` registered, though
+`Klass.allocate` honoured it, so the ordinary construction path of every
+TypedData extension raised before `dup` was reached. Both are closed, and
+`tests/a_dup_of_a_c_data_object.rb` is an ordinary passing golden.
+
+The rows below that are BUGS rather than decided divergences become gap files
+the same way, one at a time, since each needs its own small `.c`.
 
 | Divergence | Why |
 |---|---|
-| `dup` on a `T_DATA` object gives a copy whose `DATA_PTR` is NULL | CRuby runs the class's ALLOCATOR, so the copy gets a fresh ZEROED struct -- it does not copy the original's, because `rb_obj_init_copy` leaves a TypedData payload alone. Measured against ruby 4.0.6: a `DupData` holding 7 dups to one holding 0. zeo has no allocator table until `rb_define_alloc_func`, and a shallow copy is not an option either -- two objects sharing one pointer means `dfree` runs twice on it. `tests/gaps/a_dup_of_a_c_data_object.rb`, blocked behind #122. |
 | A cycle closed through a C struct is never reclaimed | A `dmark` enumerates edges and cannot clear one, so `CData::gc_visit` reports on the walk and nothing on the sweep. The asymmetry rule makes this the safe direction: an omitted edge leaks, a reported one that cannot be released can clear a live object. A cycle that merely passes THROUGH a `T_DATA` object is still reclaimed, at its Ruby links. |
 | `RB_FLONUM_P` is true for the same doubles as MRI, but an `Integer` outside the Fixnum range is a fresh handle each time | Which is what CRuby does with a Bignum too, so two equal ones are correctly not `equal?`. |
 | A store through a refilled view does not reach the object | `RSTRING(s)->len = 3`, `ROBJECT_FIELDS(o)[0] = v` and `fp->fd = n` all change the view alone. The one exception is the BYTES `RSTRING_PTR` answers: those are the String's own, and a write through them is written back at the scope pop. Nothing in the 23-gem census stores through any of the others. |

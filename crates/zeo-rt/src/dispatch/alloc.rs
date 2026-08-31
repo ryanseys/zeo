@@ -86,6 +86,22 @@ pub(crate) fn own_class_method_fn(id: ClassId, name: Symbol) -> Option<ValueImpl
 /// The registry's dynamic constructor for `id` (`Class#new`'s row) --
 /// `None` for modules, builtins without allocators, or a missing registry.
 pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {
+    // A C extension's `rb_define_alloc_func` wins, for the reason it wins in
+    // [`allocate_of`]: it is what makes `Foo.new` produce a TypedData rather
+    // than a plain object, and the C `initialize` reads that payload with
+    // `DATA_PTR` on its first line.
+    //
+    // It has to be asked HERE, per call, and not once when the class was
+    // minted. `rb_define_class` creates the class and `rb_define_alloc_func`
+    // runs later in the same `Init_`, so a runtime class has already recorded
+    // a `DynObject` constructor by then -- which is why `Foo.allocate` (which
+    // asks `allocate_of`) worked while `Foo.new` handed the C `initialize` an
+    // object carrying no struct. `zeo_rt_class_new_instance` intercepts the
+    // COMPILED half for the same reason and says so in the same words.
+    #[cfg(feature = "cext")]
+    if crate::cext::method::has_alloc_func(id) {
+        return Some(construct_by_c_allocator);
+    }
     if let Some(c) = REGISTRY
         .get()
         .and_then(|r| r.entries.get(&id.0))
@@ -122,6 +138,33 @@ pub(crate) fn allocate_of(id: ClassId) -> Option<RubyValue> {
         return crate::runtime_meta::runtime_allocate(id);
     }
     None
+}
+
+/// `Class#new` for a class whose allocator came from a C extension: run that
+/// allocator, then `initialize` on what it produced.
+///
+/// CRuby's `rb_class_new_instance` in two lines. The allocator is what puts
+/// the struct behind `DATA_PTR`, so the order is not negotiable -- a C
+/// `initialize` writes through that pointer immediately.
+#[cfg(feature = "cext")]
+fn construct_by_c_allocator(
+    id: ClassId,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    // `c_allocate` answers `None` for a RAISE from inside the allocator, and
+    // parks the signal -- `allocate_of` returns an Option, so that is the
+    // only way one travels. Here there is a `Result` to put it in.
+    let Some(obj) = crate::cext::method::c_allocate(id) else {
+        return Err(crate::signal::take_pending().unwrap_or_else(|| {
+            crate::builtins::type_error!(
+                "allocator undefined for {}",
+                crate::dispatch::class_name(id).unwrap_or_else(|| "Class".into())
+            )
+        }));
+    };
+    crate::dispatch::send_value(&obj, Symbol::intern("initialize"), args, block)?;
+    Ok(obj)
 }
 
 /// Construct an instance of the class with id `id`, running its `initialize`.

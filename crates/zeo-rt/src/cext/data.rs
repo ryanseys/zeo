@@ -356,17 +356,32 @@ impl RubyObject for CData {
         out.extend(edges);
     }
 
-    /// A shallow copy would alias the C struct, and then `dfree` would run
-    /// twice on one pointer. So the copy carries a NULL slot and no free
-    /// function: `DATA_PTR` on it is null, which is what a TypedData object
-    /// looks like between `rb_obj_alloc` and `initialize_copy`.
+    /// CRuby's `rb_obj_dup` runs the class's own ALLOCATOR and copies
+    /// nothing: `rb_obj_init_copy` leaves a TypedData payload alone. So the
+    /// copy gets whatever the allocator produced -- for the ordinary
+    /// `TypedData_Make_Struct` allocator, a fresh ZEROED struct, not the
+    /// original's values. Measured against ruby 4.0.6: a `DupData` holding 7
+    /// dups to one holding 0.
     ///
-    /// CRuby differs: `rb_obj_dup` calls the class's own allocator, so the
-    /// copy gets a fresh zeroed struct. zeo cannot yet, because the
-    /// allocator table arrives with `rb_define_alloc_func`. Recorded under
-    /// "Known divergences" in `crates/zeo-rt/cext/README.md`; it becomes a
-    /// real gap file once a gem can load and the shape is runnable.
+    /// Doing the same is what makes this right, and it is also what makes it
+    /// SAFE. A shallow copy would alias the C struct and `dfree` would then
+    /// run twice on one pointer; a second allocator call gives the copy a
+    /// pointer of its own.
+    ///
+    /// The fallback below is for a class with no registered allocator: a NULL
+    /// slot and no free function, which is what a TypedData object looks like
+    /// between `rb_obj_alloc` and `initialize_copy`. An allocator that RAISES
+    /// takes it too -- `dup_object` has no error channel, and `c_allocate`
+    /// has already parked the signal for the next capi boundary to find.
     fn dup_object(&self, copy_frozen: bool) -> RObj {
+        if super::method::has_alloc_func(self.class)
+            && let Some(RubyValue::Object(fresh)) = super::method::c_allocate(self.class)
+        {
+            if copy_frozen && self.is_frozen() {
+                fresh.set_frozen();
+            }
+            return fresh;
+        }
         Arc::new(CData {
             class: self.class,
             cell: Cell::new(std::ptr::null_mut()),

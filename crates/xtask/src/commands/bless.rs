@@ -270,13 +270,16 @@ fn with_suffix(rb: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(format!("{}{suffix}", rb.display()))
 }
 
-/// A `.cext` sidecar's extension directory, resolved against the `.rb`'s own.
+/// A `.cext` sidecar's extension directory, read against the TESTS ROOT --
+/// the directory every golden runs in. Not against the `.rb`'s own: a golden
+/// moves between `tests/` and `tests/gaps/` when it is promoted or filed, and
+/// a name relative to the file would point elsewhere afterwards.
 fn cext_fixture(rb: &Path) -> Result<Option<PathBuf>, Error> {
     let Some(bytes) = sidecar(rb, ".cext")? else {
         return Ok(None);
     };
     let named = String::from_utf8_lossy(&bytes).trim().to_string();
-    let dir = rb.parent().unwrap_or(Path::new(".")).join(named);
+    let dir = run_cwd().join(named);
     let dir = std::fs::canonicalize(&dir)
         .map_err(|e| Error::new(format!("{}: .cext names {}: {e}", rb.display(), dir.display())))?;
     Ok(Some(dir))

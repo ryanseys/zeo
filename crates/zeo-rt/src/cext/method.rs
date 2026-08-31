@@ -257,6 +257,18 @@ pub(super) fn alloc_func_of(owner: ClassId) -> *const c_void {
         .map_or(std::ptr::null(), |a| a as *const c_void)
 }
 
+/// Whether `owner` has a C allocator, WITHOUT running it -- what
+/// `dispatch::constructor_of` asks to decide whose `Class#new` this is.
+/// Guarded by the same relaxed load as [`c_allocate`], so a program with no
+/// extension pays one atomic read.
+pub(crate) fn has_alloc_func(owner: ClassId) -> bool {
+    ANY_ALLOC_FUNC.load(std::sync::atomic::Ordering::Relaxed)
+        && ALLOC_FUNCS
+            .lock()
+            .as_ref()
+            .is_some_and(|m| m.contains_key(&owner.0))
+}
+
 /// # Safety
 ///
 /// `v` must be a live `VALUE` naming a Class or Module.
