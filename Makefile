@@ -27,7 +27,7 @@ BUNDLE ?= bundle
 # file of either name would have turned that target into a silent no-op.
 .PHONY: all help deps test test-jit test-aot test-memcheck \
         test-typed test-milestones test-config test-platform test-size \
-        lint check-batch gate bench pgo install linux clean
+        test-all lint check-batch gate bench pgo install linux clean
 
 .DEFAULT_GOAL := all
 
@@ -144,6 +144,23 @@ test-size:  ## the binary-size floor (builds the release compiler)
 	$(NEXTEST) -p zeo --test checks --run-ignored all -E 'test(binary_size::)'
 
 # --- The composed tiers. ---------------------------------------------------
+#
+# NOTHING RUNS TWICE IN ONE CONFIGURATION, and two facts keep it that way.
+# Both are filters, so an edit to either can break this silently -- re-check
+# with `cargo nextest list` after touching one.
+#
+#   1. The three whole-gem names are excluded by `[profile.default]`'s
+#      default-filter in `.config/nextest.toml`, so `--workspace` cannot
+#      reach them and the `-P full` legs own them alone.
+#      Measured: workspace 7175, milestones 10, whole-gem 1, no overlap.
+#
+#   2. `test-aot` and `gate`'s spinel line PARTITION the goldens binary --
+#      `- test(spinel::)` and `& test(spinel::)`.
+#      Measured: 1565 + 3131 = 4696 = every case, none twice, none missed.
+#
+# A golden DOES run under several legs -- jit, then AOT, then instrumented,
+# then typed. That is four different questions about one program, not one
+# question asked four times.
 
 # The mid-tier for batch boundaries INSIDE a phase: cheaper than the gate,
 # broader than `make test`. One workspace pass, the AOT smoke tier, one
@@ -158,6 +175,19 @@ check-batch: test-jit test-aot test-memcheck  ## the mid-tier between batches (~
 gate: test-jit test-aot test-memcheck test-config test-milestones test-platform  ## the phase boundary: every leg, plus full-spinel AOT
 	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --no-fail-fast -E 'binary(goldens) & test(spinel::)'
 	$(NEXTEST) -p zeo -P full -E 'test(every_bundled_gem_compiles)'
+
+# Everything, with no judgement about when it is worth running. `gate` is a
+# CURATED boundary -- it leaves out the two legs whose cost only pays back
+# against a particular change, and that curation is deliberate:
+#
+#   test-typed  every golden twice; it answers a question about TyKind
+#               emission, so it earns its minutes on a typed change
+#   test-size   builds the release compiler and links a program
+#
+# Use this before a release, or when you want the answer rather than the
+# fastest sufficient answer. `make linux` is NOT here: it needs podman and
+# runs a different platform, so it is its own thing.
+test-all: gate test-typed test-size  ## every test target, no exceptions (slowest)
 
 # --- Measurement, packaging, platforms. ------------------------------------
 
