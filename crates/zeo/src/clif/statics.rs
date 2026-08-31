@@ -365,6 +365,20 @@ pub(crate) fn define_unit_init(
     // `.bss` sites.
     let callers_id = if callers.is_empty() {
         None
+    } else if let Some(pkg) = &em.pkg {
+        // The blob carries CLASS IDS, and only the HOST knows their final
+        // values: the manifest ships the locals, and the host defines this
+        // symbol with the band it assigned (`pkg::merge_rows`).
+        let id = em
+            .module
+            .declare_data(
+                &format!("{}_callers", pkg.prefix()),
+                Linkage::Import,
+                false,
+                false,
+            )
+            .map_err(|e| CodegenError::internal(format!("declaring the callers import: {e}")))?;
+        Some(id)
     } else {
         let id = em
             .module

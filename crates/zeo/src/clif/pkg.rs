@@ -104,6 +104,9 @@ pub(crate) fn finish_package(
     if compiler.hir.data_section.is_some() {
         return refuse("an __END__ data section");
     }
+    if !compiler.refinements.is_empty() {
+        return refuse("a refinement (its candidate rows carry class ids in rodata)");
+    }
 
     // Reveal groups: the package's units plus its alias-reveal groups
     // share one id space starting at 0.
@@ -219,6 +222,7 @@ pub(crate) fn finish_package(
             .map(|(feature, f)| Ok((feature.clone(), symbol_of(em, *f)?)))
             .collect::<CResult<_>>()?,
         unit_init: unit_init.map(|f| symbol_of(em, f)).transpose()?,
+        callers: em.callsites.clone(),
         class_tables: super::statics::needed_class_tables(analyzed)
             .iter()
             .map(|s| (*s).to_string())
@@ -284,33 +288,35 @@ pub(crate) fn merge_rows(
     // pub_grub `require_relative "rubygems"` shape). A collision between
     // OBJECTS is a hard error; within one program it stays the warning
     // `warn_on_colliding_unit_features` already emits.
-    let host_spellings: std::collections::HashSet<&str> =
+    let mut claimed_spellings: std::collections::HashSet<&str> =
         unit_rows.iter().map(|(s, _)| s.as_str()).collect();
-    let host_class_names: std::collections::HashSet<&str> =
+    let mut claimed_class_names: std::collections::HashSet<&str> =
         class_specs.iter().map(|c| c.name.as_str()).collect();
     for m in &manifests {
         for (spelling, _) in &m.units {
-            if host_spellings.contains(spelling.as_str()) {
+            if !claimed_spellings.insert(spelling.as_str()) {
                 return Err(CodegenError::unsupported(
                     format!(
-                        "feature '{spelling}' is provided by both package '{}' and this \
-                         program; rename one or drop the package",
+                        "feature '{spelling}' is provided by package '{}' and by \
+                         another object in this program; rename one or drop the \
+                         package",
                         m.feature
                     ),
                     None,
                 ));
             }
         }
-        // A shared namespace (`module Rack` in both objects) is ordinary
-        // Ruby, but merging it needs the id-translation tier's ALIASING
-        // (M2): two ClassSpecs under one name would resolve by
-        // registration order, silently. Refuse it by name until then.
+        // A shared namespace (`module Rack` in two objects) is ordinary
+        // Ruby, but merging it needs id-table ALIASING (later in M2): two
+        // ClassSpecs under one name would resolve by registration order,
+        // silently. Refuse it by name until then.
         for c in &m.classes {
-            if host_class_names.contains(c.name.as_str()) {
+            if !claimed_class_names.insert(c.name.as_str()) {
                 return Err(CodegenError::unsupported(
                     format!(
-                        "class {} is defined by both package '{}' and this program; \
-                         a cross-object reopen needs the id-translation tier (M2)",
+                        "class {} is defined by package '{}' and by another object \
+                         in this program; a cross-object reopen needs id-table \
+                         aliasing (M2)",
                         c.name, m.feature
                     ),
                     None,
@@ -326,12 +332,41 @@ pub(crate) fn merge_rows(
             .declare_function(name, Linkage::Import, sig)
             .map_err(|e| CodegenError::internal(format!("importing {name}: {e}")))
     };
+    // Band assignment. The host's own classes end where its compiler's
+    // table does; each package's band follows in merge order, and the
+    // id-translation table its object imports is DEFINED here with the
+    // final ids -- the moment a position-independent object becomes
+    // correct in THIS program. Reveal-group strides stack the same way
+    // (the host's own groups already start past the packages' total).
+    let mut next_band = analyzed.compiler.classes.len() as u32;
+    let mut next_stride: u32 = 0;
     for m in manifests {
+        let first = m.first_class_id;
+        let base = next_band;
+        next_band = base + m.n_class_ids;
+        let stride = next_stride;
+        next_stride += m.n_units;
+        // Local id -> final id. Builtins (below the package's own band)
+        // and the u32::MAX no-caller sentinel pass through.
+        let rb = |id: u32| -> u32 {
+            if id == u32::MAX || id < first {
+                id
+            } else {
+                base + (id - first)
+            }
+        };
+        let cids: Vec<u32> = (0..m.n_class_ids).map(|i| base + i).collect();
+        define_u32s(em, &format!("{}_cids", m.prefix), &cids)?;
+        define_u32s(em, &format!("{}_unit_base", m.prefix), &[stride])?;
+        if !m.callers.is_empty() {
+            let callers: Vec<u32> = m.callers.iter().map(|&c| rb(c)).collect();
+            define_u32s(em, &format!("{}_callers", m.prefix), &callers)?;
+        }
         for c in m.classes {
             class_specs.push(super::classes::ClassSpec {
-                id: c.id,
+                id: rb(c.id),
                 name: c.name,
-                ancestors: c.ancestors,
+                ancestors: c.ancestors.iter().map(|&a| rb(a)).collect(),
                 ivars: c.ivars,
                 hidden: c.hidden,
                 members: c.members,
@@ -341,7 +376,7 @@ pub(crate) fn merge_rows(
         for r in m.obj {
             let f = import(em, &r.f, &vsig)?;
             obj_rows.push(ObjRowSpec {
-                class: r.class,
+                class: rb(r.class),
                 name: r.name,
                 f,
             });
@@ -349,24 +384,43 @@ pub(crate) fn merge_rows(
         for r in m.cm {
             let f = import(em, &r.f, &vsig)?;
             cm_rows.push(CmRowSpec {
-                class: r.class,
+                class: rb(r.class),
                 box_id: r.box_id,
                 name: r.name,
                 f,
             });
         }
         for r in m.reg {
+            // What a reg row's `ids` MEAN depends on its kind: class ids
+            // for the mixin/ancestry/surrogate kinds, reveal-group ids for
+            // a concealment, and plain scalars (a slot, a redef index)
+            // everywhere else. Rebasing the wrong space is a silently
+            // wrong program, so the kinds are named here one by one.
+            let ids: Vec<u32> = match r.kind {
+                zeo_abi::abi::REG_EXTENDS
+                | zeo_abi::abi::REG_SINGLETON_SUPER_TARGET
+                | zeo_abi::abi::REG_SET_ANCESTORS
+                | zeo_abi::abi::REG_REGISTER_BUILTIN
+                | zeo_abi::abi::REG_SINGLETON_SURROGATE => {
+                    r.ids.iter().map(|&i| rb(i)).collect()
+                }
+                zeo_abi::abi::REG_CONCEAL_METHOD => {
+                    r.ids.iter().map(|&i| i + stride).collect()
+                }
+                _ => r.ids,
+            };
             // The shared-bootstrap rows both sides emit (a builtin's boot
             // `extend`, a require-gated builtin's registration): the host's
             // copy stands, because a SECOND `REG_REGISTER_BUILTIN` would
             // re-register without the native constructor. A row only the
             // package emits (a gated builtin the host never reaches) stays.
+            let class = rb(r.class);
             let bootstrap_dup = matches!(
                 r.kind,
                 zeo_abi::abi::REG_EXTENDS | zeo_abi::abi::REG_REGISTER_BUILTIN
             ) && reg_rows
                 .iter()
-                .any(|h| h.kind == r.kind && h.class == r.class && h.ids == r.ids);
+                .any(|h| h.kind == r.kind && h.class == class && h.ids == ids);
             if bootstrap_dup {
                 continue;
             }
@@ -376,25 +430,25 @@ pub(crate) fn merge_rows(
             };
             reg_rows.push(RegRowSpec {
                 kind: r.kind,
-                class: r.class,
+                class,
                 a: r.a,
                 b: r.b,
                 f,
-                ids: r.ids,
+                ids,
                 flag: r.flag,
             });
         }
         for r in m.vis {
             vis_rows.push(VisRowSpec {
-                class: r.class,
+                class: rb(r.class),
                 name: r.name,
                 verb: r.verb,
             });
         }
-        foreign.extend(m.foreign);
+        foreign.extend(m.foreign.into_iter().map(|(class, name)| (rb(class), name)));
         for r in m.meta {
             meta_rows.push(MetaRowSpec {
-                class: r.class,
+                class: rb(r.class),
                 singleton: r.singleton,
                 name: r.name,
                 params: r.params,
@@ -408,5 +462,71 @@ pub(crate) fn merge_rows(
             unit_rows.push((spelling, f));
         }
     }
+    // Past the patched-class bitmap's span, a typed-direct guard has no
+    // bit to read. The package compiled its guards against LOCAL ids under
+    // the span; the FINAL ids must stay under it too, or those guards read
+    // some other class's bit. Refused rather than slowed: widening the
+    // bitmap is a one-constant, backward-compatible change.
+    if next_band > zeo_abi::abi::PATCHED_BITS_IDS {
+        return Err(CodegenError::unsupported(
+            format!(
+                "the merged class-id space ({next_band} ids) exceeds the patched-class \
+                 bitmap span ({}); widen PATCHED_BITS_IDS or merge fewer packages",
+                zeo_abi::abi::PATCHED_BITS_IDS
+            ),
+            None,
+        ));
+    }
+    Ok(())
+}
+
+/// The `packaged-ids` bench mode's identity id-translation table: the
+/// program is its own "package" whose band lands exactly where it
+/// compiled, so every table load answers the id an immediate would have
+/// been. Defined only when some site actually loaded through the table.
+pub(crate) fn define_identity_cids(em: &mut Emitter, analyzed: &Analyzed) -> CResult<()> {
+    let Some(id) = em.cids_id else {
+        return Ok(());
+    };
+    let super::module::IdMode::Packaged { first } = em.id_mode else {
+        return Ok(());
+    };
+    if em.pkg.is_some() {
+        return Ok(()); // a package IMPORTS its table; the host defines it
+    }
+    let n = analyzed.compiler.classes.len() as u32;
+    let mut bytes = Vec::with_capacity(((n - first) as usize) * 4);
+    for i in first..n {
+        bytes.extend_from_slice(&i.to_le_bytes());
+    }
+    use cranelift_module::DataDescription;
+    let mut data = DataDescription::new();
+    data.define(bytes.into_boxed_slice());
+    data.set_align(4);
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| CodegenError::internal(format!("defining zeo_cids: {e}")))?;
+    Ok(())
+}
+
+/// One little-endian `u32` array as EXPORTED initialized data -- the id
+/// tables and base cells a package object imports, defined by the host
+/// with the values only the host knows.
+fn define_u32s(em: &mut Emitter, name: &str, vals: &[u32]) -> CResult<()> {
+    use cranelift_module::DataDescription;
+    let id = em
+        .module
+        .declare_data(name, Linkage::Export, false, false)
+        .map_err(|e| CodegenError::internal(format!("declaring {name}: {e}")))?;
+    let mut bytes = Vec::with_capacity(vals.len() * 4);
+    for v in vals {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut data = DataDescription::new();
+    data.define(bytes.into_boxed_slice());
+    data.set_align(4);
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| CodegenError::internal(format!("defining {name}: {e}")))?;
     Ok(())
 }

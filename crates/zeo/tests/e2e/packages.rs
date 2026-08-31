@@ -83,6 +83,7 @@ p one.tagged(2)
 p Pureleaf.kind
 p Pureleaf::Deep::WIDTH
 p PURELEAF_TAG
+p PURELEAF_PROBE
 p require "pureleaf"
 p Pureleaf.instance_methods(false).sort
 begin
@@ -95,7 +96,7 @@ end
 /// The one output every road must produce -- verified against ruby 4.0.6
 /// by the sibling differential assertion below, then held here so a drift
 /// in EITHER road fails by name.
-const WANT: &str = "nil\n:guard_before_no\ntrue\n:guard_after_yes\n\"leaf\"\n\"leaf-2\"\n:pure\n3\n7\nfalse\n[:leaf, :tagged]\nNoMethodError\n";
+const WANT: &str = "nil\n:guard_before_no\ntrue\n:guard_after_yes\n\"leaf\"\n\"leaf-2\"\n:pure\n3\n7\n\"leaf-7\"\nfalse\n[:leaf, :tagged]\nNoMethodError\n";
 
 #[test]
 fn a_precompiled_gem_links_and_answers_like_the_spliced_one() {
@@ -152,30 +153,70 @@ fn every_exported_package_symbol_carries_the_package_prefix() {
 }
 
 #[test]
-fn a_bootstrap_mismatch_is_refused_by_name() {
-    let dir = scratch("mismatch");
+fn a_package_is_position_independent() {
+    // The host defines its OWN classes before the require, shifting the
+    // package's band -- the object was compiled knowing nothing of them,
+    // and its id-translation table is what keeps every answer right.
+    let dir = scratch("shift");
     let object = build_package(&dir);
-    // Corrupt the recorded band start: the host must refuse rather than
-    // register the package's classes at the wrong ids.
-    let zman = object.with_extension("zman");
-    let text = std::fs::read_to_string(&zman).expect("read manifest");
-    std::fs::write(&zman, text.replace("\"first_class_id\":", "\"first_class_id\": 9000, \"_was\":"))
-        .expect("rewrite manifest");
     let host = dir.join("host.rb");
-    std::fs::write(&host, "p 1\n").expect("write host");
-    let out = run(zeo()
+    std::fs::write(
+        &host,
+        "class ShiftA\n  def a = 1\nend\nclass ShiftB\n  def b = 2\nend\n\
+         p ShiftA.new.a + ShiftB.new.b\nrequire \"pureleaf\"\n\
+         p Pureleaf.new.tagged(9)\np Pureleaf.kind\np PURELEAF_PROBE\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
         .arg("--experimental-use-pkg")
         .arg(&object)
         .arg("-o")
-        .arg(dir.join("host-bin"))
+        .arg(&bin)
         .arg(&host)
         .env("ZEO_CACHE", "0"));
-    assert!(!out.status.success(), "a wrong band must not link");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("minted its classes from id 9000"),
-        "the refusal names the band: {err}"
-    );
+    let out = ok(&mut Command::new(&bin));
+    assert_eq!(out, "3\n\"leaf-9\"\n:pure\n\"leaf-7\"\n");
+}
+
+#[test]
+fn two_packages_link_into_one_host() {
+    // Both gems compiled ALONE claim overlapping local bands; the host
+    // assigns each a disjoint final band and fills each object's own id
+    // table and reveal stride.
+    let dir = scratch("two");
+    let leaf = build_package(&dir);
+    let second = dir.join("puresecond.o");
+    ok(zeo()
+        .arg("--experimental-pkg")
+        .arg("puresecond")
+        .arg("-o")
+        .arg(&second)
+        .arg(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/packages/puresecond/lib/puresecond.rb"),
+        )
+        .env("ZEO_CACHE", "0"));
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"pureleaf\"\nrequire \"puresecond\"\n\
+         p Pureleaf.new.tagged(1)\np Puresecond.new.two\np Puresecond.kind\n\
+         p [PURELEAF_TAG, PURESECOND_TAG]\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&leaf)
+        .arg("--experimental-use-pkg")
+        .arg(&second)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    let out = ok(&mut Command::new(&bin));
+    assert_eq!(out, "\"leaf-1\"\n22\n:second\n[7, 8]\n");
 }
 
 #[test]

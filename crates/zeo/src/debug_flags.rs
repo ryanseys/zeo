@@ -34,6 +34,12 @@ pub(crate) enum DebugFlag {
     /// produces may raise `LoadError` where the swept one would not, so it
     /// measures rather than ships.
     NoPackageSweep,
+    /// `packaged-ids`: force the Packaged id mode program-wide, with an
+    /// identity id-translation table -- every class-id immediate becomes
+    /// a table load, exactly as in a package object. The bench upper
+    /// bound for separate compilation's id indirection: compile once with
+    /// and once without, and compare the bank.
+    PackagedIds,
     /// `outline-frames`: emit the CALL form of every frame push, pop and
     /// pool mark instead of the inline one. The inline protocol is the
     /// largest per-method cost in an emitted body -- a `def m; 1; end`
@@ -51,6 +57,7 @@ const NAMES: &[(&str, DebugFlag)] = &[
     ("verify-class-index", DebugFlag::VerifyClassIndex),
     ("no-typed-calls", DebugFlag::NoTypedCalls),
     ("no-package-sweep", DebugFlag::NoPackageSweep),
+    ("packaged-ids", DebugFlag::PackagedIds),
     ("outline-frames", DebugFlag::OutlineFrames),
 ];
 

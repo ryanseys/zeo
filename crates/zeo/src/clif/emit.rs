@@ -111,6 +111,19 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         .iter()
         .map(|m| m.n_units)
         .sum();
+    // A package reads its own-band class ids through the id-translation
+    // table the host fills -- position independence. The `packaged-ids`
+    // debug flag forces the same emission program-wide over an identity
+    // table, which is the bench upper bound for the indirection.
+    em.id_mode = if em.pkg.is_some()
+        || crate::debug_flags::debug(crate::debug_flags::DebugFlag::PackagedIds)
+    {
+        super::module::IdMode::Packaged {
+            first: analyzed.compiler.first_program_class_id,
+        }
+    } else {
+        super::module::IdMode::Immediate
+    };
     super::collect::collect_reopen_flags(em, analyzed);
     let defs = super::collect::collect_methods(em, analyzed)?;
     let collected = super::classes::collect_classes(em, analyzed)?;
@@ -1003,6 +1016,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         statics::define_rodata(em)?;
         return Ok(f);
     }
+    super::pkg::define_identity_cids(em, analyzed)?;
     let eval_install =
         matches!(em.module, ClifModule::Object(_)) && analyzed.compiler.compiles_at_runtime();
     let desc = statics::define_desc(

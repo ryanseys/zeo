@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped when the manifest schema changes shape. Independent of
 /// `zeo_abi::ABI_VERSION`: the manifest is a compiler-to-compiler file.
-pub const MANIFEST_VERSION: u32 = 1;
+pub const MANIFEST_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -54,6 +54,11 @@ pub struct Manifest {
     /// The package object's exported site-table initializer, run from the
     /// host's own `zeo_unit_init`.
     pub unit_init: Option<String>,
+    /// The caller-class id per inline-cache slot (`u32::MAX` = an FCALL
+    /// with no visibility question), in LOCAL ids. The package object
+    /// IMPORTS `{prefix}_callers`; the host defines it with the band it
+    /// assigned.
+    pub callers: Vec<u32>,
     /// The builtin dispatch tables this package's code can reach, by
     /// `zeo_ctable_*` name -- unioned into the host's list so
     /// `-dead_strip` keeps them.
@@ -262,6 +267,7 @@ mod tests {
             meta: vec![],
             units: vec![("pureleaf".into(), "zeo_pkg_pureleaf_unit_0".into())],
             unit_init: Some("zeo_pkg_pureleaf_unit_init".into()),
+            callers: vec![u32::MAX, 400],
             class_tables: vec![],
             facts: MFacts {
                 const_names: vec!["PURELEAF_TAG".into()],

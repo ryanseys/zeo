@@ -105,6 +105,11 @@ pub(crate) struct Fx<'e, 'f> {
     /// The gates word's global value, declared at most once per function.
     /// See [`Fx::gates_base`].
     pub gates_gv: Option<ir::GlobalValue>,
+    /// The id-translation table's GV, cached like `gates_gv`. Packaged id
+    /// mode only.
+    pub cids_gv: Option<ir::GlobalValue>,
+    /// The reveal-group base cell's GV. Package emission only.
+    pub unit_base_gv: Option<ir::GlobalValue>,
     /// [`Fx::gates_base`]'s twin for the patched-class bitmap.
     pub patched_bits_gv: Option<ir::GlobalValue>,
     pub prev_line: Option<u32>,
@@ -272,6 +277,8 @@ impl<'e, 'f> Fx<'e, 'f> {
             branch_cond: None,
             frame_hot: None,
             gates_gv: None,
+            cids_gv: None,
+            unit_base_gv: None,
             patched_bits_gv: None,
             prev_line: None,
             prev_file: None,
@@ -525,15 +532,77 @@ impl<'e, 'f> Fx<'e, 'f> {
 
     /// The ONE place a compile-time class id becomes a machine value.
     ///
-    /// Today every id is an immediate. The Packaged id mode (M2 of the
-    /// separate-compilation plan) swaps THIS body for a load from the
-    /// package's link-time id-translation table -- for ids in the
-    /// package's own band -- and no call site moves. Sentinels
-    /// (`u32::MAX`) and fixed builtin ids pass through as immediates in
-    /// both modes, so any class-id-shaped value may route here.
+    /// `Immediate` mode emits the id as an iconst -- today's whole-program
+    /// compile, byte for byte. `Packaged` mode reads an id in this
+    /// object's own band from the id-translation table the HOST fills at
+    /// link time, which is what makes a package object correct in any
+    /// program. Sentinels (`u32::MAX`) and fixed builtin ids pass through
+    /// as immediates in both modes, so any class-id-shaped value may
+    /// route here. The load is readonly-flagged: the table is initialized
+    /// data, so Cranelift may hoist and dedupe it freely.
     pub fn cid_value(&mut self, cid: u32) -> ir::Value {
-        use cranelift_codegen::ir::InstBuilder;
+        use cranelift_codegen::ir::{InstBuilder, MemFlagsData};
+        if let super::module::IdMode::Packaged { first } = self.em.id_mode
+            && cid >= first
+            && cid != u32::MAX
+        {
+            let base = self.cids_base();
+            let off = ((cid - first) * 4) as i32;
+            let fl = MemFlagsData::trusted().with_readonly();
+            return self.b.ins().load(ir::types::I32, fl, base, off);
+        }
         self.b.ins().iconst(ir::types::I32, i64::from(cid))
+    }
+
+    /// The id-translation table's base address, GV-cached like
+    /// [`Fx::gates_base`].
+    fn cids_base(&mut self) -> ir::Value {
+        use cranelift_codegen::ir::InstBuilder;
+        use cranelift_module::Module;
+        let gv = match self.cids_gv {
+            Some(gv) => gv,
+            None => {
+                let id = self.em.cids_data_id();
+                let gv = self.em.module.declare_data_in_func(id, self.b.func);
+                self.cids_gv = Some(gv);
+                gv
+            }
+        };
+        let ptr = self.em.ptr;
+        self.b.ins().symbol_value(ptr, gv)
+    }
+
+    /// A reveal-group id as a machine value. An ordinary compile bakes
+    /// `unit_base + local` (packages merged into it own `[0, unit_base)`);
+    /// a PACKAGE reads its base from the `{prefix}_unit_base` cell the
+    /// host fills, plus the local offset -- its reveal ids are as
+    /// position-independent as its class ids.
+    pub fn reveal_group_value(&mut self, local: u32) -> ir::Value {
+        use cranelift_codegen::ir::{InstBuilder, MemFlagsData};
+        use cranelift_module::Module;
+        if self.em.pkg.is_none() {
+            return self
+                .b
+                .ins()
+                .iconst(ir::types::I32, i64::from(self.em.unit_base + local));
+        }
+        let gv = match self.unit_base_gv {
+            Some(gv) => gv,
+            None => {
+                let id = self.em.unit_base_data_id();
+                let gv = self.em.module.declare_data_in_func(id, self.b.func);
+                self.unit_base_gv = Some(gv);
+                gv
+            }
+        };
+        let ptr = self.em.ptr;
+        let addr = self.b.ins().symbol_value(ptr, gv);
+        let fl = MemFlagsData::trusted().with_readonly();
+        let base = self.b.ins().load(ir::types::I32, fl, addr, 0);
+        if local == 0 {
+            return base;
+        }
+        self.b.ins().iadd_imm_u(base, i64::from(local))
     }
 
     /// The patched-class bitmap's base address, on [`Fx::gates_base`]'s

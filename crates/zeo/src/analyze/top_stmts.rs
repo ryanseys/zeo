@@ -1555,42 +1555,13 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
     for b in 1..=compiler.hir.boxes {
         compiler.ensure_box_surrogate(b);
     }
-    // EXPERIMENTAL (M0): the class-id band boundary between separately
-    // compiled objects. A package link runs this identical bootstrap on
-    // both sides, so `classes.len()` HERE is the first id either side
-    // mints for itself. A package build RECORDS it (the manifest carries
-    // it); a host merging a package ASSERTS the package agrees, then pads
-    // its own minting past the package's band with inert bootstrap-marked
-    // entries, so both objects' baked class-id immediates stay final.
+    // EXPERIMENTAL (M2): the boundary between the shared bootstrap and a
+    // compile's OWN class ids. A package records it in its manifest (its
+    // ids past this point are its LOCAL band, read through the
+    // id-translation table the host fills), and the host's merge assigns
+    // each package's final band after its own classes -- so neither side
+    // pads and neither side asserts the other's bootstrap size.
     compiler.first_program_class_id = compiler.classes.len() as u32;
-    let bands: Vec<(String, u32, u32)> = compiler
-        .hir
-        .pkg_merge
-        .iter()
-        .map(|m| (m.feature.clone(), m.first_class_id, m.n_class_ids))
-        .collect();
-    for (feature, first, n) in bands {
-        if first != compiler.classes.len() as u32 {
-            return Err(format!(
-                "package '{feature}' minted its classes from id {first}, but this \
-                 program's bootstrap ends at {} -- the two compiles disagree on the \
-                 shared bootstrap (a box-using host, or a different zeo); rebuild \
-                 the package",
-                compiler.classes.len()
-            ));
-        }
-        for i in 0..n {
-            let id = compiler.add_class(
-                format!("(zeo pkg {feature} {i})"),
-                Some(crate::compiler::OBJECT_CLASS),
-                false,
-            );
-            // Bootstrap-marked: every emission walk already skips the set
-            // that exists before user code, which is exactly what a class
-            // OWNED by another object is to this compile.
-            compiler.classes[id.0 as usize].is_bootstrap = true;
-        }
-    }
     Ok(())
 }
 

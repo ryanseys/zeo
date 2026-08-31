@@ -235,13 +235,6 @@ pub fn parse_and_lower_with(
         })?;
         hir.pkg_merge.push(m);
     }
-    // Every package was compiled ALONE, so each claims the same class-id
-    // band; two would collide. The id-translation tier (M2) lifts this.
-    if hir.pkg_merge.len() > 1 {
-        return Err(CompileError::analyze(
-            "M0 supports one --experimental-use-pkg per program",
-        ));
-    }
     // A package's constants land when its units run -- exactly what
     // `unrun_unit_consts` describes. Seeded BEFORE the main lowering,
     // because the loader's own guard folder decides `defined?(NAME)`

@@ -768,8 +768,7 @@ pub(super) fn define_toplevel(
         // from here on. Emitted unconditionally -- the runtime call is a
         // no-op for a unit that concealed nothing.
         TopScope::Unit { index, .. } => {
-            let group = i64::from(fx.em.unit_base) + *index as i64;
-            let u = fx.b.ins().iconst(types::I32, group);
+            let u = fx.reveal_group_value(*index as u32);
             fx.call("zeo_rt_reveal_unit_methods", &[u]);
         }
     }

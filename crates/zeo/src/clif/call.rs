@@ -892,6 +892,16 @@ pub(crate) fn typed_direct_send(
     let argv_ptr = build_argv(fx, site, args)?;
     super::stmt::stamp_call_line(fx, site);
 
+    // Packaged id mode: an own-band id is a table LOAD (see
+    // `Fx::cid_value`), so the bitmap word offset, the bit mask, and the
+    // class comparison below all compute from the loaded value instead of
+    // being baked. Emitted here, in the entry flow, so the value dominates
+    // both guard blocks. `None` keeps today's immediates byte for byte.
+    let dyn_cid = match fx.em.id_mode {
+        super::module::IdMode::Packaged { first } if cid.0 >= first => Some(fx.cid_value(cid.0)),
+        _ => None,
+    };
+
     let gates_chk = fx.b.create_block();
     let patch_chk = fx.b.create_block();
     let class_chk = fx.b.create_block();
@@ -919,18 +929,37 @@ pub(crate) fn typed_direct_send(
 
     fx.b.switch_to_block(patch_chk);
     let pbase = fx.patched_bits_base();
-    let word = fx
-        .b
-        .ins()
-        .load(types::I64, fl, pbase, ((cid.0 / 64) * 8) as i32);
-    let bit = fx.b.ins().band_imm_u(word, (1u64 << (cid.0 % 64)) as i64);
+    let bit = match dyn_cid {
+        None => {
+            let word = fx
+                .b
+                .ins()
+                .load(types::I64, fl, pbase, ((cid.0 / 64) * 8) as i32);
+            fx.b.ins().band_imm_u(word, (1u64 << (cid.0 % 64)) as i64)
+        }
+        Some(cv) => {
+            let widx = fx.b.ins().ushr_imm_u(cv, 6);
+            let widx64 = fx.b.ins().uextend(types::I64, widx);
+            let boff = fx.b.ins().ishl_imm_u(widx64, 3);
+            let addr = fx.b.ins().iadd(pbase, boff);
+            let word = fx.b.ins().load(types::I64, fl, addr, 0);
+            let sh = fx.b.ins().band_imm_u(cv, 63);
+            let sh64 = fx.b.ins().uextend(types::I64, sh);
+            let shifted = fx.b.ins().ushr(word, sh64);
+            fx.b.ins().band_imm_u(shifted, 1)
+        }
+    };
     fx.b.ins().brif(bit, slow, &[], class_chk, &[]);
 
     fx.b.switch_to_block(class_chk);
     let live_cid = fx.call_status("zeo_rt_class_of", &[recv_ptr]);
-    let hit =
-        fx.b.ins()
-            .icmp_imm_u(IntCC::Equal, live_cid, i64::from(cid.0));
+    let hit = match dyn_cid {
+        None => fx
+            .b
+            .ins()
+            .icmp_imm_u(IntCC::Equal, live_cid, i64::from(cid.0)),
+        Some(cv) => fx.b.ins().icmp(IntCC::Equal, live_cid, cv),
+    };
     fx.b.ins().brif(hit, fast, &[], slow, &[]);
 
     fx.b.switch_to_block(fast);

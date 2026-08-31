@@ -147,6 +147,22 @@ struct PendingCode {
 }
 
 /// Program-wide emission state: the module, the rodata blob, the symbol
+/// EXPERIMENTAL (M2): how a compile-time class id becomes a machine value.
+///
+/// `Immediate` is today's whole-program compile: every id is an `iconst`.
+/// `Packaged` is what makes a package object POSITION-INDEPENDENT: an id at
+/// or past `first` (the shared bootstrap's end -- the object's own band)
+/// reads from the id-translation table the HOST fills at link time, so the
+/// same object is correct in any program, wherever its band lands. Builtin
+/// ids below `first`, and the `u32::MAX` sentinel, stay immediates in both
+/// modes. The `packaged-ids` debug flag forces this mode program-wide with
+/// an identity table, which is the bench upper bound for the load cost.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum IdMode {
+    Immediate,
+    Packaged { first: u32 },
+}
+
 /// pool, and the capi import cache.
 pub(crate) struct Emitter {
     pub module: ClifModule,
@@ -200,6 +216,18 @@ pub(crate) struct Emitter {
     /// one -- names the unit machinery `{prefix}_unit_*`, exports the
     /// row-referenced bodies, and swaps the desc for a manifest.
     pub pkg: Option<crate::package::PackageBuild>,
+    /// EXPERIMENTAL (M2): how a class id becomes a machine value -- see
+    /// [`IdMode`] and `Fx::cid_value`.
+    pub id_mode: IdMode,
+    /// The id-translation table's declaration, made once on first use:
+    /// `{prefix}_cids` imported by a package (the HOST defines it with the
+    /// band it assigned), `zeo_cids` defined locally by the
+    /// `packaged-ids` bench mode.
+    pub cids_id: Option<DataId>,
+    /// The reveal-group base cell, same shape: `{prefix}_unit_base`,
+    /// imported by a package, defined by the host with the package's
+    /// stride.
+    pub unit_base_id: Option<DataId>,
     /// EXPERIMENTAL (M0): the first reveal-group id THIS compile may use.
     /// Merged packages own `[0, unit_base)`; every unit index and
     /// alias-reveal group this program bakes -- the reveal calls and the
@@ -451,6 +479,9 @@ impl Emitter {
             reopen_flags_id,
             reopen_flags: HashMap::new(),
             pkg: None,
+            id_mode: IdMode::Immediate,
+            cids_id: None,
+            unit_base_id: None,
             unit_base: 0,
             callsites: Vec::new(),
             cm_sites_id,
@@ -508,6 +539,42 @@ impl Emitter {
         }
         self.ffi_sites += 1;
         self.ffi_sites - 1
+    }
+
+    /// The id-translation table's `DataId`, declared on first use. A
+    /// PACKAGE imports it (the host defines it with the assigned band);
+    /// the `packaged-ids` bench mode declares it locally and
+    /// `define_identity_cids` fills it.
+    pub(crate) fn cids_data_id(&mut self) -> DataId {
+        if let Some(id) = self.cids_id {
+            return id;
+        }
+        let (name, linkage) = match &self.pkg {
+            Some(p) => (format!("{}_cids", p.prefix()), Linkage::Import),
+            None => ("zeo_cids".to_string(), Linkage::Local),
+        };
+        let id = self
+            .module
+            .declare_data(&name, linkage, false, false)
+            .expect("declaring the id-translation table");
+        self.cids_id = Some(id);
+        id
+    }
+
+    /// The reveal-group base cell's `DataId`, same declare-once shape as
+    /// [`Emitter::cids_data_id`]. Only a package has one.
+    pub(crate) fn unit_base_data_id(&mut self) -> DataId {
+        if let Some(id) = self.unit_base_id {
+            return id;
+        }
+        let pkg = self.pkg.as_ref().expect("only a package loads a unit base");
+        let name = format!("{}_unit_base", pkg.prefix());
+        let id = self
+            .module
+            .declare_data(&name, Linkage::Import, false, false)
+            .expect("declaring the reveal-group base cell");
+        self.unit_base_id = Some(id);
+        id
     }
 
     /// A compiled body/trampoline symbol, package-prefixed when this
