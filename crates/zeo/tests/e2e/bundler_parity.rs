@@ -263,29 +263,58 @@ fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<String, (Vec<u8>, u32)>) 
                 0
             }
         };
-        out.insert(rel, (std::fs::read(&path).unwrap_or_default(), mode));
+        out.insert(rel, (canonical_shebang(std::fs::read(&path).unwrap_or_default()), mode));
     }
 }
 
-/// The store paths that are allowed to differ, with the reason.
+/// A binstub's interpreter line, folded to `#!<engine>`.
 ///
-/// `build_info` records the arguments a native build ran with, and the
-/// fixture gems have no extension, so nothing lands there. The list is empty
-/// on purpose: an exception belongs here only once something has argued for
-/// it, and an empty list is what says none has.
+/// The ONE thing about an installed tree that SHOULD differ. RubyGems writes
+/// the running engine into a binstub's shebang, so CRuby writes `env ruby`
+/// and zeo writes `env zeo` -- and zeo's is the right answer, because the
+/// whole point is that the machine needs no ruby. Only the interpreter line
+/// is folded, so the rest of the binstub is still compared byte for byte.
+fn canonical_shebang(bytes: Vec<u8>) -> Vec<u8> {
+    if !bytes.starts_with(b"#!") {
+        return bytes;
+    }
+    let end = bytes.iter().position(|&b| b == b'\n').unwrap_or(bytes.len());
+    let line = String::from_utf8_lossy(&bytes[..end]).into_owned();
+    let engine = line.rsplit(['/', ' ']).next().unwrap_or_default();
+    if engine != "ruby" && engine != "zeo" {
+        return bytes;
+    }
+    let mut out = b"#!<engine>".to_vec();
+    out.extend_from_slice(&bytes[end..]);
+    out
+}
+
+/// The store paths that are allowed to differ WHOLESALE, with the reason.
+///
+/// Empty on purpose. The binstub shebang, the one difference the probe found
+/// that is not a defect, is folded by [`canonical_shebang`] instead -- an
+/// exception that names a whole file would stop comparing the rest of it.
 const ALLOWED_TO_DIFFER: &[&str] = &[];
+
+/// The paths the two trees disagree on, each named once.
+fn differences<'a>(
+    want: &'a BTreeMap<String, (Vec<u8>, u32)>,
+    got: &'a BTreeMap<String, (Vec<u8>, u32)>,
+) -> Vec<&'a String> {
+    let mut out: Vec<&String> = want
+        .keys()
+        .chain(got.keys())
+        .filter(|k| !ALLOWED_TO_DIFFER.iter().any(|a| k.contains(a)))
+        .filter(|k| want.get(*k) != got.get(*k))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
 
 /// The two engines install one Gemfile identically, or this says exactly
 /// where they parted.
-///
-/// IGNORED on the divergence it found the first time it ran: zeo installs
-/// `bundler/rubygems_ext.rb`'s universal-arch `Gem::BasicSpecification#
-/// extensions_dir` on a machine that is not universal, so the guarded body
-/// shadows `basic_specification.rb`'s real one and every install raises
-/// `uninitialized constant ORIGINAL_LOCAL_PLATFORM`. CRuby's side of this
-/// same probe passes, which is what says the fault is zeo's.
 #[test]
-#[ignore = "zeo installs a guarded def whose guard is false (extensions_dir)"]
 fn one_gemfile_installs_the_same_way_under_both_engines() {
     let Some(ruby) = oracle_ruby() else {
         eprintln!("skipping: this machine has no ruby to be the other engine");
@@ -321,12 +350,7 @@ fn one_gemfile_installs_the_same_way_under_both_engines() {
         tree(&ruby_root.join("bundle")),
         tree(&zeo_root.join("bundle")),
     );
-    let differing: Vec<&String> = want
-        .keys()
-        .chain(got.keys())
-        .filter(|k| !ALLOWED_TO_DIFFER.iter().any(|a| k.contains(a)))
-        .filter(|k| want.get(*k) != got.get(*k))
-        .collect();
+    let differing = differences(&want, &got);
     assert!(
         differing.is_empty(),
         "the installed trees differ at {} path(s): {:?}",

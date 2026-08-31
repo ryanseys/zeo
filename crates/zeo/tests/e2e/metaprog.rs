@@ -1,4 +1,4 @@
-use crate::support::run_ruby;
+use crate::support::{run_ruby, run_ruby_project};
 
 #[test]
 fn dynamic_send_with_a_non_literal_target() {
@@ -863,4 +863,246 @@ fn a_conditionally_defined_method_is_visible_to_reflection_and_extend() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "[:flavor]\nother\nfalse\n");
+}
+
+// ---- a guarded `def` and the positional-install pass ----
+//
+// `analyze::dyn_defs` gives every `def` in a class body that installs methods
+// at run time its own document position. A `def` nested in an `if` branch
+// registers a method-history row and leaves NO site record, so the two lists
+// it pairs by order describe different bodies -- and pairing them anyway
+// handed bundler's universal-arch `Gem::BasicSpecification#extensions_dir`
+// the position of rubygems' real one, on every machine that is not
+// universal. These pin both halves of the rule: the pairing must refuse a
+// count mismatch, and a guarded body must never be installed unconditionally.
+
+/// The reported shape, smallest form: guarded body FIRST, unguarded second.
+#[test]
+fn a_guarded_def_written_first_does_not_take_the_later_bodys_position() {
+    let result = run_ruby(
+        r#"
+        def cpu = ["arm", "64"].join
+        class C
+          [:tag].each { |n| attr_accessor(n) }
+          if cpu == "universal"
+            ONLY = "universal"
+            def which = ONLY
+          end
+        end
+        class C
+          def which = "real"
+        end
+        puts C.new.which
+        puts C.const_defined?(:ONLY)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "real\nfalse\n");
+}
+
+/// ...and with the guarded body written last, which is the same rule read
+/// from the other end.
+#[test]
+fn a_guarded_def_written_last_does_not_displace_the_earlier_body() {
+    let result = run_ruby(
+        r#"
+        def cpu = ["arm", "64"].join
+        class C
+          [:tag].each { |n| attr_accessor(n) }
+          def which = "real"
+          if cpu == "universal"
+            def which = "universal"
+          end
+        end
+        puts C.new.which
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "real\n");
+}
+
+/// The class-method channel takes the same rule. It is counted apart from the
+/// instance channel, so a fix that only watched one would pass everything
+/// above and still hand `def self.x` the wrong body.
+#[test]
+fn a_guarded_class_method_does_not_take_the_later_bodys_position() {
+    let result = run_ruby(
+        r#"
+        def cpu = ["arm", "64"].join
+        class C
+          [:tag].each { |n| attr_accessor(n) }
+          if cpu == "universal"
+            ONLY = "universal"
+            def self.which = ONLY
+          end
+        end
+        class C
+          def self.which = "real"
+        end
+        puts C.which
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "real\n");
+}
+
+/// A guard that PASSES still installs. Without this the rule could be
+/// satisfied by never installing a guarded body at all, which is a different
+/// bug wearing the same green.
+#[test]
+fn a_guarded_def_whose_guard_passes_still_wins() {
+    let result = run_ruby(
+        r#"
+        def cpu = ["arm", "64"].join
+        class C
+          [:tag].each { |n| attr_accessor(n) }
+          def which = "real"
+          def self.which = "real class method"
+          if cpu == "arm64"
+            def which = "taken"
+            def self.which = "taken class method"
+          end
+        end
+        puts C.new.which
+        puts C.which
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "taken\ntaken class method\n");
+}
+
+/// Three bodies for one name, two of them guarded: the two lists differ by
+/// two, so an off-by-one fix would still land on the wrong row.
+#[test]
+fn two_guarded_bodies_and_one_real_one_still_answer_the_real_one() {
+    let result = run_ruby(
+        r#"
+        def cpu = ["arm", "64"].join
+        class C
+          [:tag].each { |n| attr_accessor(n) }
+          if cpu == "universal"
+            def which = "first guard"
+          end
+          if cpu == "sparc"
+            def which = "second guard"
+          end
+          def which = "real"
+        end
+        puts C.new.which
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "real\n");
+}
+
+/// Bundler's actual nesting: a guard inside a guard, with a local assigned
+/// between them and the body reading a constant only the inner branch writes.
+#[test]
+fn a_def_two_guards_deep_stays_inside_both_of_them() {
+    let result = run_ruby(
+        r#"
+        def cpu = ["arm", "64"].join
+        class C
+          [:tag].each { |n| attr_accessor(n) }
+          if cpu
+            arch = cpu
+            if arch == "universal"
+              DEEP = "deep"
+              def which = DEEP
+            end
+          end
+          def which = "real"
+        end
+        puts C.new.which
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "real\n");
+}
+
+/// The failing shape ACROSS FILES, which is how bundler and rubygems meet:
+/// the guarded reopen is a unit walked before the unit holding the real
+/// bodies.
+#[test]
+fn a_guarded_def_in_an_earlier_unit_does_not_take_a_later_units_position() {
+    let result = run_ruby_project(
+        &[
+            (
+                "guarded.rb",
+                r#"
+                class C
+                  [:tag].each { |n| attr_accessor(n) }
+                  if Probe.cpu == "universal"
+                    ONLY = "universal"
+                    def which = ONLY
+                    def self.which = ONLY
+                  end
+                end
+                require "real"
+                "#,
+            ),
+            (
+                "real.rb",
+                r#"
+                class C
+                  def which = "real"
+                  def self.which = "real class method"
+                end
+                "#,
+            ),
+            (
+                "main.rb",
+                r#"
+                module Probe
+                  def self.cpu = ["arm", "64"].join
+                end
+                require "guarded"
+                puts C.new.which
+                puts C.which
+                c = C.new
+                c.tag = "tagged"
+                puts c.tag
+                "#,
+            ),
+        ],
+        "main.rb",
+        &["."],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "real\nreal class method\ntagged\n");
+}
+
+/// ...and the pass's own job is untouched: a block-installed accessor still
+/// loses to the `def` written below it, and so does a macro a class method
+/// expands. A fix that made `dyn_defs` refuse more than it should would show
+/// up here and nowhere else.
+#[test]
+fn the_positional_install_still_beats_a_block_installed_accessor() {
+    let result = run_ruby(
+        r#"
+        class Blocked
+          [:y].each { |a| attr_writer(a) }
+          def y=(v)
+            @y = [v, v]
+          end
+          attr_reader :y
+        end
+        class Macro
+          def self.make(n) = attr_writer(n)
+          make :z
+          def z=(v)
+            @z = [v, v]
+          end
+          attr_reader :z
+        end
+        b = Blocked.new
+        b.y = 1
+        p b.y
+        m = Macro.new
+        m.z = 2
+        p m.z
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[1, 1]\n[2, 2]\n");
 }

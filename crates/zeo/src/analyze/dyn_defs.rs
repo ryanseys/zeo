@@ -99,31 +99,47 @@ pub fn resolve(compiler: &mut Compiler) {
         // counters -- `SiteDef::seq` counts definitions, the history counts
         // registrations -- so they are paired by ORDER, which is what
         // `redefs` does with the same pair.
-        let mut ordinal = 0usize;
+        //
+        // Pairing by order is only sound when the two lists describe the same
+        // bodies, and one shape breaks that: a `def` nested in an `if` branch
+        // registers in the history and leaves NO site record. The counts then
+        // differ and every ordinal after the guarded body is off by one, which
+        // handed bundler's universal-arch `extensions_dir` -- guarded, and
+        // false on every machine that is not universal -- the position of
+        // rubygems' real one. `redefs` refuses the same mismatch for the same
+        // reason; leave the name fully static.
+        let (mut ordinal, mut sited) = (0usize, 0usize);
         for site in &compiler.class_body_sites {
             if site.class != cid {
                 continue;
             }
-            ordinal += site
-                .defs
-                .iter()
-                .filter(|d| {
-                    d.event == DefEvent::Added
-                        && d.singleton == singleton
-                        && d.name == name
-                        && d.seq < seq
-                })
-                .count();
+            for d in &site.defs {
+                if d.event != DefEvent::Added || d.singleton != singleton || d.name != name {
+                    continue;
+                }
+                sited += 1;
+                ordinal += usize::from(d.seq < seq);
+            }
         }
-        let Some(scope) = compiler.classes[cid.0 as usize]
+        let history: Vec<ScopeId> = compiler.classes[cid.0 as usize]
             .method_history
             .iter()
             .filter(|&&(ref m, s, _, _)| s == singleton && *m == name)
-            .nth(ordinal)
             .map(|&(_, _, _, sid)| sid)
-        else {
+            .collect();
+        if history.len() != sited {
+            continue;
+        }
+        let Some(&scope) = history.get(ordinal) else {
             continue;
         };
+        // ...and, whatever the pairing said, a body whose guard zeo cannot
+        // decide is not one to install unconditionally. The overlay write a
+        // splice emits runs whenever the class body does, so a guarded body
+        // put there answers even when its guard is false.
+        if compiler.scope(scope).runtime_conditional {
+            continue;
+        }
         // A PREPENDED module's copy of the name outranks this body, and the
         // overlay install would put the body on top of it. The compiled
         // tables already have the prepend in the right place, so leave the
@@ -312,5 +328,65 @@ impl InstallerSpans {
             .iter()
             .take_while(|&&(start, _)| start < outer.end)
             .any(|&(_, end)| end <= outer.end)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hir::FileId;
+
+    fn spans(rows: &[(u32, u32, u32)]) -> InstallerSpans {
+        let mut by_file: crate::compiler::FMap<u32, Vec<(u32, u32)>> = Default::default();
+        for &(file, start, end) in rows {
+            by_file.entry(file).or_default().push((start, end));
+        }
+        for v in by_file.values_mut() {
+            v.sort_unstable();
+        }
+        InstallerSpans { by_file }
+    }
+
+    fn at(file: u32, start: u32, end: u32) -> Span {
+        Span {
+            file: FileId(file),
+            start,
+            end,
+        }
+    }
+
+    /// A class body counts as dynamic only when an installer sits INSIDE one
+    /// of its own statements. The three ways that can go wrong are a call
+    /// before it, a call after it, and a call that merely overlaps.
+    #[test]
+    fn covers_answers_containment_not_proximity() {
+        let s = spans(&[(0, 100, 110)]);
+        assert!(s.covers(at(0, 90, 120)), "a call inside the statement");
+        assert!(s.covers(at(0, 100, 110)), "the statement IS the call");
+        assert!(!s.covers(at(0, 0, 50)), "a statement entirely before it");
+        assert!(!s.covers(at(0, 200, 250)), "a statement entirely after it");
+        assert!(!s.covers(at(0, 90, 105)), "an overlap is not containment");
+        assert!(!s.covers(at(0, 105, 120)), "nor is the other overlap");
+        assert!(!s.covers(at(1, 90, 120)), "another file's offsets never match");
+    }
+
+    /// `covers` binary-searches, so a statement whose start sits between two
+    /// calls must still find the one it contains.
+    #[test]
+    fn covers_finds_a_later_call_past_earlier_ones() {
+        let s = spans(&[(0, 10, 20), (0, 30, 40), (0, 50, 60), (0, 70, 80)]);
+        assert!(s.covers(at(0, 45, 65)), "the third call, past two earlier");
+        assert!(s.covers(at(0, 5, 85)), "a statement holding all four");
+        assert!(!s.covers(at(0, 41, 49)), "the gap between two calls");
+        assert!(!s.covers(at(0, 15, 35)), "straddling two, containing neither");
+    }
+
+    /// An empty set short-circuits the whole pass, so it has to report
+    /// itself as empty rather than as a map of empty vectors.
+    #[test]
+    fn an_installerless_program_is_empty() {
+        assert!(spans(&[]).is_empty());
+        assert!(!spans(&[(0, 1, 2)]).is_empty());
+        assert!(!spans(&[]).covers(at(0, 0, 100)));
     }
 }
