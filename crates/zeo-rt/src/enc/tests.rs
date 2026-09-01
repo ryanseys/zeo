@@ -92,6 +92,14 @@ fn push_buf_appends_raw_bytes_and_adopts_the_negotiated_encoding() {
     a.push_buf(&StrBuf::from_utf8("é".to_string())).unwrap();
     assert_eq!(a.encoding(), UTF_8);
     assert_eq!(a.bytes(), "xé".as_bytes());
+    // An EMPTY ascii-compatible receiver keeps its own tag for a 7-bit
+    // addition (`"".b << "abc"` stays BINARY), and adopts only when the
+    // addition needs it.
+    let mut e = StrBuf::from_bytes(Vec::new(), ASCII_8BIT);
+    e.push_buf(&StrBuf::from_utf8("abc".to_string())).unwrap();
+    assert_eq!(e.encoding(), ASCII_8BIT);
+    e.push_buf(&StrBuf::from_utf8("é".to_string())).unwrap();
+    assert_eq!(e.encoding(), UTF_8);
 }
 
 #[test]

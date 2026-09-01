@@ -624,6 +624,14 @@ pub fn compat_concat_enc(left: &StrBuf, right: &StrBuf) -> Option<EncodingId> {
         return Some(left.enc);
     }
     if left.is_empty() {
+        // An ASCII-COMPATIBLE empty receiver keeps its own encoding when the
+        // addition is 7-bit (`"".b << "abc"` stays BINARY); it adopts the
+        // right's only when the right actually needs it. The right's own
+        // ascii-compatibility matters too: a UTF-16 `"ab"` is all 7-bit
+        // BYTES, and ruby still hands its encoding over.
+        if left.enc.ascii_compatible() && right.enc.ascii_compatible() && right.ascii_only() {
+            return Some(left.enc);
+        }
         return Some(right.enc);
     }
     if !left.enc.ascii_compatible() || !right.enc.ascii_compatible() {
