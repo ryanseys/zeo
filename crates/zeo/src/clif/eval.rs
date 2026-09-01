@@ -361,10 +361,7 @@ fn eval_class_body(
         .as_ref()
         .map(|c| c.chain.clone())
         .unwrap_or_default();
-    let bytes: Vec<u8> = outer.iter().flat_map(|c| c.to_le_bytes()).collect();
-    let outer_off = fx.em.intern_rodata_aligned(&bytes, 4);
-    let outer_ptr = fx.rod(outer_off);
-    let n_outer = fx.b.ins().iconst(fx.em.ptr, outer.len() as i64);
+    let (outer_ptr, n_outer) = fx.cid_array(&outer);
     let out_ss = fx.temp_slot();
     let out = fx.slot_addr(out_ss, 0);
     let status = fx.call_status(

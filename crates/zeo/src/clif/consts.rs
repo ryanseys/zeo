@@ -113,10 +113,7 @@ fn const_cref_call(
     for &scope in chain {
         emit_named_autoload_touch(fx, crate::compiler::ClassId(scope), name);
     }
-    let bytes: Vec<u8> = chain.iter().flat_map(|c| c.to_le_bytes()).collect();
-    let ids_off = fx.em.intern_rodata_aligned(&bytes, 4);
-    let ids_ptr = fx.rod(ids_off);
-    let n_ids = fx.b.ins().iconst(fx.em.ptr, chain.len() as i64);
+    let (ids_ptr, n_ids) = fx.cid_array(chain);
     let (nptr, nlen) = super::expr::rodata_name(fx, name);
     let (qptr, qlen) = super::expr::rodata_name(fx, qualified);
     let flags = u8::from(hook) | if fx.box_id == 0 { 0 } else { 2 };

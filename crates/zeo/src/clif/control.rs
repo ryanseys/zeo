@@ -390,10 +390,7 @@ fn clause_match(
     let zero = fx.b.ins().iconst(types::I8, 0);
     fx.b.ins().store(fl, zero, out, 0);
     if !ids.is_empty() {
-        let id_bytes: Vec<u8> = ids.iter().flat_map(|i| i.to_le_bytes()).collect();
-        let off = fx.em.intern_rodata_aligned(&id_bytes, 4);
-        let ids_ptr = fx.rod(off);
-        let n = fx.b.ins().iconst(fx.em.ptr, ids.len() as i64);
+        let (ids_ptr, n) = fx.cid_array(ids);
         let m = fx.call_status("zeo_rt_rescue_matches", &[exc, ids_ptr, n]);
         let next = fx.b.create_block();
         fx.b.ins().brif(m, hit, &[], next, &[]);

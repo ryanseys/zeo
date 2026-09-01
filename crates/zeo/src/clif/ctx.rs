@@ -554,6 +554,36 @@ impl<'e, 'f> Fx<'e, 'f> {
         self.b.ins().iconst(ir::types::I32, i64::from(cid))
     }
 
+    /// A `&[u32]` of CLASS IDS handed to a runtime call -- the ARRAY twin
+    /// of [`Fx::cid_value`]. An ordinary compile bakes the ids in rodata,
+    /// byte for byte today's output. A package compile materializes them
+    /// in a stack slot through `cid_value`, because rodata cannot be
+    /// translated at merge: a baked local id read as a final id is a
+    /// wrong answer, not a slow path (a rescue matching the wrong class,
+    /// a cref walk consulting the wrong scope). Answers `(ptr, len)`.
+    pub fn cid_array(&mut self, ids: &[u32]) -> (ir::Value, ir::Value) {
+        use cranelift_codegen::ir::InstBuilder;
+        if matches!(self.em.id_mode, super::module::IdMode::Packaged { .. }) {
+            let slot = self.b.create_sized_stack_slot(ir::StackSlotData::new(
+                ir::StackSlotKind::ExplicitSlot,
+                (ids.len().max(1) * 4) as u32,
+                2,
+            ));
+            for (i, &cid) in ids.iter().enumerate() {
+                let v = self.cid_value(cid);
+                self.b.ins().stack_store(self.em.ptr, v, slot, (i * 4) as i32);
+            }
+            let ptr = self.b.ins().stack_addr(self.em.ptr, slot, 0);
+            let n = self.b.ins().iconst(self.em.ptr, ids.len() as i64);
+            return (ptr, n);
+        }
+        let bytes: Vec<u8> = ids.iter().flat_map(|c| c.to_le_bytes()).collect();
+        let off = self.em.intern_rodata_aligned(&bytes, 4);
+        let ptr = self.rod(off);
+        let n = self.b.ins().iconst(self.em.ptr, ids.len() as i64);
+        (ptr, n)
+    }
+
     /// The id-translation table's base address, GV-cached like
     /// [`Fx::gates_base`].
     fn cids_base(&mut self) -> ir::Value {
