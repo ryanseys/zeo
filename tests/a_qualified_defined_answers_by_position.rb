@@ -10,7 +10,25 @@ p defined?(Zed::Q)
 require "csv"
 p defined?(CSV)
 p defined?(CSV::Row)
+if defined?(Zed::Q)
+  puts "guard above: yes"
+else
+  puts "guard above: no"
+end
+if defined?(Wob)
+  puts "bare guard above: yes"
+else
+  puts "bare guard above: no"
+end
 module Zed
   class Q; end
 end
+module Wob; end
 p defined?(Zed::Q)
+if defined?(Zed::Q)
+  puts "guard below: yes"
+else
+  puts "guard below: no"
+end
+GATED = 1 unless defined?(GATED)
+p GATED

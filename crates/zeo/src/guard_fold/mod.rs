@@ -670,7 +670,7 @@ fn defined_const_fold(
     {
         return Some(true);
     }
-    const_name_fold(compiler, cref, box_id, &joined)
+    const_name_fold(compiler, cref, box_id, &joined, node)
 }
 
 /// `Module#const_defined?(:X)` -- `defined?(X)`'s reflective twin, and the shape
@@ -697,7 +697,13 @@ fn const_defined_fold(
             _ => return None,
         },
     };
-    const_name_fold(compiler, scope, box_id, &name)
+    // The name ARGUMENT node stands in for the probe's document position:
+    // any node inside the asking statement carries the same ordering.
+    let at = match args {
+        [ArrayElem::Single(a), ..] => *a,
+        _ => return None,
+    };
+    const_name_fold(compiler, scope, box_id, &name, at)
 }
 
 /// The shared decision behind `defined?(X)` and `const_defined?(:X)`.
@@ -706,12 +712,28 @@ fn const_name_fold(
     cref: &[ClassId],
     box_id: u32,
     joined: &str,
+    at: NodeId,
 ) -> Option<bool> {
     if let Some(cid) = compiler.resolve_class(joined, cref, box_id) {
         // Registered but not PROMISED: whether a runtime-conditional class's
         // constant exists is settled by its guarded body having run.
         if compiler.constant_is_positional(cid) {
             return None;
+        }
+        // Registered, but ruby defines the constant at the marker's own
+        // line: once `index_document_order` has placed the definitions, a
+        // guard that runs before the leaf's first one answers nil -- the
+        // rule the VALUE fold already applies. During the registration
+        // walk the order table is empty and this narrows nothing; that
+        // walk consults in execution order, so a later class is simply
+        // not resolved yet.
+        let ci = compiler.class(cid);
+        let leaf = ci.name.rsplit("::").next().unwrap_or(&ci.name).to_string();
+        let owner = ci
+            .lexical_parent
+            .unwrap_or(crate::compiler::OBJECT_CLASS);
+        if compiler.const_defined_before(owner, &leaf, at) == Some(false) {
+            return Some(false);
         }
         return Some(true);
     }
