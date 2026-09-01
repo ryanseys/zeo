@@ -210,10 +210,14 @@ pub fn c_allocate(owner: ClassId) -> Option<RubyValue> {
     if !ANY_ALLOC_FUNC.load(std::sync::atomic::Ordering::Relaxed) {
         return None;
     }
-    let addr = ALLOC_FUNCS
-        .lock()
-        .as_ref()
-        .and_then(|m| m.get(&owner.0).copied())?;
+    let addr = resolved_alloc_func(owner)?;
+    if addr == ALLOC_UNDEF {
+        crate::signal::set_pending(crate::builtins::type_error!(
+            "allocator undefined for {}",
+            crate::dispatch::class_name(owner).unwrap_or_else(|| format!("#<Class:{}>", owner.0))
+        ));
+        return None;
+    }
     let scope = Scope::enter();
     let this = to_value(&RubyValue::Class(owner)).ok()?;
     // SAFETY: the extension registered this function for exactly this call,
@@ -248,25 +252,49 @@ fn remember_alloc_func(owner: ClassId, addr: usize) {
     ANY_ALLOC_FUNC.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The allocator installed for `owner`, or null.
-pub(super) fn alloc_func_of(owner: ClassId) -> *const c_void {
-    ALLOC_FUNCS
-        .lock()
-        .as_ref()
-        .and_then(|m| m.get(&owner.0).copied())
-        .map_or(std::ptr::null(), |a| a as *const c_void)
+/// `rb_undef_alloc_func`'s mark in [`ALLOC_FUNCS`]: allocation refuses at
+/// this class even when a class above still defines an allocator.
+pub(super) const ALLOC_UNDEF: usize = 0;
+
+/// The nearest registration on `owner`'s CLASS chain -- CRuby's
+/// `rb_get_alloc_func` walk. zlib is the shape that needs it: the gem undefs
+/// the allocator on `ZStream` and defines one on each subclass, so both the
+/// definitions and the undef only mean anything relative to the chain.
+fn resolved_alloc_func(owner: ClassId) -> Option<usize> {
+    let guard = ALLOC_FUNCS.lock();
+    let map = guard.as_ref()?;
+    if let Some(&a) = map.get(&owner.0) {
+        return Some(a);
+    }
+    for &anc in crate::dispatch::ancestors_of_value(owner).iter() {
+        if anc == owner || crate::dispatch::class_is_module(anc).unwrap_or(true) {
+            continue;
+        }
+        if let Some(&a) = map.get(&anc.0) {
+            return Some(a);
+        }
+    }
+    None
 }
 
-/// Whether `owner` has a C allocator, WITHOUT running it -- what
-/// `dispatch::constructor_of` asks to decide whose `Class#new` this is.
-/// Guarded by the same relaxed load as [`c_allocate`], so a program with no
-/// extension pays one atomic read.
+/// The allocator `owner` allocates with (its own or an inherited one), or
+/// null -- for a class with none, and for one whose nearest registration is
+/// `rb_undef_alloc_func`'s, which is what CRuby's own walk answers there.
+pub(super) fn alloc_func_of(owner: ClassId) -> *const c_void {
+    match resolved_alloc_func(owner) {
+        Some(a) if a != ALLOC_UNDEF => a as *const c_void,
+        _ => std::ptr::null(),
+    }
+}
+
+/// Whether `owner` allocates through the C registry, WITHOUT running it --
+/// what `dispatch::constructor_of` asks to decide whose `Class#new` this is.
+/// An undef counts: its `new` must reach [`c_allocate`] to raise CRuby's
+/// TypeError. Guarded by the same relaxed load as [`c_allocate`], so a
+/// program with no extension pays one atomic read.
 pub(crate) fn has_alloc_func(owner: ClassId) -> bool {
     ANY_ALLOC_FUNC.load(std::sync::atomic::Ordering::Relaxed)
-        && ALLOC_FUNCS
-            .lock()
-            .as_ref()
-            .is_some_and(|m| m.contains_key(&owner.0))
+        && resolved_alloc_func(owner).is_some()
 }
 
 /// # Safety
@@ -444,26 +472,12 @@ crate::cext_fn! {
         Ok(())
     }
 
+    /// Recorded as DATA, not as a refusing `new` -- a singleton method here
+    /// shadowed `Class#new` for every SUBCLASS, where CRuby's undef is a
+    /// per-class mark the chain walk stops at (see [`resolved_alloc_func`]).
     fn rb_undef_alloc_func(klass: Value) -> () {
         let owner = unsafe { as_class(klass)? };
-        let cls = RubyValue::Class(owner);
-        for name in ["allocate", "new"] {
-            let refuse = crate::rproc::ProcBuilder::from_rust(
-                move |recv: &RubyValue, _a: &[RubyValue], _b: Option<RubyValue>| {
-                    Err(crate::builtins::type_error!("allocator undefined for {}",
-                            crate::dispatch::class_name(recv.class_id()).unwrap_or("Class".into())))
-                },
-                cls.clone(),
-                -1,
-                true,
-            )
-            .build();
-            crate::runtime_meta::runtime_define_singleton_method(
-                &cls,
-                Symbol::intern(name),
-                refuse,
-            )?;
-        }
+        remember_alloc_func(owner, ALLOC_UNDEF);
         Ok(())
     }
 
@@ -630,5 +644,25 @@ mod tests {
             super::super::call::current_receiver().is_none(),
             "the frame outlived its call"
         );
+    }
+
+    /// zlib's shape: `rb_undef_alloc_func` on a class is a per-class MARK the
+    /// resolution answers, not a refusing `new` -- so it neither shadows a
+    /// subclass's own allocator nor hands `rb_get_alloc_func` a callable.
+    /// (The chain half of the walk needs a class registry, so the live probe
+    /// through the C zlib gem is its proof.)
+    #[test]
+    fn an_undef_mark_is_data_the_resolution_answers() {
+        super::remember_alloc_func(zeo_abi::NUMERIC_CLASS, 0xbeef);
+        assert!(super::has_alloc_func(zeo_abi::NUMERIC_CLASS));
+        assert!(!super::alloc_func_of(zeo_abi::NUMERIC_CLASS).is_null());
+        super::remember_alloc_func(zeo_abi::INTEGER_CLASS, super::ALLOC_UNDEF);
+        assert!(super::has_alloc_func(zeo_abi::INTEGER_CLASS));
+        assert_eq!(
+            super::resolved_alloc_func(zeo_abi::INTEGER_CLASS),
+            Some(super::ALLOC_UNDEF)
+        );
+        assert!(super::alloc_func_of(zeo_abi::INTEGER_CLASS).is_null());
+        assert!(super::alloc_func_of(zeo_abi::STRING_CLASS).is_null());
     }
 }

@@ -68,6 +68,12 @@ pub unsafe extern "C" fn zeo_rt_class_new_instance(
                 .map(|_| alloc);
         return status_out(init, out);
     }
+    // A `None` with a parked signal is a REFUSAL (an undef'd allocator, or a
+    // raise inside one), not an invitation to allocate the compiled shape.
+    #[cfg(feature = "cext")]
+    if let Some(sig) = crate::signal::take_pending() {
+        return status_out(Err(sig), out);
+    }
     let layout = match compiled_object::layout_of(id) {
         Some(l) => l,
         None => panic!("zeo_rt_class_new_instance: no layout registered for class {cid}"),

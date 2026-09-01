@@ -247,7 +247,11 @@ unsafe fn as_str(v: Value) -> Result<RStr, crate::Signal> {
 /// `p` must name `len` readable bytes, or a NUL-terminated string.
 pub(super) unsafe fn borrow_bytes(p: *const c_char, len: c_long) -> Vec<u8> {
     if p.is_null() {
-        return Vec::new();
+        // MRI's `rb_str_new(NULL, len)` allocates a string OF `len` bytes for
+        // the caller to fill through `RSTRING_PTR` -- zlib's `gzfile_read`
+        // builds every read that way. An empty answer here made the C side
+        // memcpy past a two-byte pin.
+        return vec![0; len.max(0) as usize];
     }
     // SAFETY: the caller's contract.
     unsafe {
