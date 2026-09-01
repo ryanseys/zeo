@@ -244,9 +244,29 @@ pub(crate) fn resolve_class_here(fx: &Fx, name: &str) -> Option<crate::compiler:
     if fx.eval_cref.is_some() {
         return None;
     }
-    fx.an
-        .compiler
-        .resolve_class(name, cref_chain(fx), fx.box_id)
+    let compiler = &fx.an.compiler;
+    let cid = compiler.resolve_class(name, cref_chain(fx), fx.box_id)?;
+    // The class table is only half of each scope's constant table. Ruby's
+    // cref walk asks a scope for classes AND values before moving out, so a
+    // `Program = Data.define(:v)` written in `Op` shadows a `class Program`
+    // two scopes out from anywhere inside `Op` -- and the read has to take
+    // the run-time walk, which the claim map already points at `Op`. Only the
+    // head segment can be shadowed this way; `::X` names the top level.
+    let path = crate::constpath::ConstPath::parse(name);
+    if path.is_top_anchored() {
+        return Some(cid);
+    }
+    let head = path.segments().next()?;
+    let head_cid = match path.is_bare() {
+        true => cid,
+        false => compiler.resolve_class(head, cref_chain(fx), fx.box_id)?,
+    };
+    let head_scope = compiler.class(head_cid).lexical_parent;
+    let shadowed = cref_chain(fx).iter().rev().any(|&scope| {
+        Some(scope) != head_scope
+            && crate::analyze::mro::directly_defines_const(compiler, scope, head)
+    });
+    (!shadowed).then_some(cid)
 }
 
 /// `Ruby::Box.current` -- the box the SITE runs in.

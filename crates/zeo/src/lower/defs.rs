@@ -1683,32 +1683,35 @@ pub(crate) fn try_lower_definition(
                 // for the same reason. A name that is also a `class`
                 // definition stays on the static path.
                 //
-                // Both halves ask FROM THIS CREF, which is what makes them
-                // agree: they used to be a lexical search against a bare-leaf
-                // table, so a constant of the same leaf in an unrelated
-                // namespace answered the first and not the second, and the
-                // definition was silently rewritten into a runtime one.
-                Ok(n) => const_is_assigned(hir, &n) && !const_is_class_def(hir, &n),
+                // One walk FROM THIS CREF, nearest scope first, and the first
+                // scope that binds the name answers. Two separate lexical
+                // searches used to decide it, and a `class Program` two
+                // scopes out then overrode the `Program = Data.define` right
+                // here.
+                Ok(n) => matches!(
+                    hir.const_binding_in_scope(&n),
+                    Some(crate::hir::ConstBinding::Values(_))
+                ),
             };
             if runtime_parent {
                 return lower_runtime_class(result, hir, &name, Some(&sc), class.body()).map(Some);
             }
-        } else if const_holds_runtime_class(hir, &name)
-            && !const_is_class_def(hir, &name)
-            && runtime_class_body_is_expressible(class.body())
+        } else if reopens_a_runtime_class(hir, &name)
+            && runtime_class_body_keeps_its_scope(class.body())
         {
             // No superclass clause, and the name holds a runtime class value
             // (`D = Data.define(:x)`) -- this REOPENS that class rather than
             // defining a new one, so it lowers to a runtime reopen instead of
             // a `ClassDef` the static path would register as a fresh
-            // (memberless) class.
+            // (memberless) class. The body rides as a block, and every
+            // class-body statement but a local write has a spelling there
+            // (`transform_runtime_class_body`): a nested `class Spec` inside
+            // the reopen used to send the whole definition back to the static
+            // path, which minted a memberless `Target` over the Data class.
             //
-            // A body the runtime form can't express falls back to the STATIC
-            // path rather than erroring: a constant alias to a builtin
-            // (`INT_ALIAS = 1.class; class INT_ALIAS; include M; end`) is a
-            // real Ruby shape the static path at least compiles, and turning
-            // a program that ran into one that won't build is a worse
-            // failure than the one it already had.
+            // A body that writes a local falls back to the STATIC path rather
+            // than erroring: turning a program that ran into one that won't
+            // build is a worse failure than the one it already had.
             return lower_runtime_class_reopen(result, hir, &name, class.body()).map(Some);
         }
         // `class SecretKeys::Encryptor` where `SecretKeys` is itself a runtime

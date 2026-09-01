@@ -929,7 +929,7 @@ fn struct_construct_inner(
     // than as an arity error. Refusing an incomplete instance is the whole
     // reason Data exists; Struct, its mutable half, really does allow the
     // short form and keeps its own message.
-    let zipped;
+    let zipped: Vec<RubyValue>;
     let args = if meta.is_data && !matches!(args, [RubyValue::Hash(_)]) {
         // Positionals AND keywords together is not a short form -- it is an
         // illegal mix, and must be refused before the zip below turns the
@@ -938,13 +938,24 @@ fn struct_construct_inner(
             return Err(crate::builtins::arity_err(args.len(), 0, Some(0)));
         }
         crate::builtins::check_arity(args.len(), 0, Some(meta.members.len()))?;
-        zipped = [RubyValue::Hash(hash_new(
-            meta.members
-                .iter()
-                .zip(args)
-                .map(|(m, v)| (RubyValue::Symbol(*m), v.clone()))
-                .collect(),
-        ))];
+        // The zipped hash is passed AS KEYWORDS (`rb_class_new_instance_kw`
+        // with `RB_PASS_KEYWORDS`), so a user `initialize(max: 256)` binds
+        // it by name -- and, as with any `**{}`, an EMPTY one is no argument
+        // at all, which is what lets that override's defaults apply to a
+        // bare `P.new`.
+        zipped = if args.is_empty() {
+            Vec::new()
+        } else {
+            let h = hash_new(
+                meta.members
+                    .iter()
+                    .zip(args)
+                    .map(|(m, v)| (RubyValue::Symbol(*m), v.clone()))
+                    .collect(),
+            );
+            h.lock().kw_marked = true;
+            vec![RubyValue::Hash(h)]
+        };
         &zipped[..]
     } else {
         args

@@ -19,7 +19,7 @@ mod params;
 mod pattern;
 mod source;
 
-pub use arena::{FeatureUnit, Hir, LoadedFile, NodeFlag, NodeId, is_internal_local};
+pub use arena::{ConstBinding, FeatureUnit, Hir, LoadedFile, NodeFlag, NodeId, is_internal_local};
 pub use ffi::{FfiCall, FfiLib, FfiStructLayout, FfiType};
 pub use multi::{MultiTarget, MultiTargetGroup};
 pub use node::{

@@ -18,56 +18,30 @@ pub(crate) fn const_is_assigned(hir: &Hir, name: &str) -> bool {
     !hir.const_write_values_in_scope(name).is_empty()
 }
 
-/// Whether every statement in a class body can be expressed as the BLOCK the
-/// runtime-class forms lower to. The runtime form runs the body as a block, so
-/// a statement that only the static class path can emit (`include`, a
-/// visibility modifier, `alias`, a nested class) has no runtime spelling --
-/// see `lower_runtime_class_body`, which rejects the same set.
+/// Whether a bare `class Name ... end` (no superclass clause) REOPENS a
+/// constant holding a class minted at run time (`Name = Data.define(:x)`,
+/// `Struct.new`, `Class.new`) -- the shapes that lower to `Name.class_eval {
+/// body }` rather than to a fresh static class. A value constant (`C = 7`)
+/// does not qualify, and a `class`-defined `Name` in the same scope keeps the
+/// static path.
 ///
-/// Only the reopen form consults this, and only to FALL BACK to the static
-/// path; `class X < <expression>` has no static fallback (that shape is why
-/// the runtime form exists) and reports the rejection instead. A prism-level
-/// scan rather than a lowered one so the fallback costs no orphan nodes in the
-/// arena -- a stray `ConstWrite` left behind would perturb `const_is_assigned`.
-pub(crate) fn runtime_class_body_is_expressible(body: Option<Node<'_>>) -> bool {
-    let stmts: Vec<Node<'_>> = match body {
-        None => return true,
-        Some(n) => match n.as_statements_node() {
-            Some(s) => s.body().iter().collect(),
-            None => vec![n],
-        },
-    };
-    stmts.iter().all(|stmt| {
-        if stmt.as_alias_method_node().is_some()
-            || stmt.as_undef_node().is_some()
-            || stmt.as_class_node().is_some()
-            || stmt.as_module_node().is_some()
-        {
-            return false;
-        }
-        if writes_a_local(stmt) {
-            return false;
-        }
-        // `include M` / `private` and friends are receiverless calls, not
-        // their own node kinds.
-        if let Some(call) = stmt.as_call_node()
-            && call.receiver().is_none()
-        {
-            let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
-            return !matches!(
-                name.as_str(),
-                "include"
-                    | "extend"
-                    | "prepend"
-                    | "private"
-                    | "public"
-                    | "protected"
-                    | "module_function"
-                    | "alias_method"
-            );
-        }
-        true
-    })
+/// A bare name asks the CURRENT cref only. That is ruby's `class` statement:
+/// it looks the name up in the cref's own constant table and mints there on a
+/// miss, so a same-named class or Data constant in an ENCLOSING scope is
+/// invisible to it. Asking the lexical chain instead sent `class Program`
+/// inside `Sow::GL::Op` -- where `Program = Data.define(:vertex)` sits -- to
+/// the static path because an unrelated `Sow::Program` was `class`-defined
+/// two scopes out. A qualified `class A::B` keeps the lexical walk: its tables
+/// key by spelling, and what `A` names is not this statement's question.
+pub(crate) fn reopens_a_runtime_class(hir: &Hir, name: &str) -> bool {
+    if !crate::constpath::ConstPath::parse(name).is_bare() {
+        return const_holds_runtime_class(hir, name) && !const_is_class_def(hir, name);
+    }
+    !hir.class_defined_here(name)
+        && hir
+            .const_write_values_here(name)
+            .iter()
+            .any(|&v| value_mints_runtime_class(hir, v))
 }
 
 /// A direct local-variable write in a class body -- the one statement the

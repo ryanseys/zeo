@@ -773,19 +773,23 @@ impl Hir {
     /// `::`-anchored name asks at the top level only. See
     /// [`FfiVocab::ffi_layout_hooks`].
     pub(crate) fn ffi_layout_hook_for(&self, name: &str) -> Option<&String> {
-        if let Some(absolute) = name.strip_prefix("::") {
-            return self.ffi.ffi_layout_hooks.get(absolute);
-        }
-        for depth in (0..=self.cref_names.len()).rev() {
-            let qualified = match depth {
-                0 => name.to_string(),
-                _ => format!("{}::{name}", self.cref_names[..depth].join("::")),
-            };
-            if let Some(source) = self.ffi.ffi_layout_hooks.get(&qualified) {
-                return Some(source);
-            }
-        }
-        None
+        self.lexical_candidates(name)
+            .find_map(|qualified| self.ffi.ffi_layout_hooks.get(&qualified))
+    }
+
+    /// The paths a name written in the cref being lowered may bind to, in
+    /// ruby's lexical order: the cref's own path first, then each enclosing
+    /// scope, then the top level. A `::`-anchored name has one candidate, the
+    /// top level.
+    fn lexical_candidates(&self, name: &str) -> impl Iterator<Item = String> + '_ {
+        let (name, depths) = match name.strip_prefix("::") {
+            Some(absolute) => (absolute.to_string(), 0..=0),
+            None => (name.to_string(), 0..=self.cref_names.len()),
+        };
+        depths.rev().map(move |depth| match depth {
+            0 => name.clone(),
+            _ => format!("{}::{name}", self.cref_names[..depth].join("::")),
+        })
     }
 
     /// Records one `class`/`module` definition in `class_def_paths`. Call it
@@ -832,16 +836,42 @@ impl Hir {
     /// SEEN FROM the cref being lowered: ruby's lexical search, innermost
     /// scope first, then the top level. `::Name` asks at the top level only.
     pub(crate) fn class_defined_in_scope(&self, name: &str) -> bool {
-        if let Some(absolute) = name.strip_prefix("::") {
-            return self.class_def_paths.contains(absolute);
-        }
-        (0..=self.cref_names.len()).rev().any(|depth| {
-            let candidate = if depth == 0 {
-                name.to_string()
-            } else {
-                format!("{}::{name}", self.cref_names[..depth].join("::"))
-            };
-            self.class_def_paths.contains(&candidate)
+        self.lexical_candidates(name)
+            .any(|candidate| self.class_def_paths.contains(&candidate))
+    }
+
+    /// Whether an already-lowered `class`/`module` definition binds `name` IN
+    /// the cref being lowered -- the one scope a `class Name` statement
+    /// consults. Ruby's `vm_define_class` asks the cref's own constant table
+    /// and never the enclosing chain: `class Program` inside `module Op`
+    /// reopens `Op::Program` when there is one and otherwise mints it, even
+    /// with a `Sow::Program` in view.
+    pub(crate) fn class_defined_here(&self, name: &str) -> bool {
+        self.class_def_paths.contains(&self.cref_path(name))
+    }
+
+    /// The values assigned so far to `name` IN the cref being lowered -- the
+    /// twin of [`class_defined_here`](Self::class_defined_here), for the same
+    /// statement.
+    pub fn const_write_values_here(&self, name: &str) -> &[NodeId] {
+        self.const_write_values(&self.cref_path(name))
+    }
+
+    /// What `name` binds to as seen from the cref being lowered: the FIRST
+    /// lexical scope that either `class`-defines it or assigns it answers, and
+    /// a scope that does both answers the definition. One walk rather than two
+    /// -- asking "assigned anywhere?" and "defined anywhere?" separately let a
+    /// `class Program` two scopes out override a `Program = Data.define` in
+    /// the scope right here, and the subclass of the Data class was put on
+    /// the static path.
+    pub fn const_binding_in_scope(&self, name: &str) -> Option<ConstBinding<'_>> {
+        self.lexical_candidates(name).find_map(|candidate| {
+            if self.class_def_paths.contains(&candidate) {
+                return Some(ConstBinding::ClassDef);
+            }
+            self.const_writes
+                .get(&candidate)
+                .map(|values| ConstBinding::Values(values))
         })
     }
 
@@ -873,6 +903,15 @@ impl std::ops::Index<NodeId> for Hir {
     fn index(&self, id: NodeId) -> &HirNode {
         &self.nodes[id.0 as usize]
     }
+}
+
+/// What a constant name binds to in one lexical scope -- see
+/// [`Hir::const_binding_in_scope`].
+pub enum ConstBinding<'a> {
+    /// A `class`/`module` statement defines it there.
+    ClassDef,
+    /// Statements assign it there; the values, in push order.
+    Values(&'a [NodeId]),
 }
 
 impl std::ops::IndexMut<NodeId> for Hir {
@@ -929,15 +968,7 @@ impl Hir {
     /// `Bundler::Settings::Path` answer for `Bundler::Source::Path` -- see
     /// [`const_writes`](Self::const_writes).
     pub fn const_write_values_in_scope(&self, name: &str) -> &[NodeId] {
-        if let Some(absolute) = name.strip_prefix("::") {
-            return self.const_write_values(absolute);
-        }
-        (0..=self.cref_names.len())
-            .rev()
-            .map(|depth| match depth {
-                0 => name.to_string(),
-                _ => format!("{}::{name}", self.cref_names[..depth].join("::")),
-            })
+        self.lexical_candidates(name)
             .find_map(|candidate| self.const_writes.get(&candidate))
             .map_or(&[], Vec::as_slice)
     }
