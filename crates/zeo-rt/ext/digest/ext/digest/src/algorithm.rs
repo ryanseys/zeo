@@ -5,8 +5,8 @@
 //! other three ids alias it via the linkme entries in this module's parent.
 
 use super::{
-    algo_of_class, base64, block_length_of, digest_bubblebabble, digest_eq, digest_length_of,
-    finalize, hex, in_bytes, new_digest, push_bytes, reset_buf, str,
+    algo_of_class, block_length_of, digest_bubblebabble, digest_eq, digest_length_of, finalize,
+    hex, in_bytes, new_digest, push_bytes, reset_buf, str,
 };
 use crate::encoding::ASCII_8BIT;
 use crate::{RubyValue, string_from_bytes};
@@ -28,7 +28,10 @@ fn digest_allocate() -> RubyValue {
 
 ruby_class! {
     // Registered under Digest::MD5; SHA1/SHA256/SHA512 alias this same table.
-    Digest = zeo_abi::DIGEST_MD5_CLASS < zeo_abi::OBJECT_CLASS;
+    // The `file`/`base64digest` families are NOT here: the gem's vendored
+    // Ruby half defines them on `Digest::Class`/`Digest::Instance`, which
+    // every algorithm class reaches through the ancestry.
+    Digest = zeo_abi::DIGEST_MD5_CLASS < zeo_abi::DIGEST_BASE_CLASS;
 
     allocate digest_allocate;
 
@@ -55,24 +58,6 @@ ruby_class! {
         };
         Ok(new_digest(algo))
     }
-    // `.file(path)` -- a digest of the file's CONTENT, answering the
-    // instance so `.hexdigest` reads off it.
-    def self."file" (recv, path) {
-        let path = crate::builtins::convert::to_rstr(path)?
-            .lock()
-            .to_utf8_lossy()
-            .into_owned();
-        let bytes = std::fs::read(&path)
-            .map_err(|e| crate::builtins::file::raise_errno(&e, "rb_sysopen", &path))?;
-        let d = new_digest(algo_of_class(recv));
-        crate::dispatch::send_value(
-            &d,
-            crate::Symbol::intern("update"),
-            &[RubyValue::Str(string_from_bytes(bytes, ASCII_8BIT))],
-            None,
-        )?;
-        Ok(d)
-    }
     // `#<Digest::MD5: <hexdigest>>` -- CRuby embeds the CURRENT digest, so
     // it changes as the instance is fed. `SHA2` names its width in the class
     // half instead of a space (`#<Digest::SHA2:384 ...>`), because the class
@@ -92,9 +77,6 @@ ruby_class! {
     def self."digest" cfunc (recv, arg, *_rest) {
         Ok(RubyValue::Str(string_from_bytes(class_raw(recv, arg)?, ASCII_8BIT)))
     }
-    def self."base64digest" (recv, arg, *_rest) {
-        Ok(str(base64(&class_raw(recv, arg)?)))
-    }
 
     // -- streaming instance API --
     def "update" | "<<"(recv, other) {
@@ -106,9 +88,6 @@ ruby_class! {
     }
     def "digest"(recv, data?) {
         Ok(RubyValue::Str(string_from_bytes(finalize(recv, data)?, ASCII_8BIT)))
-    }
-    def "base64digest"(recv, data?) {
-        Ok(str(base64(&finalize(recv, data)?)))
     }
     def "reset"(recv) {
         reset_buf(recv);
@@ -134,23 +113,6 @@ ruby_class! {
         let out = hex(&finalize(recv, None)?);
         reset_buf(recv);
         Ok(str(out))
-    }
-    def "base64digest!"(recv) {
-        let out = base64(&finalize(recv, None)?);
-        reset_buf(recv);
-        Ok(str(out))
-    }
-    // The INSTANCE half of `file`: feed the file's bytes in and answer self,
-    // so `Digest::SHA256.new.file(path).hexdigest` reads as one chain.
-    def "file"(recv, name) {
-        let path = crate::builtins::convert::to_rstr(name)?
-            .lock()
-            .to_utf8_lossy()
-            .into_owned();
-        let bytes = std::fs::read(&path)
-            .map_err(|e| crate::builtins::file::raise_errno(&e, "rb_sysopen", &path))?;
-        push_bytes(recv, &bytes);
-        Ok(recv.clone())
     }
     def "digest_length" | "length" | "size"(recv) {
         Ok(RubyValue::Int(digest_length_of(recv)))

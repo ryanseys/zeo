@@ -533,13 +533,6 @@ ruby_module! {
     private def "BigDecimal" cfunc (_recv, _initial, _digits?) {
         crate::ext::bigdecimal::kernel_big_decimal(__args)
     }
-    // `Digest(name)` -- CRuby writes it in `digest.rb` as a private method of
-    // `Object`, so it needs `require "digest"` there. Compiled in, it answers
-    // without one, the way `BigDecimal` above does.
-    #[cfg(feature = "ext-digest")]
-    private def "Digest" params "name" (_recv, arg) {
-        crate::ext::digest::kernel_digest(arg)
-    }
     // `Kernel#Pathname(str)` -- PRIVATE, and there with no require, because
     // ruby 4.0 loads `pathname.so` before the first line.
     module_function def "Pathname" params "path" (_recv, arg) {

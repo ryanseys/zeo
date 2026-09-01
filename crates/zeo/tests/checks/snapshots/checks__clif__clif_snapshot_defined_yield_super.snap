@@ -167,9 +167,9 @@ block19:
 block20:
     v51 = stack_addr.i64 ss2
     call fn9(v41, v51)
-    v52 = iconst.i32 400
+    v52 = iconst.i32 403
     v53 = load.i32 notrap aligned v4
-    v54 = call fn10(v0, v52, v53)  ; v52 = 400
+    v54 = call fn10(v0, v52, v53)  ; v52 = 403
     v55 = stack_addr.i64 ss3
     brif v54, block21, block22
 
@@ -425,9 +425,9 @@ block18:
 block19:
     v46 = stack_addr.i64 ss1
     v47 = iconst.i8 0
-    v48 = iconst.i32 401
+    v48 = iconst.i32 404
     v49 = load.i32 notrap aligned v4
-    v50 = call fn9(v0, v48, v49, v41, v47, v43, v1, v46)  ; v48 = 401, v47 = 0, v43 = 0
+    v50 = call fn9(v0, v48, v49, v41, v47, v43, v1, v46)  ; v48 = 404, v47 = 0, v43 = 0
     brif v50, block1, block20
 
 block20:
@@ -849,10 +849,10 @@ block27:
     v115 = iconst.i64 0
     v116 = iconst.i64 0
     v117 = symbol_value.i64 gv4
-    v118 = iconst.i32 401
+    v118 = iconst.i32 404
     v119 = iconst.i64 0
     v120 = stack_addr.i64 ss4
-    v121 = call fn11(v117, v118, v115, v119, v116, v120)  ; v118 = 401, v115 = 0, v119 = 0, v116 = 0
+    v121 = call fn11(v117, v118, v115, v119, v116, v120)  ; v118 = 404, v115 = 0, v119 = 0, v116 = 0
     brif v121, block1, block29
 
 block29:

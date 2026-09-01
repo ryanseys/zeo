@@ -1,0 +1,16 @@
+ancestors: [Digest::MD5, Digest::Base, Digest::Class, Digest::Instance, Object]
+sha2 superclass: Digest::Class
+sha384 superclass: Digest::Base
+version: "3.2.1"
+class file: [Digest::SHA256, true]
+base64digest: "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
+inst base64digest: "qZk+NkcGgWq6PiVxeFDCbJzQ2J0="
+bang: ["+44g/C5MPySMYMOb1lLzwTRymLuXe4tNWQO4UFViBgM=", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]
+file owner: Digest::Instance
+Digest fn: true
+Digest nope: LoadError: library not found for class Digest::NOPE -- digest/nope
+require nope: LoadError: cannot load such file -- digest/nope
+require sha2: false
+hexencode: "6162"
+instance module: true
+class includes: true

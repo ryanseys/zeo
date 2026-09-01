@@ -214,11 +214,11 @@ block22:
     brif v69, block26, block27
 
 block26:
-    v70 = iconst.i32 206
+    v70 = iconst.i32 209
     v71 = iconst.i64 10
     v72 = iadd.i64 v4, v71  ; v71 = 10
     v73 = iconst.i64 12
-    v74 = call fn7(v70, v72, v73)  ; v70 = 206, v73 = 12
+    v74 = call fn7(v70, v72, v73)  ; v70 = 209, v73 = 12
     jump block1
 
 block27:
@@ -398,11 +398,11 @@ block46:
     brif v165, block50, block51
 
 block50:
-    v166 = iconst.i32 206
+    v166 = iconst.i32 209
     v167 = iconst.i64 10
     v168 = iadd.i64 v4, v167  ; v167 = 10
     v169 = iconst.i64 12
-    v170 = call fn7(v166, v168, v169)  ; v166 = 206, v169 = 12
+    v170 = call fn7(v166, v168, v169)  ; v166 = 209, v169 = 12
     jump block1
 
 block51:

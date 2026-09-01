@@ -13,6 +13,7 @@ GEM
     delegate (0.6.1)
     did_you_mean (2.0.0)
     diff-lcs (1.6.2)
+    digest (3.2.1)
     drb (2.2.3)
     english (0.8.1)
     erb (6.0.7)
@@ -174,6 +175,7 @@ DEPENDENCIES
   debug (= 1.11.1)
   delegate (= 0.6.1)
   did_you_mean (= 2.0.0)
+  digest (= 3.2.1)
   drb (= 2.2.3)
   english (= 0.8.1)
   erb (= 6.0.7)
@@ -255,6 +257,7 @@ CHECKSUMS
   delegate (0.6.1) sha256=54cf946cacfe05b1c23114edd8fbd8d54e9cea7abf36b95130ab53cc88b8f7e4
   did_you_mean (2.0.0) sha256=914a5803e310063240799d547c10693a97eef906bbcbdbe23b46d60a96de765a
   diff-lcs (1.6.2) sha256=9ae0d2cba7d4df3075fe8cd8602a8604993efc0dfa934cff568969efb1909962
+  digest (3.2.1) sha256=ab3312b4e272d7d5dc41c564c86a25861a1f34ac5153374199a0b74861395947
   drb (2.2.3) sha256=0b00d6fdb50995fe4a45dea13663493c841112e4068656854646f418fda13373
   english (0.8.1) sha256=39a87c5acaf9798850c9abd2189acc1851df19aa0b58f174894d4d9427524380
   erb (6.0.7) sha256=c5ca6dc25b0ef974a44dc8f59fe847577122483b1968a38dec305c60bf91ee92

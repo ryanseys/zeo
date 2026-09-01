@@ -247,33 +247,7 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-/// Standard RFC 4648 base64 with padding -- inlined so `ext-digest` doesn't
-/// depend on the (separately gated) `ext-base64` module.
-pub(crate) fn base64(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let n = (u32::from(chunk[0]) << 16)
-            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
-            | u32::from(*chunk.get(2).unwrap_or(&0));
-        s.push(B64[(n >> 18) as usize & 63] as char);
-        s.push(B64[(n >> 12) as usize & 63] as char);
-        s.push(if chunk.len() > 1 {
-            B64[(n >> 6) as usize & 63] as char
-        } else {
-            '='
-        });
-        s.push(if chunk.len() > 2 {
-            B64[n as usize & 63] as char
-        } else {
-            '='
-        });
-    }
-    s
-}
-
-/// Shared body of the instance `hexdigest`/`digest`/`base64digest`: an optional
+/// Shared body of the instance `hexdigest`/`digest`: an optional
 /// string arg is appended, the buffer hashed, and (per CRuby) the object reset
 /// when an arg was supplied.
 pub(crate) fn finalize(recv: &RubyValue, data: Option<&RubyValue>) -> Result<Vec<u8>, Signal> {
@@ -292,36 +266,6 @@ pub(crate) fn finalize(recv: &RubyValue, data: Option<&RubyValue>) -> Result<Vec
 /// A fresh streaming digest object for `algo` (the shared `.new` body).
 pub(crate) fn new_digest(algo: Algo) -> RubyValue {
     RubyValue::Object(Arc::new(RDigest::new(algo)))
-}
-
-/// `Digest(name)` -- the function-shaped algorithm lookup CRuby writes in
-/// `digest.rb` as a private method of `Object`. `pstore` picks its checksum
-/// with `%w[SHA512 ... MD5].each { break Digest(algo) rescue LoadError }`, so
-/// the LoadError is load-bearing, not just a message.
-///
-/// CRuby reaches the class through `Digest.const_missing`, which requires
-/// `digest/<name.downcase>` and then answers the constant. Every algorithm
-/// zeo has is registered already, so the lookup IS the answer, and a name
-/// with no class gets the message that `const_missing` would have raised.
-pub(crate) fn kernel_digest(name: &RubyValue) -> Result<RubyValue, Signal> {
-    // `name.to_sym` is what CRuby writes, so a String spells the same lookup.
-    let name = match name {
-        RubyValue::Symbol(s) => s.name(),
-        RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-        other => {
-            return Err(crate::builtins::no_method_error!(
-                "undefined method 'to_sym' for {}",
-                crate::dispatch::describe_receiver(other)
-            ));
-        }
-    };
-    if let Some(found) = crate::constants::const_get(zeo_abi::DIGEST_MODULE.0, &name) {
-        return Ok(found);
-    }
-    let file = name.to_lowercase();
-    Err(crate::builtins::load_error!(
-        "library not found for class Digest::{name} -- digest/{file}"
-    ))
 }
 
 /// The algorithm an INSTANCE carries, and the digest of what it holds --
@@ -425,14 +369,6 @@ mod tests {
                 None
             )),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
-        assert_eq!(
-            t(cm("base64digest")(
-                &cls(DIGEST_SHA256_CLASS),
-                &[s("abc")],
-                None
-            )),
-            "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
         );
     }
 

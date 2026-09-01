@@ -259,7 +259,13 @@ pub fn canonical_ext_feature(feature: &str) -> &str {
     match feature {
         "cgi" | "cgi/util" | "cgi/escape" => "cgi/escape",
         "yaml" => "psych",
-        f if f == "digest" || f.starts_with("digest/") => "digest",
+        // Only the algorithm spellings ruby itself ships. A blanket
+        // `digest/*` arm made `require "digest/nope"` answer false, which
+        // starved `Digest.const_missing` of the LoadError it re-raises --
+        // and swallowed `digest/version`, a real file in the gem's lib tree.
+        "digest" | "digest/md5" | "digest/sha1" | "digest/sha2" | "digest/bubblebabble" => {
+            "digest"
+        }
         other => other,
     }
 }
@@ -452,6 +458,14 @@ pub const DIGEST_SHA512_CLASS: ClassId = ClassId(54);
 /// `BUILTINS` must stay contiguous, so the then-highest ids moved down.)
 pub const DIGEST_SHA384_CLASS: ClassId = ClassId(107);
 pub const DIGEST_SHA2_CLASS: ClassId = ClassId(108);
+/// The `digest` framework's ancestry, exactly ruby's: every fixed-width
+/// algorithm class `< Digest::Base < Digest::Class`, `SHA2 < Digest::Class`
+/// directly, and `Digest::Class` includes `Digest::Instance`. The gem's
+/// vendored Ruby half reopens `Class` and `Instance` with the file and
+/// base64digest families.
+pub const DIGEST_INSTANCE_MODULE: ClassId = ClassId(176);
+pub const DIGEST_CLASS_CLASS: ClassId = ClassId(177);
+pub const DIGEST_BASE_CLASS: ClassId = ClassId(178);
 /// `json`: the `JSON` module (parser/generator). Scaffolded (see docs/EXTENSIONS.md).
 pub const JSON_MODULE: ClassId = ClassId(55);
 /// `date`: `Date`/`DateTime`. Scaffolded.
