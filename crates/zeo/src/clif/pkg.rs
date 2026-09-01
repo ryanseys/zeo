@@ -69,9 +69,6 @@ pub(crate) fn finish_package(
             None,
         ))
     };
-    if compiler.compiles_at_runtime() {
-        return refuse("eval (the package would need the run-time compiler)");
-    }
     if compiler.hir.boxes > 0 {
         return refuse("Ruby::Box");
     }
@@ -333,6 +330,7 @@ pub(crate) fn finish_package(
                 moved_receiver_possible: compiler.moved_receiver_possible(),
                 const_names: sorted(Box::new(compiler.assigned_const_names.iter().cloned())),
                 global_names: sorted(Box::new(compiler.global_write_sites.keys().cloned())),
+                runtime_eval: compiler.compiles_at_runtime(),
             }
         },
         iface,

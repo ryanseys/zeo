@@ -438,7 +438,12 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     mark_inline_iter_sites(compiler, &main_statements, &main_local_types);
     mark_accessor_sites(compiler, &main_statements, &main_local_types);
     mark_typed_call_sites(compiler, &main_statements, &main_local_types);
-    compiler.runtime_eval = narrow_runtime_eval(compiler, &main_statements, &feature_units);
+    compiler.runtime_eval = narrow_runtime_eval(compiler, &main_statements, &feature_units)
+        || compiler
+            .hir
+            .pkg_merge
+            .iter()
+            .any(|m| m.facts.runtime_eval);
     // After `runtime_eval`: a program that compiles Ruby at run time can name
     // any class at all, and this reads that answer.
     compiler.reachable_builtins = class_reach::resolve(compiler);

@@ -337,27 +337,59 @@ fn a_host_subclass_of_a_package_class_is_refused_by_name() {
 }
 
 #[test]
-fn a_package_carrying_main_code_is_refused_by_name() {
-    // The package driver compiles an EMPTY main; a shape that would leave
-    // statements there (eval, boxes, top-level code) must refuse loudly.
-    // The cheapest such probe: an entry whose unit itself is fine but whose
-    // compile is asked to carry an eval.
+fn a_package_carrying_a_box_is_refused_by_name() {
+    // Box ids cross the boundary in code and in rows; until they rebase
+    // through the stride array, a box-bearing package refuses loudly.
     let dir = scratch("refuse");
-    let entry = dir.join("evalgem.rb");
-    std::fs::write(&entry, "class Evalgem\n  def go = eval(\"1\")\nend\n").expect("write entry");
+    let entry = dir.join("boxgem.rb");
+    std::fs::write(
+        &entry,
+        "box = Ruby::Box.new\nbox.eval_string(\"X = 1\")\nclass Boxgem\nend\n",
+    )
+    .expect("write entry");
     let out = run(zeo()
         .arg("--experimental-pkg")
-        .arg("evalgem")
+        .arg("boxgem")
         .arg("-o")
-        .arg(dir.join("evalgem.o"))
+        .arg(dir.join("boxgem.o"))
         .arg(&entry)
         .env("ZEO_CACHE", "0"));
-    assert!(!out.status.success(), "an eval-bearing package must refuse");
+    assert!(!out.status.success(), "a box-bearing package must refuse");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("a package build cannot carry eval"),
-        "the refusal names eval: {err}"
+        err.contains("a package build cannot carry Ruby::Box"),
+        "the refusal names the box: {err}"
     );
+}
+
+#[test]
+fn an_eval_bearing_package_links_against_the_hosts_compiler() {
+    // The package's manifest says it compiles at run time; the HOST has no
+    // eval of its own, so only the fact union makes it embed the run-time
+    // compiler. The snippet reads a captured local, resolves the package's
+    // own class through the runtime registry, and installs a method the
+    // host then calls dynamically.
+    let dir = scratch("evalpkg");
+    let object = build_inline_package(
+        &dir,
+        "evalgem",
+        "class Evalgem\n  def go(n) = eval(\"n * 3\")\n  def kls = eval(\"Evalgem\").name\n  def mint\n    Evalgem.class_eval(\"def minted = :minted\")\n  end\nend\n",
+    );
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"evalgem\"\ne = Evalgem.new\np e.go(4)\np e.kls\ne.mint\np e.minted\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&object)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(ok(&mut Command::new(&bin)), "12\n\"Evalgem\"\n:minted\n");
 }
 
 /// Compile any entry file as a package named `feature` into `dir`.

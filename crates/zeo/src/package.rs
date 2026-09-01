@@ -157,6 +157,10 @@ pub struct MFacts {
     pub const_names: Vec<String>,
     /// Global variables the package writes, sorted.
     pub global_names: Vec<String>,
+    /// The package can compile Ruby at run time (`eval` and its family).
+    /// A host that merges it embeds the run-time compiler and keeps every
+    /// builtin class table, exactly as its own eval would make it.
+    pub runtime_eval: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
