@@ -129,6 +129,11 @@ pub struct Scope {
     /// too, and so the property survives `mro::materialize_methods` copying
     /// the body onto a descendant.
     pub accessor: Option<AccessorShape>,
+    /// EXPERIMENTAL (M2): the exported symbol of a separately compiled
+    /// BODY this scope stands for. The scope itself is body-less (a
+    /// package interface registered it); codegen must never emit it, and a
+    /// typed direct call declares this symbol as an import instead.
+    pub extern_symbol: Option<String>,
 }
 
 /// A method whose entire body is one instance-variable access.
@@ -182,6 +187,18 @@ pub struct Compiler {
     /// have no node in this arena, so the site-based guard analysis cannot
     /// see them; the name set is consulted beside it.
     pub external_global_writers: FSet<String>,
+    /// EXPERIMENTAL (M2): the unit-walk blanket de-opt, split out for a
+    /// PACKAGE build. A lazily-loaded unit's `def` names go here instead of
+    /// [`runtime_patches`](Self::runtime_patches) when compiling a package,
+    /// so the manifest's fact vector carries only GENUINE patch sources --
+    /// a host would otherwise refuse to devirtualize every packaged method.
+    /// [`may_be_patched_at_runtime`](Self::may_be_patched_at_runtime)
+    /// unions both, so the package's own compile behaves identically.
+    pub unit_blanket_names: FSet<String>,
+    /// EXPERIMENTAL (M2): `(merged-manifest index, package-local class id)`
+    /// -> the host id its interface registration minted. The merge writes
+    /// each package's id-translation table from this map.
+    pub pkg_class_map: FMap<(u32, u32), ClassId>,
     /// EXPERIMENTAL (M0): `classes.len()` right after the shared bootstrap
     /// (builtins + exception tail) -- the first id a program or package
     /// mints for itself. Recorded by `pin_builtin_exceptions_tail`; a
@@ -661,6 +678,7 @@ impl Compiler {
                 feature_gate: None,
                 runtime_conditional: false,
                 unit: None,
+                imported_pkg: None,
             }],
             scopes: Vec::new(),
             names: Names::default(),
@@ -682,6 +700,8 @@ impl Compiler {
             global_write_sites: FMap::default(),
             const_set_sites: Vec::new(),
             runtime_patches: FSet::default(),
+            unit_blanket_names: FSet::default(),
+            pkg_class_map: FMap::default(),
             runtime_mixin_super_names: FSet::default(),
             unit_walk: false,
             unit_scopes: FSet::default(),
@@ -886,7 +906,13 @@ impl Compiler {
     /// (`HirNode::FeatureLoaded`). A feature ruby has loaded before line 1 is
     /// neither -- it is simply there.
     pub(crate) fn constant_is_positional(&self, cid: ClassId) -> bool {
-        if self.class(cid).runtime_conditional || self.class_waits_for_its_unit(cid) {
+        // An interface-registered package class installs when its unit runs
+        // -- its constant is positional exactly like a lazily-loaded unit's
+        // (the merged conceal/reveal rows are what answer the probe).
+        if self.class(cid).runtime_conditional
+            || self.class(cid).imported_pkg.is_some()
+            || self.class_waits_for_its_unit(cid)
+        {
             return true;
         }
         // Exactly the classes `clif::classes` conceals: a gated builtin this
@@ -950,7 +976,9 @@ impl Compiler {
     /// or a `private` is an ordinary expression, and resolving it would be a
     /// second analysis that still could not decide the interesting cases.
     pub fn may_be_patched_at_runtime(&self, name: &str) -> bool {
-        self.runtime_patches_any_name || self.runtime_patches.contains(name)
+        self.runtime_patches_any_name
+            || self.runtime_patches.contains(name)
+            || self.unit_blanket_names.contains(name)
     }
 
     /// Whether ANY class in this program gives `!` a body. `!` is an

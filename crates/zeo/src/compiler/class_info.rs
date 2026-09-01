@@ -359,6 +359,13 @@ pub struct ClassInfo {
     /// still that if the unit is DECLINED -- such a unit never runs, so its
     /// classes never get one.
     pub unit: Option<u32>,
+    /// EXPERIMENTAL (M2): `Some(merged-manifest index)` when this class was
+    /// registered from a package INTERFACE rather than from this arena. Its
+    /// scopes are body-less (`Scope::extern_symbol`); codegen emits no rows
+    /// or bodies for it -- the manifest merge provides both -- and a host
+    /// definition targeting it (reopen, subclass, mixin) is refused by name
+    /// until M4's patch rows land.
+    pub imported_pkg: Option<u32>,
 }
 
 impl ClassInfo {
@@ -538,6 +545,7 @@ impl Compiler {
             // and a DECLINED unit keeps it -- that unit never runs, so its
             // classes never get a name.
             unit: self.unit_walk.then_some(Self::UNIT_UNRESOLVED),
+            imported_pkg: None,
         });
         ClassId((self.classes.len() - 1) as u32)
     }

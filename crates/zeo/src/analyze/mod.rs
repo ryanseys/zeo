@@ -30,6 +30,7 @@ pub(crate) use scans::*;
 use static_guards::*;
 use top_stmts::*;
 pub(crate) mod mro;
+mod pkg_iface;
 pub(crate) mod alias_reveals;
 pub(crate) mod dyn_defs;
 pub(crate) mod redefs;
@@ -401,6 +402,11 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // A namespace the program ASKS about (`Outer.constants`) must not list a
     // class whose declaration has not run yet.
     conceal_observed_namespace_members(compiler);
+
+    // EXPERIMENTAL (M2): a host definition touching a package's class needs
+    // M4's patch rows to stay sound; until then it refuses by name, before
+    // materialization folds anything against the edit.
+    pkg_iface::refuse_host_edits_of_imports(compiler)?;
 
     mro::materialize(compiler, &main_statements)?;
 
@@ -914,6 +920,16 @@ fn mark_typed_call_sites(
     }
     for &n in main_statements {
         scan(compiler, n, main_local_types, &mut sites);
+    }
+    if crate::debug_flags::debug(crate::debug_flags::DebugFlag::TraceTyped) {
+        for (n, cid) in &sites {
+            eprintln!(
+                "typed site {:?} -> class {} {}",
+                n,
+                cid.0,
+                compiler.class(*cid).name
+            );
+        }
     }
     compiler.typed_call_sites = sites;
 }

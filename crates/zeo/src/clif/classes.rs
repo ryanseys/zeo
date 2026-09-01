@@ -851,6 +851,74 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             }
             continue;
         }
+        // EXPERIMENTAL (M2): an interface-registered class emits NOTHING --
+        // its desc rows and bodies travel in the package object and merge
+        // in `pkg::merge_rows`. What the host does own is the typed
+        // direct-call table: each plain exported body is declared as an
+        // IMPORT here, so a host call site on a packaged receiver goes
+        // direct into the package's compiled code.
+        if let Some(pi) = class.imported_pkg {
+            let m = &compiler.hir.pkg_merge[pi as usize];
+            let local = compiler
+                .pkg_class_map
+                .iter()
+                .find(|((mp, _), v)| *mp == pi && v.0 == idx as u32)
+                .map(|((_, l), _)| *l);
+            for sid in &class.own_methods {
+                let scope = compiler.scope(*sid);
+                let Some(sym) = scope.extern_symbol.as_deref() else {
+                    continue;
+                };
+                if sym.is_empty() {
+                    continue;
+                }
+                let layout = params::layout_of(&scope.params)?;
+                if !layout.plain || class.box_id != 0 {
+                    continue;
+                }
+                let tramp_sym = local.and_then(|l| {
+                    m.obj
+                        .iter()
+                        .find(|r| r.class == l && r.name == scope.name)
+                        .map(|r| r.f.clone())
+                });
+                let Some(tramp_sym) = tramp_sym else { continue };
+                let has_blk = scope.needs_block_param();
+                let body = em
+                    .module
+                    .declare_function(
+                        sym,
+                        Linkage::Import,
+                        &params::body_sig(em, layout.n_slots, has_blk),
+                    )
+                    .map_err(|e| {
+                        CodegenError::internal(format!("importing {sym}: {e}"))
+                    })?;
+                let tramp = em
+                    .module
+                    .declare_function(&tramp_sym, Linkage::Import, &params::value_fn_sig(em))
+                    .map_err(|e| {
+                        CodegenError::internal(format!("importing {tramp_sym}: {e}"))
+                    })?;
+                if crate::debug_flags::debug(crate::debug_flags::DebugFlag::TraceTyped) {
+                    eprintln!("extern typed method ({}, {})", idx, scope.name);
+                }
+                em.typed_methods.insert(
+                    (idx as u32, scope.name.clone()),
+                    super::module::MethodDecl {
+                        body,
+                        tramp,
+                        arity: scope.params.required.len(),
+                        plain: layout.plain,
+                        kw_direct: layout.kw_direct.clone(),
+                        has_blk,
+                        reopen_flagged: false,
+                        concealed: false,
+                    },
+                );
+            }
+            continue;
+        }
         let name = compiler.fq_name(crate::compiler::ClassId(idx as u32));
         // A per-BOX class shares its ruby name with the main-box one, so
         // the symbols it declares carry the box; the frame label keeps the

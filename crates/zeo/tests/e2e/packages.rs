@@ -77,6 +77,8 @@ if defined?(PURELEAF_TAG)
 else
   p :guard_after_no
 end
+p defined?(Pureleaf::Deep)
+p defined?(Pureleaf::Deep::WIDTH)
 one = Pureleaf.new
 p one.leaf
 p one.tagged(2)
@@ -96,7 +98,7 @@ end
 /// The one output every road must produce -- verified against ruby 4.0.6
 /// by the sibling differential assertion below, then held here so a drift
 /// in EITHER road fails by name.
-const WANT: &str = "nil\n:guard_before_no\ntrue\n:guard_after_yes\n\"leaf\"\n\"leaf-2\"\n:pure\n3\n7\n\"leaf-7\"\nfalse\n[:leaf, :tagged]\nNoMethodError\n";
+const WANT: &str = "nil\n:guard_before_no\ntrue\n:guard_after_yes\n\"constant\"\n\"constant\"\n\"leaf\"\n\"leaf-2\"\n:pure\n3\n7\n\"leaf-7\"\nfalse\n[:leaf, :tagged]\nNoMethodError\n";
 
 #[test]
 fn a_precompiled_gem_links_and_answers_like_the_spliced_one() {
@@ -160,9 +162,14 @@ fn a_package_is_position_independent() {
     let dir = scratch("shift");
     let object = build_package(&dir);
     let host = dir.join("host.rb");
+    // The nested-const guard runs PACKAGED-ONLY here: the eager-splice road
+    // wrongly folds a pre-require `defined?(Pureleaf::Deep)` to "constant"
+    // (a standing whole-program bug), while the interface's positional
+    // classes answer ruby's nil.
     std::fs::write(
         &host,
         "class ShiftA\n  def a = 1\nend\nclass ShiftB\n  def b = 2\nend\n\
+         p defined?(Pureleaf::Deep)\n\
          p ShiftA.new.a + ShiftB.new.b\nrequire \"pureleaf\"\n\
          p Pureleaf.new.tagged(9)\np Pureleaf.kind\np PURELEAF_PROBE\n",
     )
@@ -176,7 +183,7 @@ fn a_package_is_position_independent() {
         .arg(&host)
         .env("ZEO_CACHE", "0"));
     let out = ok(&mut Command::new(&bin));
-    assert_eq!(out, "3\n\"leaf-9\"\n:pure\n\"leaf-7\"\n");
+    assert_eq!(out, "nil\n3\n\"leaf-9\"\n:pure\n\"leaf-7\"\n");
 }
 
 #[test]
@@ -217,6 +224,116 @@ fn two_packages_link_into_one_host() {
         .env("ZEO_CACHE", "0"));
     let out = ok(&mut Command::new(&bin));
     assert_eq!(out, "\"leaf-1\"\n22\n:second\n[7, 8]\n");
+}
+
+#[test]
+fn the_manifest_interface_carries_clean_facts_and_typed_bodies() {
+    // Two halves of compile-against-interface, pinned on the manifest text:
+    // the unit-walk blanket must NOT leak into `patched_names` (a host would
+    // refuse to devirtualize every packaged method), and each plain method
+    // must name its exported body for the host's typed direct calls.
+    let dir = scratch("manifest");
+    let object = build_package(&dir);
+    let zman =
+        std::fs::read_to_string(object.with_extension("zman")).expect("read the manifest");
+    assert!(
+        zman.contains("\"patched_names\": []"),
+        "the blanket de-opt stays out of the facts: {zman}"
+    );
+    assert!(
+        zman.contains("zeo_pkg_pureleaf_m_Pureleaf_tagged"),
+        "a plain method names its exported body: {zman}"
+    );
+}
+
+/// The point of the interface: a host call site on a packaged receiver is
+/// nominated, resolves the package's imported body, and emits the guarded
+/// direct call. Read through `ZEO_DEBUG=trace-typed` -- a disassembly
+/// cannot see an address-materialized call, and the trace names each stage
+/// so a regression fails at the stage that broke.
+#[test]
+fn a_host_call_site_compiles_direct_into_the_package_body() {
+    let dir = scratch("direct");
+    let object = build_package(&dir);
+    let src = dir.join("driver.rb");
+    std::fs::write(
+        &src,
+        "require \"pureleaf\"\nclass Driver\n  def go\n    one = Pureleaf.new\n    one.tagged(3)\n  end\nend\np Driver.new.go\n",
+    )
+    .expect("write host");
+    let bin = dir.join("driver");
+    let out = run(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&object)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&src)
+        .env("ZEO_CACHE", "0")
+        .env("ZEO_DEBUG", "trace-typed"));
+    assert!(out.status.success(), "the driver host compiles");
+    let trace = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        trace.contains("extern typed method"),
+        "the package's plain bodies were declared as imports: {trace}"
+    );
+    let emitted = trace
+        .lines()
+        .any(|l| l.contains("emitting direct call for tagged"));
+    assert!(
+        emitted,
+        "the host method body's `one.tagged(3)` goes direct: {trace}"
+    );
+    assert_eq!(ok(&mut Command::new(&bin)), "\"leaf-3\"\n");
+}
+
+#[test]
+fn a_host_reopen_of_a_package_class_is_refused_by_name() {
+    let dir = scratch("reopen");
+    let object = build_package(&dir);
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"pureleaf\"\nclass Pureleaf\n  def extra = 1\nend\n",
+    )
+    .expect("write host");
+    let out = run(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&object)
+        .arg("-o")
+        .arg(dir.join("host-bin"))
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert!(!out.status.success(), "a host reopen must refuse");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("reopens `Pureleaf`"),
+        "the refusal names the reopen: {err}"
+    );
+}
+
+#[test]
+fn a_host_subclass_of_a_package_class_is_refused_by_name() {
+    let dir = scratch("subclass");
+    let object = build_package(&dir);
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"pureleaf\"\nclass Sprout < Pureleaf\nend\np Sprout.new.leaf\n",
+    )
+    .expect("write host");
+    let out = run(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&object)
+        .arg("-o")
+        .arg(dir.join("host-bin"))
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert!(!out.status.success(), "a host subclass must refuse");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("subclasses `Pureleaf`"),
+        "the refusal names the subclass: {err}"
+    );
 }
 
 #[test]

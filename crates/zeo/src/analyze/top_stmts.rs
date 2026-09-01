@@ -1562,6 +1562,11 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
     // each package's final band after its own classes -- so neither side
     // pads and neither side asserts the other's bootstrap size.
     compiler.first_program_class_id = compiler.classes.len() as u32;
+    // EXPERIMENTAL (M2): merged packages' interface classes register HERE --
+    // after the shared bootstrap band (their builtin references must cross
+    // untranslated), before any user class (so `class Mine < Packaged`
+    // resolution finds them).
+    super::pkg_iface::register_package_interfaces(compiler)?;
     Ok(())
 }
 

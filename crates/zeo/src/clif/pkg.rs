@@ -11,7 +11,9 @@ use super::module::Emitter;
 use super::statics::{CmRowSpec, DescRows, MetaRowSpec, ObjRowSpec, RegRowSpec, VisRowSpec, VmRowSpec};
 use crate::analyze::Analyzed;
 use crate::codegen_error::{CResult, CodegenError};
-use crate::package::{MClass, MCmRow, MMetaRow, MObjRow, MRegRow, MVisRow, Manifest};
+use crate::package::{
+    MClass, MCmRow, MIfaceClass, MIfaceMethod, MMetaRow, MObjRow, MRegRow, MVisRow, Manifest,
+};
 use cranelift_codegen::ir::AbiParam;
 use cranelift_codegen::ir::types;
 use cranelift_module::{FuncId, Linkage, Module};
@@ -133,6 +135,78 @@ pub(crate) fn finish_package(
     // carry the prefix); the sweep above is what catches everything else a
     // row can name.
 
+    // The compile-time interface: every program class with its OWN methods,
+    // enough for a host to register real (body-less) scopes. A method whose
+    // plain body sits in `typed_methods` names it, and that body is exported
+    // here -- the ONE addition to the row-referenced export sweep above.
+    let mut iface = Vec::new();
+    for (idx, class) in compiler
+        .classes
+        .iter()
+        .enumerate()
+        .skip(compiler.first_program_class_id as usize)
+    {
+        let cid = idx as u32;
+        // A singleton-class surrogate is minted by the singleton machinery,
+        // not registrable as an ordinary class; its ids stay unmapped and the
+        // merge assigns them a fresh band as before.
+        if compiler.is_singleton_surrogate(crate::compiler::ClassId(cid)) {
+            continue;
+        }
+        let vis_of = |v: crate::hir::Visibility| match v {
+            crate::hir::Visibility::Public => 0u8,
+            crate::hir::Visibility::Private => 1,
+            crate::hir::Visibility::Protected => 2,
+        };
+        let extract = |em: &mut Emitter,
+                           sids: &[crate::compiler::ScopeId],
+                           class_side: bool|
+         -> CResult<Vec<MIfaceMethod>> {
+            let mut out = Vec::new();
+            for sid in sids {
+                let scope = compiler.scope(*sid);
+                let layout = super::params::layout_of(&scope.params)?;
+                let body = if class_side {
+                    None
+                } else if let Some(decl) = em.typed_methods.get(&(cid, scope.name.clone())) {
+                    let f = decl.body;
+                    Some(f)
+                } else {
+                    None
+                };
+                let body = match body {
+                    Some(f) => {
+                        export(em, f)?;
+                        Some(symbol_of(em, f)?)
+                    }
+                    None => None,
+                };
+                out.push(MIfaceMethod {
+                    name: scope.name.clone(),
+                    visibility: vis_of(scope.visibility),
+                    plain: layout.plain,
+                    arity: scope.params.required.len() as u32,
+                    has_blk: scope.needs_block_param(),
+                    runtime_conditional: scope.runtime_conditional,
+                    body,
+                });
+            }
+            Ok(out)
+        };
+        let methods = extract(em, &class.own_methods, false)?;
+        let class_methods = extract(em, &class.own_class_methods, true)?;
+        iface.push(MIfaceClass {
+            id: cid,
+            parent: class.parent.map(|p| p.0),
+            is_module: class.is_module,
+            mixin_order: class.mixin_order.iter().map(|(m, p)| (m.0, *p)).collect(),
+            extends: class.extends.iter().map(|e| e.0).collect(),
+            hidden_ivars: class.hidden_ivars.clone(),
+            methods,
+            class_methods,
+        });
+    }
+
     let manifest = Manifest {
         manifest_version: crate::package::MANIFEST_VERSION,
         abi_version: zeo_abi::abi::ABI_VERSION,
@@ -244,6 +318,7 @@ pub(crate) fn finish_package(
                 global_names: sorted(Box::new(compiler.global_write_sites.keys().cloned())),
             }
         },
+        iface,
     };
     std::fs::write(&pkg.manifest_out, manifest.to_json()).map_err(|e| {
         CodegenError::internal(format!(
@@ -340,22 +415,37 @@ pub(crate) fn merge_rows(
     // (the host's own groups already start past the packages' total).
     let mut next_band = analyzed.compiler.classes.len() as u32;
     let mut next_stride: u32 = 0;
-    for m in manifests {
+    for (pi, m) in manifests.into_iter().enumerate() {
         let first = m.first_class_id;
-        let base = next_band;
-        next_band = base + m.n_class_ids;
         let stride = next_stride;
         next_stride += m.n_units;
-        // Local id -> final id. Builtins (below the package's own band)
+        // Local id -> final id. An INTERFACE-REGISTERED class already has
+        // its host id (`pkg_class_map`, minted right after the bootstrap
+        // band); only the unregistered residue -- singleton surrogates --
+        // takes a fresh id here. Builtins (below the package's own band)
         // and the u32::MAX no-caller sentinel pass through.
+        let mut fresh: std::collections::HashMap<u32, u32> = Default::default();
+        for i in 0..m.n_class_ids {
+            let local = first + i;
+            if !analyzed
+                .compiler
+                .pkg_class_map
+                .contains_key(&(pi as u32, local))
+            {
+                fresh.insert(local, next_band);
+                next_band += 1;
+            }
+        }
         let rb = |id: u32| -> u32 {
             if id == u32::MAX || id < first {
                 id
+            } else if let Some(c) = analyzed.compiler.pkg_class_map.get(&(pi as u32, id)) {
+                c.0
             } else {
-                base + (id - first)
+                fresh[&id]
             }
         };
-        let cids: Vec<u32> = (0..m.n_class_ids).map(|i| base + i).collect();
+        let cids: Vec<u32> = (0..m.n_class_ids).map(|i| rb(first + i)).collect();
         define_u32s(em, &format!("{}_cids", m.prefix), &cids)?;
         define_u32s(em, &format!("{}_unit_base", m.prefix), &[stride])?;
         if !m.callers.is_empty() {

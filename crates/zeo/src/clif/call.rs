@@ -852,6 +852,10 @@ pub(crate) fn typed_direct_send(
     let Some(&cid) = fx.an.compiler.typed_call_sites.get(&site) else {
         return Ok(None);
     };
+    let trace = crate::debug_flags::debug(crate::debug_flags::DebugFlag::TraceTyped);
+    if trace {
+        eprintln!("typed_direct_send: site {site:?} cid {} name {name}", cid.0);
+    }
     // The guard reads this class's bit out of a fixed-size bitmap; a class id
     // past its span has no bit to read, so the site keeps dispatch.
     if cid.0 >= zeo_abi::abi::PATCHED_BITS_IDS {
@@ -862,8 +866,22 @@ pub(crate) fn typed_direct_send(
         return Ok(None);
     }
     let Some(decl) = fx.em.typed_methods.get(&(cid.0, name.to_string())) else {
+        if trace {
+            eprintln!("typed_direct_send: no typed_methods entry for ({}, {name})", cid.0);
+        }
         return Ok(None);
     };
+    if trace {
+        eprintln!(
+            "typed_direct_send: decl plain={} reopen={} concealed={} arity={} args={} kw={:?}",
+            decl.plain,
+            decl.reopen_flagged,
+            decl.concealed,
+            decl.arity,
+            args.len(),
+            decl.kw_direct
+        );
+    }
     // Plain positional bodies only, count-matched -- the receiverless
     // direct path's own gate. An arity MISMATCH must raise through
     // dispatch (the runtime owns the error), not bind wrong.
@@ -878,6 +896,9 @@ pub(crate) fn typed_direct_send(
     let (body_id, has_blk) = (decl.body, decl.has_blk);
     if args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
         return Ok(None);
+    }
+    if trace {
+        eprintln!("typed_direct_send: emitting direct call for {name} on class {}", cid.0);
     }
 
     let bypass = super::expr::bypasses_visibility(fx, Some(recv));

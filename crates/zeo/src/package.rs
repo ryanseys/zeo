@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped when the manifest schema changes shape. Independent of
 /// `zeo_abi::ABI_VERSION`: the manifest is a compiler-to-compiler file.
-pub const MANIFEST_VERSION: u32 = 2;
+pub const MANIFEST_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -66,6 +66,46 @@ pub struct Manifest {
     /// What the package DOES to the shared world -- see [`MFacts`]. A host
     /// unions these with its own arena facts before any fold fires.
     pub facts: MFacts,
+    /// What the package IS, for the host's COMPILE: enough per class to
+    /// register a real `ClassInfo` (body-less scopes) so host code resolves
+    /// constants, infers receiver types, and nominates typed direct calls
+    /// into the package's exported bodies. Joined with `classes` by id.
+    pub iface: Vec<MIfaceClass>,
+}
+
+/// One class's compile-time interface. `parent`/`mixin_order`/`extends`
+/// are LOCAL ids (or builtin ids below the package band); the host
+/// re-materializes the MRO from them with the same algorithm the package
+/// ran, so the two worlds cannot disagree.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MIfaceClass {
+    pub id: u32,
+    pub parent: Option<u32>,
+    pub is_module: bool,
+    /// `(module id, prepend?)` in declaration order.
+    pub mixin_order: Vec<(u32, bool)>,
+    pub extends: Vec<u32>,
+    pub hidden_ivars: Vec<String>,
+    pub methods: Vec<MIfaceMethod>,
+    pub class_methods: Vec<MIfaceMethod>,
+}
+
+/// One own method. `body` is the exported BODY symbol when the package
+/// compiled a plain direct-callable body for it (`None` keeps the method
+/// lookup-visible but dispatch-only). The shape numbers reproduce the
+/// package's own `params::layout_of` verdict, so the host's synthesized
+/// scope cannot disagree with the compiled body's ABI.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MIfaceMethod {
+    pub name: String,
+    /// 0 = public, 1 = private, 2 = protected.
+    pub visibility: u8,
+    pub plain: bool,
+    /// Required-positional count (only meaningful when `plain`).
+    pub arity: u32,
+    pub has_blk: bool,
+    pub runtime_conditional: bool,
+    pub body: Option<String>,
 }
 
 /// The package's whole-program facts, extracted from the same `Compiler`
@@ -273,6 +313,17 @@ mod tests {
                 const_names: vec!["PURELEAF_TAG".into()],
                 ..MFacts::default()
             },
+            iface: vec![MIfaceClass {
+                id: 400,
+                parent: Some(0),
+                methods: vec![MIfaceMethod {
+                    name: "leaf".into(),
+                    plain: true,
+                    body: Some("zeo_m_Pureleaf_leaf".into()),
+                    ..MIfaceMethod::default()
+                }],
+                ..MIfaceClass::default()
+            }],
         }
     }
 

@@ -46,6 +46,11 @@ pub(crate) enum DebugFlag {
     /// whose work is two instructions -- and this prices it: compile once
     /// with and once without, and diff the binary and the bench.
     OutlineFrames,
+    /// `trace-typed`: print every typed-call-site nomination, every extern
+    /// (package-interface) method declaration, and each direct-send gate's
+    /// verdict to stderr. The instrument the packaged devirtualization
+    /// tests read -- a disassembly cannot see an address-materialized call.
+    TraceTyped,
 }
 
 const NAMES: &[(&str, DebugFlag)] = &[
@@ -59,6 +64,7 @@ const NAMES: &[(&str, DebugFlag)] = &[
     ("no-package-sweep", DebugFlag::NoPackageSweep),
     ("packaged-ids", DebugFlag::PackagedIds),
     ("outline-frames", DebugFlag::OutlineFrames),
+    ("trace-typed", DebugFlag::TraceTyped),
 ];
 
 /// Whether `flag` was named in `ZEO_DEBUG`.

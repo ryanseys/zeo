@@ -883,7 +883,15 @@ pub(super) fn register_method(
     // sat in the compiled-in load path of an rspec program and made the
     // static tables bake a visibility raise into `RSpec.describe`.
     if compiler.unit_walk {
-        compiler.runtime_patches.insert(name.clone());
+        // A PACKAGE build keeps the blanket out of `runtime_patches`, whose
+        // contents become the manifest's fact vector -- the split set feeds
+        // `may_be_patched_at_runtime` all the same. See
+        // `Compiler::unit_blanket_names`.
+        if compiler.hir.pkg_build.is_some() {
+            compiler.unit_blanket_names.insert(name.clone());
+        } else {
+            compiler.runtime_patches.insert(name.clone());
+        }
     }
     Ok(compiler.push_scope(Scope {
         name,
@@ -917,6 +925,7 @@ pub(super) fn register_method(
                 .has_flag(n, crate::hir::NodeFlag::RUBY2_KEYWORDS)
         }),
         accessor,
+        extern_symbol: None,
     }))
 }
 
