@@ -26,7 +26,7 @@ BUNDLE ?= bundle
 # be half-declared: the old one omitted `ci-features` and `ci-size`, and a
 # file of either name would have turned that target into a silent no-op.
 .PHONY: all help deps test test-jit test-aot test-memcheck \
-        test-typed test-packaged test-milestones test-config test-platform test-size \
+        test-typed test-packaged test-milestones test-config test-platform test-size build-pure \
         test-smoke test-all lint ratchet no-big-files hygiene check-generated tool-versions ci-local \
         check-batch gate bench pgo install linux clean
 
@@ -174,6 +174,13 @@ test-typed: all  ## every golden twice, with typed emission on and off, diffed
 # compiles gems as packages, the leg widens to true spliced-vs-packaged.
 test-packaged: all  ## every golden twice, with packaged id codegen on and off, diffed
 	ZEO_GOLDEN_DIFF_PKGIDS=1 $(NEXTEST) -p zeo --test goldens --no-fail-fast
+
+# The pure-stdlib build: no C-extension machinery, and the lane-P gems
+# served by their pure-Ruby trees instead of the Rust extensions. This leg
+# is the standing measurement of what deleting the C API would buy, and the
+# proof that the dual-build switch's OFF side keeps compiling.
+build-pure:  ## the pure-stdlib feature set compiles
+	cargo build -p zeo --no-default-features --features pure-stdlib
 
 # The umbrella entry points, one named case each (tests/milestones/). Each
 # splices a whole library's require graph, so this is minutes rather than
