@@ -226,16 +226,23 @@ pub fn author_gem(dir: &Path) -> Result<AuthorGem, String> {
         .version
         .clone()
         .ok_or_else(|| format!("{} sets no version", gemspec.display()))?;
-    let feature = spec.name.replace('-', "/");
-    let entry = spec
-        .require_paths
-        .iter()
-        .map(|rp| dir.join(rp).join(format!("{feature}.rb")))
-        .find(|p| p.is_file())
+    // Two entry spellings, the same probe `store_gems` runs: the slash
+    // convention (net-http -> net/http.rb) and the name verbatim (open-uri
+    // ships open-uri.rb).
+    let (feature, entry) = [spec.name.replace('-', "/"), spec.name.clone()]
+        .into_iter()
+        .find_map(|feature| {
+            spec.require_paths
+                .iter()
+                .map(|rp| dir.join(rp).join(format!("{feature}.rb")))
+                .find(|p| p.is_file())
+                .map(|p| (feature, p))
+        })
         .ok_or_else(|| {
             format!(
-                "`{}` has no {feature}.rb under its require paths",
-                spec.name
+                "`{}` has no {}.rb under its require paths",
+                spec.name,
+                spec.name.replace('-', "/")
             )
         })?;
     Ok(AuthorGem {

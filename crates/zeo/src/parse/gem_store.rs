@@ -212,13 +212,24 @@ pub(crate) fn store_gems(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<Vec
                 row.skip = Some("ships a prebuilt native object".to_string());
             }
             NativeKind::No => {
-                let entry = spec
-                    .require_paths
-                    .iter()
-                    .map(|rp| gem_dir.join(rp).join(format!("{}.rb", row.feature)))
-                    .find(|p| p.is_file());
+                // Two entry spellings: the slash convention (net-http ->
+                // net/http.rb) and the name verbatim (open-uri ships
+                // open-uri.rb). The feature follows whichever file exists,
+                // because it is the require string the artifact answers to.
+                let entry = [row.feature.clone(), locked.name.clone()]
+                    .into_iter()
+                    .find_map(|feature| {
+                        spec.require_paths
+                            .iter()
+                            .map(|rp| gem_dir.join(rp).join(format!("{feature}.rb")))
+                            .find(|p| p.is_file())
+                            .map(|p| (feature, p))
+                    });
                 match entry {
-                    Some(e) => row.entry = Some(e),
+                    Some((feature, e)) => {
+                        row.feature = feature;
+                        row.entry = Some(e);
+                    }
                     None => {
                         row.skip =
                             Some(format!("no {}.rb under its require paths", row.feature));
