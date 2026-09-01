@@ -77,17 +77,33 @@ pub fn key(source: &str, opts: &crate::CompileOptions) -> String {
     format!("{:016x}", h.finish())
 }
 
-/// What tells one zeo build from another: the executable's path, length and
-/// modification time. A rebuilt compiler emits different code, and in a dev
-/// tree that happens many times a day.
-fn zeo_identity() -> (String, u64, Option<std::time::SystemTime>) {
-    let exe = std::env::current_exe().unwrap_or_default();
-    let meta = std::fs::metadata(&exe).ok();
+/// One file's identity for the key: path, length and modification time.
+type FileId = (String, u64, Option<std::time::SystemTime>);
+
+fn file_identity(path: &Path) -> FileId {
+    let meta = std::fs::metadata(path).ok();
     (
-        exe.to_string_lossy().into_owned(),
+        path.to_string_lossy().into_owned(),
         meta.as_ref().map_or(0, std::fs::Metadata::len),
         meta.and_then(|m| m.modified().ok()),
     )
+}
+
+/// What tells one zeo build from another: the executable AND the runtime
+/// archive its programs link, each by path, length and modification time.
+///
+/// Both halves matter. A rebuilt compiler emits different code, and in a dev
+/// tree that happens many times a day. A rebuilt ARCHIVE changes every
+/// program's runtime WITHOUT touching the compiler binary -- a zeo-rt body
+/// fix leaves the projected class surface identical, so cargo never relinks
+/// `zeo` -- and a key without it kept serving programs linked against the
+/// old runtime. `runtime_archive` in a dev tree also brings the archive up
+/// to date first, so the identity hashed here is the one a fresh compile
+/// would link.
+fn zeo_identity() -> (FileId, FileId) {
+    let exe = std::env::current_exe().unwrap_or_default();
+    let archive = crate::backend::link::runtime_archive().unwrap_or_default();
+    (file_identity(&exe), file_identity(&archive))
 }
 
 /// Environment a COMPILE reads, sorted so the key is stable.

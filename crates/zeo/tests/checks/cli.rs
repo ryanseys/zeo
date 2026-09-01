@@ -473,6 +473,57 @@ fn the_cache_can_be_turned_off() {
     let _ = std::fs::remove_dir_all(&cache);
 }
 
+/// A rebuilt RUNTIME ARCHIVE misses the cache. A zeo-rt body fix can leave
+/// the compiler binary untouched (the projected class surface is identical,
+/// so cargo never relinks `zeo`), and a key on the exe alone kept serving
+/// programs linked against the OLD runtime -- the one staleness no source
+/// manifest can see. The archive's identity is in the key now; this pins it.
+#[test]
+fn a_rebuilt_runtime_archive_misses_the_cache() {
+    let dir = scratch("cache-archive");
+    let rb = write(&dir, "t.rb", "puts 9\n");
+    let cache = std::env::temp_dir().join(format!("zeo-cli-cache-arch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    std::fs::create_dir_all(&cache).expect("create the cache dir");
+
+    let run = |cache: &Path| {
+        let out = zeo()
+            .env("ZEO_PROGRAM_CACHE", cache)
+            .arg(&rb)
+            .output()
+            .expect("zeo runs");
+        assert_eq!(stdout_of(&out).trim(), "9");
+    };
+    let entries = |cache: &Path| std::fs::read_dir(cache).expect("readable").count();
+    run(&cache);
+    assert_eq!(entries(&cache), 1);
+    run(&cache);
+    assert_eq!(entries(&cache), 1, "an unchanged build must hit");
+
+    // A fresh modification time is what a runtime rebuild leaves behind.
+    // Bumped FORWARD (so the dev-tree staleness rule never triggers a real
+    // cargo build) and restored after, to keep the window where concurrent
+    // tests compute a different key as small as possible.
+    let archive = Path::new(env!("CARGO_BIN_EXE_zeo"))
+        .parent()
+        .expect("the zeo binary has a parent")
+        .join("libzeo.a");
+    let original = std::fs::metadata(&archive)
+        .and_then(|m| m.modified())
+        .expect("the archive has a modification time");
+    let f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&archive)
+        .expect("open the archive");
+    f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(2))
+        .expect("bump the archive's mtime");
+    run(&cache);
+    let after = entries(&cache);
+    let _ = f.set_modified(original);
+    assert_eq!(after, 2, "a rebuilt runtime archive must miss");
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
 /// An explicit `--backend` means the caller chose how to run, so the cache
 /// stays out of it. The golden harness relies on this: it spawns every one
 /// of its thousands of children with `--backend jit`.
