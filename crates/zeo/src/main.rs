@@ -168,6 +168,8 @@ enum Report {
 /// the wrapper prints and exits for.
 enum Parsed {
     Run(Box<Args>),
+    /// `zeo install`: precompile the project's locked gems into the store.
+    Install(InstallCmd),
     /// `-h`/`--help` (exit 0).
     Help,
     /// `-v`/`--version` (exit 0).
@@ -175,6 +177,18 @@ enum Parsed {
     /// Bare `zeo`: help, but exit 1 -- an invocation that compiled nothing
     /// must not look like success to a caller that expected an artifact.
     NoInput,
+}
+
+/// `zeo install [--bundle-gemfile <path>] [--gem-path <dir>]... [names...]`.
+///
+/// The verb precompiles the lockfile's gems into the store tier; it never
+/// runs Bundler (that is `zeo bundle install`) and never touches the
+/// network. Bare names narrow it to those gems.
+#[derive(Debug, Default, PartialEq)]
+struct InstallCmd {
+    gemfile: Option<PathBuf>,
+    gem_paths: Vec<PathBuf>,
+    names: Vec<String>,
 }
 
 /// The environment `parse_args_from` consults -- captured as a value so the
@@ -241,9 +255,15 @@ subcommands:
                         both ask rubygems for an INSTALLED bundler gem,
                         and zeo carries bundler as a library. See
                         docs/COMPATIBILITY.md.
-  install <args...>     `bundle install` under its own name, with the same
-                        arguments -- the verb the rest of the ecosystem
-                        spells the same way
+  install [names...]    precompile the project's locked gems into the gem
+                        store, so later compiles link them instead of
+                        recompiling them (bare names narrow it). Reads
+                        Gemfile.lock and the installed store; never runs
+                        Bundler and never touches the network -- run
+                        `zeo bundle install` first. --bundle-gemfile and
+                        --gem-path (or their env spellings) relocate it; a
+                        gem the package tier cannot carry is reported and
+                        keeps compiling from source
                         A script really named `build`, `gem`, `bundle` or
                         `install` still runs as `zeo ./build`; a verb never
                         depends on what is in the current directory.
@@ -379,6 +399,11 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     } else {
         argv
     };
+    // `zeo install`: zeo's own verb, with its own small flag set -- it is
+    // not a program run, so none of ruby's parsing rules apply to it.
+    if !build_verb && argv.first().map(String::as_str) == Some("install") {
+        return parse_install(&argv[1..]).map(Parsed::Install);
+    }
     // A subcommand becomes `-e <driver> -- <its own arguments>`, and the `--`
     // is what keeps them its own: without it a `zeo gem --version` would read
     // as zeo's `--version` rather than rubygems'.
@@ -838,7 +863,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         report,
         store_from_flags: gem_paths_from_flag || gemfile_from_flag,
         gem_paths,
-        lockfile: gemfile.map(derive_lockfile),
+        lockfile: gemfile.map(zeo::project::derive_lockfile),
         program_args,
         emit_clif,
         check_syntax,
@@ -847,6 +872,40 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         backend,
         log_level,
     })))
+}
+
+/// The install verb's own flags: a store, a Gemfile, gem names. `-h` gets
+/// the main help; anything else is refused by name.
+fn parse_install(argv: &[String]) -> Result<InstallCmd, String> {
+    let mut cmd = InstallCmd::default();
+    let mut iter = argv.iter();
+    while let Some(arg) = iter.next() {
+        let (name, inline) = match arg.split_once('=') {
+            Some((n, v)) => (n, Some(v.to_string())),
+            None => (arg.as_str(), None),
+        };
+        let mut value = |flag: &str| -> Result<String, String> {
+            match inline.clone() {
+                Some(v) => Ok(v),
+                None => iter
+                    .next()
+                    .cloned()
+                    .ok_or(format!("{flag} requires a value")),
+            }
+        };
+        match name {
+            "--bundle-gemfile" => cmd.gemfile = Some(PathBuf::from(value("--bundle-gemfile")?)),
+            "--gem-path" => cmd.gem_paths.push(PathBuf::from(value("--gem-path")?)),
+            _ if name.starts_with('-') => {
+                return Err(format!(
+                    "invalid option for zeo install: {name} (it takes --bundle-gemfile, \
+                     --gem-path, and gem names)"
+                ));
+            }
+            _ => cmd.names.push(arg.clone()),
+        }
+    }
+    Ok(cmd)
 }
 
 /// Every `-W:[no-]<category>` ruby 4.0.6 accepts. zeo emits none of these
@@ -881,23 +940,6 @@ fn warn_flag(arg: &str) -> Result<(), String> {
     }
 }
 
-/// The lockfile a Gemfile path names, by bundler's own rules: `Gemfile` ->
-/// `Gemfile.lock`, `gems.rb` -> `gems.locked`, anything else gets `.lock`
-/// appended; a path that already IS a lockfile is taken as given.
-fn derive_lockfile(gemfile: PathBuf) -> PathBuf {
-    let name = gemfile
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    if name.ends_with(".lock") || name.ends_with(".locked") {
-        gemfile
-    } else if name == "gems.rb" {
-        gemfile.with_file_name("gems.locked")
-    } else {
-        gemfile.with_file_name(format!("{name}.lock"))
-    }
-}
-
 /// The default package-dir candidates appended AFTER any explicit
 /// `--gems` dirs (explicit dirs get first-name-wins priority): the
 /// input file's sibling `gems/` (project-local gems).
@@ -928,6 +970,7 @@ fn print_help() {
 fn run() -> Result<(), MainError> {
     let mut args = match parse_args()? {
         Parsed::Run(args) => args,
+        Parsed::Install(cmd) => return run_install(cmd),
         Parsed::Help => {
             print_help();
             return Ok(());
@@ -1029,6 +1072,21 @@ fn run() -> Result<(), MainError> {
         }
         None => None,
     };
+    // The store tier: a locked project's precompiled artifacts link instead
+    // of recompiling. Only a compile with an ACTIVE store consults it (the
+    // same pairing rule the store roots follow), a package build never does
+    // (a package compiles alone), and an artifact the merge later refuses
+    // drops back to a source compile with a warning.
+    if package_build.is_none()
+        && !args.gem_paths.is_empty()
+        && let Some(lock) = &args.lockfile
+    {
+        for artifact in zeo::project::store_linkable(lock, &args.gem_paths) {
+            if !args.with_packages.contains(&artifact) {
+                args.with_packages.push(artifact);
+            }
+        }
+    }
     let use_packages: Vec<zeo::package::UsePackage> = args
         .with_packages
         .iter()
@@ -1209,6 +1267,121 @@ fn run() -> Result<(), MainError> {
 /// writes the raw object with the manifest beside it. A cache write that
 /// fails (a read-only cache directory) degrades to "compiled, not cached"
 /// with a log line, never to a failed build.
+/// `zeo install`: precompile the project's locked gems into the store tier.
+///
+/// Resolution is Bundler's, already written down -- this verb reads the
+/// lockfile and the installed store, compiles each gem it can to a
+/// `.zeopkg` (through the machine cache), and places the artifact at its
+/// store home. It never runs Bundler and never touches the network; a
+/// missing store says to run `zeo bundle install` first. A gem the
+/// package tier cannot carry is a `skip` or `declined` row, never an
+/// error: its require simply keeps compiling from source.
+fn run_install(cmd: InstallCmd) -> Result<(), MainError> {
+    init_tracing(None);
+    zeo::home::ensure_resolved()?;
+    let env = Env::from_process();
+    let gemfile = cmd
+        .gemfile
+        .or_else(|| env.bundle_gemfile.as_ref().map(PathBuf::from));
+    let project = zeo::project::locate(
+        gemfile,
+        cmd.gem_paths,
+        std::env::var_os("GEM_PATH").as_deref(),
+    )?;
+    let rows = zeo::project::survey(&project)?;
+    for name in &cmd.names {
+        if !rows.iter().any(|r| &r.name == name) {
+            return Err(format!(
+                "`{name}` is not a gem in {}",
+                project.lockfile.display()
+            )
+            .into());
+        }
+    }
+    zeo::memguard::arm("install");
+    let (mut installed, mut cached_only, mut skipped, mut declined) = (0u32, 0u32, 0u32, 0u32);
+    for row in &rows {
+        if !cmd.names.is_empty() && !cmd.names.contains(&row.name) {
+            continue;
+        }
+        let label = format!("{} {}", row.name, row.version);
+        if let Some(reason) = &row.skip {
+            println!("     skip {label} ({reason})");
+            skipped += 1;
+            continue;
+        }
+        let (entry, home) = (
+            row.entry.as_ref().expect("no skip means an entry"),
+            row.home.as_ref().expect("an entry has a home"),
+        );
+        match install_one(&row.feature, entry, home) {
+            Ok(true) => {
+                println!("  install {label}");
+                installed += 1;
+            }
+            Ok(false) => {
+                println!("    cache {label} (store not writable; kept in the machine cache)");
+                cached_only += 1;
+            }
+            Err(reason) => {
+                println!("  decline {label} ({reason})");
+                declined += 1;
+            }
+        }
+    }
+    println!(
+        "zeo install: {installed} installed, {cached_only} cached, {skipped} skipped, \
+         {declined} declined"
+    );
+    Ok(())
+}
+
+/// Compile one gem to a `.zeopkg` and place it at its store `home`.
+/// `Ok(false)` = built, but the store is read-only (the machine cache still
+/// holds it). `Err` carries the refusal's first line.
+fn install_one(
+    feature: &str,
+    entry: &std::path::Path,
+    home: &std::path::Path,
+) -> Result<bool, String> {
+    let staging = std::env::temp_dir().join(format!(
+        "zeo-install-{}-{}.zeopkg",
+        std::process::id(),
+        zeo::package::fnv64(home.as_os_str().as_encoded_bytes())
+    ));
+    let root = entry
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .canonicalize()
+        .map_err(|e| format!("resolving {}: {e}", entry.display()))?;
+    let opts = zeo::CompileOptions {
+        input_path: Some(entry.to_path_buf()),
+        file_name: Some(PathBuf::from(format!("<package {feature}>"))),
+        mode: zeo::CompileMode::Program,
+        package_build: Some(zeo::package::PackageBuild {
+            entry: entry.to_path_buf(),
+            feature: feature.to_string(),
+            manifest_out: staging.with_extension("zman"),
+            root,
+        }),
+        ..Default::default()
+    };
+    // The package build's MAIN source is synthetic and empty; the entry
+    // rides in as a feature unit (see the host compile above).
+    let first_line = |e: MainError| {
+        let text = match e {
+            MainError::Plain(m) => m,
+            MainError::Compile(e) => e.to_string(),
+        };
+        text.lines().next().unwrap_or_default().to_string()
+    };
+    build_package("", &opts, &staging).map_err(first_line)?;
+    let placed = zeo::package::store_install(home, &staging)
+        .map_err(|e| format!("installing {}: {e}", home.display()))?;
+    let _ = std::fs::remove_file(&staging);
+    Ok(placed)
+}
+
 fn build_package(
     source: &str,
     opts: &zeo::CompileOptions,
@@ -1515,15 +1688,19 @@ mod tests {
         // some installs.
         assert!(matches!(ok(&["bundler", "-v"]).source, Source::Eval(_)));
 
-        // `zeo install` is `bundle install`, and KEEPS its own name: Bundler
-        // dispatches on it, so dropping it the way `bundle` drops its would
-        // run bundler's default command instead.
-        let install = ok(&["install", "--local"]);
-        match &install.source {
-            Source::Eval(code) => assert!(code.contains("Bundler::CLI.start")),
-            _ => panic!("expected an eval source"),
+        // `zeo install` is zeo's OWN verb now (precompile the project's
+        // gems); Bundler's install is spelled `zeo bundle install`.
+        match parse(&["install", "rack", "--gem-path", "/s"]).expect("parses") {
+            Parsed::Install(cmd) => {
+                assert_eq!(cmd.names, ["rack"]);
+                assert_eq!(cmd.gem_paths, [PathBuf::from("/s")]);
+            }
+            _ => panic!("expected Parsed::Install"),
         }
-        assert_eq!(install.program_args, ["install", "--local"]);
+        assert!(
+            err(&["install", "--local"]).contains("invalid option for zeo install"),
+            "a Bundler flag no longer reaches Bundler through this verb"
+        );
 
         // The verb is only a verb in FIRST position. A file really called
         // `gem` is reachable, and a file whose name merely contains it is

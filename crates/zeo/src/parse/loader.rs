@@ -182,6 +182,12 @@ pub(super) struct Loader {
     /// site inline would run the body there, at a position the guarded site
     /// (which comes first) has already passed.
     unit_only_targets: HashSet<PathBuf>,
+    /// Every feature spelling a merged package carries (its own feature
+    /// plus each of its units'). The resolver answers "not on disk" for
+    /// these, so no provider -- a gem store's source tree above all -- can
+    /// splice code the package already compiled: the require stays a call
+    /// and the package's merged unit rows answer it at run time.
+    packaged_features: HashSet<String>,
     /// External-store gems zeo can't provide, `name -> reason`:
     /// a `require` of one fails with the store's precise reason (which native
     /// layout, why) instead of the generic "cannot load such file".
@@ -409,6 +415,13 @@ pub(super) fn lower_main_file(
         in_unit_sweep: false,
         single_units: HashMap::new(),
         unit_only_targets: HashSet::new(),
+        packaged_features: hir
+            .pkg_merge
+            .iter()
+            .flat_map(|m| {
+                std::iter::once(m.feature.clone()).chain(m.units.iter().map(|(f, _)| f.clone()))
+            })
+            .collect(),
         store_exclusions: HashMap::new(),
         native_exts: HashMap::new(),
         store_overrides: HashSet::new(),

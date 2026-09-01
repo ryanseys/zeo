@@ -108,6 +108,100 @@ fn create_makefile_names(text: &str) -> Vec<String> {
     out
 }
 
+/// One locked RubyGems-store gem, seen through the package tier's eyes:
+/// where its tree lives, which file its `require` reaches, and why it
+/// cannot precompile when it cannot.
+pub(crate) struct StoreGem {
+    pub name: String,
+    pub version: String,
+    /// The require spelling for the gem itself (`io-console` -> `io/console`).
+    pub feature: String,
+    /// The store that supplied the gem (`gem env gemdir` shape).
+    pub store: PathBuf,
+    /// The file `require "<feature>"` reaches, when the gem follows the
+    /// convention. `None` only when `skip` says why.
+    pub entry: Option<PathBuf>,
+    /// Why the package tier passes this gem over (`None` = precompilable).
+    pub skip: Option<String>,
+}
+
+/// The package tier's view of `lockfile` against `stores`: every
+/// RubyGems-sourced gem, either precompilable (an entry to compile) or
+/// carrying the reason it is not. Git- and path-sourced gems are not
+/// listed: their trees live outside the store the artifact home is keyed
+/// on.
+pub(crate) fn store_gems(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<Vec<StoreGem>> {
+    let mut out = Vec::new();
+    for locked in &lockfile.gems {
+        if locked.source != GemSource::Rubygems {
+            continue;
+        }
+        let feature = locked.name.replace('-', "/");
+        let mut row = StoreGem {
+            name: locked.name.clone(),
+            version: locked.version.clone(),
+            feature,
+            store: PathBuf::new(),
+            entry: None,
+            skip: None,
+        };
+        let mut found = None;
+        let mut saw_precompiled = false;
+        for store in stores {
+            match locate_gemspec(&store.join("specifications"), &locked.name, &locked.version) {
+                Located::Source(path) => {
+                    found = Some((path, store));
+                    break;
+                }
+                Located::PrecompiledOnly => saw_precompiled = true,
+                Located::Absent => {}
+            }
+        }
+        let (gemspec_path, store) = match found {
+            Some(hit) => hit,
+            None => {
+                row.skip = Some(if saw_precompiled {
+                    "only a precompiled platform gem is installed".to_string()
+                } else if crate::lower::features::zeo_provides(&locked.name) {
+                    "not in the store; zeo's bundled copy answers".to_string()
+                } else {
+                    "not installed in the store".to_string()
+                });
+                out.push(row);
+                continue;
+            }
+        };
+        let spec = super::gemspec::parse_file(&gemspec_path)?;
+        let version = spec.version.as_deref().unwrap_or(&locked.version);
+        let gem_dir = store.join("gems").join(format!("{}-{version}", spec.name));
+        row.store = store.clone();
+        match native_kind(&spec, &gem_dir) {
+            NativeKind::Buildable => {
+                row.skip = Some("ships a native extension".to_string());
+            }
+            NativeKind::PrecompiledAbi => {
+                row.skip = Some("ships a prebuilt native object".to_string());
+            }
+            NativeKind::No => {
+                let entry = spec
+                    .require_paths
+                    .iter()
+                    .map(|rp| gem_dir.join(rp).join(format!("{}.rb", row.feature)))
+                    .find(|p| p.is_file());
+                match entry {
+                    Some(e) => row.entry = Some(e),
+                    None => {
+                        row.skip =
+                            Some(format!("no {}.rb under its require paths", row.feature));
+                    }
+                }
+            }
+        }
+        out.push(row);
+    }
+    Ok(out)
+}
+
 /// Resolve `lockfile`'s gems against the `stores` directories (each a `gem
 /// env gemdir` -- `GEM_PATH` is a list, probed in order, first hit per gem
 /// wins). Never fails on an individual gem -- an unusable one becomes a

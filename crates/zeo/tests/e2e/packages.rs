@@ -1033,3 +1033,113 @@ fn target_of(manifest: &str) -> String {
         .expect("a manifest names its target")
         .to_string()
 }
+
+/// The store tier end to end: `zeo install` precompiles a locked gem into
+/// the gem store, and a store-active compile LINKS that artifact instead
+/// of splicing the gem's source. The proof is a poisoned source tree --
+/// only the artifact carries the working body, so the answer can only
+/// come from the link. Removing the artifact flips the same compile back
+/// to the source splice, which is the fallback contract.
+#[test]
+fn zeo_install_populates_the_store_and_a_compile_links_it() {
+    let dir = scratch("install");
+    let store = dir.join("store");
+    let gem_lib = store.join("gems/tinygem-1.0.0/lib");
+    std::fs::create_dir_all(store.join("specifications")).expect("mkdir");
+    std::fs::create_dir_all(&gem_lib).expect("mkdir");
+    std::fs::write(
+        store.join("specifications/tinygem-1.0.0.gemspec"),
+        "Gem::Specification.new do |s|\n  s.name = \"tinygem\"\n  s.version = \"1.0.0\"\n  \
+         s.require_paths = [\"lib\"]\nend\n",
+    )
+    .expect("write gemspec");
+    let good = "class Tinygem\n  def greet = \"hello from tinygem\"\nend\n";
+    std::fs::write(gem_lib.join("tinygem.rb"), good).expect("write lib");
+    let proj = dir.join("proj");
+    std::fs::create_dir_all(&proj).expect("mkdir");
+    std::fs::write(
+        proj.join("Gemfile"),
+        "source \"https://rubygems.org\"\ngem \"tinygem\"\n",
+    )
+    .expect("write Gemfile");
+    std::fs::write(
+        proj.join("Gemfile.lock"),
+        "GEM\n  remote: https://rubygems.org/\n  specs:\n    tinygem (1.0.0)\n\nPLATFORMS\n  \
+         ruby\n\nDEPENDENCIES\n  tinygem\n\nBUNDLED WITH\n   4.0.18\n",
+    )
+    .expect("write lock");
+    std::fs::write(proj.join("app.rb"), "require \"tinygem\"\nputs Tinygem.new.greet\n")
+        .expect("write app");
+
+    let report = ok(zeo()
+        .current_dir(&proj)
+        .arg("install")
+        .arg("--gem-path")
+        .arg(&store)
+        .env("ZEO_CACHE", "0"));
+    assert!(report.contains("install tinygem 1.0.0"), "report: {report}");
+    let artifacts: Vec<PathBuf> = walk_files(&store.join("zeo"));
+    assert_eq!(
+        artifacts.len(),
+        1,
+        "one artifact at its store home: {artifacts:?}"
+    );
+    assert!(artifacts[0].ends_with("tinygem-1.0.0/pkg.zeopkg"));
+
+    // Only the ARTIFACT has the working body now.
+    std::fs::write(gem_lib.join("tinygem.rb"), "raise \"the SOURCE was spliced\"\n")
+        .expect("poison lib");
+    let compile = |out: &str| {
+        let bin = proj.join(out);
+        zeo()
+            .current_dir(&proj)
+            .arg("build")
+            .arg("app.rb")
+            .arg("--gem-path")
+            .arg(&store)
+            .arg("--bundle-gemfile")
+            .arg("Gemfile")
+            .arg("-o")
+            .arg(&bin)
+            .env("ZEO_CACHE", "0")
+            .output()
+            .expect("spawn");
+        bin
+    };
+    let linked = compile("app-linked");
+    let out = Command::new(&linked).output().expect("run");
+    assert!(
+        out.status.success(),
+        "the artifact answers: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hello from tinygem\n");
+
+    // No artifact -> the same compile splices the source again.
+    std::fs::remove_file(&artifacts[0]).expect("remove artifact");
+    let spliced = compile("app-spliced");
+    let out = Command::new(&spliced).output().expect("run");
+    assert!(!out.status.success(), "the poisoned source raises");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("the SOURCE was spliced"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Every file under `root`, recursively.
+fn walk_files(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(walk_files(&path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
+}

@@ -229,7 +229,7 @@ pub(crate) fn finish_package(
     let manifest = Manifest {
         manifest_version: crate::package::MANIFEST_VERSION,
         abi_version: zeo_abi::abi::ABI_VERSION,
-        compiler: format!("zeo {}", env!("CARGO_PKG_VERSION")),
+        compiler: crate::package::compiler_identity(),
         target: em.module.isa().triple().to_string(),
         source_digest,
         iface_hash,
@@ -408,7 +408,7 @@ pub(crate) fn merge_rows(
     // anything else is a refusal that names the package, which the
     // drop-to-splice tier turns into a source recompile when it can.
     let host_triple = em.module.isa().triple().to_string();
-    let host_compiler = format!("zeo {}", env!("CARGO_PKG_VERSION"));
+    let host_compiler = crate::package::compiler_identity();
     for m in &manifests {
         if m.target != host_triple {
             return Err(CodegenError::unsupported(

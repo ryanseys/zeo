@@ -290,6 +290,13 @@ pub fn store_install(
     }
 }
 
+/// The identity a manifest's `compiler` field carries. Decision 7: no
+/// stable ABI tag exists yet, so an EXACT match on this string is the
+/// whole acceptance contract.
+pub fn compiler_identity() -> String {
+    format!("zeo {}", env!("CARGO_PKG_VERSION"))
+}
+
 /// FNV-1a, the same shape the program cache uses. A hash, not a
 /// signature: it guards against a stale artifact, not an adversary.
 pub fn fnv64(bytes: &[u8]) -> u64 {

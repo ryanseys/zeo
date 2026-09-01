@@ -1,5 +1,5 @@
-//! `zeo gem`, `zeo bundle`, `zeo install`: the vendored libraries' own
-//! binstubs, as programs zeo compiles and runs.
+//! `zeo gem` and `zeo bundle`: the vendored libraries' own binstubs, as
+//! programs zeo compiles and runs.
 //!
 //! In the library rather than beside the argument parser because the parity
 //! probe (`tests/e2e/bundler_parity.rs`) runs the SAME driver text under
@@ -32,16 +32,13 @@ pub const BUNDLE_DRIVER: &str = "require \"bundler\"\nrequire \"bundler/friendly
 /// The rule is deliberately not "unless a file by that name exists": that
 /// would make the same command line mean different things in different
 /// directories. A script really called `gem` still runs as `zeo ./gem`.
-///
-/// `install` is `bundle install` under its own name -- the verb people reach
-/// for, and the one every other language's tool spells the same way. It keeps
-/// its name so Bundler still sees the subcommand it dispatches on; the other
-/// two name the library, which its `ARGV` must not contain.
+/// Both rows name the library, which its own `ARGV` must not contain.
+/// (`zeo install` is NOT a row here: it is zeo's own verb -- precompile
+/// the project's gems -- handled beside `build` in the argument parser.)
 pub fn driver(name: Option<&str>) -> Option<(&'static str, bool)> {
     match name? {
         "gem" => Some((GEM_DRIVER, false)),
         "bundle" | "bundler" => Some((BUNDLE_DRIVER, false)),
-        "install" => Some((BUNDLE_DRIVER, true)),
         _ => None,
     }
 }

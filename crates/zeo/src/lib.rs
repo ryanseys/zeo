@@ -72,6 +72,7 @@ mod guard_fold;
 pub(crate) mod names;
 pub mod parse;
 pub mod progcache;
+pub mod project;
 pub mod ruby_features;
 pub mod subcommand;
 pub mod types;

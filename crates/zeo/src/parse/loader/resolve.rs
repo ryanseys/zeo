@@ -243,6 +243,13 @@ impl Loader {
         if is_native_feature(feature) {
             return Ok(None);
         }
+        // A merged package already compiled this feature: no provider may
+        // splice its source again (the artifact and a store tree could
+        // diverge, and both bodies would run). "Not on disk" leaves the
+        // require a call, which the package's merged unit rows answer.
+        if self.packaged_features.contains(feature) {
+            return Ok(None);
+        }
         let fname = with_rb_ext(feature);
         if Path::new(&fname).is_absolute() {
             let p = PathBuf::from(&fname);
