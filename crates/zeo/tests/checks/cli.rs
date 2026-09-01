@@ -354,18 +354,20 @@ fn a_library_named_in_the_runtime_load_dial_loads_at_run_time() {
 
     // `irb` names `irb/init` too -- a library defers WHOLE, or the run
     // measures a mixture of the two loaders rather than either one. A BUNDLED
-    // gem is what makes the deferral observable: its roots are deliberately
-    // not searchable at run time, so a sub-file that reached the runtime
-    // loader says so out loud. (A `-I` root is searchable both ways, which is
-    // why the fixture above cannot tell the two apart.)
+    // gem is what makes the deferral observable: the compiler spliced nothing
+    // under the deferred name, so the sub-file can only arrive through the
+    // runtime loader's own search of the bundled roots. Loading (ruby's
+    // answer -- rubygems resolves `irb/init` from the activated gem) proves
+    // the deferral reached run time AND the runtime loader served it.
     let sub_file = zeo()
         .env("ZEO_DEBUG_RUNTIME_LOAD", "irb")
-        .args(["-e", "require \"irb/init\""])
+        .args(["-e", "p(require \"irb/init\")"])
         .output()
         .expect("spawn zeo");
-    assert!(
-        stderr_of(&sub_file).contains("cannot load such file -- irb/init"),
-        "a sub-file of a deferred library must defer too -- stderr: {}",
+    assert_eq!(
+        stdout_of(&sub_file),
+        "true\n",
+        "a sub-file of a deferred library loads at run time -- stderr: {}",
         stderr_of(&sub_file)
     );
 }
