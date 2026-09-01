@@ -6,9 +6,10 @@
  * @brief      The view entries every payload-struct cast macro calls.
  *
  * A zeo heap `VALUE` is a handle whose first two words are a real
- * `struct RBasic`. So `RBASIC_CLASS`, `RB_FL_TEST_RAW`, `RB_BUILTIN_TYPE`,
- * `RB_TYPE_P`, `RB_OBJ_FROZEN_RAW` and `RTYPEDDATA_P` read the truth with no
- * patch at all.
+ * `struct RBasic`. So `RB_FL_TEST_RAW`, `RB_BUILTIN_TYPE`, `RB_TYPE_P`,
+ * `RB_OBJ_FROZEN_RAW` and `RTYPEDDATA_P` read the truth with no patch at
+ * all. The `klass` half is the one exception: it is minted lazily, so
+ * `RBASIC_CLASS` is a call (below) rather than the field read.
  *
  * Behind those two words there is no `struct RString` and no `struct RArray`:
  * a zeo String is an `Arc<Mutex<StrBuf>>` and a zeo Array is a `Vec` the
@@ -46,6 +47,11 @@ struct RData;
 struct RTypedData;
 
 RBIMPL_SYMBOL_EXPORT_BEGIN()
+
+/* The `klass` half of `RBasic`, minted lazily. A handle's word starts as
+ * Qnil, so `RBASIC_CLASS` calls here; the answer is memoized into the word.
+ * A Class answers its metaclass, as MRI's `klass` pointer does. */
+VALUE rb_zeo_rbasic_class(VALUE obj);
 
 /* Refilled views. Each raises if the object is not of that type. */
 struct RString *rb_zeo_rstring(VALUE obj);

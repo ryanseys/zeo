@@ -29,6 +29,7 @@
 #include "ruby/internal/dllexport.h"
 #include "ruby/internal/special_consts.h"
 #include "ruby/internal/value.h"
+#include "ruby/internal/zeo.h"
 #include "ruby/assert.h"
 
 /**
@@ -166,7 +167,12 @@ static inline VALUE
 RBASIC_CLASS(VALUE obj)
 {
     RBIMPL_ASSERT_OR_ASSUME(! RB_SPECIAL_CONST_P(obj));
-    return RBASIC(obj)->klass;
+    /* zeo: a call, not a field read. A handle's `klass` word is minted
+     * lazily -- it starts as Qnil, and a direct read handed C nil where MRI
+     * hands the class (a Class's metaclass included, which is what
+     * `rb_undef_method(CLASS_OF(c), "m")` names). The call fills the word
+     * once and answers it. See `ruby/internal/zeo.h`. */
+    return rb_zeo_rbasic_class(obj);
 }
 
 #endif /* RBIMPL_RBASIC_H */

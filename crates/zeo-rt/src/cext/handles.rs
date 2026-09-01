@@ -384,6 +384,34 @@ pub unsafe fn deref<'a>(v: Value) -> &'a Handle {
     unsafe { &*(v as *const Handle) }
 }
 
+crate::cext_fn! {
+    /// `RBASIC_CLASS(obj)` and the `CLASS_OF` behind it: the handle's
+    /// `klass` word, minted on the first read and memoized into the word --
+    /// minting it at handle creation would recurse, because a class handle's
+    /// own `klass` is another handle (see the mint site). A Class answers
+    /// its metaclass, which is where MRI keeps a class handle's `klass`
+    /// pointer and what `rb_undef_method(CLASS_OF(c), "m")` -- date's
+    /// class-method undef -- relies on.
+    fn rb_zeo_rbasic_class(obj: Value) -> Value {
+        // SAFETY: `RBASIC_CLASS` asserts the argument is no special const,
+        // and the inline `rb_class_of` answers immediates from the globals
+        // before ever reaching here.
+        let h = unsafe { deref(obj) };
+        let memo = h.basic.klass.load(Ordering::Relaxed);
+        if memo != value::Q_NIL {
+            return Ok(memo);
+        }
+        let k = match &h.value {
+            v @ RubyValue::Class(_) => super::object::send(v, "singleton_class", &[])?,
+            v => RubyValue::Class(v.class_id()),
+        };
+        let kv = super::convert::to_value(&k)?;
+        // A racing second mint stores an equal answer; last write wins.
+        h.basic.klass.store(kv, Ordering::Relaxed);
+        Ok(kv)
+    }
+}
+
 /// Is `v` an address the handle table still owns?
 ///
 /// `rb_gc_mark_maybe` is the reason this exists: the caller found the word by
