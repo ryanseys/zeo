@@ -70,7 +70,13 @@ pub fn cref_of(req: &EvalRequest<'_>) -> (Vec<zeo_abi::ClassId>, Option<String>)
     }
     match (req.mode, &req.self_val) {
         (EvalMode::ClassEval, RubyValue::Class(cid)) => {
-            (vec![*cid], crate::dispatch::class_name(*cid))
+            // CRuby pushes the receiver onto the CALLER's cref -- rss's
+            // `DublinCoreModel.module_eval("class X < Element")` resolves
+            // `Element` through the module the CALL is written in. The
+            // caller's chain rides the published cref stack.
+            let mut chain = vec![*cid];
+            chain.extend(caller_cref());
+            (chain, crate::dispatch::class_name(*cid))
         }
         (EvalMode::InstanceEval, RubyValue::Class(cid)) => (
             Vec::new(),
@@ -102,12 +108,45 @@ pub struct EvalHome {
 thread_local! {
     static EVAL_HOMES: std::cell::RefCell<Vec<EvalHome>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Each entry is one scope's LEXICAL class chain, innermost first --
+    /// published on entry by any scope that lexically contains a run-time
+    /// eval, popped on every exit. The top is what CRuby reads off the
+    /// caller's control frame when a string `*_eval` builds its cref.
+    /// Separate from `EVAL_HOMES`: a class body publishes a cref but no
+    /// home (`has_home` false is what makes its `yield` an Invalid yield).
+    static CREF_STACK: std::cell::RefCell<Vec<Vec<zeo_abi::ClassId>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// See [`crate::ec`] -- the stack is per-fiber, like every other
 /// frame-shaped piece of ambient state.
 pub(crate) fn swap_eval_homes(next: Vec<EvalHome>) -> Vec<EvalHome> {
     EVAL_HOMES.with(|h| std::mem::replace(&mut *h.borrow_mut(), next))
+}
+
+/// See [`crate::ec`] -- per-fiber, like `swap_eval_homes`.
+pub(crate) fn swap_cref_stack(
+    next: Vec<Vec<zeo_abi::ClassId>>,
+) -> Vec<Vec<zeo_abi::ClassId>> {
+    CREF_STACK.with(|h| std::mem::replace(&mut *h.borrow_mut(), next))
+}
+
+pub fn cref_push(chain: Vec<zeo_abi::ClassId>) {
+    CREF_STACK.with(|h| h.borrow_mut().push(chain));
+}
+
+pub fn cref_pop() {
+    CREF_STACK.with(|h| {
+        h.borrow_mut().pop();
+    });
+}
+
+/// The calling scope's lexical class chain, innermost first -- empty when
+/// the caller published none (the top level, or a scope the compiler did
+/// not see an eval call in).
+#[must_use]
+pub fn caller_cref() -> Vec<zeo_abi::ClassId> {
+    CREF_STACK.with(|h| h.borrow().last().cloned().unwrap_or_default())
 }
 
 /// Publish this scope's block channel (and, for a method, what a bare
@@ -395,14 +434,6 @@ pub fn class_open(
     if let Some(cid) = existing {
         return Ok(RubyValue::Class(cid));
     }
-    let val = if is_module {
-        crate::runtime_meta::runtime_module_new(None)?
-    } else {
-        crate::runtime_meta::runtime_class_new(superclass.cloned(), None)?
-    };
-    let RubyValue::Class(cid) = val else {
-        unreachable!("runtime_class_new answers a Class")
-    };
     let qualified = if owner_id == zeo_abi::OBJECT_CLASS.0 {
         name.to_string()
     } else {
@@ -411,8 +442,25 @@ pub fn class_open(
             crate::dispatch::class_name(zeo_abi::ClassId(owner_id)).unwrap_or_default()
         )
     };
-    crate::runtime_meta::name_runtime_class_if_anonymous(cid, &qualified);
-    crate::constants::const_set(owner_id, name, val.clone());
+    // The `class` KEYWORD names the class and binds its constant BEFORE
+    // `inherited` fires (CRuby's `rb_define_class_id_under`) -- rss's
+    // `Element.inherited` reads `klass.name`. Only `Class.new` shows the
+    // hook a nil name.
+    let val = if is_module {
+        let val = crate::runtime_meta::runtime_module_new(None)?;
+        let RubyValue::Class(cid) = val else {
+            unreachable!("runtime_module_new answers a Class")
+        };
+        crate::runtime_meta::name_runtime_class_if_anonymous(cid, &qualified);
+        crate::constants::const_set(owner_id, name, val.clone());
+        val
+    } else {
+        crate::runtime_meta::runtime_class_new_with(superclass.cloned(), None, |cid| {
+            crate::runtime_meta::name_runtime_class_if_anonymous(cid, &qualified);
+            crate::constants::const_set(owner_id, name, RubyValue::Class(cid));
+            Ok(())
+        })?
+    };
     Ok(val)
 }
 

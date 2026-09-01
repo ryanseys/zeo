@@ -81,6 +81,8 @@ capi_symbols!(
     objects::zeo_rt_const_visibility,
     kernel::zeo_rt_cov_file_loaded,
     kernel::zeo_rt_cov_line,
+    kernel::zeo_rt_cref_pop,
+    kernel::zeo_rt_cref_push,
     objects::zeo_rt_cvar_get,
     objects::zeo_rt_cvar_get_checked,
     objects::zeo_rt_cvar_set,

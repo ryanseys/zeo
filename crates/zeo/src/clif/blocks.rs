@@ -790,6 +790,13 @@ fn define_block_fn(
             &[home_blk, null, zero8, null, zero32, zero32],
         );
     }
+    // The caller-cref half of the same publication: a string `*_eval`
+    // written in this block resolves constants against the block's OWN
+    // lexical chain, wherever the proc is eventually called from.
+    let publishes_cref = publishes_eval_home && !super::boxes::cref_chain(&bfx).is_empty();
+    if publishes_cref {
+        super::boxes::emit_cref_push(&mut bfx);
+    }
 
 
     // A required-only 0/1-name NON-LAMBDA block binds inline: ruby's
@@ -1051,6 +1058,9 @@ fn define_block_fn(
         }
         if publishes_eval_home {
             bfx.call("zeo_rt_eval_home_pop", &[]);
+        }
+        if publishes_cref {
+            bfx.call("zeo_rt_cref_pop", &[]);
         }
         let code = bfx.b.ins().iconst(types::I32, status);
         bfx.b.ins().return_(&[code]);

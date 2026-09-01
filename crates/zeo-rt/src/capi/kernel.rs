@@ -152,6 +152,25 @@ pub unsafe extern "C" fn zeo_rt_eval_home_pop() {
     crate::eval::home_pop();
 }
 
+/// This scope's LEXICAL class chain, innermost first -- what a string
+/// `*_eval` called from here builds its cref against. Published by any
+/// scope (method, block or class body) that lexically contains a run-time
+/// eval call; the matching pop runs on every exit path.
+///
+/// # Safety
+/// `ids` points at `len` readable class ids.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_cref_push(ids: *const u32, len: usize) {
+    let chain = unsafe { std::slice::from_raw_parts(ids, len) };
+    crate::eval::cref_push(chain.iter().map(|&id| zeo_abi::ClassId(id)).collect());
+}
+
+/// The matching pop for [`zeo_rt_cref_push`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_cref_pop() {
+    crate::eval::cref_pop();
+}
+
 /// `block_given?` written at a snippet's own level.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_eval_block_given() -> i8 {

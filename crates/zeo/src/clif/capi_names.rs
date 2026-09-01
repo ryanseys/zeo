@@ -288,6 +288,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_cref_pop",
+        params: &[],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_cref_push",
+        params: &[Ptr, Usize],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_cvar_get",
         params: &[U32, Ptr, Usize, Ptr],
         ret: None,

@@ -514,6 +514,17 @@ pub(super) fn define_method_body(
         let sym = fx.sym_id(def.name);
         fx.call("zeo_rt_eval_home_push", &[blk, args, unmark_v, kw, dc, sym]);
     }
+    // A string `*_eval` builds its cref on the CALLER's lexical chain
+    // (CRuby reads it off the control frame), so any scope containing a
+    // run-time eval publishes its chain -- class bodies included, which is
+    // where rss writes `module_eval("class X < Element")`.
+    let publishes_cref = crate::analyze::captures::body_contains_runtime_eval(
+        &analyzed.compiler,
+        def.body,
+    ) && !super::boxes::cref_chain(&fx).is_empty();
+    if publishes_cref {
+        super::boxes::emit_cref_push(&mut fx);
+    }
     if def.discard_value {
         super::stmt::lower_stmts(&mut fx, def.body)?;
         super::ownership::write_move_into(&mut fx, &super::operand::Operand::Nil, out_ptr);
@@ -563,6 +574,9 @@ pub(super) fn define_method_body(
         }
         if publishes_eval_home {
             fx.call("zeo_rt_eval_home_pop", &[]);
+        }
+        if publishes_cref {
+            fx.call("zeo_rt_cref_pop", &[]);
         }
         fx.b.ins().return_(&[epi_status]);
     };

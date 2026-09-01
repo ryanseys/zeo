@@ -18,6 +18,27 @@ pub(super) fn cref_chain<'a>(fx: &'a Fx) -> &'a [crate::compiler::ClassId] {
         .unwrap_or(&[])
 }
 
+/// Publish this scope's lexical cref chain (innermost first) for the
+/// length of the call -- what a string `*_eval` called from here builds
+/// its cref against. The caller pairs it with `zeo_rt_cref_pop` on every
+/// exit path. Ids go through [`Fx::cid_value`], so a packaged object's
+/// chain translates like every other class-id immediate.
+pub(super) fn emit_cref_push(fx: &mut Fx) {
+    let chain: Vec<crate::compiler::ClassId> = cref_chain(fx).iter().rev().copied().collect();
+    let slot = fx.b.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+        cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+        (chain.len() * 4) as u32,
+        2,
+    ));
+    for (i, cid) in chain.iter().enumerate() {
+        let v = fx.cid_value(cid.0);
+        fx.b.ins().stack_store(fx.em.ptr, v, slot, (i * 4) as i32);
+    }
+    let addr = fx.b.ins().stack_addr(fx.em.ptr, slot, 0);
+    let len = fx.b.ins().iconst(fx.em.ptr, chain.len() as i64);
+    fx.call("zeo_rt_cref_push", &[addr, len]);
+}
+
 /// The run-time handle for a box, gate and all -- see the `BoxHandle` arm.
 pub(crate) fn box_handle(fx: &mut Fx, box_id: u32) -> CResult<Operand> {
     let bx = fx.b.ins().iconst(types::I32, i64::from(box_id));
@@ -336,7 +357,14 @@ pub(super) fn module_nesting(
     if !matches!(&fx.an.compiler.hir[r], HirNode::ClassRef(n) if n == "Module") {
         return Ok(None);
     }
-    let chain: Vec<crate::compiler::ClassId> = cref_chain(fx).iter().rev().copied().collect();
+    // A snippet's nesting is its EvalCref -- the receiver plus the calling
+    // scope's chain, already innermost first. `class_immediate` only stores
+    // tag + id, so an id this compiler holds no entry for still works; its
+    // type claim dies at the push.
+    let chain: Vec<crate::compiler::ClassId> = match &fx.eval_cref {
+        Some(cref) => cref.chain.iter().map(|&c| crate::compiler::ClassId(c)).collect(),
+        None => cref_chain(fx).iter().rev().copied().collect(),
+    };
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let cap = fx.b.ins().iconst(fx.em.ptr, chain.len() as i64);

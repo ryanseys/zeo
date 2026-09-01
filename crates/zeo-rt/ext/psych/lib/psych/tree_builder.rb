@@ -43,7 +43,7 @@ module Psych
     }.each do |node|
       class_eval <<~RUBY, __FILE__, __LINE__ + 1
         def start_#{node.downcase}(anchor, tag, implicit, style)
-          n = Psych::Nodes::#{node}.new(anchor, tag, implicit, style)
+          n = Nodes::#{node}.new(anchor, tag, implicit, style)
           set_start_location(n)
           @last.children << n
           push n
