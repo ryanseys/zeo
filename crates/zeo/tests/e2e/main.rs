@@ -53,6 +53,7 @@ mod object_protocol;
 mod packages;
 mod pattern_match;
 mod process_exit;
+mod pure_gems;
 mod regexp;
 mod securerandom;
 mod strings;
