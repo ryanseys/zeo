@@ -55,8 +55,6 @@ fn synthetic_shim_static(feature: &str) -> Option<&'static str> {
             "\n",
             include_str!("../shims/mkmf_zeo.rb")
         )),
-        "securerandom" => Some(include_str!("../shims/securerandom.rb")),
-        "gem-securerandom" => Some(include_str!("../shims/gem_securerandom.rb")),
         "gem-readline" => Some(include_str!("../shims/gem_readline.rb")),
         // CRuby's C `erb/escape` extension -- defined as a pure-Ruby shim over
         // the native `CGI.escapeHTML` (see `shims/erb_escape.rb`).
@@ -65,17 +63,12 @@ fn synthetic_shim_static(feature: &str) -> Option<&'static str> {
     }
 }
 
-/// A rubygems-/bundler-vendored file that duplicates a library zeo already
-/// provides natively, mapped to the synthetic shim that stands in for it (see
-/// `synthetic_shim_source`). Currently just the vendored `securerandom` copy,
-/// whose load-time `class << self` entropy probe zeo can't lower; matched by
-/// path suffix so both the rubygems and bundler copies (identical files under
-/// different `vendor/` roots) redirect to the same native-backed shim.
+/// A vendored or installed file whose load-time probing has exactly one
+/// possible outcome under zeo, mapped to the synthetic shim that states that
+/// outcome (see `synthetic_shim_source`). Matched by path suffix so every
+/// copy of the file redirects to the same shim.
 pub(super) fn vendored_shim_feature(canonical: &Path) -> Option<&'static str> {
     let path = canonical.to_string_lossy().replace('\\', "/");
-    if path.ends_with("vendor/securerandom/lib/securerandom.rb") {
-        return Some("gem-securerandom");
-    }
     // The readline gem's entry file, from any installed store copy: its
     // load-time probe for the C readline extension has one possible outcome
     // under zeo (see `shims/gem_readline.rb`).
