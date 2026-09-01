@@ -506,12 +506,25 @@ pub(super) enum NativeKind {
     PrecompiledAbi,
 }
 
+/// Gems whose C extension is a pure ACCELERATOR: the same gem carries a
+/// complete Ruby fallback behind `rescue LoadError` (racc's parser.rb sets
+/// `Racc_Runtime_Type = 'ruby'` when `racc/cparse` fails to load). zeo
+/// declines the build -- loading any C extension arms the GVL process-wide
+/// -- and the gem's own rescue takes the Ruby runtime, which zeo compiles.
+const ACCELERATOR_ONLY: &[&str] = &["racc"];
+
 /// Which of the three signals a resolved gemspec carries.
 ///
 /// `s.extensions` is checked FIRST and wins: a gem that ships its C source
 /// also ships the `.so` from an earlier build in the same directory, and
 /// reading that as "precompiled" would refuse a gem zeo can build.
 fn native_kind(spec: &super::gemspec::GemSpec, gem_dir: &Path) -> NativeKind {
+    // Before the extension check on purpose, and before the native-object
+    // scan: an installed accelerator gem carries both the extconf AND a
+    // built `.bundle` under lib/, and either reading would sink the gem.
+    if ACCELERATOR_ONLY.contains(&spec.name.as_str()) {
+        return NativeKind::No;
+    }
     if !spec.extensions.is_empty() {
         return NativeKind::Buildable;
     }

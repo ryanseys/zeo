@@ -239,3 +239,32 @@ fn the_disclosure_record_names_both_as_faithful_bundled_gems() {
         );
     }
 }
+
+/// racc's C extension is a pure ACCELERATOR -- its own parser.rb carries a
+/// complete Ruby runtime behind `rescue LoadError`. The store must serve the
+/// gem WITHOUT building cparse (which would arm the GVL process-wide): no
+/// compiled-extension row, and the runtime require of `racc/cparse` stays a
+/// catchable LoadError so the gem's own rescue picks the Ruby runtime.
+#[test]
+fn the_racc_accelerator_is_declined_and_the_gem_serves_pure_ruby() {
+    let report = std::env::temp_dir().join(format!("zeo-racc-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&report);
+    let opts = zeo::CompileOptions {
+        gem_paths: vec![repo("vendor/bundle/ruby/4.0.0")],
+        lockfile: Some(repo("Gemfile.lock")),
+        gem_report: Some(report.clone()),
+        ..Default::default()
+    };
+    zeo::check_program_with("require \"racc/parser\"\nputs Racc::Parser.racc_runtime_type\n", &opts)
+        .expect("racc resolves from the store without its C extension");
+    let json = std::fs::read_to_string(&report).unwrap();
+    let _ = std::fs::remove_file(&report);
+    assert!(
+        !json.lines().any(|l| l.contains("racc") && l.contains("compiled-extension")),
+        "racc must not build cparse: {json}"
+    );
+    assert!(
+        json.contains(r#""racc/parser": {"by": "bundled-gem""#),
+        "racc/parser should serve from the store as plain Ruby: {json}"
+    );
+}
