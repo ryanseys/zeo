@@ -306,7 +306,9 @@ fn scan_api() -> Result<Vec<Decl>, Error> {
     }
     std::fs::write(&tu, source)
         .map_err(|e| Error::new(format!("writing {}: {e}", tu.display())))?;
-    let cc = std::env::var("CC").unwrap_or_else(|_| "cc".into());
+    // `clang` by name, not `cc`: `-Xclang -ast-dump` is clang's own flag, and
+    // `cc` is gcc on Linux, which rejects it and dumps no AST.
+    let cc = std::env::var("CC").unwrap_or_else(|_| "clang".into());
     let out = exec::run(
         &[
             Path::new(&cc),
@@ -322,10 +324,13 @@ fn scan_api() -> Result<Vec<Decl>, Error> {
         ],
         root(),
         &[],
-        Capture::Stdout,
+        Capture::Both,
     )?;
     if out.stdout.is_empty() {
-        return Err(Error::new("clang could not parse the vendored headers"));
+        return Err(Error::new(format!(
+            "{cc} could not parse the vendored headers:\n{}",
+            out.stderr_text().trim_end()
+        )));
     }
     parse_ast(&out.stdout_text())
 }
