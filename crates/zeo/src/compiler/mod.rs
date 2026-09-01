@@ -204,6 +204,11 @@ pub struct Compiler {
     /// one shared-class name cannot hold their document order, so analyze
     /// refuses each entry by the providing package's name.
     pub pkg_spine_redefs: Vec<(ClassId, String, bool)>,
+    /// A PACKAGE build's `refine Target` whose target resolved to nothing:
+    /// the target may be real in the host program, so the silent drop the
+    /// whole-program compile tolerates would ship a package missing its
+    /// refinement. `finish_package` refuses each entry by target name.
+    pub pkg_unresolved_refinements: Vec<String>,
     /// `classes.len()` right after the shared bootstrap
     /// (builtins + exception tail) -- the first id a program or package
     /// mints for itself. Recorded by `pin_builtin_exceptions_tail`; a
@@ -714,6 +719,7 @@ impl Compiler {
             unit_blanket_names: FSet::default(),
             pkg_class_map: FMap::default(),
             pkg_spine_redefs: Vec::new(),
+            pkg_unresolved_refinements: Vec::new(),
             runtime_mixin_super_names: FSet::default(),
             unit_walk: false,
             unit_scopes: FSet::default(),

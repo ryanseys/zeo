@@ -769,6 +769,15 @@ pub(super) fn register_refinement(
     let target = compiler.resolve_class(&target, cref, box_id);
     let holder = compiler.class_in_scope(Some(class_id), &holder, box_id);
     let (Some(target), Some(holder)) = (target, holder) else {
+        // A package's world deliberately excludes the host's gems, so an
+        // unresolvable target here may be real in the program the artifact
+        // runs in; the whole-program silent drop would ship a missing
+        // refinement. Recorded for `finish_package`'s refusal.
+        if compiler.hir.pkg_build.is_some()
+            && let HirNode::Refine { target, .. } = &compiler.hir[stmt]
+        {
+            compiler.pkg_unresolved_refinements.push(target.clone());
+        }
         return;
     };
     compiler.refinements.push(crate::compiler::Refinement {

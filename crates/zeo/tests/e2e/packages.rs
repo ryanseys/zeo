@@ -654,6 +654,100 @@ fn a_second_packages_band_shift_keeps_unit_interior_reads_right() {
     assert_eq!(ok(&mut Command::new(&bin)), "42\n\"Bbb::S\"\n");
 }
 
+const REFINO: &str = "module Refino\n  module Ext\n    refine String do\n      def shout\n        \
+                      upcase + \"!\"\n      end\n    end\n    refine Integer do\n      def doubled\n        \
+                      self * 2\n      end\n    end\n  end\nend\n\nmodule Refino\n  using Refino::Ext\n  \
+                      def self.run(s)\n    s.shout\n  end\n\n  def self.twice(n)\n    n.doubled\n  \
+                      end\nend\n";
+
+#[test]
+fn a_packaged_refinement_dispatches_under_a_shifted_band() {
+    // A refined site hands the runtime `(target, holder, singleton)`
+    // triples whose class ids once rode in rodata -- untranslatable at
+    // merge. A first package shifts the second's band, so an identity
+    // mapping cannot mask a missed translation. Verified against
+    // ruby 4.0.6, leak check included (the refinement must not escape
+    // its lexical scope).
+    let dir = scratch("refine");
+    let aaa = build_inline_package(&dir, "aaa", "module Aaa\n  ONE = 1\nend\n");
+    let refino = build_inline_package(&dir, "refino", REFINO);
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "class HostA; end\nrequire \"refino\"\np Refino.run(\"hey\")\np Refino.twice(21)\n\
+         begin\n  \"x\".shout\nrescue NoMethodError\n  puts \"no leak\"\nend\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--with-package")
+        .arg(&aaa)
+        .arg("--with-package")
+        .arg(&refino)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(ok(&mut Command::new(&bin)), "\"HEY!\"\n42\nno leak\n");
+}
+
+#[test]
+fn a_host_using_a_packaged_refinement_module_refuses() {
+    // The refinements live in the package's compiled bodies, not in its
+    // interface, so a host `using` would silently miss them. The refusal
+    // names the package, which is the drop-to-splice spelling.
+    let dir = scratch("refine-host-using");
+    let refino = build_inline_package(&dir, "refino", REFINO);
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"refino\"\nusing Refino::Ext\np \"hey\".shout\n",
+    )
+    .expect("write host");
+    let out = run(zeo()
+        .arg("--with-package")
+        .arg(&refino)
+        .arg("-o")
+        .arg(dir.join("host-bin"))
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert!(!out.status.success(), "a host `using` of a package module must refuse");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("package 'refino'") && err.contains("using"),
+        "the refusal names the package and the `using`: {err}"
+    );
+}
+
+#[test]
+fn a_package_refining_an_unknown_target_refuses_instead_of_dropping() {
+    // A whole-program compile silently drops a `refine Target` whose
+    // target resolves to nothing; a package's world excludes the host's
+    // gems, so the target may be real in the program the artifact runs
+    // in. The refusal drops the gem to its source splice.
+    let dir = scratch("refine-unknown");
+    let entry = dir.join("refgem.rb");
+    std::fs::write(
+        &entry,
+        "module Refgem\n  module Ext\n    refine ForeignThing do\n      def x\n        1\n      \
+         end\n    end\n  end\nend\n",
+    )
+    .expect("write entry");
+    let out = run(zeo()
+        .arg("--package")
+        .arg("refgem")
+        .arg("-o")
+        .arg(dir.join("refgem.o"))
+        .arg(&entry)
+        .env("ZEO_CACHE", "0"));
+    assert!(!out.status.success(), "an unresolvable refine target must refuse");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("a refinement of unknown `ForeignThing`"),
+        "the refusal names the target: {err}"
+    );
+}
+
 #[test]
 fn a_definition_the_package_cannot_resolve_refuses_instead_of_dropping() {
     // A whole-program compile may DROP a `class X < Unknown` definition

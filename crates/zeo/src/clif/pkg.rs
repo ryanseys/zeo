@@ -89,8 +89,10 @@ pub(crate) fn finish_package(
     if compiler.hir.data_section.is_some() {
         return refuse("an __END__ data section");
     }
-    if !compiler.refinements.is_empty() {
-        return refuse("a refinement (its candidate rows carry class ids in rodata)");
+    if let Some(target) = compiler.pkg_unresolved_refinements.first() {
+        return refuse(&format!(
+            "a refinement of unknown `{target}` (defined outside this package)"
+        ));
     }
 
     // Reveal groups: the package's units plus its alias-reveal groups
@@ -610,6 +612,7 @@ pub(crate) fn merge_rows(
                 | zeo_abi::abi::REG_SINGLETON_SUPER_TARGET
                 | zeo_abi::abi::REG_SET_ANCESTORS
                 | zeo_abi::abi::REG_REGISTER_BUILTIN
+                | zeo_abi::abi::REG_MARK_REFINEMENT
                 | zeo_abi::abi::REG_SINGLETON_SURROGATE => {
                     r.ids.iter().map(|&i| rb(i)).collect()
                 }

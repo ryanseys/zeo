@@ -58,6 +58,22 @@ pub(super) fn refuse_host_spine_redefinitions(compiler: &Compiler) -> Result<(),
             feature_of(class.0, name, *class_side)
         ));
     }
+    // A HOST `using` of a merged package's module: the refinements live in
+    // the package's compiled bodies, not in its interface, so the host's
+    // refined-send rewrite would silently miss them. Refuse by package
+    // name, which drops that gem to its source splice.
+    for a in &compiler.activations {
+        if let Some(pi) = compiler.class(a.module).imported_pkg {
+            return Err(format!(
+                "this program writes `using {}`, whose refinements package \
+                 '{}' compiled internally; a host cannot activate a \
+                 package's refinements yet (compile the gem from source \
+                 instead)",
+                compiler.class(a.module).name,
+                compiler.hir.pkg_merge[pi as usize].feature
+            ));
+        }
+    }
     Ok(())
 }
 

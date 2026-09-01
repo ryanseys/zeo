@@ -271,11 +271,34 @@ impl Cands<'_> {
     }
 }
 
-/// The candidate set as one 4-aligned `.rodata` `u32` triple array.
+/// The candidate set as one 4-aligned `u32` triple array. An ordinary
+/// compile bakes it in `.rodata`; a package compile materializes the two
+/// class-id words through [`Fx::cid_value`] into a stack slot (rodata
+/// cannot be translated at merge -- the `Fx::cid_array` rule), with the
+/// singleton flag stored plain.
 fn candidate_table(
     fx: &mut Fx,
     cands: &[(ClassId, ClassId, bool)],
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    use cranelift_codegen::ir::{StackSlotData, StackSlotKind};
+    if matches!(fx.em.id_mode, super::module::IdMode::Packaged { .. }) {
+        let slot = fx.b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            (cands.len().max(1) * 12) as u32,
+            2,
+        ));
+        for (i, &(target, holder, singleton)) in cands.iter().enumerate() {
+            let t = fx.cid_value(target.0);
+            fx.b.ins().stack_store(fx.em.ptr, t, slot, (i * 12) as i32);
+            let h = fx.cid_value(holder.0);
+            fx.b.ins().stack_store(fx.em.ptr, h, slot, (i * 12 + 4) as i32);
+            let s = fx.b.ins().iconst(types::I32, i64::from(singleton));
+            fx.b.ins().stack_store(fx.em.ptr, s, slot, (i * 12 + 8) as i32);
+        }
+        let ptr = fx.b.ins().stack_addr(fx.em.ptr, slot, 0);
+        let n = fx.b.ins().iconst(fx.em.ptr, cands.len() as i64);
+        return (ptr, n);
+    }
     let mut bytes = Vec::with_capacity(cands.len() * 12);
     for &(target, holder, singleton) in cands {
         bytes.extend_from_slice(&target.0.to_le_bytes());
