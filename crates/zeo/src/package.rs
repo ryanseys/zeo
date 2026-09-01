@@ -86,6 +86,15 @@ pub struct Manifest {
     /// serve a compile without leaving a require unanswerable. Sorted.
     #[serde(default)]
     pub host_features: Vec<String>,
+    /// Whether the build stamped coverage lines into the package's code.
+    /// A coverage-measuring host refuses an unstamped artifact -- its
+    /// lines could never report -- and the refusal drops it to source.
+    #[serde(default)]
+    pub cov_active: bool,
+    /// The package's line-coverage rows, string-keyed by file; the host
+    /// concatenates them onto its own table.
+    #[serde(default)]
+    pub cov: Vec<MCovRow>,
     /// The package object's exported site-table initializer, run from the
     /// host's own `zeo_unit_init`.
     pub unit_init: Option<String>,
@@ -174,6 +183,15 @@ pub struct MFacts {
     /// A host that merges it embeds the run-time compiler and keeps every
     /// builtin class table, exactly as its own eval would make it.
     pub runtime_eval: bool,
+}
+
+/// One file's line-coverage row -- `zeo_abi::abi::CovFile`, in serde form.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MCovRow {
+    pub file: String,
+    pub total: u32,
+    pub stmt: Vec<u32>,
+    pub def: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -487,6 +505,8 @@ mod tests {
             meta: vec![],
             units: vec![("pureleaf".into(), "zeo_pkg_pureleaf_unit_0".into())],
             host_features: vec![],
+            cov_active: false,
+            cov: vec![],
             unit_init: Some("zeo_pkg_pureleaf_unit_init".into()),
             callers: vec![u32::MAX, 400],
             class_tables: vec![],

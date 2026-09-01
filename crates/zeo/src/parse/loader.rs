@@ -248,6 +248,17 @@ pub(super) struct Loader {
     /// `host_features`: the artifact's runtime requires the host must be
     /// able to answer. Always empty outside a package build.
     pkg_foreign: std::cell::RefCell<std::collections::BTreeSet<String>>,
+    /// Whether resolution consults the machine package cache for bundled
+    /// gems (`CompileOptions::auto_package`, on a linking road). A hit gem
+    /// is never spliced: its features answer "not on disk" and the
+    /// discovery loop re-parses with the artifact merged.
+    auto_consult: bool,
+    /// Per-gem cache verdicts for [`Self::auto_consult`], memoized so one
+    /// gem is probed once per parse.
+    auto_verdicts: std::cell::RefCell<HashMap<String, bool>>,
+    /// Features deferred to a cached artifact this parse, by gem name --
+    /// what the discovery loop consults and merges before the re-parse.
+    auto_pending: std::cell::RefCell<HashMap<String, Vec<String>>>,
 }
 
 /// `resolve_require`'s success shape: the found path plus the owning
@@ -469,6 +480,11 @@ pub(super) fn lower_main_file(
         ambiguous_features: std::cell::RefCell::new(HashMap::new()),
         activated: std::cell::RefCell::new(Vec::new()),
         pkg_foreign: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+        auto_consult: opts.auto_package
+            && opts.package_build.is_none()
+            && crate::progcache::enabled(),
+        auto_verdicts: std::cell::RefCell::new(HashMap::new()),
+        auto_pending: std::cell::RefCell::new(HashMap::new()),
     };
     // `ZEO_DISABLE_BUILTIN` retires zeo's implementation of a library, and
     // the ext tier's Ruby half IS part of that implementation -- it sits on
@@ -720,6 +736,19 @@ pub(super) fn lower_main_file(
     hir.loader.search_roots = loader.load_path();
     loader.record_activation_summary(hir);
     Ok((lowered, loader.gem_records))
+}
+
+/// Every BUNDLED gem the compiler ships, as `(name, roots)` -- the
+/// auto-packaging tier's provider probe, for a deferred gem's foreign
+/// dependency nothing in the current parse requires. Same discovery and
+/// order as a compile with no caller-supplied package dirs.
+pub(crate) fn bundled_gem_roots() -> Vec<(String, Vec<PathBuf>)> {
+    discover_packages(&[], bundled_libraries())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|g| g.provenance == GemProvenance::Bundled)
+        .map(|g| (g.name, g.roots))
+        .collect()
 }
 
 /// Whether the ambient rbconfig shim must be compiled in: some spliced

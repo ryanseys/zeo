@@ -1903,25 +1903,31 @@ fn define_cov_rows(em: &mut Emitter, analyzed: &Analyzed) -> CResult<(Option<Dat
     if !em.cov_active {
         return Ok((None, 0));
     }
-    let defs = crate::analyze::coverage::def_lines(&analyzed.compiler);
-    let stmts = std::mem::take(&mut em.cov_lines);
-    let mut seen = crate::compiler::FSet::default();
-    let files: Vec<(String, u32, Vec<u32>, Vec<u32>)> = analyzed
-        .compiler
-        .hir
-        .files
-        .iter()
-        .filter(|f| seen.insert(f.name.clone()))
-        .filter_map(|f| {
-            let stmt: Vec<u32> = stmts.get(&f.name).into_iter().flatten().copied().collect();
-            let def: Vec<u32> = defs.get(&f.name).into_iter().flatten().copied().collect();
-            if stmt.is_empty() && def.is_empty() {
-                return None;
+    let mut files = cov_rows(em, analyzed);
+    // Merged packages contribute their own rows (string-keyed by file, so
+    // no id space to rebase). An artifact compiled WITHOUT the stamps can
+    // never report its lines here, so it is refused -- the `package '..'`
+    // spelling is what drops it to the source splice.
+    let mut seen: crate::compiler::FSet<String> =
+        files.iter().map(|(name, ..)| name.clone()).collect();
+    for m in &analyzed.compiler.hir.pkg_merge {
+        if !m.cov_active {
+            return Err(CodegenError::unsupported(
+                format!(
+                    "this program measures coverage, but package '{}' was compiled without \
+                     coverage stamps",
+                    m.feature
+                ),
+                None,
+            ));
+        }
+        for row in &m.cov {
+            if !seen.insert(row.file.clone()) {
+                continue;
             }
-            let total = u32::try_from(f.source.lines().count()).unwrap_or(u32::MAX);
-            Some((f.name.clone(), total, stmt, def))
-        })
-        .collect();
+            files.push((row.file.clone(), row.total, row.stmt.clone(), row.def.clone()));
+        }
+    }
     if files.is_empty() {
         return Ok((None, 0));
     }
@@ -1983,6 +1989,35 @@ fn define_cov_rows(em: &mut Emitter, analyzed: &Analyzed) -> CResult<(Option<Dat
         .define_data(id, &data)
         .map_err(|e| CodegenError::internal(format!("defining the coverage table: {e}")))?;
     Ok((Some(id), files.len() as u64))
+}
+
+/// The coverage rows THIS compile owns: one `(file, total, stmt lines,
+/// def lines)` per source file with a coverable line. Drains the stamped
+/// lines out of the emitter, so it runs once -- `define_cov_rows` for a
+/// program, the manifest writer for a package build.
+pub(super) fn cov_rows(
+    em: &mut Emitter,
+    analyzed: &Analyzed,
+) -> Vec<(String, u32, Vec<u32>, Vec<u32>)> {
+    let defs = crate::analyze::coverage::def_lines(&analyzed.compiler);
+    let stmts = std::mem::take(&mut em.cov_lines);
+    let mut seen = crate::compiler::FSet::default();
+    analyzed
+        .compiler
+        .hir
+        .files
+        .iter()
+        .filter(|f| seen.insert(f.name.clone()))
+        .filter_map(|f| {
+            let stmt: Vec<u32> = stmts.get(&f.name).into_iter().flatten().copied().collect();
+            let def: Vec<u32> = defs.get(&f.name).into_iter().flatten().copied().collect();
+            if stmt.is_empty() && def.is_empty() {
+                return None;
+            }
+            let total = u32::try_from(f.source.lines().count()).unwrap_or(u32::MAX);
+            Some((f.name.clone(), total, stmt, def))
+        })
+        .collect()
 }
 
 /// `zeo_class_tables`: one pointer per builtin class method table the program

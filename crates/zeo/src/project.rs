@@ -336,6 +336,8 @@ mod tests {
             redef_metas: vec![],
             units: vec![(feature.to_string(), format!("zeo_pkg_{feature}_unit_0"))],
             host_features: host_features.iter().map(|s| (*s).to_string()).collect(),
+            cov_active: false,
+            cov: vec![],
             unit_init: None,
             callers: vec![],
             class_tables: vec![],

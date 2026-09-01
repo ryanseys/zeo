@@ -11,6 +11,7 @@ pub(crate) use gem_store::store_gems;
 pub(crate) mod gemspec;
 mod loader;
 pub use loader::absolutize_feature;
+pub(crate) use loader::bundled_gem_roots;
 pub(crate) mod lockfile;
 pub(crate) mod syntax_report;
 

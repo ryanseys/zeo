@@ -322,6 +322,9 @@ impl Loader {
             }
             1 => {
                 let (path, pkg) = hits.remove(0);
+                if self.defer_to_cached_artifact(feature, pkg) {
+                    return Ok(None);
+                }
                 Ok(Some((path, Some(pkg.name.clone()))))
             }
             // Multiple providers: the FIRST wins, because `packages` is in
@@ -348,9 +351,39 @@ impl Loader {
                     .borrow_mut()
                     .insert(feature.to_string(), providers);
                 let (path, pkg) = hits.remove(0);
+                if self.defer_to_cached_artifact(feature, pkg) {
+                    return Ok(None);
+                }
                 Ok(Some((path, Some(pkg.name.clone()))))
             }
         }
+    }
+
+    /// Whether the machine package cache should answer this require
+    /// instead of the gem's source tree: `pkg` is a BUNDLED gem, the cache
+    /// holds a servable artifact for it, and no discovery round rejected
+    /// it. True defers the feature -- "not on disk", so nothing splices --
+    /// and records it for the discovery loop, which merges the artifact
+    /// and re-parses. The verdict is per GEM and memoized: one probe per
+    /// parse, every feature of the gem follows it.
+    fn defer_to_cached_artifact(&self, feature: &str, pkg: &Gem) -> bool {
+        if !self.auto_consult || pkg.provenance != GemProvenance::Bundled {
+            return false;
+        }
+        let has = *self
+            .auto_verdicts
+            .borrow_mut()
+            .entry(pkg.name.clone())
+            .or_insert_with(|| crate::autopkg::cache_has(&pkg.name, &pkg.roots, feature));
+        if !has {
+            return false;
+        }
+        self.auto_pending
+            .borrow_mut()
+            .entry(pkg.name.clone())
+            .or_default()
+            .push(feature.to_string());
+        true
     }
 
     /// Record that a `require` reached `pkg`, so its roots join `$LOAD_PATH`.
@@ -443,12 +476,23 @@ impl Loader {
     pub(super) fn record_activation_summary(&self, hir: &mut crate::hir::Hir) {
         let memo = self.require_memo.borrow();
         hir.loader.pkg_foreign_requires = self.pkg_foreign.borrow().clone();
+        let pending = self.auto_pending.borrow();
         hir.loader.activated_bundled = self
             .activated
             .borrow()
             .iter()
+            .map(String::as_str)
+            // A gem whose features DEFERRED to a cached artifact never
+            // activates -- nothing spliced -- but it is exactly what the
+            // discovery loop needs to consult, so it joins the rows.
+            .chain(
+                pending
+                    .keys()
+                    .map(String::as_str)
+                    .filter(|n| !self.activated.borrow().iter().any(|a| a == n)),
+            )
             .filter_map(|name| {
-                let pkg = self.packages.iter().find(|g| &g.name == name)?;
+                let pkg = self.packages.iter().find(|g| g.name == name)?;
                 if pkg.provenance != GemProvenance::Bundled {
                     return None;
                 }
@@ -459,12 +503,15 @@ impl Loader {
                         _ => None,
                     })
                     .collect();
+                features.extend(pending.get(name).into_iter().flatten().cloned());
                 features.sort();
+                features.dedup();
                 Some(crate::hir::ActivatedBundled {
                     name: pkg.name.clone(),
                     version: pkg.version.clone(),
                     roots: pkg.roots.clone(),
                     features,
+                    deferred: pending.contains_key(name),
                 })
             })
             .collect();

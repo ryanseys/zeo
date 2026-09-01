@@ -304,6 +304,15 @@ pub(super) fn resolve_module_target(
     let resolved = resolved.or_else(|| resolve_const_alias(compiler, name, cref, box_id));
     match resolved {
         Some(cid) => MixinTarget::Static(cid),
+        // A PACKAGE build's world excludes the foreign gems the host
+        // provides, so "resolves nowhere here" says nothing about the
+        // merged program. The directive stays a REAL runtime self-send:
+        // csv's `extend Forwardable` lands when the forwardable artifact
+        // answers, and a truly missing name still raises ruby's NameError
+        // from the send's constant argument. `DeferredRead` would rewrite
+        // the directive to a bare read and silently drop the mixin. Free
+        // here, because a package's own sites are blanket-dynamic.
+        None if compiler.hir.pkg_build.is_some() => MixinTarget::Runtime,
         None if !compiler.assigns_const_path(name) => MixinTarget::DeferredRead,
         // A second NAME for a module (`Constants = ::Socket::Constants`) that
         // resolves to nothing zeo compiled: spelled directly, that same include

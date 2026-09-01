@@ -414,16 +414,20 @@ fn analyze_on_this_thread(
     let start = std::time::Instant::now();
     memguard::set_phase(memguard::Phase::ParseLower);
     let (mut hir, mut root, mut gem_records) = parse::parse_and_lower_with(source, opts)?;
-    // First-use auto-packaging: consult the machine cache for every
-    // bundled gem this parse activated, and re-parse with the artifacts
-    // merged so their sources stop splicing. Bounded, because hits only
-    // grow and a re-parse can activate no gem the spliced parse did not.
+    // First-use auto-packaging: the parse already DEFERRED every bundled
+    // gem the machine cache holds (nothing of theirs spliced or lowered);
+    // this loop merges those artifacts and re-parses. A rejection (an
+    // artifact that cannot serve this compile whole) re-parses too, so
+    // the gem splices after all. Bounded: hits and rejections only grow.
     let mut auto = autopkg::AutoPackages::default();
     if opts.auto_package && opts.package_build.is_none() && progcache::enabled() {
+        // Rejections are per COMPILE; the compile thread is fresh per
+        // compile, but a retry on the same thread must not inherit them.
+        autopkg::clear_rejected();
         let mut local = opts.clone();
-        for _ in 0..4 {
-            let new = autopkg::consult_new(&hir, &local.use_packages, &mut auto);
-            if new.is_empty() {
+        for _ in 0..6 {
+            let (new, rejected_any) = autopkg::consult_new(&hir, &local.use_packages, &mut auto);
+            if new.is_empty() && !rejected_any {
                 break;
             }
             local.use_packages.extend(new);

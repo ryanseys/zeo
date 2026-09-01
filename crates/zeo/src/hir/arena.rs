@@ -546,6 +546,10 @@ pub struct ActivatedBundled {
     pub roots: Vec<std::path::PathBuf>,
     /// Feature spellings this compile resolved into the gem, sorted.
     pub features: Vec<String>,
+    /// The parse DEFERRED this gem to a cached artifact instead of
+    /// splicing it. The discovery loop must then merge that artifact --
+    /// or reject the gem and re-parse, so the splice happens after all.
+    pub deferred: bool,
 }
 
 /// One compiled-in load-path file -- see `LoaderState::feature_units`. Its statements

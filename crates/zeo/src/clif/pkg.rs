@@ -86,9 +86,6 @@ pub(crate) fn finish_package(
     {
         return refuse("an FFI declaration");
     }
-    if em.cov_active {
-        return refuse("coverage");
-    }
     if compiler.hir.data_section.is_some() {
         return refuse("an __END__ data section");
     }
@@ -327,6 +324,16 @@ pub(crate) fn finish_package(
             .pkg_foreign_requires
             .iter()
             .cloned()
+            .collect(),
+        cov_active: em.cov_active,
+        cov: super::statics::cov_rows(em, analyzed)
+            .into_iter()
+            .map(|(file, total, stmt, def)| crate::package::MCovRow {
+                file,
+                total,
+                stmt,
+                def,
+            })
             .collect(),
         callers: em.callsites.clone(),
         class_tables: super::statics::needed_class_tables(analyzed)
