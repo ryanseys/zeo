@@ -71,7 +71,15 @@ impl NativeExt {
     /// LITERAL scan: a computed argument is not seen, and the require then
     /// falls through to the ordinary miss rather than to a wrong gem.
     pub fn provides(&self, feature: &str) -> bool {
-        self.extconfs.iter().any(|extconf| {
+        self.extconf_index_for(feature).is_some()
+    }
+
+    /// WHICH extension provides `feature` -- the extconf index whose
+    /// `create_makefile` names it. A multi-extension gem (json ships a
+    /// parser and a generator) builds one product per extconf, and a
+    /// require must load the one its feature names, not the first.
+    pub fn extconf_index_for(&self, feature: &str) -> Option<usize> {
+        self.extconfs.iter().position(|extconf| {
             let path = self.gem_dir.join(extconf);
             std::fs::read_to_string(&path)
                 .ok()
@@ -585,5 +593,43 @@ fn excluded(name: &str, kind: &str, reason: String) -> GemRecord {
             kind: kind.to_string(),
             reason,
         },
+    }
+}
+
+#[cfg(test)]
+mod native_ext_tests {
+    use super::*;
+
+    /// json's shape: two extensions, and a require must load the one its
+    /// feature names, not the first.
+    #[test]
+    fn a_multi_extension_gem_maps_each_feature_to_its_own_extconf() {
+        let dir = std::env::temp_dir().join(format!("zeo-next-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (sub, target) in [
+            ("ext/json/ext/generator", "json/ext/generator"),
+            ("ext/json/ext/parser", "json/ext/parser"),
+        ] {
+            let d = dir.join(sub);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(
+                d.join("extconf.rb"),
+                format!("require 'mkmf'\ncreate_makefile(\"{target}\")\n"),
+            )
+            .unwrap();
+        }
+        let ext = NativeExt {
+            name: "json".into(),
+            gem_dir: dir.clone(),
+            extconfs: vec![
+                "ext/json/ext/generator/extconf.rb".into(),
+                "ext/json/ext/parser/extconf.rb".into(),
+            ],
+        };
+        assert_eq!(ext.extconf_index_for("json/ext/generator"), Some(0));
+        assert_eq!(ext.extconf_index_for("json/ext/parser"), Some(1));
+        assert_eq!(ext.extconf_index_for("json/ext/nothing"), None);
+        assert!(ext.provides("json/ext/parser"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

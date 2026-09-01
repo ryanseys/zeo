@@ -113,22 +113,31 @@ impl Loader {
             return Ok(None);
         };
         let gem = gem.as_str();
-        if let Some((library, init)) = self.built_cexts.get(gem) {
+        // A gem may ship more than one extension (json: a parser and a
+        // generator), each with its own `create_makefile` and its own
+        // require. The FEATURE names which one this require loads; a
+        // feature no extconf names (the gem-name convention) takes the
+        // first. The memo keys on the same choice, so the other
+        // extension's require still builds and loads its own product.
+        let idx = self.native_exts[gem]
+            .extconf_index_for(feature)
+            .unwrap_or(0);
+        let memo_key = format!("{gem}#{idx}");
+        if let Some((library, init)) = self.built_cexts.get(&memo_key) {
             let (library, init) = (library.clone(), init.clone());
             return Ok(Some(loaded_cext(hir, &library, init)));
         }
         let ext = &self.native_exts[gem];
         let zeo =
             crate::cext::zeo_binary().map_err(|e| format!("building {gem}'s C extension: {e}"))?;
-        // A gem may ship more than one extension. Every one is built in one
-        // staged copy of the gem tree, and the FIRST is what the feature
-        // names -- mkmf's own convention, since a second extension has its
-        // own `create_makefile` and its own require. Out of tree: the gem
-        // store is shared and often read only, and a build that wrote into
-        // it would leave one project's artifacts where another reads them.
+        // Every extension is built in one staged copy of the gem tree; the
+        // products come back parallel to the extconf list. Out of tree: the
+        // gem store is shared and often read only, and a build that wrote
+        // into it would leave one project's artifacts where another reads
+        // them.
         let libraries = crate::cext::build_out_of_tree(&zeo, gem, &ext.gem_dir, &ext.extconfs)
             .map_err(|e| format!("building {gem}'s C extension: {e}"))?;
-        let Some(library) = libraries.first() else {
+        let Some(library) = libraries.get(idx).or_else(|| libraries.first()) else {
             return Ok(None);
         };
         let init = library
@@ -138,7 +147,7 @@ impl Loader {
             .to_string();
         let library = library.display().to_string();
         self.built_cexts
-            .insert(gem.to_string(), (library.clone(), init.clone()));
+            .insert(memo_key, (library.clone(), init.clone()));
         self.record_gem(crate::gem_report::GemRecord {
             name: gem.to_string(),
             by: crate::gem_report::SatisfiedBy::CompiledExt {
@@ -162,10 +171,14 @@ impl Loader {
             .or_else(|| feature.strip_suffix(".o"))
             .unwrap_or(feature);
         !self.builtin_wins(bare)
-            && (self.built_cexts.contains_key(bare)
-                || self
-                    .cext_gem(bare)
-                    .is_some_and(|gem| self.built_cexts.contains_key(gem)))
+            && self.cext_gem(bare).is_some_and(|gem| {
+                // Same key `build_cext` memoizes under: gem plus WHICH of
+                // its extensions the feature names.
+                let idx = self.native_exts[gem]
+                    .extconf_index_for(bare)
+                    .unwrap_or(0);
+                self.built_cexts.contains_key(&format!("{gem}#{idx}"))
+            })
     }
 
     /// Which store gem, if any, would build `feature`.
