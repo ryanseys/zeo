@@ -323,7 +323,26 @@ pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult
             let set = &fx.an.compiler.hir.loader.unrun_unit_consts;
             set.contains(&name) || set.contains(&format!("{scope}::{name}"))
         };
-        if unrun || crate::analyze::constfold::const_form_resolves(&env, inner) != Some(true) {
+        // A POSITIONAL scope or target -- a class a spliced require reveals
+        // at its own statement -- is undefined until that line runs, so a
+        // static "constant" above the require is a claim ruby does not make.
+        // The bare-name arm below already asks the run time; this is the
+        // qualified spelling's half.
+        let positional = [format!("{scope}::{name}"), scope.clone()].iter().any(|p| {
+            super::boxes::resolve_class_here(fx, p)
+                .is_some_and(|cid| fx.an.compiler.constant_is_positional(cid))
+        });
+        // While the path's ROOT is only defined LATER in the document, ruby
+        // has no such constant at this line -- and the runtime registry
+        // cannot say so (a spliced class registers at startup), so the
+        // answer is a STATIC nil, not a probe.
+        if crate::analyze::constfold::path_root_defined_only_later(&env, inner, &scope) {
+            return Ok(defined_static(fx, None));
+        }
+        if unrun
+            || positional
+            || crate::analyze::constfold::const_form_resolves(&env, inner) != Some(true)
+        {
             let Some(scope_id) = super::boxes::resolve_class_here(fx, &scope) else {
                 // A scope only the run time can name (`Scoped = Module.new`)
                 // -- or one nothing ever defines, where reading it raises
@@ -533,6 +552,13 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
         // load at run time, "provably absent" is a claim the compiler is not
         // entitled to make.
         if crate::analyze::constfold::const_form_resolves(&env, inner) != Some(true) {
+            // While the name's ROOT is only defined LATER in the document,
+            // ruby has no such constant at this line. The runtime registry
+            // cannot say so -- a spliced class registers at startup -- so
+            // the answer is a STATIC nil, ahead of every probe below.
+            if crate::analyze::constfold::path_root_defined_only_later(&env, inner, &name) {
+                return Ok(defined_static(fx, None));
+            }
             // A positional CLASS answers the scope operator's question -- the
             // name is looked up IN its lexical parent. A value constant a
             // unit assigns answers the BARE one, which reaches a top-level

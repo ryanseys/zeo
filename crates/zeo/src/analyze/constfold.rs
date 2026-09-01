@@ -141,6 +141,20 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
                 {
                     return None;
                 }
+                // A POSITIONAL scope makes the whole path a runtime question
+                // -- the QualifiedConstRead arm's rule, for the path spelled
+                // as one name. `defined?(Gemx::Nested)` above the require
+                // that reveals Gemx is nil under ruby.
+                if env.compiler.constant_is_positional(sid) {
+                    return None;
+                }
+            }
+            // The path's ROOT decides first: while the root itself is only
+            // defined LATER in the document (a require further down), no
+            // path under it is defined here, whatever the whole-program
+            // walk below would say about the leaf.
+            if path.scope().is_some() && path_root_defined_only_later(env, id, name) {
+                return Some(false);
             }
             // A constant a compiled-in UNIT assigns exists only once that
             // file runs, and a unit is not in any statement stream -- so
@@ -200,6 +214,13 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
             if env.compiler.constant_is_positional(scope_id) {
                 return None;
             }
+            // While the SCOPE'S ROOT is only defined LATER in the document
+            // (a require further down), nothing under it is defined here,
+            // whatever the whole-program walk below says about the leaf --
+            // the same doc-order rule the bare arm applies to its own name.
+            if path_root_defined_only_later(env, id, scope) {
+                return Some(false);
+            }
             // `defined?(M::S)` is nil for a private constant -- the same
             // rejection of the scope operator the read itself gets -- and
             // WHEN it is private is positional, so the probe asks.
@@ -239,6 +260,23 @@ pub(crate) fn const_form_resolves(env: &ConstEnv, id: NodeId) -> Option<bool> {
 /// a reference with no position (it sits in a `def` body, which runs at call
 /// time, or in a block), or a name with no positioned definition at all, keeps
 /// whatever whole-program answer the caller already had.
+/// Whether `path`'s ROOT segment (`Gemx` of `Gemx::Nested`) is only defined
+/// LATER in the document than `at`. The emit arm needs this on its own: a
+/// spliced class sits in the runtime registry from startup, so no runtime
+/// probe can answer "not yet" -- the STATIC nil is the only correct answer
+/// for a reference above the require that defines the root.
+pub(crate) fn path_root_defined_only_later(env: &ConstEnv, at: NodeId, path: &str) -> bool {
+    let parsed = crate::constpath::ConstPath::parse(path);
+    let root = parsed
+        .unanchored()
+        .split_once("::")
+        .map_or(parsed.unanchored(), |(r, _)| r)
+        .to_string();
+    let mut scopes = env.cref_chain().to_vec();
+    scopes.push(OBJECT_CLASS);
+    defined_only_later(env, at, &scopes, &root)
+}
+
 fn defined_only_later(env: &ConstEnv, at: NodeId, scopes: &[ClassId], name: &str) -> bool {
     let mut later = false;
     for &s in scopes {
