@@ -190,6 +190,7 @@ pub(crate) fn finish_package(
                     has_blk: scope.needs_block_param(),
                     runtime_conditional: scope.runtime_conditional,
                     body,
+                    unit: scope.unit,
                 });
             }
             Ok(out)
@@ -460,6 +461,88 @@ pub(crate) fn merge_rows(
             }
         }
     }
+    // ONE method name defined statically by TWO packages is ruby's
+    // ordinary cross-gem monkey-patch, but the flat table can hold one
+    // body. The LAST manifest's row stays static; every clashing
+    // package's body installs POSITIONALLY instead -- a host thunk on the
+    // defining unit replaces the runtime overlay body when that unit runs
+    // (the channel a spliced redefinition uses), so require order
+    // decides, exactly ruby's install-where-it-stands. The registration
+    // pass already made every such name runtime-patched, so no host site
+    // folds against either body.
+    let mut clash: std::collections::HashMap<(u32, String, bool), u32> = Default::default();
+    let mut unit_installs: std::collections::HashMap<(u32, u32), Vec<(u32, String, bool, String)>> =
+        Default::default();
+    {
+        let mapped = |pi: usize, m: &Manifest, id: u32| -> Option<u32> {
+            if id < m.first_class_id {
+                Some(id)
+            } else {
+                analyzed
+                    .compiler
+                    .pkg_class_map
+                    .get(&(pi as u32, id))
+                    .map(|c| c.0)
+            }
+        };
+        // (final class, name, class side) -> every (package, local class,
+        // dispatch symbol) that statically defines it.
+        let mut seen: std::collections::HashMap<(u32, String, bool), Vec<(u32, u32, String)>> =
+            Default::default();
+        for (pi, m) in manifests.iter().enumerate() {
+            for r in &m.vm {
+                if let Some(fc) = mapped(pi, m, r.class) {
+                    seen.entry((fc, r.name.clone(), false))
+                        .or_default()
+                        .push((pi as u32, r.class, r.f.clone()));
+                }
+            }
+            for r in &m.cm {
+                if let Some(fc) = mapped(pi, m, r.class) {
+                    seen.entry((fc, r.name.clone(), true))
+                        .or_default()
+                        .push((pi as u32, r.class, r.f.clone()));
+                }
+            }
+        }
+        for (key, rows) in seen {
+            let pis: std::collections::HashSet<u32> = rows.iter().map(|r| r.0).collect();
+            if pis.len() < 2 {
+                continue;
+            }
+            for (pi, local, fsym) in &rows {
+                let m = &manifests[*pi as usize];
+                // The defining unit, from the package's interface -- the
+                // moment its file runs is the moment the install must land.
+                let unit = m
+                    .iface
+                    .iter()
+                    .find(|ic| ic.id == *local)
+                    .and_then(|ic| {
+                        let list = if key.2 { &ic.class_methods } else { &ic.methods };
+                        list.iter().find(|im| im.name == key.1)
+                    })
+                    .and_then(|im| im.unit);
+                let Some(unit) = unit else {
+                    return Err(CodegenError::unsupported(
+                        format!(
+                            "two packages define `{}` on one shared class, and \
+                             package '{}' carries no unit row to install its body \
+                             from; compile one of them from source",
+                            key.1, m.feature
+                        ),
+                        None,
+                    ));
+                };
+                unit_installs
+                    .entry((*pi, unit))
+                    .or_default()
+                    .push((key.0, key.1.clone(), key.2, fsym.clone()));
+            }
+            let kept = rows.iter().map(|r| r.0).max().unwrap_or_default();
+            clash.insert(key, kept);
+        }
+    }
     // A shared namespace (`module Rack` in two packages) ALIASES: the
     // registration pass mapped both local ids onto one host id and held
     // the compatibility line (one ancestry side, disjoint methods), so
@@ -584,24 +667,47 @@ pub(crate) fn merge_rows(
             });
         }
         for r in m.vm {
+            let class = rb(r.class);
+            // A cross-package clash: only the kept package's row stays
+            // static; the rest install through their unit thunks.
+            if let Some(&kept) = clash.get(&(class, r.name.clone(), false))
+                && kept != pi as u32
+            {
+                continue;
+            }
             let f = import(em, &r.f, &vsig)?;
             vm_rows.push(VmRowSpec {
-                class: rb(r.class),
+                class,
                 box_id: r.box_id,
                 name: r.name,
                 f,
             });
         }
         for r in m.cm {
+            let class = rb(r.class);
+            if let Some(&kept) = clash.get(&(class, r.name.clone(), true))
+                && kept != pi as u32
+            {
+                continue;
+            }
             let f = import(em, &r.f, &vsig)?;
             cm_rows.push(CmRowSpec {
-                class: rb(r.class),
+                class,
                 box_id: r.box_id,
                 name: r.name,
                 f,
             });
         }
         for r in m.reg {
+            // A dropped clash row's conceal row goes with it: the conceal
+            // map holds ONE unit per (class, name), and it must be the
+            // kept row's -- the thunks own the other packages' installs.
+            if r.kind == zeo_abi::abi::REG_CONCEAL_METHOD
+                && let Some(&kept) = clash.get(&(rb(r.class), r.a.clone(), r.flag != 0))
+                && kept != pi as u32
+            {
+                continue;
+            }
             // What a reg row's `ids` MEAN depends on its kind: class ids
             // for the mixin/ancestry/surrogate kinds, reveal-group ids for
             // a concealment, and plain scalars (a slot, a redef index)
@@ -706,8 +812,17 @@ pub(crate) fn merge_rows(
                 },
             );
         }
-        for (spelling, sym) in m.units {
-            let f = import(em, &sym, &usig)?;
+        for (ui, (spelling, sym)) in m.units.into_iter().enumerate() {
+            let mut f = import(em, &sym, &usig)?;
+            if let Some(installs) = unit_installs.get(&(pi as u32, ui as u32)) {
+                let resolved: Vec<(u32, String, bool, FuncId)> = installs
+                    .iter()
+                    .map(|(cid, name, side, fsym)| {
+                        Ok((*cid, name.clone(), *side, import(em, fsym, &vsig)?))
+                    })
+                    .collect::<CResult<_>>()?;
+                f = define_redef_thunk(em, f, &usig, &resolved)?;
+            }
             unit_rows.push((spelling, f));
         }
     }
@@ -742,6 +857,68 @@ pub(crate) fn merge_rows(
         ));
     }
     Ok(())
+}
+
+/// A host wrapper on a package UNIT whose file defines a method ANOTHER
+/// package also defines statically: before the unit body runs, each such
+/// body is installed over the runtime overlay -- the channel a spliced
+/// redefinition uses (`HirNode::MethodRedefine`) -- so the unit that ran
+/// LAST answers, ruby's install-where-it-stands across two precompiled
+/// objects. Same granularity as `zeo_rt_reveal_unit_methods`, which also
+/// fires at the unit's head.
+fn define_redef_thunk(
+    em: &mut Emitter,
+    orig: FuncId,
+    usig: &cranelift_codegen::ir::Signature,
+    installs: &[(u32, String, bool, FuncId)],
+) -> CResult<FuncId> {
+    use cranelift_codegen::ir::{self, InstBuilder, UserFuncName};
+    use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+    let name = format!("zeo_pkg_redef_thunk_{}", orig.as_u32());
+    let id = em
+        .module
+        .declare_function(&name, Linkage::Local, usig)
+        .map_err(|e| CodegenError::internal(format!("declaring {name}: {e}")))?;
+    let mut func =
+        ir::Function::with_name_signature(UserFuncName::user(1, id.as_u32()), usig.clone());
+    let mut refs = Vec::new();
+    for (cid, mname, side, tramp) in installs {
+        let entry = if *side {
+            "zeo_rt_runtime_replace_class_method"
+        } else {
+            "zeo_rt_runtime_replace_method"
+        };
+        let eid = em.import(entry);
+        let e = em.module.declare_func_in_func(eid, &mut func);
+        let t = em.module.declare_func_in_func(*tramp, &mut func);
+        let off = em.intern_rodata(mname.as_bytes());
+        refs.push((e, t, off, *cid, mname.len()));
+    }
+    let oref = em.module.declare_func_in_func(orig, &mut func);
+    let rodata_gv = em.module.declare_data_in_func(em.rodata_id, &mut func);
+    let ptr = em.ptr;
+    let mut fbc = FunctionBuilderContext::new();
+    let mut b = FunctionBuilder::new(&mut func, &mut fbc);
+    let entry = b.create_block();
+    b.append_block_params_for_function_params(entry);
+    b.switch_to_block(entry);
+    let out = b.block_params(entry)[0];
+    let rodata = b.ins().symbol_value(ptr, rodata_gv);
+    for (e, t, off, cid, len) in refs {
+        let cidv = b.ins().iconst(types::I32, i64::from(cid));
+        let nptr = b.ins().iadd_imm_u(rodata, i64::from(off));
+        let nlen = b.ins().iconst(ptr, len as i64);
+        let taddr = b.ins().func_addr(ptr, t);
+        b.ins().call(e, &[cidv, nptr, nlen, taddr]);
+    }
+    let call = b.ins().call(oref, &[out]);
+    let ret = b.func.dfg.inst_results(call)[0];
+    b.ins().return_(&[ret]);
+    b.seal_all_blocks();
+    let cfg = em.module.target_config();
+    b.finalize(cfg);
+    em.define(id, func, &name, false)?;
+    Ok(id)
 }
 
 /// The `packaged-ids` bench mode's identity id-translation table: the

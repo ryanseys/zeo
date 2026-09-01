@@ -390,20 +390,18 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                     // never guarded against. A PRELUDE body (ruby's own,
                     // `native_default`) is not a competitor: reopening it is
                     // an ordinary builtin reopen, and the standing entry
-                    // gives way.
+                    // gives way. Any other duplicate becomes POSITIONAL:
+                    // the merge drops the clashing static rows and installs
+                    // each package's body when its defining unit runs
+                    // (`pkg::merge_rows`), so require order decides -- and
+                    // the name joins `runtime_patches` here so no host site
+                    // folds or nominates against either body.
                     if aliased && let Some(&at) = index.get(&im.name) {
-                        if compiler.scopes[list[at].0 as usize].native_default {
-                            list[at] = sid;
-                            continue;
+                        if !compiler.scopes[list[at].0 as usize].native_default {
+                            compiler.runtime_patches.insert(im.name.clone());
                         }
-                        let sep = if class_side { "." } else { "#" };
-                        return Err(format!(
-                            "package '{}' defines `{taken_name}{sep}{}`, which \
-                             another merged package also defines; a cross-\
-                             package redefinition is not supported yet -- \
-                             compile one of them from source",
-                            m.feature, im.name
-                        ));
+                        list[at] = sid;
+                        continue;
                     }
                     index.insert(im.name.clone(), list.len());
                     list.push(sid);

@@ -843,22 +843,44 @@ fn regexp_and_flip_flop_sites_get_disjoint_strides() {
 }
 
 #[test]
-fn two_packages_defining_one_method_on_a_shared_class_are_refused() {
-    // A cross-package redefinition: the earlier package's typed sites
-    // compiled against ITS body with no guard for a static replacement.
-    // Patch rows will lift this; today it refuses by name.
+fn two_packages_defining_one_method_install_in_require_order() {
+    // A cross-package redefinition is ruby's ordinary cross-gem monkey-
+    // patch: the def installs where its file runs. The merge keeps one
+    // static row and installs each package's body from a thunk on its
+    // defining unit, so require order decides -- verified against
+    // ruby 4.0.6 in BOTH orders, re-require idempotence included.
     let dir = scratch("clash-method");
-    let a = build_inline_package(&dir, "clasha", "module Shk\n  def self.tag = :a\nend\n");
-    let b = build_inline_package(&dir, "clashb", "module Shk\n  def self.tag = :b\nend\n");
-    let err = refuse_merge(
+    let a = build_inline_package(
         &dir,
-        &a,
-        &b,
-        "require \"clasha\"\nrequire \"clashb\"\np Shk.tag\n",
+        "clasha",
+        "module Shk\n  def self.tag = :a\n  def greet = :ha\nend\n",
     );
-    assert!(
-        err.contains("defines `Shk.tag`") && err.contains("another merged package"),
-        "the refusal names the method: {err}"
+    let b = build_inline_package(
+        &dir,
+        "clashb",
+        "module Shk\n  def self.tag = :b\n  def greet = :hb\nend\n",
+    );
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "begin\n  Shk.tag\nrescue NameError\n  puts \"pre: no constant\"\nend\n\
+         require \"clasha\"\np Shk.tag\nrequire \"clashb\"\np Shk.tag\nrequire \"clasha\"\n\
+         p Shk.tag\nclass UsesIt\n  include Shk\nend\np UsesIt.new.greet\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--with-package")
+        .arg(&a)
+        .arg("--with-package")
+        .arg(&b)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(
+        ok(&mut Command::new(&bin)),
+        "pre: no constant\n:a\n:b\n:b\n:hb\n"
     );
 }
 

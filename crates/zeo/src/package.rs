@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped when the manifest schema changes shape. Independent of
 /// `zeo_abi::ABI_VERSION`: the manifest is a compiler-to-compiler file.
-pub const MANIFEST_VERSION: u32 = 7;
+pub const MANIFEST_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -150,6 +150,11 @@ pub struct MIfaceMethod {
     pub has_blk: bool,
     pub runtime_conditional: bool,
     pub body: Option<String>,
+    /// The package unit whose file wrote this `def` -- what lets a host
+    /// place a cross-package redefinition's install at the unit that
+    /// defines it (`pkg::merge_rows`).
+    #[serde(default)]
+    pub unit: Option<u32>,
 }
 
 /// The package's whole-program facts, extracted from the same `Compiler`
