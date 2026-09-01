@@ -573,6 +573,12 @@ pub enum HirNode {
         /// this set for as long as the hook body is on the stack. Empty for
         /// the last definition in a class, which is the common case.
         pending: Vec<String>,
+        /// A PACKAGE build cannot know whether the program it links into
+        /// carries a hook body, so it announces through a run-time probe
+        /// (`zeo_rt_probe_def_hook`) instead of an unconditional send. The
+        /// no-hook answer is one atomic load, and a definition runs once
+        /// per require, so the probe is never hot.
+        probe: bool,
     },
     /// A method REDEFINITION applied at its document position. Ruby installs
     /// each `def` where it stands, so code running between two same-name

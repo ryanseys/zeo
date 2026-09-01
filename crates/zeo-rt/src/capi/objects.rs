@@ -1344,3 +1344,43 @@ pub unsafe extern "C" fn zeo_rt_pending_defs_begin(class: u32, syms: *const u32,
 pub unsafe extern "C" fn zeo_rt_pending_defs_end() {
     crate::runtime_meta::pending_defs_end();
 }
+
+/// A separately compiled definition's `method_added`-family probe: fires
+/// the hook only if this program carries a body for it. `event` is 0 for
+/// an added definition, 1 for `remove_method`, 2 for `undef_method`;
+/// `singleton` distinguishes `def self.x`. `pending` is a sym-id array on
+/// [`zeo_rt_pending_defs_begin`]'s shape.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_probe_def_hook(
+    class: u32,
+    singleton: u8,
+    event: u8,
+    name: u32,
+    pending: *const u32,
+    n_pending: usize,
+) -> i32 {
+    let event = match event {
+        1 => crate::runtime_meta::DefEvent::Removed,
+        2 => crate::runtime_meta::DefEvent::Undefined,
+        _ => crate::runtime_meta::DefEvent::Added,
+    };
+    let ids = if n_pending == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(pending, n_pending) }
+    };
+    let names: Vec<Symbol> = ids.iter().map(|&s| Symbol::from_u32(s)).collect();
+    match crate::runtime_meta::probe_def_hook(
+        ClassId(class),
+        singleton != 0,
+        event,
+        Symbol::from_u32(name),
+        &names,
+    ) {
+        Ok(()) => zeo_abi::abi::STATUS_OK,
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            zeo_abi::abi::STATUS_SIGNAL
+        }
+    }
+}

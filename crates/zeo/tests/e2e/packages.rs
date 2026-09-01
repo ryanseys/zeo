@@ -363,6 +363,42 @@ fn a_package_carrying_a_box_is_refused_by_name() {
 }
 
 #[test]
+fn a_hosts_global_def_hook_hears_a_packages_definitions() {
+    // The package compiled with no hook in sight, so each of its
+    // definitions announces through the run-time probe; the host's
+    // `method_added`/`singleton_method_added` bodies answer, in ruby's
+    // order (each hook announces itself first). Verified against ruby
+    // 4.0.6.
+    let dir = scratch("defhook");
+    let object = build_inline_package(
+        &dir,
+        "hookgem",
+        "class Hookgem\n  def alpha = 1\n  def self.side = 2\n  def omega = 3\nend\n",
+    );
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "class Module\n  def method_added(n) = puts(\"added #{n}\")\nend\n\
+         class BasicObject\n  def singleton_method_added(n) = puts(\"s-added #{n}\")\nend\n\
+         require \"hookgem\"\np Hookgem.new.alpha\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&object)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(
+        ok(&mut Command::new(&bin)),
+        "added method_added\nadded singleton_method_added\nadded alpha\n\
+         s-added side\nadded omega\n1\n"
+    );
+}
+
+#[test]
 fn an_eval_bearing_package_links_against_the_hosts_compiler() {
     // The package's manifest says it compiles at run time; the HOST has no
     // eval of its own, so only the fact union makes it embed the run-time

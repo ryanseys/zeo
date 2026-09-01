@@ -838,6 +838,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(Usize),
     },
     CapiSig {
+        name: "zeo_rt_probe_def_hook",
+        params: &[U32, U8, U8, U32, Ptr, Usize],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_pool_push",
         params: &[Ptr],
         ret: None,

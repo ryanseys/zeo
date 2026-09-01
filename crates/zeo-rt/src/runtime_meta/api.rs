@@ -2720,3 +2720,33 @@ pub(crate) fn fire_def_hook(
     crate::dispatch::send_value(&recv, hook, &[RubyValue::Symbol(name)], None)?;
     Ok(())
 }
+
+/// A separately compiled definition's announcement PROBE. The object was
+/// compiled without knowing whether this program carries a hook, so its def
+/// positions ask at run time; the no-hook answer costs one atomic load
+/// inside [`fire_def_hook`]'s own gate, and a definition runs once per
+/// require, so the probe is never on a hot path. `pending` carries the
+/// class's own names still in the future at this position, exactly as a
+/// spliced announcement would.
+pub(crate) fn probe_def_hook(
+    class: ClassId,
+    singleton: bool,
+    event: DefEvent,
+    name: Symbol,
+    pending: &[Symbol],
+) -> Result<(), Signal> {
+    let value = RubyValue::Class(class);
+    let target = if singleton {
+        DefTarget::Singleton(&value)
+    } else {
+        DefTarget::Class(class)
+    };
+    if !pending.is_empty() {
+        super::pending_defs_begin(class, pending);
+    }
+    let fired = fire_def_hook(target, event, name);
+    if !pending.is_empty() {
+        super::pending_defs_end();
+    }
+    fired
+}

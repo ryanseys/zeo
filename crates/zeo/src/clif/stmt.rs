@@ -1009,9 +1009,33 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             hook,
             name,
             pending,
+            probe,
         } => {
-            let (class, hook, name, pending) =
-                (*class, hook.clone(), name.clone(), pending.clone());
+            let (class, hook, name, pending, probe) =
+                (*class, hook.clone(), name.clone(), pending.clone(), *probe);
+            if probe {
+                // The linking program may or may not carry a hook body; the
+                // runtime answers, pending window included, in one call.
+                let singleton = u8::from(hook.starts_with("singleton_"));
+                let event: u8 = if hook.ends_with("_removed") {
+                    1
+                } else if hook.ends_with("_undefined") {
+                    2
+                } else {
+                    0
+                };
+                let cid_v = fx.cid_value(class);
+                let singleton_v = fx.b.ins().iconst(types::I8, i64::from(singleton));
+                let event_v = fx.b.ins().iconst(types::I8, i64::from(event));
+                let name_sym = fx.sym_id(&name);
+                let (pend_ptr, pend_n) = sym_id_array(fx, &pending);
+                let status = fx.call_status(
+                    "zeo_rt_probe_def_hook",
+                    &[cid_v, singleton_v, event_v, name_sym, pend_ptr, pend_n],
+                );
+                fx.fallible(status);
+                return Ok(());
+            }
             let recv = super::consts::class_immediate(fx, crate::compiler::ClassId(class));
             let recv_ptr = ownership::borrow_ptr(fx, &recv);
             let arg_ss = fx.temp_slot();

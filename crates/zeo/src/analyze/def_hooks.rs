@@ -319,6 +319,10 @@ struct Send {
     hook: &'static str,
     name: String,
     pending: Vec<String>,
+    /// The hook body is not in THIS compile: a package build announces
+    /// through the run-time probe, which fires only when the linking
+    /// program carries a body. False = an unconditional send.
+    probe: bool,
 }
 
 /// Per definition (keyed by [`SiteDef::seq`]), the names of its own class that
@@ -404,12 +408,28 @@ fn surviving(
         .filter(|d| !prelude.contains(&d.node))
         .filter_map(|d| {
             let hook = d.event.hook(d.singleton);
-            fires(compiler, class, d, hook, global, graph, unit_of_file).then(|| Send {
-                at: d.at,
-                hook,
-                name: d.name.clone(),
-                pending: future.pending(class, d.seq),
-            })
+            if fires(compiler, class, d, hook, global, graph, unit_of_file) {
+                return Some(Send {
+                    at: d.at,
+                    hook,
+                    name: d.name.clone(),
+                    pending: future.pending(class, d.seq),
+                    probe: false,
+                });
+            }
+            // A package build's world is open: the program it links into
+            // may carry the hook this compile does not, so every remaining
+            // definition announces through the run-time probe instead.
+            if compiler.hir.pkg_build.is_some() {
+                return Some(Send {
+                    at: d.at,
+                    hook,
+                    name: d.name.clone(),
+                    pending: future.pending(class, d.seq),
+                    probe: true,
+                });
+            }
+            None
         })
         .collect()
 }
@@ -485,12 +505,20 @@ fn fires(
 /// actually told about lose their fold, and only in a program that has one.
 fn splice(compiler: &mut Compiler, stmts: &mut Vec<NodeId>, class: ClassId, sends: Vec<Send>) {
     for send in sends.into_iter().rev() {
-        compiler.runtime_patches.insert(send.name.clone());
+        // A PROBE does not dynamize the name: if the linking program's hook
+        // redefines it at run time, the install patches the class and every
+        // guarded site deopts -- the same contract every runtime definition
+        // rides. An unconditional send's hook is in THIS compile, and its
+        // folds must lose statically.
+        if !send.probe {
+            compiler.runtime_patches.insert(send.name.clone());
+        }
         let node = compiler.hir.push(HirNode::DefHook {
             class: class.0,
             hook: send.hook.to_string(),
             name: send.name,
             pending: send.pending,
+            probe: send.probe,
         });
         stmts.insert(send.at, node);
     }
