@@ -70,6 +70,38 @@ fn the_pure_string_scanner_matches_the_c_gems_recorded_output() {
     );
 }
 
+#[test]
+fn the_pure_string_io_matches_the_c_gems_recorded_output() {
+    golden_matches(
+        "stringio",
+        "a_string_io_answers_the_same_off_either_implementation",
+    );
+}
+
+/// The vendored UPSTREAM suite (ruby/stringio's own test_stringio.rb at the
+/// locked v3.2.0 tag) against the pure port, under ruby. The driver refuses
+/// to run if the pure tree did not win the require.
+#[test]
+fn the_pure_string_io_passes_the_upstream_suite() {
+    let Some(ruby) = oracle_ruby() else {
+        eprintln!("skipping: this machine has no ruby to run the pure port");
+        return;
+    };
+    let out = Command::new(&ruby)
+        .arg(root().join("crates/zeo-rt/gems/stringio/test/run_pure.rb"))
+        .env("BUNDLE_GEMFILE", root().join("Gemfile"))
+        .env_remove("RUBYOPT")
+        .env_remove("RUBYLIB")
+        .output()
+        .expect("ruby spawns");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains(", 0 failures, 0 errors,"),
+        "upstream stringio suite failed:\n{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// The vendored UPSTREAM suite (ruby/strscan's own test_stringscanner.rb at
 /// the locked v3.1.8 tag) against the pure port, under ruby. The driver
 /// refuses to run if the pure tree did not win the require.
