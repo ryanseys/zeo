@@ -1391,7 +1391,7 @@ impl Loader {
             // hoisted differ.rb ahead of the whole module statement.
             let mut autoloads = Vec::new();
             collect_autoloads(&n, &mut autoloads);
-            for Autoload { call, .. } in &autoloads {
+            for call in &autoloads {
                 // Only a target this pass can NAME is registered. A computed
                 // one -- including the one-argument form an `autoload` DSL
                 // defines over `Module#autoload` -- is left to run: its
