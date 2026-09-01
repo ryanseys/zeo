@@ -43,7 +43,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::normalize::{normalize_addresses, normalize_thread_ids};
-use crate::paths::workspace_root;
+use crate::paths::{resolve_ruby, workspace_root};
 use crate::zeo_bin::zeo_cli;
 
 /// Hard bounds on any child this harness runs (a compiled golden binary, or the
@@ -381,7 +381,11 @@ struct Sidecars {
 
 /// The tag a per-platform golden carries. Empty everywhere but linux, so the
 /// default `.expected` is macOS's answer and nothing else needs a file.
-const PLATFORM: &str = if cfg!(target_os = "linux") { ".linux" } else { "" };
+const PLATFORM: &str = if cfg!(target_os = "linux") {
+    ".linux"
+} else {
+    ""
+};
 
 /// Resolve `<rb>.args` / `<rb>.stdin` / `<rb>.expected` / `<rb>.err.expected`
 /// (the corpus sidecar convention; a `.rb` file's siblings by suffix).
@@ -460,6 +464,7 @@ pub fn backend_is_aot() -> bool {
 /// only consumer was the retired `Mode::CompileFail` classification; a
 /// rejection now surfaces as the compiler's own error on the child's
 /// stderr, which the comparison fails on like any other divergence.
+#[allow(clippy::too_many_arguments)] // the golden's sidecars, one per parameter
 fn run_via_cli(
     backend: &str,
     rb: &Path,
@@ -595,7 +600,9 @@ fn cext_root(fixture: &Path) -> Result<PathBuf, String> {
     type Memo = std::collections::HashMap<PathBuf, Result<PathBuf, String>>;
     static BUILDS: std::sync::Mutex<Option<Memo>> = std::sync::Mutex::new(None);
 
-    let mut guard = BUILDS.lock().expect("the cext build memo is never poisoned");
+    let mut guard = BUILDS
+        .lock()
+        .expect("the cext build memo is never poisoned");
     let memo = guard.get_or_insert_with(Memo::default);
     if let Some(hit) = memo.get(fixture) {
         return hit.clone();
@@ -645,25 +652,6 @@ fn build_cext_for_zeo(fixture: &Path) -> Result<PathBuf, String> {
 
 // ---- ruby oracle (bless) ----
 
-/// `mise which ruby` (falls back to bare `ruby`), the same resolution the old
-/// oracle used so goldens come from the `mise.toml`-pinned ruby.
-fn resolve_ruby(cwd: &Path) -> PathBuf {
-    let out = Command::new("mise")
-        .arg("which")
-        .arg("ruby")
-        .current_dir(cwd)
-        .output();
-    if let Ok(out) = out
-        && out.status.success()
-    {
-        let path = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-        if !path.is_empty() {
-            return PathBuf::from(path);
-        }
-    }
-    PathBuf::from("ruby")
-}
-
 /// Resolve the oracle against `Gemfile.lock` -- the same set the compiler
 /// vendors, so neither side can answer a `require` with a version the other
 /// does not have. `-rbundler/setup` is what `bundle exec` does, one process
@@ -692,7 +680,11 @@ pub fn bundle_rspec_libs() -> Vec<PathBuf> {
         .into_iter()
         .flatten()
         .flatten()
-        .flat_map(|abi| std::fs::read_dir(abi.path().join("gems")).into_iter().flatten())
+        .flat_map(|abi| {
+            std::fs::read_dir(abi.path().join("gems"))
+                .into_iter()
+                .flatten()
+        })
         .flatten()
         .map(|e| e.path())
         .filter(|p| {
@@ -759,13 +751,16 @@ fn bless(
     // answer the program exists to differ from, and the test would then fail
     // for a reason nobody could read.
     let (stdout, stderr) = match mode {
-        Mode::Divergence => compile_and_run(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)
-            .map_err(|e| {
-                format!(
-                    "{}: a decided divergence records zeo's own output, and zeo failed: {e}",
-                    rb.display()
-                )
-            })?,
+        Mode::Divergence => {
+            compile_and_run(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env).map_err(
+                |e| {
+                    format!(
+                        "{}: a decided divergence records zeo's own output, and zeo failed: {e}",
+                        rb.display()
+                    )
+                },
+            )?
+        }
         Mode::Pass | Mode::Xfail => {
             run_oracle(rb, source, &sc.args, sc.stdin.as_deref(), run_cwd, env)?
         }
@@ -888,7 +883,9 @@ pub fn run_golden_env(
         if !std::env::var_os(gate).is_some_and(|v| v == "1") {
             continue;
         }
-        let Ok((on_out, on_err)) = &actual else { continue };
+        let Ok((on_out, on_err)) = &actual else {
+            continue;
+        };
         let (off_out, off_err) = compile_and_run_debug(
             rb,
             &source,
@@ -944,7 +941,10 @@ pub fn run_golden_env(
     }
 
     // The reference: committed `.expected` (+ optional `.err.expected`), else a
-    // live ruby-oracle run (a test without a committed stdout snapshot).
+    // live ruby-oracle run (a test without a committed stdout snapshot). On CI
+    // the live run is refused: whatever ruby a runner has must not arbitrate
+    // a golden nobody blessed. `ZEO_GOLDEN_REQUIRE_EXPECTED=1` asks the same
+    // question locally.
     let (expected_out, expected_err) = match &sc.expected_out {
         Some(p) => {
             let out = std::fs::read(p)?;
@@ -953,6 +953,17 @@ pub fn run_golden_env(
                 None => Vec::new(), // no .err.expected => stderr must be empty
             };
             (out, err)
+        }
+        None if std::env::var_os("CI").is_some()
+            || std::env::var_os("ZEO_GOLDEN_REQUIRE_EXPECTED").is_some() =>
+        {
+            return Err(format!(
+                "{}: no committed .expected, and this run refuses the live oracle. \
+                 Bless it: `cargo xtask bless {}`",
+                rb.display(),
+                rb.file_stem().unwrap_or(rb.as_os_str()).to_string_lossy()
+            )
+            .into());
         }
         None => run_oracle(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env)?,
     };

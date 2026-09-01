@@ -12,6 +12,26 @@ pub fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// The ruby oracle: `mise which ruby` (the `mise.toml` pin), else bare `ruby`
+/// off PATH. CI has no mise and puts the same pinned ruby on PATH.
+#[allow(dead_code)] // the `checks` binary includes this file and asks no oracle
+pub fn resolve_ruby(cwd: &Path) -> PathBuf {
+    let out = std::process::Command::new("mise")
+        .arg("which")
+        .arg("ruby")
+        .current_dir(cwd)
+        .output();
+    if let Ok(out) = out
+        && out.status.success()
+    {
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
+    }
+    PathBuf::from("ruby")
+}
+
 /// `target/<profile>/`, where cargo puts this package's binaries.
 pub fn profile_dir() -> Result<PathBuf, String> {
     let mut p = std::env::current_exe().map_err(|e| format!("test binary path: {e}"))?;

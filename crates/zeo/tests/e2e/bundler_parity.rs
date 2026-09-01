@@ -41,33 +41,19 @@ fn fixtures() -> PathBuf {
 /// The pinned ruby, resolved the way the golden harness resolves it. `None`
 /// when this machine has no ruby to be the other engine.
 fn oracle_ruby() -> Option<PathBuf> {
-    let mise = Command::new("mise")
-        .args(["which", "ruby"])
-        .current_dir(crate::paths::workspace_root())
-        .output();
-    if let Ok(out) = mise
-        && out.status.success()
-    {
-        let path = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-        if !path.is_empty() {
-            return Some(PathBuf::from(path));
-        }
-    }
-    Command::new("ruby")
+    let ruby = crate::paths::resolve_ruby(&crate::paths::workspace_root());
+    Command::new(&ruby)
         .arg("-v")
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|_| PathBuf::from("ruby"))
+        .map(|_| ruby)
 }
 
 /// The two vendored trees both engines run: RubyGems' `lib/` and Bundler's.
 fn vendored_libs() -> [PathBuf; 2] {
     let root = crate::paths::workspace_root().join("lib/ruby");
-    [
-        root.join("rubygems/lib"),
-        root.join("bundler/lib"),
-    ]
+    [root.join("rubygems/lib"), root.join("bundler/lib")]
 }
 
 /// A scratch directory under `target/`, wiped on entry so a rerun cannot
@@ -104,7 +90,10 @@ fn stage(root: &Path, cache: &Path) {
     std::fs::create_dir_all(root.join("home")).expect("a scratch HOME");
     std::fs::create_dir_all(root.join("vendor/cache")).expect("a vendor/cache");
     std::fs::copy(fixtures().join("Gemfile"), root.join("Gemfile")).expect("the Gemfile");
-    for entry in std::fs::read_dir(cache).expect("the built fixture gems").flatten() {
+    for entry in std::fs::read_dir(cache)
+        .expect("the built fixture gems")
+        .flatten()
+    {
         let name = entry.file_name();
         std::fs::copy(entry.path(), root.join("vendor/cache").join(name)).expect("caching a gem");
     }
@@ -219,11 +208,22 @@ fn normalize(text: &str, root: &Path) -> String {
     // whichever spelling it was handed.
     let alt = format!("/private{root}");
     let mut out = text.replace(&alt, "<root>").replace(&root, "<root>");
-    out = out.replace(&crate::paths::workspace_root().to_string_lossy().into_owned(), "<repo>");
+    out = out.replace(
+        &crate::paths::workspace_root()
+            .to_string_lossy()
+            .into_owned(),
+        "<repo>",
+    );
     // Bundler's `--verbose` timing lines are the only output that a rerun of
     // the same install is allowed to change.
     out.lines()
-        .map(|line| if line.contains("Took") { "<timing>" } else { line })
+        .map(|line| {
+            if line.contains("Took") {
+                "<timing>"
+            } else {
+                line
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -256,14 +256,22 @@ fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<String, (Vec<u8>, u32)>) 
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                path.metadata().map(|m| m.permissions().mode() & 0o777).unwrap_or(0)
+                path.metadata()
+                    .map(|m| m.permissions().mode() & 0o777)
+                    .unwrap_or(0)
             }
             #[cfg(not(unix))]
             {
                 0
             }
         };
-        out.insert(rel, (canonical_shebang(std::fs::read(&path).unwrap_or_default()), mode));
+        out.insert(
+            rel,
+            (
+                canonical_shebang(std::fs::read(&path).unwrap_or_default()),
+                mode,
+            ),
+        );
     }
 }
 
@@ -278,7 +286,10 @@ fn canonical_shebang(bytes: Vec<u8>) -> Vec<u8> {
     if !bytes.starts_with(b"#!") {
         return bytes;
     }
-    let end = bytes.iter().position(|&b| b == b'\n').unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .position(|&b| b == b'\n')
+        .unwrap_or(bytes.len());
     let line = String::from_utf8_lossy(&bytes[..end]).into_owned();
     let engine = line.rsplit(['/', ' ']).next().unwrap_or_default();
     if engine != "ruby" && engine != "zeo" {

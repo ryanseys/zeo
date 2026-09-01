@@ -234,8 +234,7 @@ fn the_manifest_interface_carries_clean_facts_and_typed_bodies() {
     // must name its exported body for the host's typed direct calls.
     let dir = scratch("manifest");
     let object = build_package(&dir);
-    let zman =
-        std::fs::read_to_string(object.with_extension("zman")).expect("read the manifest");
+    let zman = std::fs::read_to_string(object.with_extension("zman")).expect("read the manifest");
     assert!(
         zman.contains("\"patched_names\": []"),
         "the blanket de-opt stays out of the facts: {zman}"
@@ -579,8 +578,11 @@ fn two_packages_share_a_namespace_module() {
     // across two precompiled objects. Verified against ruby 4.0.6.
     let dir = scratch("alias");
     let fixtures = fixture_gem().parent().expect("fixtures dir").to_path_buf();
-    let alpha =
-        build_named_package(&dir, "alphapart", &fixtures.join("alphapart/lib/alphapart.rb"));
+    let alpha = build_named_package(
+        &dir,
+        "alphapart",
+        &fixtures.join("alphapart/lib/alphapart.rb"),
+    );
     let beta = build_named_package(&dir, "betapart", &fixtures.join("betapart/lib/betapart.rb"));
     let host = dir.join("host.rb");
     std::fs::write(
@@ -674,7 +676,12 @@ fn two_packages_defining_one_method_on_a_shared_class_are_refused() {
     let dir = scratch("clash-method");
     let a = build_inline_package(&dir, "clasha", "module Shk\n  def self.tag = :a\nend\n");
     let b = build_inline_package(&dir, "clashb", "module Shk\n  def self.tag = :b\nend\n");
-    let err = refuse_merge(&dir, &a, &b, "require \"clasha\"\nrequire \"clashb\"\np Shk.tag\n");
+    let err = refuse_merge(
+        &dir,
+        &a,
+        &b,
+        "require \"clasha\"\nrequire \"clashb\"\np Shk.tag\n",
+    );
     assert!(
         err.contains("defines `Shk.tag`") && err.contains("another merged package"),
         "the refusal names the method: {err}"
@@ -732,8 +739,11 @@ fn a_packages_top_level_def_reaches_the_host() {
         "def shade = :package\nclass Topgem\n  def call_shade = shade\nend\n",
     );
     let host = dir.join("host.rb");
-    std::fs::write(&host, "require \"topgem\"\np shade\np Topgem.new.call_shade\n")
-        .expect("write host");
+    std::fs::write(
+        &host,
+        "require \"topgem\"\np shade\np Topgem.new.call_shade\n",
+    )
+    .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
         .arg("--with-package")
@@ -745,11 +755,8 @@ fn a_packages_top_level_def_reaches_the_host() {
     assert_eq!(ok(&mut Command::new(&bin)), ":package\n:package\n");
 
     let collide = dir.join("collide.rb");
-    std::fs::write(
-        &collide,
-        "require \"topgem\"\ndef shade = :host\np shade\n",
-    )
-    .expect("write collide host");
+    std::fs::write(&collide, "require \"topgem\"\ndef shade = :host\np shade\n")
+        .expect("write collide host");
     let out = run(zeo()
         .arg("--with-package")
         .arg(&object)
@@ -915,9 +922,12 @@ fn the_package_cache_serves_hits_and_invalidates_on_edit() {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    let rows = std::fs::read_to_string(e.path().join("manifest"))
-                        .unwrap_or_default();
-                    format!("{}: {names:?} rows: {rows}", e.file_name().to_string_lossy())
+                    let rows =
+                        std::fs::read_to_string(e.path().join("manifest")).unwrap_or_default();
+                    format!(
+                        "{}: {names:?} rows: {rows}",
+                        e.file_name().to_string_lossy()
+                    )
                 })
                 .collect()
         })
@@ -1069,8 +1079,11 @@ fn tinygem_project(dir: &Path) -> (PathBuf, PathBuf) {
          ruby\n\nDEPENDENCIES\n  tinygem\n\nBUNDLED WITH\n   4.0.18\n",
     )
     .expect("write lock");
-    std::fs::write(proj.join("app.rb"), "require \"tinygem\"\nputs Tinygem.new.greet\n")
-        .expect("write app");
+    std::fs::write(
+        proj.join("app.rb"),
+        "require \"tinygem\"\nputs Tinygem.new.greet\n",
+    )
+    .expect("write app");
     (store, proj)
 }
 
@@ -1096,8 +1109,11 @@ fn zeo_install_populates_the_store_and_a_compile_links_it() {
     assert!(artifacts[0].ends_with("tinygem-1.0.0/pkg.zeopkg"));
 
     // Only the ARTIFACT has the working body now.
-    std::fs::write(gem_lib.join("tinygem.rb"), "raise \"the SOURCE was spliced\"\n")
-        .expect("poison lib");
+    std::fs::write(
+        gem_lib.join("tinygem.rb"),
+        "raise \"the SOURCE was spliced\"\n",
+    )
+    .expect("poison lib");
     let compile = |out: &str| {
         let bin = proj.join(out);
         zeo()
@@ -1239,15 +1255,21 @@ fn a_precompiled_platform_gem_ships_its_artifact_to_a_consumer() {
         .filter(|p| p.extension().is_some_and(|e| e == "gem"))
         .collect();
     assert_eq!(gems.len(), 1, "one platform gem: {gems:?}");
-    assert!(!gem_dir.join("zeo").exists(), "the loose artifact is cleaned");
+    assert!(
+        !gem_dir.join("zeo").exists(),
+        "the loose artifact is cleaned"
+    );
 
     // The consumer machine: install the .gem, then let `zeo install`
     // promote the shipped artifact -- no compile.
     let store = dir.join("store");
+    // `--no-document`: rdoc's install hook is the environment's concern (rdoc 8
+    // hard-requires rbs), and this test is about the artifact.
     ok(zeo()
         .arg("gem")
         .arg("install")
         .arg("--local")
+        .arg("--no-document")
         .arg("--install-dir")
         .arg(&store)
         .arg(&gems[0]));
@@ -1264,8 +1286,11 @@ fn a_precompiled_platform_gem_ships_its_artifact_to_a_consumer() {
          ruby\n\nDEPENDENCIES\n  shipgem\n\nBUNDLED WITH\n   4.0.18\n",
     )
     .expect("write lock");
-    std::fs::write(proj.join("app.rb"), "require \"shipgem\"\nputs Shipgem.new.greet\n")
-        .expect("write app");
+    std::fs::write(
+        proj.join("app.rb"),
+        "require \"shipgem\"\nputs Shipgem.new.greet\n",
+    )
+    .expect("write app");
     let report = ok(zeo()
         .current_dir(&proj)
         .arg("install")
