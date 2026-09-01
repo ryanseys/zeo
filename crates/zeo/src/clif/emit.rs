@@ -99,7 +99,7 @@ pub fn compile_jit(analyzed: &Analyzed) -> CResult<Jitted> {
 /// mode-blind. Returns the emitted C `main`.
 fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     em.cov_active = crate::analyze::coverage::active(&analyzed.compiler);
-    // EXPERIMENTAL (M0): a package build swaps the desc for a manifest at
+    // A package build swaps the desc for a manifest at
     // the end of this function; a host merging packages offsets every
     // reveal-group id it bakes past theirs. Zero/None on an ordinary
     // compile, which keeps the output byte-identical.
@@ -973,7 +973,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     // The JIT never needs the reference: the `zeo` process it runs in
     // installed the compiler itself. A LINKED program names the installer
     // so the linker keeps the compiler for it -- and only for it.
-    // EXPERIMENTAL (M0): a host merging packages appends their manifest
+    // A host merging packages appends their manifest
     // rows to its own before the one desc is emitted; a no-op without any.
     let mut class_specs = class_specs;
     let mut vm_rows = vm_rows;
@@ -993,7 +993,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         &mut meta_rows,
         &mut unit_rows,
     )?;
-    // EXPERIMENTAL (M0): a package build writes those same rows to a
+    // A package build writes those same rows to a
     // MANIFEST beside its object instead of a desc, and emits no `main`.
     if em.pkg.is_some() {
         let f = super::pkg::finish_package(

@@ -1555,14 +1555,14 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
     for b in 1..=compiler.hir.boxes {
         compiler.ensure_box_surrogate(b);
     }
-    // EXPERIMENTAL (M2): the boundary between the shared bootstrap and a
+    // The boundary between the shared bootstrap and a
     // compile's OWN class ids. A package records it in its manifest (its
     // ids past this point are its LOCAL band, read through the
     // id-translation table the host fills), and the host's merge assigns
     // each package's final band after its own classes -- so neither side
     // pads and neither side asserts the other's bootstrap size.
     compiler.first_program_class_id = compiler.classes.len() as u32;
-    // EXPERIMENTAL (M2): merged packages' interface classes register HERE --
+    // Merged packages' interface classes register HERE --
     // after the shared bootstrap band (their builtin references must cross
     // untranslated), before any user class (so `class Mine < Packaged`
     // resolution finds them).

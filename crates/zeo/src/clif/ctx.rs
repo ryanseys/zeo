@@ -780,7 +780,7 @@ impl<'e, 'f> Fx<'e, 'f> {
         }
     }
 
-    /// A loud "the M0 slice cannot lower this" error; the location travels
+    /// A loud "a package cannot lower this" error; the location travels
     /// as the node's span.
     pub fn unsupported<T>(&self, node: crate::hir::NodeId, what: &str) -> CResult<T> {
         Err(crate::codegen_error::CodegenError::unsupported(

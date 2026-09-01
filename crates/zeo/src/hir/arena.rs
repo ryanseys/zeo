@@ -99,13 +99,13 @@ pub fn is_internal_local(name: &str) -> bool {
 #[derive(Clone, Default)]
 pub struct Hir {
     nodes: Vec<HirNode>,
-    /// EXPERIMENTAL (M0): the package build this compile is, when it is one
+    /// The package build this compile is, when it is one
     /// (`--experimental-pkg`). Set by `parse_and_lower_with` from the
     /// options; read by analyze (records the minted class band) and by
     /// emit (skips `main`/desc, writes the manifest). On the Hir because
     /// neither analyze nor emit sees `CompileOptions`.
     pub pkg_build: Option<crate::package::PackageBuild>,
-    /// EXPERIMENTAL (M0): manifests of the packages merged into this
+    /// Manifests of the packages merged into this
     /// compile (`--experimental-use-pkg`), in command-line order. Analyze
     /// pads the class-id band past them; emit appends their rows to this
     /// program's one desc.

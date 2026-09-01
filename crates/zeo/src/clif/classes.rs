@@ -1,6 +1,6 @@
 //! User-class compilation: the plain-class slice (`class Node ... end`) --
 //! `ClassDesc` collection, method/accessor rows on the OBJECT channel, and
-//! the eligibility rules that refuse everything the M0 slice cannot carry
+//! the eligibility rules that refuse everything a package cannot carry yet
 //! (modules, mixins, class methods, runtime class bodies, non-Object
 //! superclass machinery).
 
@@ -851,7 +851,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             }
             continue;
         }
-        // EXPERIMENTAL (M2): an interface-registered class emits NOTHING --
+        // An interface-registered class emits NOTHING --
         // its desc rows and bodies travel in the package object and merge
         // in `pkg::merge_rows`. What the host does own is the typed
         // direct-call table: each plain exported body is declared as an

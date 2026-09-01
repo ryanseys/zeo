@@ -129,7 +129,7 @@ pub struct Scope {
     /// too, and so the property survives `mro::materialize_methods` copying
     /// the body onto a descendant.
     pub accessor: Option<AccessorShape>,
-    /// EXPERIMENTAL (M2): the exported symbol of a separately compiled
+    /// The exported symbol of a separately compiled
     /// BODY this scope stands for. The scope itself is body-less (a
     /// package interface registered it); codegen must never emit it, and a
     /// typed direct call declares this symbol as an import instead.
@@ -183,11 +183,11 @@ pub struct Compiler {
     pub hir: Hir,
     pub classes: Vec<ClassInfo>,
     pub scopes: Vec<Scope>,
-    /// EXPERIMENTAL (M2): globals a MERGED PACKAGE writes. Their writes
+    /// Globals a MERGED PACKAGE writes. Their writes
     /// have no node in this arena, so the site-based guard analysis cannot
     /// see them; the name set is consulted beside it.
     pub external_global_writers: FSet<String>,
-    /// EXPERIMENTAL (M2): the unit-walk blanket de-opt, split out for a
+    /// The unit-walk blanket de-opt, split out for a
     /// PACKAGE build. A lazily-loaded unit's `def` names go here instead of
     /// [`runtime_patches`](Self::runtime_patches) when compiling a package,
     /// so the manifest's fact vector carries only GENUINE patch sources --
@@ -195,11 +195,11 @@ pub struct Compiler {
     /// [`may_be_patched_at_runtime`](Self::may_be_patched_at_runtime)
     /// unions both, so the package's own compile behaves identically.
     pub unit_blanket_names: FSet<String>,
-    /// EXPERIMENTAL (M2): `(merged-manifest index, package-local class id)`
+    /// `(merged-manifest index, package-local class id)`
     /// -> the host id its interface registration minted. The merge writes
     /// each package's id-translation table from this map.
     pub pkg_class_map: FMap<(u32, u32), ClassId>,
-    /// EXPERIMENTAL (M0): `classes.len()` right after the shared bootstrap
+    /// `classes.len()` right after the shared bootstrap
     /// (builtins + exception tail) -- the first id a program or package
     /// mints for itself. Recorded by `pin_builtin_exceptions_tail`; a
     /// package manifest carries it, and a host merging packages asserts
@@ -992,7 +992,7 @@ impl Compiler {
     /// same thing per call through an inline cache -- `vm_opt_not` inlines
     /// only when the resolved entry is literally `rb_obj_not` -- and zeo
     /// decides it once, ahead of time.
-    /// EXPERIMENTAL (M2): a merged package already answered "yes" to one of
+    /// A merged package already answered "yes" to one of
     /// the memoized whole-program questions, so the memo is decided before
     /// this arena is ever asked. Only a `true` seeds; `false` stays lazy.
     pub fn seed_world_bits(&mut self, defines_bang: bool, blank_slate: bool, moved: bool) {

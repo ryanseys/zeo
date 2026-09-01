@@ -226,7 +226,7 @@ pub fn parse_and_lower_with(
     // handful of folds (see `Hir::cvar_is_toplevel`).
     hir.mode = opts.mode;
     hir.builtin_exceptions_len = exceptions_len;
-    // EXPERIMENTAL (M0): the package options ride the Hir, because neither
+    // The package options ride the Hir, because neither
     // analyze nor emit sees `CompileOptions` -- see `Hir::pkg_build`.
     hir.pkg_build = opts.package_build.clone();
     for up in &opts.use_packages {

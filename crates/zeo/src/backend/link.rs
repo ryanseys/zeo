@@ -381,7 +381,7 @@ pub fn link_binary(
     let natlibs = natlibs_for(host_triple())?;
     let mut cmd = std::process::Command::new("cc");
     cmd.arg("-o").arg(output).arg(object);
-    // EXPERIMENTAL (M0): separately compiled package objects, before the
+    // Separately compiled package objects, before the
     // runtime archive so their imports resolve the same way the program's do.
     cmd.args(extra_objects);
     if cfg!(target_os = "macos") {

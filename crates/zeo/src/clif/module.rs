@@ -147,7 +147,7 @@ struct PendingCode {
 }
 
 /// Program-wide emission state: the module, the rodata blob, the symbol
-/// EXPERIMENTAL (M2): how a compile-time class id becomes a machine value.
+/// How a compile-time class id becomes a machine value.
 ///
 /// `Immediate` is today's whole-program compile: every id is an `iconst`.
 /// `Packaged` is what makes a package object POSITION-INDEPENDENT: an id at
@@ -212,11 +212,11 @@ pub(crate) struct Emitter {
     /// See [`super::names::REOPEN_FLAGS`]; empty for a program that reopens no
     /// builtin, which is almost all of them.
     pub reopen_flags: HashMap<(u32, String), u32>,
-    /// EXPERIMENTAL (M0): the package build this emission is, when it is
+    /// The package build this emission is, when it is
     /// one -- names the unit machinery `{prefix}_unit_*`, exports the
     /// row-referenced bodies, and swaps the desc for a manifest.
     pub pkg: Option<crate::package::PackageBuild>,
-    /// EXPERIMENTAL (M2): how a class id becomes a machine value -- see
+    /// How a class id becomes a machine value -- see
     /// [`IdMode`] and `Fx::cid_value`.
     pub id_mode: IdMode,
     /// The id-translation table's declaration, made once on first use:
@@ -228,7 +228,7 @@ pub(crate) struct Emitter {
     /// imported by a package, defined by the host with the package's
     /// stride.
     pub unit_base_id: Option<DataId>,
-    /// EXPERIMENTAL (M0): the first reveal-group id THIS compile may use.
+    /// The first reveal-group id THIS compile may use.
     /// Merged packages own `[0, unit_base)`; every unit index and
     /// alias-reveal group this program bakes -- the reveal calls and the
     /// `REG_CONCEAL_METHOD` rows both -- is offset by it. Zero when no

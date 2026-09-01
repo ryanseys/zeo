@@ -150,7 +150,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     compiler.global_write_sites = facts.global_write_sites;
     compiler.const_set_sites = facts.const_set_sites;
 
-    // EXPERIMENTAL (M2): a merged package's whole-program facts union in
+    // A merged package's whole-program facts union in
     // BEFORE any fold fires -- its writers are as real as this arena's,
     // they just have no nodes here. Every field is monotone-conservative:
     // the union can only fold less, never differently.
@@ -403,9 +403,9 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // class whose declaration has not run yet.
     conceal_observed_namespace_members(compiler);
 
-    // EXPERIMENTAL (M2): a host definition touching a package's class needs
-    // M4's patch rows to stay sound; until then it refuses by name, before
-    // materialization folds anything against the edit.
+    // A host definition touching a package's class has no sound mechanism
+    // yet, so it refuses by name here, before materialization folds
+    // anything against the edit.
     pkg_iface::refuse_host_edits_of_imports(compiler)?;
 
     mro::materialize(compiler, &main_statements)?;
