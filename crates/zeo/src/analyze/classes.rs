@@ -337,9 +337,18 @@ fn resolve_definition_target(
         // reopen arm below clears the gate) -- only the mismatch, which
         // that arm would reject with a TypeError CRuby never raises, is
         // exempted here.
+        //
+        // And a gated slot whose implementation this build does NOT provide
+        // (its cargo feature is off, or ZEO_DISABLE_BUILTIN retired it)
+        // never attaches at all: the native constructor behind the slot is
+        // not there, so `class StringScanner` in a pure-Ruby replacement
+        // must mint a real user class -- which is also CRuby's world, where
+        // no such constant exists until a file defines one.
         .filter(|&cid| {
             let ci = compiler.class(cid);
-            compiler.feature_active(cid) || ci.is_module == is_module
+            let provided = zeo_abi::feature_of_gated_class(cid)
+                .is_none_or(crate::lower::features::zeo_provides);
+            provided && (compiler.feature_active(cid) || ci.is_module == is_module)
         });
     // A top-level `class String ... end` INSIDE a box with no
     // same-box definition to attach to: when the name reaches a builtin
