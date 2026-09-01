@@ -1225,6 +1225,19 @@ pub fn runtime_class_new(
     superclass: Option<RubyValue>,
     body: Option<RProc>,
 ) -> Result<RubyValue, Signal> {
+    runtime_class_new_with(superclass, body, |_| Ok(()))
+}
+
+/// [`runtime_class_new`] with a step run between the mint and the
+/// `inherited` send. The `class X < S` KEYWORD names the class and binds
+/// its constant before `inherited` fires (CRuby's
+/// `rb_define_class_id_under`), where `Class.new`'s hook sees `name` nil --
+/// `eval::class_open` passes the naming here so both roads keep their order.
+pub fn runtime_class_new_with(
+    superclass: Option<RubyValue>,
+    body: Option<RProc>,
+    before_inherited: impl FnOnce(ClassId) -> Result<(), Signal>,
+) -> Result<RubyValue, Signal> {
     // CRuby's `rb_check_inheritable`, in its order. Note what is LEGAL:
     // `Class.new(Module)` and `Class.new(BasicObject)` both work -- `Module`
     // is a Class, it is just not a module INSTANCE. Only `Class` itself and
@@ -1286,11 +1299,13 @@ pub fn runtime_class_new(
     mark_live();
 
     let class_val = RubyValue::Class(new_id);
+    before_inherited(new_id)?;
     // CRuby fires `inherited` on the superclass at creation -- before the
-    // body block runs and before any constant names the class (the hook sees
-    // `name == nil`). minitest's whole Runnable registry IS this hook, fired
-    // by every `describe` block's `Class.new(Minitest::Spec)`. The default
-    // `Class#inherited` is a no-op row, so an unconditional send is safe.
+    // body block runs and, on the `Class.new` road, before any constant
+    // names the class (that hook sees `name == nil`). minitest's whole
+    // Runnable registry IS this hook, fired by every `describe` block's
+    // `Class.new(Minitest::Spec)`. The default `Class#inherited` is a
+    // no-op row, so an unconditional send is safe.
     crate::dispatch::send_value(
         &RubyValue::Class(super_id),
         Symbol::intern("inherited"),
