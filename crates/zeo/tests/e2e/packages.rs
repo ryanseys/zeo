@@ -1040,9 +1040,10 @@ fn target_of(manifest: &str) -> String {
 /// only the artifact carries the working body, so the answer can only
 /// come from the link. Removing the artifact flips the same compile back
 /// to the source splice, which is the fallback contract.
-#[test]
-fn zeo_install_populates_the_store_and_a_compile_links_it() {
-    let dir = scratch("install");
+/// A one-gem project against a scratch store, RubyGems-shaped: the
+/// `tinygem` sources, its gemspec, and a locked Gemfile beside an app
+/// that requires it. Answers `(store, proj)`.
+fn tinygem_project(dir: &Path) -> (PathBuf, PathBuf) {
     let store = dir.join("store");
     let gem_lib = store.join("gems/tinygem-1.0.0/lib");
     std::fs::create_dir_all(store.join("specifications")).expect("mkdir");
@@ -1070,6 +1071,14 @@ fn zeo_install_populates_the_store_and_a_compile_links_it() {
     .expect("write lock");
     std::fs::write(proj.join("app.rb"), "require \"tinygem\"\nputs Tinygem.new.greet\n")
         .expect("write app");
+    (store, proj)
+}
+
+#[test]
+fn zeo_install_populates_the_store_and_a_compile_links_it() {
+    let dir = scratch("install");
+    let (store, proj) = tinygem_project(&dir);
+    let gem_lib = store.join("gems/tinygem-1.0.0/lib");
 
     let report = ok(zeo()
         .current_dir(&proj)
@@ -1125,6 +1134,53 @@ fn zeo_install_populates_the_store_and_a_compile_links_it() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// `zeo flags` prints the handoff line the compile itself consumes: the
+/// store, the Gemfile, and -- once `zeo install` has run -- the artifact.
+/// The line is shell-quoted for `$(zeo flags)`; `--json` is the tools'
+/// form and carries the same artifact path.
+#[test]
+fn zeo_flags_prints_the_projects_handoff_line() {
+    let dir = scratch("flags");
+    let (store, proj) = tinygem_project(&dir);
+
+    let before = ok(zeo()
+        .current_dir(&proj)
+        .arg("flags")
+        .arg("--gem-path")
+        .arg(&store));
+    assert!(before.contains("--gem-path '"), "line: {before}");
+    assert!(before.contains("--bundle-gemfile '"), "line: {before}");
+    assert!(
+        !before.contains("--with-package"),
+        "no artifact before install: {before}"
+    );
+
+    ok(zeo()
+        .current_dir(&proj)
+        .arg("install")
+        .arg("--gem-path")
+        .arg(&store)
+        .env("ZEO_CACHE", "0"));
+    let after = ok(zeo()
+        .current_dir(&proj)
+        .arg("flags")
+        .arg("--gem-path")
+        .arg(&store));
+    assert!(
+        after.contains("--with-package '") && after.contains("tinygem-1.0.0/pkg.zeopkg'"),
+        "the installed artifact rides the line: {after}"
+    );
+    let json = ok(zeo()
+        .current_dir(&proj)
+        .arg("flags")
+        .arg("--json")
+        .arg("--gem-path")
+        .arg(&store));
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    let artifact = parsed["gems"][0]["artifact"].as_str().expect("an artifact");
+    assert!(artifact.ends_with("tinygem-1.0.0/pkg.zeopkg"), "{artifact}");
 }
 
 /// Every file under `root`, recursively.

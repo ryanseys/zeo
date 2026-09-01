@@ -170,6 +170,8 @@ enum Parsed {
     Run(Box<Args>),
     /// `zeo install`: precompile the project's locked gems into the store.
     Install(InstallCmd),
+    /// `zeo flags`: print the compile flags the project implies.
+    Flags(FlagsCmd),
     /// `-h`/`--help` (exit 0).
     Help,
     /// `-v`/`--version` (exit 0).
@@ -189,6 +191,17 @@ struct InstallCmd {
     gemfile: Option<PathBuf>,
     gem_paths: Vec<PathBuf>,
     names: Vec<String>,
+}
+
+/// `zeo flags [--json] [--bundle-gemfile <path>] [--gem-path <dir>]...`.
+///
+/// One producer with `zeo install` (`zeo::project`), so a Makefile that
+/// captures `$(zeo flags)` cannot drift from what the verbs would do.
+#[derive(Debug, Default, PartialEq)]
+struct FlagsCmd {
+    gemfile: Option<PathBuf>,
+    gem_paths: Vec<PathBuf>,
+    json: bool,
 }
 
 /// The environment `parse_args_from` consults -- captured as a value so the
@@ -264,9 +277,16 @@ subcommands:
                         --gem-path (or their env spellings) relocate it; a
                         gem the package tier cannot carry is reported and
                         keeps compiling from source
-                        A script really named `build`, `gem`, `bundle` or
-                        `install` still runs as `zeo ./build`; a verb never
-                        depends on what is in the current directory.
+  flags [--json]        print, on one shell-quoted line, exactly the flags a
+                        compile of this project implies (store, Gemfile, and
+                        every linkable precompiled package) -- for
+                        `$(zeo flags)` in a Makefile. --json prints the
+                        structured form for tools instead. One producer with
+                        the verbs above, so the handoff cannot drift
+                        A script really named `build`, `gem`, `bundle`,
+                        `install` or `flags` still runs as `zeo ./build`; a
+                        verb never depends on what is in the current
+                        directory.
 
 options:
   -o <output>           where to write the compiled binary
@@ -403,6 +423,10 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     // not a program run, so none of ruby's parsing rules apply to it.
     if !build_verb && argv.first().map(String::as_str) == Some("install") {
         return parse_install(&argv[1..]).map(Parsed::Install);
+    }
+    // `zeo flags`: likewise zeo's own verb.
+    if !build_verb && argv.first().map(String::as_str) == Some("flags") {
+        return parse_flags(&argv[1..]).map(Parsed::Flags);
     }
     // A subcommand becomes `-e <driver> -- <its own arguments>`, and the `--`
     // is what keeps them its own: without it a `zeo gem --version` would read
@@ -908,6 +932,39 @@ fn parse_install(argv: &[String]) -> Result<InstallCmd, String> {
     Ok(cmd)
 }
 
+/// The flags verb's own flags. Same shape as [`parse_install`].
+fn parse_flags(argv: &[String]) -> Result<FlagsCmd, String> {
+    let mut cmd = FlagsCmd::default();
+    let mut iter = argv.iter();
+    while let Some(arg) = iter.next() {
+        let (name, inline) = match arg.split_once('=') {
+            Some((n, v)) => (n, Some(v.to_string())),
+            None => (arg.as_str(), None),
+        };
+        let mut value = |flag: &str| -> Result<String, String> {
+            match inline.clone() {
+                Some(v) => Ok(v),
+                None => iter
+                    .next()
+                    .cloned()
+                    .ok_or(format!("{flag} requires a value")),
+            }
+        };
+        match name {
+            "--json" => cmd.json = true,
+            "--bundle-gemfile" => cmd.gemfile = Some(PathBuf::from(value("--bundle-gemfile")?)),
+            "--gem-path" => cmd.gem_paths.push(PathBuf::from(value("--gem-path")?)),
+            _ => {
+                return Err(format!(
+                    "invalid option for zeo flags: {arg} (it takes --json, --bundle-gemfile \
+                     and --gem-path)"
+                ));
+            }
+        }
+    }
+    Ok(cmd)
+}
+
 /// Every `-W:[no-]<category>` ruby 4.0.6 accepts. zeo emits none of these
 /// categories, so toggling one is a no-op -- but an unknown name is still
 /// reported, exactly as ruby reports it, so a typo is not silently ignored.
@@ -971,6 +1028,7 @@ fn run() -> Result<(), MainError> {
     let mut args = match parse_args()? {
         Parsed::Run(args) => args,
         Parsed::Install(cmd) => return run_install(cmd),
+        Parsed::Flags(cmd) => return run_flags(cmd),
         Parsed::Help => {
             print_help();
             return Ok(());
@@ -1334,6 +1392,67 @@ fn run_install(cmd: InstallCmd) -> Result<(), MainError> {
          {declined} declined"
     );
     Ok(())
+}
+
+/// `zeo flags`: print exactly the flags a compile of this project implies.
+///
+/// Default: one shell-quoted line for `$(zeo flags)` in a Makefile.
+/// `--json` prints the structured form instead -- the lockfile, the
+/// stores, and one row per gem with its artifact path or the reason it
+/// has none. The producer is the same `zeo::project` survey the compile
+/// itself consults, so the handoff cannot drift.
+fn run_flags(cmd: FlagsCmd) -> Result<(), MainError> {
+    init_tracing(None);
+    let env = Env::from_process();
+    let gemfile = cmd
+        .gemfile
+        .or_else(|| env.bundle_gemfile.as_ref().map(PathBuf::from));
+    let project = zeo::project::locate(
+        gemfile,
+        cmd.gem_paths,
+        std::env::var_os("GEM_PATH").as_deref(),
+    )?;
+    let rows = zeo::project::survey(&project)?;
+    let abs = |p: &std::path::Path| {
+        p.canonicalize()
+            .unwrap_or_else(|_| p.to_path_buf())
+            .display()
+            .to_string()
+    };
+    if cmd.json {
+        let json = serde_json::json!({
+            "gemfile": abs(&project.gemfile),
+            "lockfile": abs(&project.lockfile),
+            "stores": project.stores.iter().map(|s| abs(s)).collect::<Vec<_>>(),
+            "gems": rows.iter().map(|r| serde_json::json!({
+                "name": r.name,
+                "version": r.version,
+                "feature": r.feature,
+                "artifact": r.home.as_ref().filter(|h| h.is_file()).map(|h| abs(h)),
+                "skip": r.skip,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{json:#}");
+        return Ok(());
+    }
+    let mut words = Vec::new();
+    for store in &project.stores {
+        words.push("--gem-path".to_string());
+        words.push(shell_quote(&abs(store)));
+    }
+    words.push("--bundle-gemfile".to_string());
+    words.push(shell_quote(&abs(&project.gemfile)));
+    for artifact in zeo::project::linkable(&rows) {
+        words.push("--with-package".to_string());
+        words.push(shell_quote(&abs(&artifact)));
+    }
+    println!("{}", words.join(" "));
+    Ok(())
+}
+
+/// Single-quote `s` for a POSIX shell; an embedded quote becomes `'\''`.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Compile one gem to a `.zeopkg` and place it at its store `home`.
