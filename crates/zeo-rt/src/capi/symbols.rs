@@ -200,6 +200,7 @@ capi_symbols!(
     values::zeo_rt_pool_mark,
     values::zeo_rt_pool_push,
     values::zeo_rt_pool_reset,
+    objects::zeo_rt_probe_def_hook,
     procs::zeo_rt_proc_call,
     procs::zeo_rt_proc_call_or_send,
     procs::zeo_rt_proc_new,
