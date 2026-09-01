@@ -130,9 +130,8 @@ pub(super) struct ClassEntry {
     /// first, so subclasses inherit it through the ordinary MRO walk) and
     /// re-dispatch under `old`. Entries are TERMINAL: the compiler resolves
     /// an alias-of-an-alias before emitting `register_alias`, and
-    /// `validate_aliases` raises `NameError` at program start for a source
-    /// that resolves nowhere (real Ruby's timing -- the class body
-    /// executing).
+    /// `validate_alias_source` raises `NameError` for a source that
+    /// resolves nowhere (real Ruby's timing -- the class body executing).
     pub(super) aliases: FMap<(u32, Symbol), Symbol>,
     /// This class's own CLASS methods (`def self.x`, `class << self`,
     /// `extend`) -- reached when a `RubyValue::Class` receiver is sent to
@@ -350,10 +349,6 @@ impl Entries {
         debug_assert!(self.errno.is_empty(), "one errno block per registry");
         self.errno_base = base;
         self.errno = (0..n).map(|_| std::sync::OnceLock::new()).collect();
-    }
-
-    pub(super) fn keys(&self) -> impl Iterator<Item = u32> + '_ {
-        self.iter().map(|(id, _)| id)
     }
 
     /// Every entry, the deferred errno block INCLUDED -- enumeration
@@ -941,9 +936,9 @@ impl ClassRegistry {
 
     /// Records an alias of an inherited BUILTIN method (see
     /// `ClassEntry::aliases`) -- emitted by codegen next to the class's
-    /// registration. Pure data here; `validate_aliases` (run at program
-    /// start, inside the fallible closure) is what raises `NameError` for a
-    /// source that resolves nowhere.
+    /// registration. Pure data here; `validate_alias_source` (run as the
+    /// aliasing body finishes) is what raises `NameError` for a source that
+    /// resolves nowhere.
     /// The NEW names `id`'s own builtin-alias rows define -- what reflection
     /// has to list, since an alias is a name indirection here rather than a
     /// copied method entry. Empty for an unregistered or aliasless id.
@@ -1027,7 +1022,7 @@ impl ClassRegistry {
     /// name indirection resolves live -- so it would follow that later `def`,
     /// which ruby's `rb_alias` does not. Falls back to the indirection when
     /// nothing above the class supplies `old`, so the `NameError` timing that
-    /// `validate_class_aliases` owns is unchanged.
+    /// `validate_alias_source` owns is unchanged.
     pub fn register_alias(&mut self, id: ClassId, box_id: u32, new: &str, old: &str, eager: bool) {
         if eager && self.bind_alias_above(id, box_id, new, old) {
             return;

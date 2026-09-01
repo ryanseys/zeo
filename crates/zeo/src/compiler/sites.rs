@@ -83,6 +83,7 @@ pub struct ClassBodySite {
 }
 
 /// One consumed definition, and where its report would go.
+#[derive(Clone)]
 pub struct SiteDef {
     /// Where this definition sits in the program's EXECUTION order, counted
     /// across every site and the top level. The analyze walk visits bodies in

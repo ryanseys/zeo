@@ -1220,8 +1220,8 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(U8),
     },
     CapiSig {
-        name: "zeo_rt_validate_class_aliases",
-        params: &[U32],
+        name: "zeo_rt_validate_alias_source",
+        params: &[U32, Ptr, Usize],
         ret: Some(I32),
     },
     CapiSig {

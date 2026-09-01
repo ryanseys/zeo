@@ -203,6 +203,11 @@ pub(crate) struct ClassBodyCall {
     /// at all: `class DSL < Bundler::Dsl` is the only thing that loads it, and
     /// `Bundler::Dsl`'s class body is where `VALID_KEYS` is assigned.
     pub superclass_touch: Option<u32>,
+    /// Builtin-alias SOURCE names THIS site's own `alias` statements put on
+    /// the class -- what its body-end check validates. A row another stream's
+    /// body wrote validates when that body runs: rss's 0.9 `Item` body must
+    /// not check 2.0's `alias date pubDate` before 2.0's `def pubDate` ran.
+    pub alias_checks: Vec<String>,
 }
 
 /// One compiled class body (a separate Ruby scope, lifted to its own
@@ -399,6 +404,7 @@ pub(super) fn collect_class_bodies(
             guard,
             reopen_flags,
             superclass_touch,
+            alias_checks: site_alias_checks(compiler, site),
         };
         let is_inline = site.def_node.is_some_and(|n| inline.contains(&n));
         tracing::debug!(
@@ -423,6 +429,40 @@ pub(super) fn collect_class_bodies(
         });
     }
     Ok(specs)
+}
+
+/// The builtin-alias SOURCE names THIS site's own `alias` statements put on
+/// its class: the terminal old names from `builtin_aliases` rows whose alias
+/// this site's walk consumed. These are what the site's body-end check
+/// validates -- CRuby raises at the `alias` statement's position, so a row
+/// another stream's body wrote is that body's to check, not this one's.
+pub(crate) fn site_alias_checks(
+    compiler: &crate::compiler::Compiler,
+    site: &crate::compiler::ClassBodySite,
+) -> Vec<String> {
+    let class = compiler.class(site.class);
+    if class.builtin_aliases.is_empty() {
+        return Vec::new();
+    }
+    let mut names: Vec<String> = site
+        .defs
+        .iter()
+        .filter_map(|d| match &compiler.hir[d.node] {
+            crate::hir::HirNode::AliasMethod {
+                new_name,
+                is_class_method: false,
+                ..
+            } => class
+                .builtin_aliases
+                .iter()
+                .find(|(new, _, _)| new == new_name)
+                .map(|(_, terminal, _)| terminal.clone()),
+            _ => None,
+        })
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 /// Allocate one `zeo_reopen_flags` byte per `(builtin class, method name)`

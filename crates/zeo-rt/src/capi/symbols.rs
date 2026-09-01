@@ -281,7 +281,7 @@ capi_symbols!(
     signals::zeo_rt_system_exit_status,
     frames::zeo_rt_trace_frame_self,
     values::zeo_rt_truthy,
-    lifecycle::zeo_rt_validate_class_aliases,
+    lifecycle::zeo_rt_validate_alias_source,
     dispatch::zeo_rt_value_super_args,
     signals::zeo_rt_wrong_arity,
     procs::zeo_rt_yield,

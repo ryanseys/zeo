@@ -731,7 +731,7 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
         // `alias new old` is pure REGISTRATION: analyze resolved it into a
         // copy scope (user source) or an alias row (builtin source), and a
         // builtin row's source is validated at this body's END
-        // (`validate_class_aliases`) -- the statement itself runs nothing.
+        // (`validate_alias_source`) -- the statement itself runs nothing.
         // In a SNIPPET nothing was registered, so the keyword is the send
         // ruby writes on the run-time definee.
         HirNode::AliasMethod {
@@ -1880,14 +1880,13 @@ fn class_body_site_run(
     // `alias`'s builtin source validates as this body finishes -- CRuby's
     // timing, run at the CALL site so an alias-only (empty-statement) body
     // still checks (rustc emits the check even for an otherwise empty
-    // body).
+    // body). Only THIS site's own aliases: a class-wide check here validated
+    // a lazy unit's alias rows before that unit's installer ran (#166).
     let validate = |fx: &mut Fx| {
-        let has = !fx.an.compiler.classes[call.class as usize]
-            .builtin_aliases
-            .is_empty();
-        if has {
+        for old in &call.alias_checks {
             let cid = fx.cid_value(call.class);
-            let st = fx.call_status("zeo_rt_validate_class_aliases", &[cid]);
+            let (nptr, nlen) = super::expr::rodata_name(fx, old);
+            let st = fx.call_status("zeo_rt_validate_alias_source", &[cid, nptr, nlen]);
             fx.fallible(st);
         }
     };

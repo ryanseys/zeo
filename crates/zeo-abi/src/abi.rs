@@ -490,8 +490,8 @@ pub const REG_DEFER_EXTENDED_CLASS_METHOD: u8 = 19;
 
 /// `RegRow.kind`: a NAME-indirection alias whose source is a builtin
 /// method (`a` = new name, `b` = old/terminal name) -- the send miss paths
-/// rewrite through it; `validate_class_aliases` raises `NameError` for a
-/// source that resolves nowhere, at the class body's run.
+/// rewrite through it; `validate_alias_source` raises `NameError` for a
+/// source that resolves nowhere, at the aliasing body's run.
 pub const REG_ALIAS: u8 = 6;
 
 /// [`REG_ALIAS`]'s singleton-side twin (`class << self; alias [] new`):

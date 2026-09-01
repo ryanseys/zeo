@@ -477,9 +477,8 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
                 // `class << self; alias [] new`, the `Klass[...]` constructor
                 // shorthand. Recorded as a name indirection in the SINGLETON
                 // table, the exact treatment the instance side gets below;
-                // `register_class_alias` installs it and
-                // `validate_class_aliases` raises `NameError` at program start
-                // if the source resolves nowhere.
+                // `register_class_alias` installs it; the send miss paths
+                // answer `NoMethodError` if the source resolves nowhere.
                 let terminal = compiler
                     .class_alias_target(class_id, &old_name)
                     .unwrap_or(&old_name)

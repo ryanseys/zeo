@@ -1143,27 +1143,45 @@ pub(super) fn main_installs(
     analyzed: &Analyzed,
     hoisted: &[super::collect::ClassBodyCall],
 ) -> CResult<()> {
-    // Alias-carrying classes with no body of their own validate here
-    // (`NameError` for a source resolving nowhere); a class WITH a body
-    // site validates at its body's end instead.
-    let unbodied: Vec<u32> = analyzed
+    // Alias sources NO body site claims validate here (`NameError` for a
+    // source resolving nowhere): every row of a class with no body of its
+    // own, plus a toplevel-written alias on a class that has one. A row a
+    // body site's own `alias` wrote validates at that body's end instead.
+    let unclaimed: Vec<(u32, String)> = analyzed
         .compiler
         .classes
         .iter()
         .enumerate()
         .filter(|(i, c)| {
             !c.builtin_aliases.is_empty()
-                && !analyzed
-                    .compiler
-                    .class_body_sites
-                    .iter()
-                    .any(|site| site.class.0 as usize == *i)
+                && !((c.is_builtin || c.is_bootstrap)
+                    && !analyzed
+                        .compiler
+                        .builtin_is_reachable(zeo_abi::ClassId(*i as u32)))
         })
-        .map(|(i, _)| i as u32)
+        .flat_map(|(i, c)| {
+            let claimed: Vec<String> = analyzed
+                .compiler
+                .class_body_sites
+                .iter()
+                .filter(|site| site.class.0 as usize == i)
+                .flat_map(|site| super::collect::site_alias_checks(&analyzed.compiler, site))
+                .collect();
+            let mut olds: Vec<String> = c
+                .builtin_aliases
+                .iter()
+                .map(|(_, terminal, _)| terminal.clone())
+                .filter(|old| !claimed.contains(old))
+                .collect();
+            olds.sort_unstable();
+            olds.dedup();
+            olds.into_iter().map(move |old| (i as u32, old))
+        })
         .collect();
-    for id in unbodied {
+    for (id, old) in unclaimed {
         let cid = fx.cid_value(id);
-        let st = fx.call_status("zeo_rt_validate_class_aliases", &[cid]);
+        let (nptr, nlen) = super::expr::rodata_name(fx, &old);
+        let st = fx.call_status("zeo_rt_validate_alias_source", &[cid, nptr, nlen]);
         fx.fallible(st);
     }
     // `TOPLEVEL_BINDING`, installed UNCONDITIONALLY so `Object.constants`

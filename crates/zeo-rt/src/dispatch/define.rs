@@ -275,7 +275,7 @@ pub(crate) fn class_alias_target(id: ClassId, name: Symbol) -> Option<Symbol> {
 
 /// Parse-special Kernel names with NO runtime dispatch row: statically-
 /// resolved call sites compile them directly, so an alias of one is valid
-/// even though no table can prove it. `validate_aliases` skips them.
+/// even though no table can prove it. `validate_alias_source` skips them.
 pub(crate) const PARSE_SPECIAL_KERNEL: &[&str] = &[
     "block_given?",
     "iterator?",
@@ -284,71 +284,47 @@ pub(crate) const PARSE_SPECIAL_KERNEL: &[&str] = &[
     "binding",
 ];
 
-/// Validates every registered builtin-alias row (see `register_alias`) --
-/// called once from generated `main`'s fallible closure, right after the
-/// registry installs: an alias whose source resolves NOWHERE for instances
-/// of its class is `NameError`, raised at program start exactly when real
-/// Ruby raises it (the `alias_method` in the class body executing). Walked
-/// in id order (superclasses precede subclasses) with sorted names, so the
-/// first error is deterministic.
-pub fn validate_aliases() -> Result<(), Signal> {
-    let Some(r) = REGISTRY.get() else {
-        return Ok(());
-    };
-    let mut ids: Vec<u32> = r.entries.keys().collect();
-    ids.sort_unstable();
-    for id in ids {
-        validate_class_aliases(ClassId(id))?;
-    }
-    Ok(())
-}
-
-/// One class's builtin-alias sources, checked where CRuby checks them: as that
-/// class's BODY runs. A source can be created by the body itself -- bundler's
-/// `Runtime` does `definition_method :specs` (a `define_method` wrapper) and
-/// then `alias_method :gems, :specs` -- so a single sweep before any body has
-/// run answers "undefined" for a method that is about to exist.
-pub fn validate_class_aliases(id: ClassId) -> Result<(), Signal> {
+/// One alias SOURCE's resolvability on `id`'s chain, checked where CRuby
+/// checks it: as the class body that wrote the alias runs. A source can be
+/// created by the body itself -- bundler's `Runtime` does `definition_method
+/// :specs` and then `alias_method :gems, :specs` -- so a sweep before the
+/// body runs answers "undefined" for a method about to exist. And a body
+/// checks only the aliases IT wrote: rss's 2.0 unit aliases `date` to a
+/// `pubDate` its own installer defines, and validating it from the 0.9 body
+/// raised a NameError ruby never raises.
+pub fn validate_alias_source(id: ClassId, old: Symbol) -> Result<(), Signal> {
     let Some(r) = REGISTRY.get() else {
         return Ok(());
     };
     let Some(entry) = r.entries.get(&id.0) else {
         return Ok(());
     };
-    if entry.aliases.is_empty() {
+    let n = old.name_str();
+    if PARSE_SPECIAL_KERNEL.contains(&n) {
         return Ok(());
     }
-    let mut olds: Vec<Symbol> = entry.aliases.values().copied().collect();
-    olds.sort_by_key(|s| s.name_str());
-    olds.dedup();
-    for old in olds {
-        let n = old.name_str();
-        if PARSE_SPECIAL_KERNEL.contains(&n) {
-            continue;
-        }
-        let has = |anc: ClassId| {
-            r.lookup(anc, old).is_some()
-                || r.lookup_value_method(anc, crate::boxes::current_box(), old).is_some()
-                || crate::builtins::class_table(anc).is_some_and(|t| t(n).is_some())
-                || crate::runtime_meta::overlay_own_method(anc, old).is_some()
-        };
-        // A bare MODULE's ancestry is itself alone, so a `Kernel` row is not
-        // in it -- and CRuby's `rb_alias` retries the lookup on `Object` for
-        // exactly that case (`vm_method.c`: the `RB_TYPE_P(klass, T_MODULE)`
-        // branch before `rb_print_undef`). That is how a module aliases
-        // `load`/`require`, which is what irb's `IRB::IrbLoader` opens with.
-        let resolves = ancestors_of_value(id).iter().any(|&anc| has(anc))
-            || (entry.is_module
-                && ancestors_of_value(zeo_abi::OBJECT_CLASS)
-                    .iter()
-                    .any(|&anc| has(anc)));
-        if !resolves {
-            let kind = if entry.is_module { "module" } else { "class" };
-            return Err(crate::builtins::name_error!(
-                "undefined method '{n}' for {kind} '{}'",
-                entry.name
-            ));
-        }
+    let has = |anc: ClassId| {
+        r.lookup(anc, old).is_some()
+            || r.lookup_value_method(anc, crate::boxes::current_box(), old).is_some()
+            || crate::builtins::class_table(anc).is_some_and(|t| t(n).is_some())
+            || crate::runtime_meta::overlay_own_method(anc, old).is_some()
+    };
+    // A bare MODULE's ancestry is itself alone, so a `Kernel` row is not
+    // in it -- and CRuby's `rb_alias` retries the lookup on `Object` for
+    // exactly that case (`vm_method.c`: the `RB_TYPE_P(klass, T_MODULE)`
+    // branch before `rb_print_undef`). That is how a module aliases
+    // `load`/`require`, which is what irb's `IRB::IrbLoader` opens with.
+    let resolves = ancestors_of_value(id).iter().any(|&anc| has(anc))
+        || (entry.is_module
+            && ancestors_of_value(zeo_abi::OBJECT_CLASS)
+                .iter()
+                .any(|&anc| has(anc)));
+    if !resolves {
+        let kind = if entry.is_module { "module" } else { "class" };
+        return Err(crate::builtins::name_error!(
+            "undefined method '{n}' for {kind} '{}'",
+            entry.name
+        ));
     }
     Ok(())
 }

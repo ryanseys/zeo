@@ -1089,7 +1089,7 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
         // A parse-special Kernel source (`alias_method :block_given!,
         // :block_given?` reached at runtime): statically-resolved call sites
         // compile these directly, so there is no dispatch row to snapshot --
-        // but the alias itself is valid, exactly as `validate_aliases`
+        // but the alias itself is valid, exactly as `validate_alias_source`
         // accepts the static form. Accept it with a stub that only raises if
         // a call actually arrives dynamically (which zeo cannot serve: the
         // answer lives in the CALLER's compiled frame).

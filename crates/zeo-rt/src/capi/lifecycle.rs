@@ -100,12 +100,19 @@ pub unsafe extern "C" fn zeo_rt_at_exit_register(handler: *mut RubyValue) {
     crate::at_exit_register(unsafe { std::ptr::read(handler) });
 }
 
-/// The head-of-toplevel alias check for one bodiless class -- raises
-/// `NameError` for an alias source that resolves nowhere. Status only; no
-/// value.
+/// The alias check for ONE source name -- raises `NameError` for a source
+/// that resolves nowhere. Emitted at a class body's end for the aliases that
+/// body wrote itself (never another stream's), and at the head of toplevel
+/// for rows no body site claims. Status only; no value.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn zeo_rt_validate_class_aliases(cid: u32) -> i32 {
-    match crate::validate_class_aliases(ClassId(cid)) {
+pub unsafe extern "C" fn zeo_rt_validate_alias_source(
+    cid: u32,
+    name: *const u8,
+    len: usize,
+) -> i32 {
+    let bytes = unsafe { std::slice::from_raw_parts(name, len) };
+    let old = crate::Symbol::intern(std::str::from_utf8(bytes).expect("alias names are utf8"));
+    match crate::validate_alias_source(ClassId(cid), old) {
         Ok(()) => STATUS_OK,
         Err(sig) => {
             crate::signal::set_pending(sig);

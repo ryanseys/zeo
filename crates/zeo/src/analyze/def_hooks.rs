@@ -258,9 +258,11 @@ pub fn resolve(
         };
         taken.push((crate::compiler::OBJECT_CLASS, defs, target));
     }
+    // Cloned, not taken: codegen still reads a site's defs to work out which
+    // builtin-alias rows the site itself wrote (`site_alias_checks`).
     for i in 0..compiler.class_body_sites.len() {
         let class = compiler.class_body_sites[i].class;
-        let defs = std::mem::take(&mut compiler.class_body_sites[i].defs);
+        let defs = compiler.class_body_sites[i].defs.clone();
         taken.push((class, defs, Target::Site(i)));
     }
     let future = future_names(&taken);

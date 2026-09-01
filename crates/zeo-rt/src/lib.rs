@@ -134,7 +134,7 @@ pub use dispatch::{
     responds_to_value, run_initialize, send, send_class_cached, send_in, send_super_class_from,
     send_super_from, send_value, send_value_cached, send_value_dyn_cached, send_value_explicit_in,
     send_value_in, send_value_public_in, send_value_vcall_in, stamp_backtrace, super_defined,
-    validate_aliases, validate_class_aliases, value_class, wrong_arity,
+    validate_alias_source, value_class, wrong_arity,
 };
 pub use encoding::{EncodingId, StrBuf};
 pub use eval::{eval_string, eval_value, eval_value_in_scope};
