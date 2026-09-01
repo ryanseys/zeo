@@ -266,6 +266,17 @@ impl Loader {
         }
         let mut hits: Vec<(PathBuf, &Gem)> = Vec::new();
         for pkg in &self.packages {
+            // A package build carries ONE gem. A feature another gem owns
+            // is the host's to answer -- from its own splice or that gem's
+            // own package -- so it resolves to nothing here and the require
+            // stays a call.
+            if self
+                .pkg_own_gem
+                .as_ref()
+                .is_some_and(|own| own != &pkg.name)
+            {
+                continue;
+            }
             // At most one hit per package: a package's OWN roots are
             // ordered by its manifest (first wins within the package).
             if let Some(cand) = pkg

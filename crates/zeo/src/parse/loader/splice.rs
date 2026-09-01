@@ -138,6 +138,14 @@ impl Loader {
         let Some(source) = synthetic_shim_source(feature) else {
             return Ok(None);
         };
+        // A PACKAGE never carries a shim copy: the host always does (see
+        // `wants_ambient_rbconfig`), and a copy in every artifact makes any
+        // two-package merge collide on the shim's own methods. The require
+        // stays whatever the fold made of it, and the package's constant
+        // reads resolve at run time against the host's copy.
+        if hir.pkg_build.is_some() {
+            return Ok(Some(Vec::new()));
+        }
         // A virtual path (no file on disk) standing in for `__FILE__`/provenance.
         let canonical = PathBuf::from(format!("<zeo-shim>/{feature}.rb"));
         // Inside the unit sweep, EVERY requiring unit carries its own copy of

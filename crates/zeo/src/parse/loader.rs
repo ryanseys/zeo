@@ -141,6 +141,10 @@ impl Gem {
 }
 
 pub(super) struct Loader {
+    /// In a package build, the name of the ONE gem being packaged. A
+    /// require resolving into any OTHER gem is deferred to the host
+    /// rather than spliced -- a package carries only its own closure.
+    pkg_own_gem: Option<String>,
     /// Ordered `-I` search roots (first hit wins, and they win over
     /// packages entirely -- CRuby's own "-I beats even default gems" rule).
     roots: Vec<PathBuf>,
@@ -398,9 +402,27 @@ pub(super) fn lower_main_file(
         ),
         None => None,
     };
+    // A package build compiles ONE gem's closure. The gem owning the entry
+    // file is recorded so resolution can DEFER a require that lands in any
+    // other gem: the host answers it, from its own splice or the dep's own
+    // package. Splicing a foreign gem's source into the artifact made every
+    // two-package merge collide on the shared dependency's methods.
+    let pkg_own_gem = opts.package_build.as_ref().and_then(|pb| {
+        let entry = pb.entry.canonicalize().ok()?;
+        let packages = discover_packages(&opts.package_dirs, bundled_libraries()).ok()?;
+        packages
+            .iter()
+            .find(|g| {
+                g.roots
+                    .iter()
+                    .any(|r| r.canonicalize().is_ok_and(|r| entry.starts_with(r)))
+            })
+            .map(|g| g.name.clone())
+    });
     // `LoaderState::search_roots` is filled at the END of lowering, once the
     // set of gems a require actually activated is final.
     let mut loader = Loader {
+        pkg_own_gem,
         roots: opts.load_roots.clone(),
         // The libraries zeo itself ships are ALWAYS discoverable, appended
         // last so any caller-supplied dir shadows them (first-name-wins).
@@ -714,6 +736,18 @@ fn wants_ambient_rbconfig(hir: &Hir) -> bool {
     // it again.
     if hir.mode.is_eval() {
         return false;
+    }
+    // Never for a PACKAGE build: the HOST always carries the shim, and a
+    // copy in every artifact makes any two-package merge collide on
+    // `RbConfig.ruby` and drop one to source.
+    if hir.pkg_build.is_some() {
+        return false;
+    }
+    // Always for a host that links packages: a package resolves `RbConfig`
+    // at run time against the host's copy, whether or not the host's own
+    // files mention it.
+    if !hir.pkg_merge.is_empty() {
+        return true;
     }
     hir.uses_runtime_eval()
         || hir
