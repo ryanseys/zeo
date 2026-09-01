@@ -172,6 +172,8 @@ enum Parsed {
     Install(InstallCmd),
     /// `zeo flags`: print the compile flags the project implies.
     Flags(FlagsCmd),
+    /// `zeo gem precompile`: build this gem's platform gem, artifact inside.
+    GemPrecompile,
     /// `-h`/`--help` (exit 0).
     Help,
     /// `-v`/`--version` (exit 0).
@@ -427,6 +429,20 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     // `zeo flags`: likewise zeo's own verb.
     if !build_verb && argv.first().map(String::as_str) == Some("flags") {
         return parse_flags(&argv[1..]).map(Parsed::Flags);
+    }
+    // `zeo gem precompile` is zeo's, not a rubygems command: it is caught
+    // here, before the `gem` rewrite hands everything to `Gem::GemRunner`.
+    if !build_verb
+        && argv.first().map(String::as_str) == Some("gem")
+        && argv.get(1).map(String::as_str) == Some("precompile")
+    {
+        if argv.len() > 2 {
+            return Err(
+                "zeo gem precompile takes no arguments; run it from the gem's own directory"
+                    .to_string(),
+            );
+        }
+        return Ok(Parsed::GemPrecompile);
     }
     // A subcommand becomes `-e <driver> -- <its own arguments>`, and the `--`
     // is what keeps them its own: without it a `zeo gem --version` would read
@@ -1029,6 +1045,7 @@ fn run() -> Result<(), MainError> {
         Parsed::Run(args) => args,
         Parsed::Install(cmd) => return run_install(cmd),
         Parsed::Flags(cmd) => return run_flags(cmd),
+        Parsed::GemPrecompile => return run_gem_precompile(),
         Parsed::Help => {
             print_help();
             return Ok(());
@@ -1372,6 +1389,28 @@ fn run_install(cmd: InstallCmd) -> Result<(), MainError> {
             row.entry.as_ref().expect("no skip means an entry"),
             row.home.as_ref().expect("an entry has a home"),
         );
+        // A platform gem SHIPPED its artifact: on an exact identity match
+        // it is promoted into the store as-is, no compile. A mismatch is
+        // not an error -- the compile below is the answer either way.
+        if let Some(shipped) = row.shipped.as_ref().filter(|s| zeo::project::artifact_matches(s))
+        {
+            match zeo::package::store_install(home, shipped) {
+                Ok(true) => {
+                    println!("  install {label} (shipped artifact)");
+                    installed += 1;
+                    continue;
+                }
+                // Already where a compile links it from; nothing to do.
+                Ok(false) => {
+                    println!("    cache {label} (shipped artifact; store not writable)");
+                    cached_only += 1;
+                    continue;
+                }
+                Err(e) => {
+                    return Err(format!("installing {}: {e}", home.display()).into());
+                }
+            }
+        }
         match install_one(&row.feature, entry, home) {
             Ok(true) => {
                 println!("  install {label}");
@@ -1455,19 +1494,14 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Compile one gem to a `.zeopkg` and place it at its store `home`.
-/// `Ok(false)` = built, but the store is read-only (the machine cache still
-/// holds it). `Err` carries the refusal's first line.
-fn install_one(
+/// Compile `entry` as the package for `feature` into the `.zeopkg` at
+/// `out`, through the machine cache. `Err` carries the refusal's first
+/// line -- the drop-to-splice spelling a caller reports.
+fn build_gem_artifact(
     feature: &str,
     entry: &std::path::Path,
-    home: &std::path::Path,
-) -> Result<bool, String> {
-    let staging = std::env::temp_dir().join(format!(
-        "zeo-install-{}-{}.zeopkg",
-        std::process::id(),
-        zeo::package::fnv64(home.as_os_str().as_encoded_bytes())
-    ));
+    out: &std::path::Path,
+) -> Result<(), String> {
     let root = entry
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
@@ -1480,7 +1514,7 @@ fn install_one(
         package_build: Some(zeo::package::PackageBuild {
             entry: entry.to_path_buf(),
             feature: feature.to_string(),
-            manifest_out: staging.with_extension("zman"),
+            manifest_out: out.with_extension("zman"),
             root,
         }),
         ..Default::default()
@@ -1494,11 +1528,71 @@ fn install_one(
         };
         text.lines().next().unwrap_or_default().to_string()
     };
-    build_package("", &opts, &staging).map_err(first_line)?;
+    build_package("", &opts, out).map_err(first_line)
+}
+
+/// Compile one gem to a `.zeopkg` and place it at its store `home`.
+/// `Ok(false)` = built, but the store is read-only (the machine cache still
+/// holds it). `Err` carries the refusal's first line.
+fn install_one(
+    feature: &str,
+    entry: &std::path::Path,
+    home: &std::path::Path,
+) -> Result<bool, String> {
+    let staging = std::env::temp_dir().join(format!(
+        "zeo-install-{}-{}.zeopkg",
+        std::process::id(),
+        zeo::package::fnv64(home.as_os_str().as_encoded_bytes())
+    ));
+    build_gem_artifact(feature, entry, &staging)?;
     let placed = zeo::package::store_install(home, &staging)
         .map_err(|e| format!("installing {}: {e}", home.display()))?;
     let _ = std::fs::remove_file(&staging);
     Ok(placed)
+}
+
+/// `zeo gem precompile`: build THIS gem's platform gem with the artifact
+/// inside.
+///
+/// The author's half of the shipping tier: compile the gem to its
+/// `.zeopkg`, put it at `zeo/pkg.zeopkg` in the tree, and have the
+/// vendored RubyGems build the platform-stamped `.gem` -- so the file an
+/// author pushes is built by RubyGems' own machinery, not an imitation.
+/// An installer that cannot use the artifact (other platform, other zeo)
+/// ignores it and compiles from source; that contract lives in
+/// `zeo::project::artifact_matches`.
+fn run_gem_precompile() -> Result<(), MainError> {
+    init_tracing(None);
+    zeo::home::ensure_resolved()?;
+    let dir = std::env::current_dir().map_err(|e| format!("reading the working directory: {e}"))?;
+    let gem = zeo::project::author_gem(&dir)?;
+    zeo::memguard::arm("gem precompile");
+    let artifact = dir.join("zeo").join("pkg.zeopkg");
+    std::fs::create_dir_all(dir.join("zeo"))
+        .map_err(|e| format!("creating {}: {e}", dir.join("zeo").display()))?;
+    build_gem_artifact(&gem.feature, &gem.entry, &artifact)?;
+    let platform = zeo::project::gem_platform();
+    let me = std::env::current_exe().map_err(|e| format!("finding the zeo binary: {e}"))?;
+    let status = std::process::Command::new(me)
+        .arg("-e")
+        .arg(zeo::subcommand::PRECOMPILE_GEM_BUILD)
+        .arg("--")
+        .arg(&gem.gemspec)
+        .arg(platform)
+        .current_dir(&dir)
+        .status()
+        .map_err(|e| format!("running the gem build: {e}"))?;
+    // The artifact travels INSIDE the .gem now; the loose copy goes.
+    let _ = std::fs::remove_file(&artifact);
+    let _ = std::fs::remove_dir(dir.join("zeo"));
+    if !status.success() {
+        return Err("the gem build failed (see above)".to_string().into());
+    }
+    println!(
+        "zeo gem precompile: {}-{}-{platform}.gem carries the precompiled artifact",
+        gem.name, gem.version
+    );
+    Ok(())
 }
 
 fn build_package(

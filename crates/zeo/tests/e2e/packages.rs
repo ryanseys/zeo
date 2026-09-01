@@ -1199,3 +1199,118 @@ fn walk_files(root: &Path) -> Vec<PathBuf> {
     }
     out
 }
+
+/// The shipping tier end to end: `zeo gem precompile` builds a platform
+/// gem with the artifact inside (through RubyGems' own Gem::Package),
+/// `zeo gem install` unpacks it into a store, `zeo install` PROMOTES the
+/// shipped artifact instead of compiling, and a store-active compile
+/// links it. The greeting names the artifact so a source splice cannot
+/// fake the answer once the tree is poisoned.
+#[test]
+fn a_precompiled_platform_gem_ships_its_artifact_to_a_consumer() {
+    let dir = scratch("shipping");
+    let gem_dir = dir.join("shipgem");
+    std::fs::create_dir_all(gem_dir.join("lib")).expect("mkdir");
+    std::fs::write(
+        gem_dir.join("shipgem.gemspec"),
+        "Gem::Specification.new do |s|\n  s.name = \"shipgem\"\n  s.version = \"2.0.0\"\n  \
+         s.summary = \"ships an artifact\"\n  s.authors = [\"e2e\"]\n  \
+         s.files = [\"lib/shipgem.rb\"]\n  s.require_paths = [\"lib\"]\nend\n",
+    )
+    .expect("write gemspec");
+    std::fs::write(
+        gem_dir.join("lib/shipgem.rb"),
+        "class Shipgem\n  def greet = \"hello from the shipped artifact\"\nend\n",
+    )
+    .expect("write lib");
+    let report = ok(zeo()
+        .current_dir(&gem_dir)
+        .arg("gem")
+        .arg("precompile")
+        .env("ZEO_CACHE", "0"));
+    assert!(
+        report.contains("carries the precompiled artifact"),
+        "report: {report}"
+    );
+    let gems: Vec<PathBuf> = std::fs::read_dir(&gem_dir)
+        .expect("read gem dir")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "gem"))
+        .collect();
+    assert_eq!(gems.len(), 1, "one platform gem: {gems:?}");
+    assert!(!gem_dir.join("zeo").exists(), "the loose artifact is cleaned");
+
+    // The consumer machine: install the .gem, then let `zeo install`
+    // promote the shipped artifact -- no compile.
+    let store = dir.join("store");
+    ok(zeo()
+        .arg("gem")
+        .arg("install")
+        .arg("--local")
+        .arg("--install-dir")
+        .arg(&store)
+        .arg(&gems[0]));
+    let proj = dir.join("proj");
+    std::fs::create_dir_all(&proj).expect("mkdir");
+    std::fs::write(
+        proj.join("Gemfile"),
+        "source \"https://rubygems.org\"\ngem \"shipgem\"\n",
+    )
+    .expect("write Gemfile");
+    std::fs::write(
+        proj.join("Gemfile.lock"),
+        "GEM\n  remote: https://rubygems.org/\n  specs:\n    shipgem (2.0.0)\n\nPLATFORMS\n  \
+         ruby\n\nDEPENDENCIES\n  shipgem\n\nBUNDLED WITH\n   4.0.18\n",
+    )
+    .expect("write lock");
+    std::fs::write(proj.join("app.rb"), "require \"shipgem\"\nputs Shipgem.new.greet\n")
+        .expect("write app");
+    let report = ok(zeo()
+        .current_dir(&proj)
+        .arg("install")
+        .arg("--gem-path")
+        .arg(&store)
+        .env("ZEO_CACHE", "0"));
+    assert!(
+        report.contains("shipped artifact"),
+        "the artifact promotes without a compile: {report}"
+    );
+
+    // Poison the installed SOURCE: only the artifact can answer now.
+    let installed_lib = store.join("gems").join(
+        std::fs::read_dir(store.join("gems"))
+            .expect("read store gems")
+            .flatten()
+            .map(|e| e.file_name())
+            .find(|n| n.to_string_lossy().starts_with("shipgem-"))
+            .expect("the installed gem dir"),
+    );
+    std::fs::write(
+        installed_lib.join("lib/shipgem.rb"),
+        "raise \"the SOURCE was spliced\"\n",
+    )
+    .expect("poison lib");
+    let bin = proj.join("app-bin");
+    ok(zeo()
+        .current_dir(&proj)
+        .arg("build")
+        .arg("app.rb")
+        .arg("--gem-path")
+        .arg(&store)
+        .arg("--bundle-gemfile")
+        .arg("Gemfile")
+        .arg("-o")
+        .arg(&bin)
+        .env("ZEO_CACHE", "0"));
+    let out = Command::new(&bin).output().expect("run");
+    assert!(
+        out.status.success(),
+        "the shipped artifact answers: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "hello from the shipped artifact\n"
+    );
+}

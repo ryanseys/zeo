@@ -35,6 +35,10 @@ pub struct GemRow {
     /// The artifact's store home
     /// (`<store>/zeo/<target>/zeo-<abi>/<name>-<version>/pkg.zeopkg`).
     pub home: Option<PathBuf>,
+    /// An artifact the gem itself SHIPPED (`zeo/pkg.zeopkg` inside its
+    /// tree -- what `zeo gem precompile` puts in a platform gem). Trusted
+    /// only on an exact identity match, exactly like a store artifact.
+    pub shipped: Option<PathBuf>,
     /// Why this gem cannot precompile, when it cannot.
     pub skip: Option<String>,
 }
@@ -136,6 +140,7 @@ pub fn survey_lock(lockfile: &Path, stores: &[PathBuf]) -> Result<Vec<GemRow>, S
                 feature: g.feature,
                 entry: g.entry,
                 home,
+                shipped: g.shipped,
                 skip: g.skip,
             }
         })
@@ -149,14 +154,97 @@ pub fn survey_lock(lockfile: &Path, stores: &[PathBuf]) -> Result<Vec<GemRow>, S
 pub fn linkable(rows: &[GemRow]) -> Vec<PathBuf> {
     rows.iter()
         .filter_map(|row| {
-            let home = row.home.as_ref()?;
-            let (manifest_text, _) = crate::package::read_zeopkg(home).ok()?;
-            let m = crate::package::Manifest::parse(&manifest_text).ok()?;
-            (m.compiler == crate::package::compiler_identity()
-                && m.target == crate::backend::link::host_triple())
-            .then(|| home.clone())
+            [row.home.as_ref(), row.shipped.as_ref()]
+                .into_iter()
+                .flatten()
+                .find(|c| artifact_matches(c))
+                .cloned()
         })
         .collect()
+}
+
+/// Whether the artifact at `path` was built by THIS compiler for THIS
+/// target -- the whole acceptance contract (decision 7: exact match, no
+/// stable tag). Unreadable or unparseable answers false.
+pub fn artifact_matches(path: &Path) -> bool {
+    let Ok((manifest_text, _)) = crate::package::read_zeopkg(path) else {
+        return false;
+    };
+    let Ok(m) = crate::package::Manifest::parse(&manifest_text) else {
+        return false;
+    };
+    m.compiler == crate::package::compiler_identity()
+        && m.target == crate::backend::link::host_triple()
+}
+
+/// RubyGems' name for this build's platform (`Gem::Platform.local`).
+pub fn gem_platform() -> &'static str {
+    match crate::backend::link::host_triple() {
+        "aarch64-apple-darwin" => "arm64-darwin",
+        "x86_64-apple-darwin" => "x86_64-darwin",
+        "x86_64-unknown-linux-gnu" => "x86_64-linux",
+        "aarch64-unknown-linux-gnu" => "aarch64-linux",
+        other => other,
+    }
+}
+
+/// The gem an author is standing in: exactly one `*.gemspec` at `dir`'s
+/// top level, pure Ruby, with the conventional entry file.
+pub struct AuthorGem {
+    pub gemspec: PathBuf,
+    pub name: String,
+    pub version: String,
+    /// The require spelling (`io-console` -> `io/console`).
+    pub feature: String,
+    pub entry: PathBuf,
+}
+
+/// Read the gem at `dir` for `zeo gem precompile`. Every refusal says
+/// what is missing or why the gem cannot carry an artifact.
+pub fn author_gem(dir: &Path) -> Result<AuthorGem, String> {
+    let mut specs: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| format!("reading {}: {e}", dir.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "gemspec"))
+        .collect();
+    specs.sort();
+    let gemspec = match specs.len() {
+        0 => return Err("no .gemspec here; run from the gem's own directory".to_string()),
+        1 => specs.remove(0),
+        _ => return Err(format!("{} gemspecs here; expected one", specs.len())),
+    };
+    let spec = crate::parse::gemspec::parse_file(&gemspec)
+        .map_err(|e| format!("reading {}: {e}", gemspec.display()))?;
+    if !spec.extensions.is_empty() {
+        return Err(format!(
+            "`{}` ships a native extension; the package tier cannot carry it",
+            spec.name
+        ));
+    }
+    let version = spec
+        .version
+        .clone()
+        .ok_or_else(|| format!("{} sets no version", gemspec.display()))?;
+    let feature = spec.name.replace('-', "/");
+    let entry = spec
+        .require_paths
+        .iter()
+        .map(|rp| dir.join(rp).join(format!("{feature}.rb")))
+        .find(|p| p.is_file())
+        .ok_or_else(|| {
+            format!(
+                "`{}` has no {feature}.rb under its require paths",
+                spec.name
+            )
+        })?;
+    Ok(AuthorGem {
+        gemspec,
+        name: spec.name,
+        version,
+        feature,
+        entry,
+    })
 }
 
 /// The store tier a compile consults on its own: every linkable artifact

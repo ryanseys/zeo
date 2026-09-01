@@ -8,7 +8,7 @@
 pub mod gem_compat;
 mod gem_store;
 pub(crate) use gem_store::store_gems;
-mod gemspec;
+pub(crate) mod gemspec;
 mod loader;
 pub use loader::absolutize_feature;
 pub(crate) mod lockfile;

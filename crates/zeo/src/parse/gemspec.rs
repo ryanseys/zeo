@@ -42,7 +42,7 @@ use std::path::Path;
 /// The gemspec fields that determine load-path resolution. Deliberately the
 /// same shape `Gem::StubSpecification` exposes.
 #[derive(Debug, Default, PartialEq)]
-pub(super) struct GemSpec {
+pub(crate) struct GemSpec {
     pub name: String,
     /// `None` for a hand-written manifest that omits it. zeo does not
     /// resolve versions; this is carried for the disclosure report.
@@ -62,7 +62,7 @@ pub(super) struct GemSpec {
 }
 
 /// Parse a gemspec file: stub header when present, else a static body parse.
-pub(super) fn parse_file(path: &Path) -> PResult<GemSpec> {
+pub(crate) fn parse_file(path: &Path) -> PResult<GemSpec> {
     // Read as BYTES. Four installed specs on the development machine carry raw
     // non-UTF-8 in author names despite their own `# -*- encoding: utf-8 -*-`
     // header, so a strict decode would reject valid input.

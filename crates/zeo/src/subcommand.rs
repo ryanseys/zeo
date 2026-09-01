@@ -26,6 +26,21 @@ pub const BUNDLE_DRIVER: &str = "require \"bundler\"\nrequire \"bundler/friendly
      \x20 Bundler::CLI.start(args, debug: true)\n\
      end\n";
 
+/// `zeo gem precompile`'s second half: RubyGems' own `Gem::Package.build`
+/// writes the platform-stamped `.gem`, with the `.zeopkg` (already at
+/// `zeo/pkg.zeopkg` in the tree) added to the files. RubyGems builds the
+/// archive so its layout, metadata and checksums are the real thing.
+pub const PRECOMPILE_GEM_BUILD: &str = "\
+    require \"rubygems\"\n\
+    require \"rubygems/package\"\n\
+    gemspec, platform = ARGV\n\
+    spec = Gem::Specification.load(gemspec)\n\
+    abort \"zeo: could not load #{gemspec}\" unless spec\n\
+    spec.platform = Gem::Platform.new(platform)\n\
+    spec.files += [\"zeo/pkg.zeopkg\"]\n\
+    spec.extensions = []\n\
+    Gem::Package.build(spec)\n";
+
 /// The driver for a `zeo <name> ...` subcommand, and whether the name itself
 /// stays in the driver's `ARGV`.
 ///

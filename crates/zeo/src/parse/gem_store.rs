@@ -121,6 +121,9 @@ pub(crate) struct StoreGem {
     /// The file `require "<feature>"` reaches, when the gem follows the
     /// convention. `None` only when `skip` says why.
     pub entry: Option<PathBuf>,
+    /// `zeo/pkg.zeopkg` inside the gem's own tree -- an artifact a
+    /// platform gem shipped (`zeo gem precompile`'s output).
+    pub shipped: Option<PathBuf>,
     /// Why the package tier passes this gem over (`None` = precompilable).
     pub skip: Option<String>,
 }
@@ -143,24 +146,38 @@ pub(crate) fn store_gems(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<Vec
             feature,
             store: PathBuf::new(),
             entry: None,
+            shipped: None,
             skip: None,
         };
         let mut found = None;
-        let mut saw_precompiled = false;
+        let mut precompiled: Option<(PathBuf, &PathBuf)> = None;
         for store in stores {
             match locate_gemspec(&store.join("specifications"), &locked.name, &locked.version) {
                 Located::Source(path) => {
                     found = Some((path, store));
                     break;
                 }
-                Located::PrecompiledOnly => saw_precompiled = true,
+                Located::PrecompiledOnly(path) => {
+                    precompiled.get_or_insert((path, store));
+                }
                 Located::Absent => {}
+            }
+        }
+        // A platform gem `zeo gem precompile` built carries its full Ruby
+        // source AND the artifact; it is as usable as a source gem.
+        if found.is_none()
+            && let Some((path, store)) = &precompiled
+        {
+            let spec = super::gemspec::parse_file(path)?;
+            let version = spec.version.clone().unwrap_or(locked.version.clone());
+            if zeo_platform_gem(store, &spec, &version).is_some() {
+                found = Some((path.clone(), store));
             }
         }
         let (gemspec_path, store) = match found {
             Some(hit) => hit,
             None => {
-                row.skip = Some(if saw_precompiled {
+                row.skip = Some(if precompiled.is_some() {
                     "only a precompiled platform gem is installed".to_string()
                 } else if crate::lower::features::zeo_provides(&locked.name) {
                     "not in the store; zeo's bundled copy answers".to_string()
@@ -173,9 +190,21 @@ pub(crate) fn store_gems(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<Vec
         };
         let spec = super::gemspec::parse_file(&gemspec_path)?;
         let version = spec.version.as_deref().unwrap_or(&locked.version);
-        let gem_dir = store.join("gems").join(format!("{}-{version}", spec.name));
+        let gem_dir = match zeo_platform_gem(store, &spec, version) {
+            Some(dir) => dir,
+            None => store.join("gems").join(format!("{}-{version}", spec.name)),
+        };
         row.store = store.clone();
-        match native_kind(&spec, &gem_dir) {
+        row.shipped = Some(gem_dir.join("zeo/pkg.zeopkg")).filter(|p| p.is_file());
+        // A zeo platform gem is pure Ruby by construction (`zeo gem
+        // precompile` refuses extension gems), so the platform suffix must
+        // not read as a C-ABI binary here.
+        let kind = if row.shipped.is_some() {
+            NativeKind::No
+        } else {
+            native_kind(&spec, &gem_dir)
+        };
+        match kind {
             NativeKind::Buildable => {
                 row.skip = Some("ships a native extension".to_string());
             }
@@ -242,7 +271,21 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
                     found = Some((path, store));
                     break;
                 }
-                Located::PrecompiledOnly => saw_precompiled = true,
+                Located::PrecompiledOnly(path) => {
+                    // A platform gem `zeo gem precompile` built has its
+                    // FULL Ruby source in the tree (the artifact is an
+                    // accelerator beside it), so it serves as a source gem;
+                    // a C-ABI binary gem stays excluded below.
+                    if found.is_none() {
+                        let spec = super::gemspec::parse_file(&path)?;
+                        let version = spec.version.clone().unwrap_or(locked.version.clone());
+                        if zeo_platform_gem(store, &spec, &version).is_some() {
+                            found = Some((path, store));
+                            continue;
+                        }
+                    }
+                    saw_precompiled = true;
+                }
                 Located::Absent => {}
             }
         }
@@ -278,9 +321,20 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
 
         let spec = super::gemspec::parse_file(&gemspec_path)?;
         let version = spec.version.as_deref().unwrap_or(&locked.version);
-        let gem_dir = store.join("gems").join(format!("{}-{version}", spec.name));
+        // A zeo platform gem's tree carries the platform suffix, and its
+        // suffix is not a C-ABI signal (pure Ruby by construction).
+        let zeo_platform = zeo_platform_gem(store, &spec, version);
+        let gem_dir = match &zeo_platform {
+            Some(dir) => dir.clone(),
+            None => store.join("gems").join(format!("{}-{version}", spec.name)),
+        };
 
-        match native_kind(&spec, &gem_dir) {
+        let kind = if zeo_platform.is_some() {
+            NativeKind::No
+        } else {
+            native_kind(&spec, &gem_dir)
+        };
+        match kind {
             // The C is shipped: zeo compiles it from source. The extension's
             // own require path is added like any other, and the build happens
             // when a `require` reaches the feature.
@@ -391,8 +445,11 @@ pub(super) fn installed_as_lockfile(store: &Path) -> PResult<Lockfile> {
 enum Located {
     /// The suffix-less `<name>-<version>.gemspec` -- a source-platform gem.
     Source(PathBuf),
-    /// Only a platform-suffixed `<name>-<version>-<platform>.gemspec` exists.
-    PrecompiledOnly,
+    /// Only a platform-suffixed `<name>-<version>-<platform>.gemspec`
+    /// exists. The path lets a caller tell zeo's OWN platform gems (a
+    /// `zeo/pkg.zeopkg` in the tree, full Ruby source beside it) from a
+    /// C-ABI binary gem, which stays excluded.
+    PrecompiledOnly(PathBuf),
     /// No gemspec for this name+version at all (not installed).
     Absent,
 }
@@ -403,7 +460,7 @@ enum Located {
 fn locate_gemspec(specs: &Path, name: &str, version: &str) -> Located {
     let source = format!("{name}-{version}.gemspec");
     let prefix = format!("{name}-{version}-");
-    let mut saw_precompiled = false;
+    let mut precompiled: Option<PathBuf> = None;
     for dir in [specs.to_path_buf(), specs.join("default")] {
         let p = dir.join(&source);
         if p.is_file() {
@@ -415,16 +472,27 @@ fn locate_gemspec(specs: &Path, name: &str, version: &str) -> Located {
                 let fname = entry.file_name();
                 let fname = fname.to_string_lossy();
                 if fname.starts_with(&prefix) && fname.ends_with(".gemspec") {
-                    saw_precompiled = true;
+                    precompiled.get_or_insert(entry.path());
                 }
             }
         }
     }
-    if saw_precompiled {
-        Located::PrecompiledOnly
-    } else {
-        Located::Absent
+    match precompiled {
+        Some(p) => Located::PrecompiledOnly(p),
+        None => Located::Absent,
     }
+}
+
+/// A platform gem `zeo gem precompile` built: pure Ruby, its full source
+/// in the tree, and the `.zeopkg` beside it. The one platform-gem shape
+/// the force-ruby-platform rule does NOT exclude -- there is no C-ABI
+/// object in it to mislead anyone.
+fn zeo_platform_gem(store: &Path, spec: &super::gemspec::GemSpec, version: &str) -> Option<PathBuf> {
+    let platform = spec.platform.as_deref().filter(|p| *p != "ruby")?;
+    let gem_dir = store
+        .join("gems")
+        .join(format!("{}-{version}-{platform}", spec.name));
+    gem_dir.join("zeo/pkg.zeopkg").is_file().then_some(gem_dir)
 }
 
 /// What kind of native a gem is, which decides what happens to it.
