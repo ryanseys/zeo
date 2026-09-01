@@ -289,6 +289,14 @@ pub(super) fn resolve_module_target(
 ) -> MixinTarget {
     let resolved = compiler
         .resolve_class(name, cref, box_id)
+        // A mixin names a MODULE. A CLASS of that name in an outer scope is
+        // not what the statement means, so the search continues -- the dual
+        // of the superclass rule above. rexml is the case: `include Encoding`
+        // inside `REXML::Output` found the BUILTIN Encoding class whenever
+        // rexml arrived as a lazy unit walked before `REXML::Encoding`, and
+        // the chain then carried a builtin class no registrar serves. The
+        // lexical road below reaches the real module through `shell_kinds`.
+        .filter(|&c| compiler.class(c).is_module)
         // A module defined LATER in the flattened list (hoisted deferred
         // require) is created as a forward shell; its methods are added when the
         // real definition reopens the shell (seen at `mro::materialize`).
@@ -553,7 +561,7 @@ pub(super) fn resolve_superclass(
 /// see an empty chain. `defining` is the path this very definition binds and
 /// can never be its own superclass.
 fn resolve_in_ancestry(
-    compiler: &Compiler,
+    compiler: &mut Compiler,
     name: &str,
     cref: &[ClassId],
     box_id: u32,
@@ -570,6 +578,15 @@ fn resolve_in_ancestry(
         }
         let path = format!("{}::{name}", compiler.fq_name(owner));
         if let Some(found) = compiler.resolve_class(&path, &[], box_id)
+            && compiler.fq_name(found) != defining
+        {
+            return Some(found);
+        }
+        // The inherited constant may be an ALIAS of a class defined elsewhere
+        // -- rss's `AuthorsBase = ChannelBase::AuthorsBase` inside ItemBase,
+        // read by `class Authors < AuthorsBase` under `Item < ItemBase`.
+        if compiler.const_aliases.contains_key(&(box_id, path.clone()))
+            && let Some(found) = resolve_const_alias(compiler, &path, cref, box_id)
             && compiler.fq_name(found) != defining
         {
             return Some(found);
