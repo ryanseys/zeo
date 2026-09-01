@@ -1360,17 +1360,16 @@ pub(crate) fn define_desc(
     // `HirNode::FeatureLoaded`, which is CRuby's `rb_provide_feature`. Seeding
     // them here instead made `$LOADED_FEATURES` name a library from line 1
     // however late the `require` was written.
-    let mut loaded: Vec<String> = vec!["<zeo-shim>/rbconfig.rb".to_string()];
     // What ruby 4.0 has loaded before the program's first line, whether or
     // not the program mentions it (`set.rb`, `thread.rb`, `monitor.rb`,
-    // `rational.so`, `complex.so` -- oracle-verified). Requiring one of these
-    // answers `false` and records nothing, which is what
-    // `features::is_preloaded_at_boot` already told the require-fold.
-    loaded.extend(
-        crate::lower::features::PRELOADED_AT_BOOT
-            .iter()
-            .map(|f| format!("<zeo-builtin>/{f}.rb")),
-    );
+    // `rational.so`, `complex.so`, and rubygems' own `rbconfig` --
+    // oracle-verified). Requiring one of these answers `false` and records
+    // nothing, which is what `features::is_preloaded_at_boot` already told
+    // the require-fold.
+    let loaded: Vec<String> = crate::lower::features::PRELOADED_AT_BOOT
+        .iter()
+        .map(|f| format!("<zeo-builtin>/{f}.rb"))
+        .collect();
     let warnings: Vec<String> = hir.warnings.iter().map(ToString::to_string).collect();
     // `$LOAD_PATH`: the `-I` roots, then the roots of every gem a require
     // actually activated. See `Loader::load_path`.

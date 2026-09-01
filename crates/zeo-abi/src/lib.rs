@@ -211,13 +211,20 @@ pub const NATIVE_FEATURES: &[&str] = &[
     "complex",
     "random/formatter",
     "pathname",
+    // Synthesized by the compiler (real Ruby generates rbconfig.rb at build
+    // time) and spliced into every program ahead of line 1, so the runtime
+    // always carries `RbConfig` and a require loads nothing.
+    "rbconfig",
 ];
 
 /// Features CRuby has ALREADY loaded before the program's first line, so
 /// requiring one answers `false` even the first time. Verified by running
 /// `p require "<f>"` under ruby 4.0.6 for every feature
 /// [`is_builtin_feature`] accepts.
-pub const PRELOADED_AT_BOOT: &[&str] = &["set", "monitor", "rational", "complex", "thread"];
+/// `rbconfig` is on the list because rubygems requires it before the program
+/// starts, so its answer is `false` there too.
+pub const PRELOADED_AT_BOOT: &[&str] =
+    &["set", "monitor", "rational", "complex", "thread", "rbconfig"];
 
 /// Features ruby folded into CORE, keeping the name only so old code still
 /// loads: it has NO FILE for them anywhere, so
@@ -227,7 +234,10 @@ pub const PRELOADED_AT_BOOT: &[&str] = &["set", "monitor", "rational", "complex"
 /// MEASURED against ruby 4.0.6 over every [`NATIVE_FEATURES`] name: `monitor`
 /// is preloaded and still HAS `monitor.rb`, and `fiber` is not preloaded and
 /// has no file. Every other native feature names a real file there.
-pub const CORE_WITH_NO_FILE: &[&str] = &["set", "fiber", "thread", "rational", "complex"];
+/// `rbconfig` sits here for zeo's own reason: ruby generates rbconfig.rb at
+/// build time, but zeo synthesizes `RbConfig` in the compiler and ships no
+/// file, so `nil` is the honest answer.
+pub const CORE_WITH_NO_FILE: &[&str] = &["set", "fiber", "thread", "rational", "complex", "rbconfig"];
 
 /// A `require` spelling mapped to its canonical in-tree `ext/` feature name.
 /// Sub-path and alias spellings of one extension collapse to a single
