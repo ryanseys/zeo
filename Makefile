@@ -27,7 +27,8 @@ BUNDLE ?= bundle
 # file of either name would have turned that target into a silent no-op.
 .PHONY: all help deps test test-jit test-aot test-memcheck \
         test-typed test-packaged test-milestones test-config test-platform test-size \
-        test-all lint check-batch gate bench pgo install linux clean
+        test-all lint ratchet no-big-files hygiene check-generated tool-versions ci-local \
+        check-batch gate bench pgo install linux clean
 
 .DEFAULT_GOAL := all
 
@@ -54,6 +55,65 @@ test: all  ## the dev loop: unit + e2e + golden suites, stops at the first failu
 
 lint:  ## clippy at CI's severity
 	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
+
+# --- The CI-only checks. ci.yml calls these; nothing runs inline there, so
+# `make ci-local` is the same run in the same words. -------------------------
+
+# The lossy-UTF-8 ratchet. `to_utf8_lossy` in the runtime is a DISPLAY-path
+# convenience that silently corrupts non-UTF-8 semantic operations; the audit
+# migrates sites onto byte/encoding-aware paths one by one, so the count may
+# only go DOWN. Re-baselined once, 2026-07-31 (211 -> 279): the openssl/zlib/
+# socket/ffi/date/bigdecimal extensions each brought display paths, and the
+# count does not measure the harm -- it includes comments, asserts and the
+# definition, and misses `chars()`/`char_vec()`, built on the same decode.
+# tests/gaps/ is the real record; this is a backstop against unbounded growth.
+LOSSY_LIMIT := 279
+ratchet:  ## the to_utf8_lossy ratchet (the count may only go down)
+	@count=$$(grep -rn "to_utf8_lossy" crates/zeo-rt/src --include="*.rs" | wc -l | tr -d ' '); \
+	echo "to_utf8_lossy sites in zeo-rt: $$count (limit: $(LOSSY_LIMIT))"; \
+	if [ "$$count" -gt "$(LOSSY_LIMIT)" ]; then \
+	  echo "to_utf8_lossy count grew ($$count > $(LOSSY_LIMIT)): new runtime code must use byte/encoding-aware paths" >&2; \
+	  exit 1; \
+	fi
+
+# A tracked file this large is almost always a build artifact committed by
+# mistake, and history was rewritten to strip blobs over this size. A `while
+# read` loop, not `xargs -I{} sh -c`: that form died with "command line cannot
+# be assembled, too long" and reported NOTHING, which read as a pass while
+# three 13MB binaries sat in HEAD.
+no-big-files:  ## no tracked file over 1MB
+	@big=$$(git ls-files -z | while IFS= read -r -d '' f; do \
+	    s=$$(wc -c < "$$f"); [ "$$s" -gt 1048576 ] && echo "$$s $$f"; done | sort -rn); \
+	if [ -n "$$big" ]; then echo "tracked files over 1MB:" >&2; echo "$$big" >&2; exit 1; fi; \
+	echo "no tracked file over 1MB"
+
+# Permissive licenses only and no yanked or advisory-flagged crate (deny.toml:
+# zeo-rt ships inside every compiled program, so its tree is the user's tree),
+# and no unused dependency (one still ships in the .crate and still has to be
+# audited; the exceptions are listed in zeo-rt's manifest with their reasons).
+hygiene: ratchet no-big-files  ## deny, machete, the ratchet and the size guard
+	$(CARGO) deny check
+	$(CARGO) machete
+
+# The MRI headers are upstream verbatim plus a patch series, and `cext/api.rs`
+# and `cext/stubs.rs` are generated from clang's AST of them; the forwarding
+# table is a set of claims verified against the oracle by `forward --reverify`
+# (needs ruby 4.0.6, so not here). Stale either way means a gem fails to LINK
+# with a symbol name and no file or line, so the committed and generated halves
+# are checked against each other.
+check-generated:  ## the vendored cext headers and their generated tables agree
+	$(CARGO) xtask cext sync --check
+	$(CARGO) xtask cext api --check
+	$(CARGO) xtask cext forward --check
+
+# What is on PATH against what CI pins (rust-toolchain.toml, mise.toml, and
+# the tool versions in .github/workflows). A drift here is the usual reason
+# "it passed on my machine".
+tool-versions:  ## the tools on PATH, to read against CI's pins
+	@rustc --version; $(CARGO) clippy --version; ruby -v; \
+	$(CARGO) nextest --version | head -1; $(CARGO) deny --version; $(CARGO) machete --version
+
+ci-local: tool-versions lint hygiene check-generated  ## the non-test CI jobs, verbatim, here
 
 # --- The verification legs. `check-batch` and `gate` compose them. ----------
 
