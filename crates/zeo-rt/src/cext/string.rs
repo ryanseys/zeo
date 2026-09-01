@@ -36,9 +36,15 @@ use std::ffi::{c_char, c_int, c_long, c_void};
 struct Pin {
     /// WEAK, and that is the whole lifetime rule -- see [`pin_bytes`].
     owner: std::sync::Weak<crate::Freezable<crate::encoding::StrBuf>>,
-    /// `len` bytes, then a NUL, then one guard byte the copy-back checks.
+    /// `cap` writable bytes (content in the first `len`, zeros after), then
+    /// a NUL slot, then one guard byte the copy-back checks.
     buf: Vec<u8>,
     len: usize,
+    /// MRI's `capa`: how far past `len` the extension may write before
+    /// publishing with `rb_str_set_len`. At least `len`; more when
+    /// `rb_str_buf_new`/`rb_str_resize`/`rb_str_modify_expand` promised
+    /// room.
+    cap: usize,
 }
 
 /// The guard byte, chosen so a plausible overrun (a NUL, a space, a digit)
@@ -49,6 +55,42 @@ thread_local! {
     /// Pinned strings, keyed by the payload address, so two `RSTRING_PTR`
     /// calls on one string answer one pointer.
     static PINS: RefCell<Vec<(usize, Box<Pin>)>> = const { RefCell::new(Vec::new()) };
+    /// Capacity promises made before any pin exists (`rb_str_buf_new(n)`
+    /// creates an EMPTY string the extension will fill through
+    /// `RSTRING_PTR`). Consumed by the next pin of that string; a stale
+    /// entry on a reused address only makes a later pin roomier.
+    static CAPA_HINTS: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Record that the string behind `key` promised `capa` writable bytes.
+pub(super) fn record_capa_hint(key: usize, capa: usize) {
+    CAPA_HINTS.with_borrow_mut(|hints| {
+        if let Some((_, c)) = hints.iter_mut().find(|(k, _)| *k == key) {
+            *c = (*c).max(capa);
+        } else {
+            hints.push((key, capa));
+        }
+    });
+}
+
+fn take_capa_hint(key: usize) -> Option<usize> {
+    CAPA_HINTS.with_borrow_mut(|hints| {
+        hints
+            .iter()
+            .position(|(k, _)| *k == key)
+            .map(|i| hints.remove(i).1)
+    })
+}
+
+/// Fill `pin.buf` with `bytes` and grow it to `cap` writable bytes plus the
+/// NUL slot and the guard.
+fn lay_out(pin: &mut Pin, bytes: Vec<u8>, cap: usize) {
+    let cap = cap.max(bytes.len());
+    pin.len = bytes.len();
+    pin.cap = cap;
+    pin.buf = bytes;
+    pin.buf.resize(cap + 1, 0);
+    pin.buf.push(GUARD);
 }
 
 /// A stable, writable `char *` for `s`.
@@ -77,28 +119,80 @@ fn pin_bytes(s: &RStr) -> *mut c_char {
         let g = s.lock();
         (g.bytes().to_vec(), g.bytesize())
     };
+    let hint = take_capa_hint(key);
     PINS.with_borrow_mut(|pins| {
         if let Some((_, pin)) = pins.iter_mut().find(|(k, _)| *k == key) {
             if pin.len != len || pin.buf[..pin.len] != bytes[..] {
-                pin.buf.clear();
-                pin.buf.extend_from_slice(&bytes);
-                pin.buf.push(0);
-                pin.buf.push(GUARD);
-                pin.len = len;
+                let cap = pin.cap.max(hint.unwrap_or(0));
+                lay_out(pin, bytes, cap);
             }
             return pin.buf.as_mut_ptr().cast();
         }
-        let mut buf = bytes;
-        buf.push(0);
-        buf.push(GUARD);
         let mut pin = Box::new(Pin {
             owner: std::sync::Arc::downgrade(s),
-            buf,
-            len,
+            buf: Vec::new(),
+            len: 0,
+            cap: 0,
         });
+        lay_out(&mut pin, bytes, hint.unwrap_or(0));
         let ptr = pin.buf.as_mut_ptr().cast();
         pins.push((key, pin));
         ptr
+    })
+}
+
+/// The pin's writable capacity for `key`, when one exists.
+fn pinned_capacity(key: usize) -> Option<usize> {
+    PINS.with_borrow(|pins| pins.iter().find(|(k, _)| *k == key).map(|(_, p)| p.cap))
+}
+
+/// Grow a live pin's writable region by `extra` bytes IN PLACE, keeping
+/// every byte up to the old capacity -- the extension's UNPUBLISHED writes
+/// live there until `rb_str_set_len`. `rb_str_modify_expand` in a fill
+/// loop (zlib's zstream) reaches this repeatedly, so the promise
+/// accumulates on the pin, never on the string's stale length.
+pub(super) fn expand_pin_capacity(key: usize, extra: usize) -> bool {
+    PINS.with_borrow_mut(|pins| {
+        let Some((_, pin)) = pins.iter_mut().find(|(k, _)| *k == key) else {
+            return false;
+        };
+        let content = pin.buf[..pin.cap].to_vec();
+        let len = pin.len;
+        let cap = pin.cap + extra;
+        lay_out(pin, content, cap);
+        pin.len = len;
+        true
+    })
+}
+
+/// Publish `new_len` bytes out of the PIN -- `rb_str_set_len`'s contract:
+/// the extension wrote through `RSTRING_PTR`, possibly past the old length
+/// and into the promised capacity, and this is the call that makes those
+/// bytes the string's. `Ok(false)` when nothing is pinned; a length past
+/// the promise is a RAISE (an orderly one -- the reentry must not abort
+/// the process for a gem's bookkeeping error).
+fn publish_pin(key: usize, new_len: usize) -> Result<bool, crate::Signal> {
+    PINS.with_borrow_mut(|pins| {
+        let Some((_, pin)) = pins.iter_mut().find(|(k, _)| *k == key) else {
+            return Ok(false);
+        };
+        if new_len > pin.cap {
+            return Err(crate::builtins::arg_error!(
+                "rb_str_set_len({new_len}) exceeds the {} bytes this string's \
+                 buffer promised (rb_str_buf_new/rb_str_resize/\
+                 rb_str_modify_expand set the promise)",
+                pin.cap
+            ));
+        }
+        let Some(owner) = pin.owner.upgrade() else {
+            return Ok(false);
+        };
+        pin.len = new_len;
+        let bytes = pin.buf[..new_len].to_vec();
+        let mut guard = owner.lock();
+        let enc = guard.encoding();
+        guard.replace_bytes(bytes, enc);
+        Ok(true)
     })
 }
 
@@ -118,7 +212,7 @@ pub(super) fn flush_pins() {
                 return false;
             };
             assert_eq!(
-                pin.buf[pin.len + 1],
+                pin.buf[pin.cap + 1],
                 GUARD,
                 "a C extension wrote past the end of a string it got from RSTRING_PTR"
             );
@@ -202,11 +296,18 @@ crate::cext_fn! {
         to_value(&new_str(bytes, crate::encoding::US_ASCII))
     }
 
-    /// `rb_str_buf_new(capacity)`. zeo's strings grow on demand, so the hint
-    /// is accepted and dropped; the answer is an empty binary String, which
-    /// is what MRI gives too.
-    fn rb_str_buf_new(_capa: c_long) -> Value {
-        to_value(&new_str(Vec::new(), crate::encoding::ASCII_8BIT))
+    /// `rb_str_buf_new(capacity)`: an empty binary String whose buffer
+    /// PROMISES `capacity` writable bytes -- the extension will fill them
+    /// through `RSTRING_PTR` and publish with `rb_str_set_len`, so the
+    /// promise must reach the pin (zlib's deflate output is this exact
+    /// shape).
+    fn rb_str_buf_new(capa: c_long) -> Value {
+        let s = new_str(Vec::new(), crate::encoding::ASCII_8BIT);
+        if let RubyValue::Str(rs) = &s {
+            let key = std::sync::Arc::as_ptr(rs) as *const () as usize;
+            record_capa_hint(key, capa.max(0) as usize);
+        }
+        to_value(&s)
     }
 
     fn rb_str_dup(v: Value) -> Value {
@@ -440,11 +541,14 @@ crate::cext_fn! {
     // ---- measuring -------------------------------------------------------
 
     /// `rb_str_capacity`: how many bytes fit before the buffer must grow.
-    /// zeo's String is a `Vec`, so this is its capacity -- the honest answer
-    /// to the question an extension is asking, which is "will my next
-    /// `rb_str_cat` reallocate".
+    /// A pinned string answers its pin's promised capacity; otherwise the
+    /// byte length, which is what an unpinned buffer really holds here.
     fn rb_str_capacity(v: Value) -> usize {
         let s = unsafe { as_str(v)? };
+        let key = std::sync::Arc::as_ptr(&s) as *const () as usize;
+        if let Some(cap) = pinned_capacity(key) {
+            return Ok(cap);
+        }
         let n = s.lock().bytesize();
         Ok(n)
     }
@@ -533,16 +637,21 @@ crate::cext_fn! {
     }
 
     /// `rb_str_set_len(str, len)`: truncate to `len` BYTES. MRI also uses it
-    /// to publish bytes written through `RSTRING_PTR` past the old length,
-    /// and the pin's copy-back is what makes that work here -- so the pin is
-    /// flushed first.
+    /// to publish bytes written through `RSTRING_PTR` past the old length --
+    /// into the capacity `rb_str_buf_new`/`rb_str_resize` promised -- so
+    /// when a pin exists, the bytes come FROM THE PIN, never from the
+    /// string's stale copy.
     fn rb_str_set_len(v: Value, len: c_long) -> () {
-        flush_pins();
         let s = unsafe { as_str(v)? };
         check_writable(&s)?;
+        let want = len.max(0) as usize;
+        let key = std::sync::Arc::as_ptr(&s) as *const () as usize;
+        if publish_pin(key, want)? {
+            return Ok(());
+        }
         let mut g = s.lock();
         let mut bytes = g.bytes().to_vec();
-        bytes.resize(len.max(0) as usize, 0);
+        bytes.resize(want, 0);
         let enc = g.encoding();
         g.replace_bytes(bytes, enc);
         Ok(())
@@ -681,11 +790,20 @@ crate::cext_fn! {
         Ok(())
     }
 
-    /// `rb_str_modify_expand(str, extra)`: the same, plus room for `extra`
-    /// more bytes. zeo's `Vec` grows on demand, so the hint is accepted.
-    fn rb_str_modify_expand(v: Value, _extra: c_long) -> () {
-        unsafe { rb_str_modify(v);
-        Ok(()) }
+    /// `rb_str_modify_expand(str, extra)`: the same, plus a PROMISE of
+    /// `extra` more writable bytes. A live pin grows in place -- its
+    /// unpublished writes are the real content -- and only an unpinned
+    /// string records a pending hint against its length.
+    fn rb_str_modify_expand(v: Value, extra: c_long) -> () {
+        let s = unsafe { as_str(v)? };
+        check_writable(&s)?;
+        let key = std::sync::Arc::as_ptr(&s) as *const () as usize;
+        let extra = extra.max(0) as usize;
+        if !expand_pin_capacity(key, extra) {
+            let len = s.lock().bytesize();
+            record_capa_hint(key, len + extra);
+        }
+        Ok(())
     }
 
     /// `rb_str_locktmp` / `rb_str_unlocktmp`: MRI's flag forbidding a

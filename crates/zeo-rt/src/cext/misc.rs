@@ -281,13 +281,17 @@ crate::cext_fn! {
     }
 
     /// `rb_str_resize(str, len)`. Growing pads with NUL bytes, as MRI does;
-    /// shrinking truncates. Answers the receiver.
+    /// shrinking truncates. Answers the receiver. The new size is also a
+    /// capacity PROMISE for the next `RSTRING_PTR` pin: an extension resizes
+    /// exactly so it may write that many bytes before `rb_str_set_len`.
     fn rb_str_resize(v: Value, len: c_long) -> Value {
         let sv = unsafe { value_of(v) };
         let RubyValue::Str(s) = &sv else {
             return Err(crate::builtins::wrong_arg_type(&sv, "String"));
         };
         let want = len.max(0) as usize;
+        let key = std::sync::Arc::as_ptr(s) as *const () as usize;
+        super::string::record_capa_hint(key, want);
         let mut g = s.lock();
         let mut bytes = g.bytes().to_vec();
         bytes.resize(want, 0);

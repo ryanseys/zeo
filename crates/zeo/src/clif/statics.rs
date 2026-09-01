@@ -2044,7 +2044,17 @@ pub(crate) fn needed_class_tables(analyzed: &Analyzed) -> Vec<&'static str> {
     // See `debug_flags::dropped_tables` -- the miss is loud, not silent.
     let dropped = crate::debug_flags::dropped_tables();
     let keep = |sym: &&'static str| !dropped.iter().any(|d| d == *sym);
-    if analyzed.compiler.compiles_at_runtime() {
+    // A program that LOADS a C extension keeps every carried table: the C
+    // half reaches builtins the Ruby-side reachability walk cannot see
+    // (zlib's stream guard is `rb_mutex_synchronize` -- `Thread::Mutex`
+    // with no Ruby mention anywhere).
+    let loads_cext = analyzed
+        .compiler
+        .hir
+        .all_nodes()
+        .iter()
+        .any(|n| matches!(n, crate::hir::HirNode::CExtLoaded { .. }));
+    if analyzed.compiler.compiles_at_runtime() || loads_cext {
         return all.iter().map(|(_, sym)| *sym).filter(keep).collect();
     }
     // A merged package's reachable set unions in: `-dead_strip` prunes any
