@@ -12,7 +12,8 @@ use super::statics::{CmRowSpec, DescRows, MetaRowSpec, ObjRowSpec, RegRowSpec, V
 use crate::analyze::Analyzed;
 use crate::codegen_error::{CResult, CodegenError};
 use crate::package::{
-    MClass, MCmRow, MIfaceClass, MIfaceMethod, MMetaRow, MObjRow, MRegRow, MVisRow, Manifest,
+    MClass, MCmRow, MIfaceClass, MIfaceMethod, MMetaRow, MObjRow, MRegRow, MVisRow, MVmRow,
+    Manifest,
 };
 use cranelift_codegen::ir::AbiParam;
 use cranelift_codegen::ir::types;
@@ -75,7 +76,16 @@ pub(crate) fn finish_package(
     if !rows.redef_metas.is_empty() {
         return refuse("an observable redefinition timeline");
     }
-    if !rows.vm.is_empty() {
+    // Value-channel rows on the package's OWN classes (an ordinary
+    // module's instance methods) travel in the manifest and remap like
+    // any other row. A row on a BUILTIN (a reopen) or on `Object` (a
+    // top-level def) lands on a class the host shares, which still needs
+    // its own mechanism; a boxed row rides the box refusal above.
+    if rows
+        .vm
+        .iter()
+        .any(|r| r.class < compiler.first_program_class_id)
+    {
         return refuse("a builtin reopen (value-channel rows)");
     }
     if !analyzed.main_statements.is_empty() {
@@ -109,6 +119,9 @@ pub(crate) fn finish_package(
     }
 
     for row in rows.obj {
+        export(em, row.f)?;
+    }
+    for row in rows.vm {
         export(em, row.f)?;
     }
     for row in rows.cm {
@@ -242,7 +255,18 @@ pub(crate) fn finish_package(
                 kind: c.kind,
             })
             .collect(),
-        vm: vec![],
+        vm: rows
+            .vm
+            .iter()
+            .map(|r| {
+                Ok(MVmRow {
+                    class: r.class,
+                    box_id: r.box_id,
+                    name: r.name.clone(),
+                    f: symbol_of(em, r.f)?,
+                })
+            })
+            .collect::<CResult<_>>()?,
         vis: rows
             .vis
             .iter()
@@ -368,7 +392,6 @@ pub(crate) fn merge_rows(
     meta_rows: &mut Vec<MetaRowSpec>,
     unit_rows: &mut Vec<(String, FuncId)>,
 ) -> CResult<()> {
-    let _ = vm_rows; // packages carry no vm rows yet
     if analyzed.compiler.hir.pkg_merge.is_empty() {
         return Ok(());
     }
@@ -536,6 +559,15 @@ pub(crate) fn merge_rows(
             let f = import(em, &r.f, &vsig)?;
             obj_rows.push(ObjRowSpec {
                 class: rb(r.class),
+                name: r.name,
+                f,
+            });
+        }
+        for r in m.vm {
+            let f = import(em, &r.f, &vsig)?;
+            vm_rows.push(VmRowSpec {
+                class: rb(r.class),
+                box_id: r.box_id,
                 name: r.name,
                 f,
             });

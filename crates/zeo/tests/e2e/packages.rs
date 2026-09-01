@@ -385,6 +385,47 @@ fn a_package_carrying_a_box_is_refused_by_name() {
 }
 
 #[test]
+fn a_host_includes_and_extends_a_packaged_module() {
+    // A module's instance methods ride the manifest's value-channel rows;
+    // the host's includer flattens them onto itself through the exported
+    // trampolines, and the module body's own sends resolve by name into
+    // the HOST's methods (`greet` reads `label`, which only the host
+    // defines). `extend` is the class-side twin. Verified against ruby
+    // 4.0.6.
+    let dir = scratch("mixin");
+    let object = build_inline_package(
+        &dir,
+        "modgem",
+        "module Modgem\n  def greet = \"hello #{label}\"\n  def shout = greet.upcase\nend\n",
+    );
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"modgem\"\n\
+         class Wearer\n  include Modgem\n  def label = \"wearer\"\nend\n\
+         class Toolbox\n  extend Modgem\n  def self.label = \"toolbox\"\nend\n\
+         w = Wearer.new\np w.greet\np w.shout\n\
+         p Wearer.ancestors.first(2).map(&:name)\np Wearer.include?(Modgem)\n\
+         p Toolbox.greet\np Toolbox.shout\n\
+         p Toolbox.singleton_class.include?(Modgem)\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&object)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(
+        ok(&mut Command::new(&bin)),
+        "\"hello wearer\"\n\"HELLO WEARER\"\n[\"Wearer\", \"Modgem\"]\ntrue\n\
+         \"hello toolbox\"\n\"HELLO TOOLBOX\"\ntrue\n"
+    );
+}
+
+#[test]
 fn a_hosts_global_def_hook_hears_a_packages_definitions() {
     // The package compiled with no hook in sight, so each of its
     // definitions announces through the run-time probe; the host's

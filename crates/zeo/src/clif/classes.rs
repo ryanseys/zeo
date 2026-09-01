@@ -350,11 +350,19 @@ fn imported_tramp(
         .iter()
         .filter(|(_, v)| **v == class)
         .find_map(|((mp, l), _)| {
-            compiler.hir.pkg_merge[*mp as usize]
-                .obj
+            let m = &compiler.hir.pkg_merge[*mp as usize];
+            // A CLASS's methods ride the object channel; a MODULE's ride
+            // the value channel. One flattened row wants either.
+            m.obj
                 .iter()
                 .find(|r| r.class == *l && r.name == name)
                 .map(|r| r.f.clone())
+                .or_else(|| {
+                    m.vm
+                        .iter()
+                        .find(|r| r.class == *l && r.name == name && r.box_id == 0)
+                        .map(|r| r.f.clone())
+                })
         });
     let Some(sym) = sym else {
         return Ok(None);
@@ -533,6 +541,11 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
         for &sid in &class.own_methods {
             let scope = compiler.scope(sid);
             if scope.native_default || scope.runtime_conditional {
+                continue;
+            }
+            // A package-compiled body has no Local definition here; its
+            // carriers reach it through `imported_tramp` instead.
+            if scope.extern_symbol.is_some() {
                 continue;
             }
             if super::emit::check_params(&scope.params).is_err() {

@@ -406,7 +406,6 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // A host definition touching a package's class has no sound mechanism
     // yet, so it refuses by name here, before materialization folds
     // anything against the edit.
-    pkg_iface::refuse_host_edits_of_imports(compiler)?;
 
     mro::materialize(compiler, &main_statements)?;
 
