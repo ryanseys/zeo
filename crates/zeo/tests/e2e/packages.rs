@@ -1377,3 +1377,45 @@ fn a_packaged_builtin_feature_defers_to_the_merged_unit() {
         .env("ZEO_CACHE", "0"));
     assert_eq!(ok(&mut Command::new(&bin)), "true\n");
 }
+
+/// A packaged timeout must WORK, not just merge: `Timeout::GET_TIME` is a
+/// module constant whose value is a runtime `Method` object written when the
+/// unit runs, read from `State`'s bodies through the lexical scope -- the
+/// shape that once reached the timer thread uninitialized.
+#[test]
+fn a_packaged_timeout_times_out() {
+    let root = crate::paths::workspace_root();
+    let timeout_rb = root.join("vendor/bundle/ruby/4.0.0/gems/timeout-0.6.1/lib/timeout.rb");
+    if !timeout_rb.is_file() {
+        eprintln!("skipping: the resolved store has no timeout 0.6.1 (run `make deps`)");
+        return;
+    }
+    let dir = scratch("packaged-timeout");
+    let pkg = build_named_package(&dir, "timeout", &timeout_rb);
+
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"timeout\"\n\
+         p Timeout.timeout(5) { :ok }\n\
+         begin\n\
+           Timeout.timeout(0.05) { sleep 1 }\n\
+         rescue Timeout::Error => e\n\
+           p [:timed_out, e.message]\n\
+         end\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host.bin");
+    ok(zeo()
+        .arg("build")
+        .arg(&host)
+        .arg("--with-package")
+        .arg(&pkg)
+        .arg("-o")
+        .arg(&bin)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(
+        ok(&mut Command::new(&bin)),
+        ":ok\n[:timed_out, \"execution expired\"]\n"
+    );
+}
