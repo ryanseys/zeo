@@ -163,6 +163,15 @@ pub(crate) enum IdMode {
     Packaged { first: u32 },
 }
 
+/// Slots in a package's `{prefix}_bases` stride array: one u32 per
+/// program-dense site space, filled by the host at merge time. A package
+/// mints each space's ids dense from zero and its emitted code adds the
+/// loaded stride; the host bakes its own ids past every package's total.
+pub(crate) const BASE_UNIT: u32 = 0;
+pub(crate) const BASE_REGEXP: u32 = 1;
+pub(crate) const BASE_FLIPFLOP: u32 = 2;
+pub(crate) const N_BASES: usize = 3;
+
 /// pool, and the capi import cache.
 pub(crate) struct Emitter {
     pub module: ClifModule,
@@ -224,16 +233,20 @@ pub(crate) struct Emitter {
     /// band it assigned), `zeo_cids` defined locally by the
     /// `packaged-ids` bench mode.
     pub cids_id: Option<DataId>,
-    /// The reveal-group base cell, same shape: `{prefix}_unit_base`,
-    /// imported by a package, defined by the host with the package's
-    /// stride.
-    pub unit_base_id: Option<DataId>,
+    /// The per-package stride array, same shape: `{prefix}_bases`,
+    /// imported by a package, defined by the host with the strides it
+    /// assigned -- one u32 per program-dense site space ([`BASE_UNIT`],
+    /// [`BASE_REGEXP`], [`BASE_FLIPFLOP`]).
+    pub bases_id: Option<DataId>,
     /// The first reveal-group id THIS compile may use.
     /// Merged packages own `[0, unit_base)`; every unit index and
     /// alias-reveal group this program bakes -- the reveal calls and the
     /// `REG_CONCEAL_METHOD` rows both -- is offset by it. Zero when no
     /// packages merge, which keeps today's output byte-identical.
     pub unit_base: u32,
+    /// The first flip-flop latch id THIS compile may use, on
+    /// `unit_base`'s rule: merged packages own `[0, flip_flop_base)`.
+    pub flip_flop_base: u32,
     pub syms: super::statics::SymPool,
     rodata: Vec<u8>,
     rodata_offsets: HashMap<Vec<u8>, u32>,
@@ -481,8 +494,9 @@ impl Emitter {
             pkg: None,
             id_mode: IdMode::Immediate,
             cids_id: None,
-            unit_base_id: None,
+            bases_id: None,
             unit_base: 0,
+            flip_flop_base: 0,
             callsites: Vec::new(),
             cm_sites_id,
             cm_sites: 0,
@@ -561,19 +575,19 @@ impl Emitter {
         id
     }
 
-    /// The reveal-group base cell's `DataId`, same declare-once shape as
+    /// The stride array's `DataId`, same declare-once shape as
     /// [`Emitter::cids_data_id`]. Only a package has one.
-    pub(crate) fn unit_base_data_id(&mut self) -> DataId {
-        if let Some(id) = self.unit_base_id {
+    pub(crate) fn bases_data_id(&mut self) -> DataId {
+        if let Some(id) = self.bases_id {
             return id;
         }
-        let pkg = self.pkg.as_ref().expect("only a package loads a unit base");
-        let name = format!("{}_unit_base", pkg.prefix());
+        let pkg = self.pkg.as_ref().expect("only a package loads a stride");
+        let name = format!("{}_bases", pkg.prefix());
         let id = self
             .module
             .declare_data(&name, Linkage::Import, false, false)
-            .expect("declaring the reveal-group base cell");
-        self.unit_base_id = Some(id);
+            .expect("declaring the stride array");
+        self.bases_id = Some(id);
         id
     }
 

@@ -90,12 +90,6 @@ pub(crate) fn finish_package(
             None,
         ));
     }
-    if compiler.hir.flip_flops > 0 {
-        return refuse("a flip-flop");
-    }
-    if em.regexp_sites > 0 {
-        return refuse("a regexp literal (its site id is program-dense)");
-    }
     if em.ffi_sites > 0 || compiler.hir.ffi.ffi_lib_slots > 0 || compiler.hir.ffi.ffi_enum_slots > 0
     {
         return refuse("an FFI declaration");
@@ -236,6 +230,8 @@ pub(crate) fn finish_package(
         first_class_id: compiler.first_program_class_id,
         n_class_ids: compiler.classes.len() as u32 - compiler.first_program_class_id,
         n_units,
+        n_regexp_sites: em.regexp_sites,
+        n_flip_flops: compiler.hir.flip_flops,
         classes: rows
             .classes
             .iter()
@@ -454,10 +450,16 @@ pub(crate) fn merge_rows(
     // (the host's own groups already start past the packages' total).
     let mut next_band = analyzed.compiler.classes.len() as u32;
     let mut next_stride: u32 = 0;
+    let mut next_regexp: u32 = 0;
+    let mut next_flip_flop: u32 = 0;
     for (pi, m) in manifests.into_iter().enumerate() {
         let first = m.first_class_id;
         let stride = next_stride;
         next_stride += m.n_units;
+        let regexp_stride = next_regexp;
+        next_regexp += m.n_regexp_sites;
+        let flip_flop_stride = next_flip_flop;
+        next_flip_flop += m.n_flip_flops;
         // Local id -> final id. An INTERFACE-REGISTERED class already has
         // its host id (`pkg_class_map`, minted right after the bootstrap
         // band); only the unregistered residue -- singleton surrogates --
@@ -486,7 +488,11 @@ pub(crate) fn merge_rows(
         };
         let cids: Vec<u32> = (0..m.n_class_ids).map(|i| rb(first + i)).collect();
         define_u32s(em, &format!("{}_cids", m.prefix), &cids)?;
-        define_u32s(em, &format!("{}_unit_base", m.prefix), &[stride])?;
+        let mut bases = [0u32; super::module::N_BASES];
+        bases[super::module::BASE_UNIT as usize] = stride;
+        bases[super::module::BASE_REGEXP as usize] = regexp_stride;
+        bases[super::module::BASE_FLIPFLOP as usize] = flip_flop_stride;
+        define_u32s(em, &format!("{}_bases", m.prefix), &bases)?;
         if !m.callers.is_empty() {
             let callers: Vec<u32> = m.callers.iter().map(|&c| rb(c)).collect();
             define_u32s(em, &format!("{}_callers", m.prefix), &callers)?;
@@ -644,6 +650,21 @@ pub(crate) fn merge_rows(
                 "the merged class-id space ({next_band} ids) exceeds the patched-class \
                  bitmap span ({}); widen PATCHED_BITS_IDS or merge fewer packages",
                 zeo_abi::abi::PATCHED_BITS_IDS
+            ),
+            None,
+        ));
+    }
+    // The run-time compiler hands eval snippets site ids from its own band;
+    // link-time strides growing into it would share latches and regexp
+    // caches with snippets, which is silently wrong, not slow.
+    let strides_fit = next_regexp <= zeo_abi::abi::EVAL_SITE_BASE
+        && next_flip_flop <= zeo_abi::abi::EVAL_SITE_BASE;
+    if !strides_fit {
+        return Err(CodegenError::unsupported(
+            format!(
+                "the merged site-id strides ({next_regexp} regexp, {next_flip_flop} \
+                 flip-flop) exceed the eval band floor ({})",
+                zeo_abi::abi::EVAL_SITE_BASE
             ),
             None,
         ));

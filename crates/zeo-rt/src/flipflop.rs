@@ -22,7 +22,7 @@ thread_local! {
 /// starts counting at zero again, so the two spaces would otherwise share
 /// latches. No program has a million flip-flop sites, and the latch vector
 /// is sparse (it grows to the highest id ever used, one byte each).
-const EVAL_BASE: u32 = 1 << 20;
+const EVAL_BASE: u32 = zeo_abi::abi::EVAL_SITE_BASE;
 
 static NEXT_EVAL_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(EVAL_BASE);
 

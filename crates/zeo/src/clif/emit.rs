@@ -111,6 +111,25 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         .iter()
         .map(|m| m.n_units)
         .sum();
+    // The other program-dense site spaces follow the reveal-group rule:
+    // merged packages own `[0, base)`, and this program's own ids start
+    // past their total. The regexp counter starts AT the base, so every
+    // minted id is final; flip-flop ids come dense from the arena and are
+    // offset at the one lowering site.
+    em.regexp_sites = analyzed
+        .compiler
+        .hir
+        .pkg_merge
+        .iter()
+        .map(|m| m.n_regexp_sites)
+        .sum();
+    em.flip_flop_base = analyzed
+        .compiler
+        .hir
+        .pkg_merge
+        .iter()
+        .map(|m| m.n_flip_flops)
+        .sum();
     // A package reads its own-band class ids through the id-translation
     // table the host fills -- position independence. The `packaged-ids`
     // debug flag forces the same emission program-wide over an identity

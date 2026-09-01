@@ -173,6 +173,14 @@ pub const PATCHED_BITS_SYM: &str = "zeo_rt_patched_bits";
 /// above this takes the dispatch route; `zeo-rt` answers for it from the set.
 pub const PATCHED_BITS_IDS: u32 = 1 << 16;
 
+/// Where a run-time compile's site ids begin, in every program-dense site
+/// space with process-global backing (flip-flop latches, regexp-literal
+/// sites, FFI sym sites). A whole-program compile mints ids dense from
+/// zero; an `eval` snippet's fresh compiler counts from zero again, so the
+/// runtime hands snippets ids from this band instead. Link-time package
+/// strides must stay below it.
+pub const EVAL_SITE_BASE: u32 = 1 << 20;
+
 // --- The C-side program description -----------------------------------------
 //
 // Everything below crosses the boundary as `.rodata` tables pointed to by one

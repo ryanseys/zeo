@@ -432,7 +432,7 @@ pub unsafe extern "C" fn zeo_rt_str_append_value(s: *const RubyValue, v: *const 
 /// and minted by ONE compile, and a snippet's fresh compiler starts at zero
 /// again. Sharing the space made a snippet's literal answer the program's
 /// cached regexp -- a silently wrong match, not an error.
-const EVAL_SITE_BASE: u32 = 1 << 20;
+const EVAL_SITE_BASE: u32 = zeo_abi::abi::EVAL_SITE_BASE;
 
 static NEXT_EVAL_SITE: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(EVAL_SITE_BASE);

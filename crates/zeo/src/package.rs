@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped when the manifest schema changes shape. Independent of
 /// `zeo_abi::ABI_VERSION`: the manifest is a compiler-to-compiler file.
-pub const MANIFEST_VERSION: u32 = 4;
+pub const MANIFEST_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -54,6 +54,14 @@ pub struct Manifest {
     /// units plus its alias-reveal groups share the space, and the host
     /// offsets its own by the total.
     pub n_units: u32,
+    /// Regexp-literal site ids `[0, n_regexp_sites)` belong to this
+    /// package. The host assigns a stride (`{prefix}_bases`) and offsets
+    /// its own sites past every package's total; the runtime's per-site
+    /// cache is keyed sparsely, so a generous stride costs nothing.
+    pub n_regexp_sites: u32,
+    /// Flip-flop latch ids `[0, n_flip_flops)` belong to this package,
+    /// on the same stride rule as `n_regexp_sites`.
+    pub n_flip_flops: u32,
     pub classes: Vec<MClass>,
     pub vm: Vec<MVmRow>,
     pub vis: Vec<MVisRow>,
@@ -423,6 +431,8 @@ mod tests {
             first_class_id: 400,
             n_class_ids: 2,
             n_units: 1,
+            n_regexp_sites: 0,
+            n_flip_flops: 0,
             classes: vec![MClass {
                 id: 400,
                 name: "Pureleaf".into(),

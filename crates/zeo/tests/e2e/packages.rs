@@ -447,6 +447,51 @@ fn two_packages_share_a_namespace_module() {
 }
 
 #[test]
+fn regexp_and_flip_flop_sites_get_disjoint_strides() {
+    // Both packages mint their FIRST regexp literal as local site 0; the
+    // runtime caches one frozen regexp per site id, so a collided id would
+    // answer the first package's pattern for the second's literal. The
+    // stride array keeps the spaces disjoint, and the host's own literal
+    // sits past both. Flip-flop latches ride the same rule. Verified
+    // against ruby 4.0.6.
+    let dir = scratch("strides");
+    let regexgem = build_inline_package(
+        &dir,
+        "regexgem",
+        "class Regexgem\n  def pat = /alpha[0-9]+/.source\n  def bees(s) = s.scan(/b+/).length\nend\n",
+    );
+    let flipgem = build_inline_package(
+        &dir,
+        "flipgem",
+        "class Flipgem\n  def mark = /zeta/.source\n  def spans(xs)\n    out = []\n    i = 0\n    while i < xs.length\n      x = xs[i]\n      out << x if (x == 1)..(x == 3)\n      i += 1\n    end\n    out\n  end\nend\n",
+    );
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"regexgem\"\nrequire \"flipgem\"\n\
+         p Regexgem.new.pat\np Flipgem.new.mark\n\
+         p Regexgem.new.bees(\"abbba bb\")\n\
+         p Flipgem.new.spans([0, 1, 2, 3, 4, 1, 9, 3, 5])\n\
+         p((/hostpat/).source)\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&regexgem)
+        .arg("--experimental-use-pkg")
+        .arg(&flipgem)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(
+        ok(&mut Command::new(&bin)),
+        "\"alpha[0-9]+\"\n\"zeta\"\n2\n[1, 2, 3, 1, 9, 3]\n\"hostpat\"\n"
+    );
+}
+
+#[test]
 fn two_packages_defining_one_method_on_a_shared_class_are_refused() {
     // A cross-package redefinition: the earlier package's typed sites
     // compiled against ITS body with no guard for a static replacement.

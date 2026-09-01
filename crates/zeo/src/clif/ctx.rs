@@ -108,8 +108,8 @@ pub(crate) struct Fx<'e, 'f> {
     /// The id-translation table's GV, cached like `gates_gv`. Packaged id
     /// mode only.
     pub cids_gv: Option<ir::GlobalValue>,
-    /// The reveal-group base cell's GV. Package emission only.
-    pub unit_base_gv: Option<ir::GlobalValue>,
+    /// The `{prefix}_bases` stride array's GV. Package emission only.
+    pub bases_gv: Option<ir::GlobalValue>,
     /// [`Fx::gates_base`]'s twin for the patched-class bitmap.
     pub patched_bits_gv: Option<ir::GlobalValue>,
     pub prev_line: Option<u32>,
@@ -278,7 +278,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             frame_hot: None,
             gates_gv: None,
             cids_gv: None,
-            unit_base_gv: None,
+            bases_gv: None,
             patched_bits_gv: None,
             prev_line: None,
             prev_file: None,
@@ -572,37 +572,64 @@ impl<'e, 'f> Fx<'e, 'f> {
         self.b.ins().symbol_value(ptr, gv)
     }
 
-    /// A reveal-group id as a machine value. An ordinary compile bakes
-    /// `unit_base + local` (packages merged into it own `[0, unit_base)`);
-    /// a PACKAGE reads its base from the `{prefix}_unit_base` cell the
-    /// host fills, plus the local offset -- its reveal ids are as
-    /// position-independent as its class ids.
-    pub fn reveal_group_value(&mut self, local: u32) -> ir::Value {
+    /// One stride out of this package's `{prefix}_bases` array, loaded at
+    /// the slot's fixed offset. The array is initialized data the host
+    /// defines, so the load is readonly and freely hoistable.
+    fn pkg_base(&mut self, slot: u32) -> ir::Value {
         use cranelift_codegen::ir::{InstBuilder, MemFlagsData};
         use cranelift_module::Module;
-        if self.em.pkg.is_none() {
-            return self
-                .b
-                .ins()
-                .iconst(ir::types::I32, i64::from(self.em.unit_base + local));
-        }
-        let gv = match self.unit_base_gv {
+        let gv = match self.bases_gv {
             Some(gv) => gv,
             None => {
-                let id = self.em.unit_base_data_id();
+                let id = self.em.bases_data_id();
                 let gv = self.em.module.declare_data_in_func(id, self.b.func);
-                self.unit_base_gv = Some(gv);
+                self.bases_gv = Some(gv);
                 gv
             }
         };
         let ptr = self.em.ptr;
         let addr = self.b.ins().symbol_value(ptr, gv);
         let fl = MemFlagsData::trusted().with_readonly();
-        let base = self.b.ins().load(ir::types::I32, fl, addr, 0);
+        self.b.ins().load(ir::types::I32, fl, addr, (slot * 4) as i32)
+    }
+
+    /// A locally minted site id plus this package's stride for `slot`, as
+    /// a machine value. An ordinary compile bakes the immediate; a PACKAGE
+    /// adds the loaded stride, which is what makes each program-dense site
+    /// space as position-independent as its class ids.
+    fn strided_value(&mut self, slot: u32, local: u32, immediate: u32) -> ir::Value {
+        use cranelift_codegen::ir::InstBuilder;
+        if self.em.pkg.is_none() {
+            return self.b.ins().iconst(ir::types::I32, i64::from(immediate));
+        }
+        let base = self.pkg_base(slot);
         if local == 0 {
             return base;
         }
         self.b.ins().iadd_imm_u(base, i64::from(local))
+    }
+
+    /// A reveal-group id as a machine value. An ordinary compile bakes
+    /// `unit_base + local` (packages merged into it own `[0, unit_base)`).
+    pub fn reveal_group_value(&mut self, local: u32) -> ir::Value {
+        let immediate = self.em.unit_base + local;
+        self.strided_value(super::module::BASE_UNIT, local, immediate)
+    }
+
+    /// A regexp-literal site id as a machine value. The emitter's counter
+    /// already starts past the merged packages' sites, so the immediate is
+    /// the minted id itself.
+    pub fn regexp_site_value(&mut self, site: u32) -> ir::Value {
+        self.strided_value(super::module::BASE_REGEXP, site, site)
+    }
+
+    /// A flip-flop latch id as a machine value. `state` is the arena's
+    /// dense id; an eval snippet's band (`Fx::flip_flop_base`) and the
+    /// merged packages' total both offset it.
+    pub fn flip_flop_state_value(&mut self, state: u32) -> ir::Value {
+        let local = state + self.flip_flop_base;
+        let immediate = local + self.em.flip_flop_base;
+        self.strided_value(super::module::BASE_FLIPFLOP, local, immediate)
     }
 
     /// The patched-class bitmap's base address, on [`Fx::gates_base`]'s

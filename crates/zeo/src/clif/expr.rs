@@ -277,7 +277,6 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
             exclusive,
         } => {
             let (state, left, right, exclusive) = (*state, *left, *right, *exclusive);
-            let state = state + fx.flip_flop_base;
             flip_flop(fx, state, left, right, exclusive)
         }
         // A loop in VALUE position: its own value is nil (`for` answers the
@@ -2216,7 +2215,7 @@ fn flip_flop(
     let turned_on = fx.b.create_block();
     let off_blk = fx.b.create_block();
     let join = fx.b.create_block();
-    let state_v = fx.b.ins().iconst(types::I32, i64::from(state));
+    let state_v = fx.flip_flop_state_value(state);
     let on = fx.call_status("zeo_rt_flip_flop_on", &[state_v]);
     fx.b.ins().brif(on, on_blk, &[], test_left, &[]);
 
@@ -2228,7 +2227,7 @@ fn flip_flop(
         let done = fx.b.create_block();
         fx.b.ins().brif(t, clear, &[], done, &[]);
         fx.b.switch_to_block(clear);
-        let state_v = fx.b.ins().iconst(types::I32, i64::from(state));
+        let state_v = fx.flip_flop_state_value(state);
         let zero = fx.b.ins().iconst(types::I8, 0);
         fx.call("zeo_rt_flip_flop_set", &[state_v, zero]);
         fx.b.ins().jump(done, &[]);
@@ -2246,7 +2245,7 @@ fn flip_flop(
     fx.b.ins().brif(t, turned_on, &[], off_blk, &[]);
 
     fx.b.switch_to_block(turned_on);
-    let state_v = fx.b.ins().iconst(types::I32, i64::from(state));
+    let state_v = fx.flip_flop_state_value(state);
     let one = fx.b.ins().iconst(types::I8, 1);
     fx.call("zeo_rt_flip_flop_set", &[state_v, one]);
     if !exclusive {
@@ -2364,7 +2363,7 @@ fn regexp_lit(
             }
         }
         let site = fx.em.mint_regexp_site();
-        let site_v = fx.b.ins().iconst(types::I32, i64::from(site));
+        let site_v = fx.regexp_site_value(site);
         let off = fx.em.intern_rodata(source.as_bytes());
         let ptr = fx.rod(off);
         let len_v = fx.b.ins().iconst(fx.em.ptr, source.len() as i64);
