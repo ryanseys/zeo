@@ -300,9 +300,24 @@ pub fn author_gem(dir: &Path) -> Result<AuthorGem, String> {
 /// for `lockfile` against `stores`. Any error along the way -- a lockfile
 /// that does not parse, an unreadable store -- answers the empty set, so a
 /// broken store can slow a compile but never stop one.
-pub fn store_linkable(lockfile: &Path, stores: &[PathBuf]) -> Vec<PathBuf> {
+pub fn store_linkable(lockfile: &Path, stores: &[PathBuf]) -> Vec<(PathBuf, Option<PathBuf>)> {
     match survey_lock(lockfile, stores) {
-        Ok(rows) => linkable(&rows),
+        Ok(rows) => linkable(&rows)
+            .into_iter()
+            .map(|artifact| {
+                // The gem's real source root (its entry's directory), for
+                // the backtrace binding of the artifact's virtual paths.
+                let root = rows
+                    .iter()
+                    .find(|r| {
+                        r.home.as_ref() == Some(&artifact) || r.shipped.as_ref() == Some(&artifact)
+                    })
+                    .and_then(|r| r.entry.as_ref())
+                    .and_then(|e| e.parent())
+                    .and_then(|p| p.canonicalize().ok());
+                (artifact, root)
+            })
+            .collect(),
         Err(_) => Vec::new(),
     }
 }

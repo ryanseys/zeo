@@ -609,6 +609,27 @@ pub(crate) fn merge_rows(
                 fresh[&id]
             }
         };
+        // Bind the package's virtual source root to the real gem root the
+        // resolution tier recorded, so a packaged frame's backtrace shows
+        // the path the spliced world would have baked. A bare
+        // `--with-package` knows no root and keeps the virtual spelling.
+        if let Some(root) = analyzed
+            .compiler
+            .hir
+            .pkg_source_roots
+            .get(pi)
+            .and_then(|r| r.as_ref())
+        {
+            reg_rows.push(RegRowSpec {
+                kind: zeo_abi::abi::REG_BIND_PKG_ROOT,
+                class: 0,
+                a: format!("/zeopkg/{}/", m.feature),
+                b: format!("{}/", root.display()),
+                f: None,
+                ids: vec![],
+                flag: 0,
+            });
+        }
         let cids: Vec<u32> = (0..m.n_class_ids).map(|i| rb(first + i)).collect();
         define_u32s(em, &format!("{}_cids", m.prefix), &cids)?;
         let mut bases = [0u32; super::module::N_BASES];

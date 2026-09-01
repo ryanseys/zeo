@@ -419,6 +419,12 @@ pub struct UsePackage {
     /// options hash changes when the package is rebuilt: the manifest text
     /// alone misses a body-only change.
     pub object_digest: u64,
+    /// The gem's real source root on THIS machine, when the resolution
+    /// tier knows it (the store row's entry, the auto-package candidate's
+    /// entry). The merge binds the package's `/zeopkg/<feature>/` virtual
+    /// prefix to it, so backtraces show the path the spliced world would
+    /// have baked. A bare `--with-package` has none.
+    pub source_root: Option<std::path::PathBuf>,
 }
 
 /// The package build a compile was asked for (`--package`).

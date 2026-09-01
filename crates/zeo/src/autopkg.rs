@@ -276,6 +276,7 @@ fn consult(cand: &Candidate) -> Consult {
             manifest_text,
             object,
             object_digest,
+            source_root: cand.entry.parent().and_then(|p| p.canonicalize().ok()),
         },
         manifest,
         inputs,

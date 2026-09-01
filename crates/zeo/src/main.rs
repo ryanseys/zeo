@@ -1176,12 +1176,17 @@ fn run() -> Result<(), MainError> {
     // same pairing rule the store roots follow), a package build never does
     // (a package compiles alone), and an artifact the merge later refuses
     // drops back to a source compile with a warning.
+    let mut package_roots: std::collections::HashMap<std::path::PathBuf, std::path::PathBuf> =
+        Default::default();
     if package_build.is_none()
         && !args.gem_paths.is_empty()
         && let Some(lock) = &args.lockfile
     {
-        for artifact in zeo::project::store_linkable(lock, &args.gem_paths) {
+        for (artifact, root) in zeo::project::store_linkable(lock, &args.gem_paths) {
             if !args.with_packages.contains(&artifact) {
+                if let Some(root) = root {
+                    package_roots.insert(artifact.clone(), root);
+                }
                 args.with_packages.push(artifact);
             }
         }
@@ -1204,6 +1209,7 @@ fn run() -> Result<(), MainError> {
                     manifest_text,
                     object,
                     object_digest,
+                    source_root: package_roots.get(obj).cloned(),
                 });
             }
             let manifest_path = obj.with_extension("zman");
@@ -1215,6 +1221,7 @@ fn run() -> Result<(), MainError> {
                 manifest_text,
                 object: obj.clone(),
                 object_digest: zeo::package::fnv64(&bytes),
+                source_root: package_roots.get(obj).cloned(),
             })
         })
         .collect::<Result<_, String>>()?;

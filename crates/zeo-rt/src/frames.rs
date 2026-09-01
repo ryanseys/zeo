@@ -700,7 +700,7 @@ pub fn current_frame_method() -> Option<&'static str> {
 /// `Thread#inspect`'s creation site. A builtin C function has no frame of its
 /// own, so the top frame is its caller.
 pub fn current_location() -> Option<(&'static str, u32)> {
-    with_frames(|f| f.last().map(|fr| (fr.file, fr.line)))
+    with_frames(|f| f.last().map(|fr| (display_file(fr.file), fr.line)))
 }
 
 /// A path a frame can hold, from a String that is not one.
@@ -733,9 +733,50 @@ pub fn current_frame_label() -> Option<&'static str> {
     with_frames(|f| Some(f.last()?.method()))
 }
 
+/// `/zeopkg/<feature>/` prefixes bound to real gem roots -- filled from
+/// the desc's `REG_BIND_PKG_ROOT` rows at registration. A packaged
+/// frame's file is baked in the artifact's rodata under the virtual
+/// spelling (reproducibility); display substitutes the root the HOST
+/// resolved, which is the path the spliced world would have baked.
+static PKG_ROOTS: std::sync::RwLock<Vec<(String, String)>> = std::sync::RwLock::new(Vec::new());
+
+pub fn bind_pkg_root(prefix: &str, root: &str) {
+    PKG_ROOTS
+        .write()
+        .unwrap()
+        .push((prefix.to_string(), root.to_string()));
+}
+
+/// The display spelling of a frame's file: a package's virtual path binds
+/// to its real root; everything else passes through. Memoized on the
+/// `&'static str`'s address -- the distinct file set is the program's own.
+pub fn display_file(file: &'static str) -> &'static str {
+    use std::sync::{LazyLock, RwLock};
+    if !file.starts_with("/zeopkg/") {
+        return file;
+    }
+    static MEMO: LazyLock<RwLock<crate::FMap<usize, &'static str>>> =
+        LazyLock::new(|| RwLock::new(crate::FMap::default()));
+    let key = file.as_ptr() as usize;
+    if let Some(&hit) = MEMO.read().unwrap().get(&key) {
+        return hit;
+    }
+    let bound = PKG_ROOTS
+        .read()
+        .unwrap()
+        .iter()
+        .find_map(|(prefix, root)| {
+            file.strip_prefix(prefix.as_str())
+                .map(|rest| intern_path(&format!("{root}{rest}")))
+        })
+        .unwrap_or(file);
+    MEMO.write().unwrap().insert(key, bound);
+    bound
+}
+
 /// `FILE:LINE:in 'METHOD'` -- CRuby's backtrace-entry shape.
 fn format_frame(fr: &Frame) -> String {
-    format!("{}:{}:in '{}'", fr.file, fr.line, fr.method())
+    format!("{}:{}:in '{}'", display_file(fr.file), fr.line, fr.method())
 }
 
 /// The current stack as formatted backtrace lines, INNERMOST FIRST --
@@ -760,7 +801,7 @@ pub fn caller_frames(start: usize) -> Vec<(&'static str, u32, &'static str)> {
         f.iter()
             .rev()
             .skip(start)
-            .map(|fr| (fr.file, fr.line, fr.method()))
+            .map(|fr| (display_file(fr.file), fr.line, fr.method()))
             .collect()
     })
 }

@@ -236,6 +236,7 @@ pub fn parse_and_lower_with(
             CompileError::analyze(format!("{}: {e}", up.manifest_path.display()))
         })?;
         hir.pkg_merge.push(m);
+        hir.pkg_source_roots.push(up.source_root.clone());
     }
     // A package's constants land when its units run -- exactly what
     // `unrun_unit_consts` describes. Seeded BEFORE the main lowering,

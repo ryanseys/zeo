@@ -251,6 +251,9 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 let target = unsafe { *r.ids.add(1) };
                 registry.mark_refinement(ClassId(r.class), ClassId(module), ClassId(target));
             }
+            abi::REG_BIND_PKG_ROOT => {
+                crate::frames::bind_pkg_root(text(r.a), text(r.b));
+            }
             abi::REG_MARK_BOX_CLASS => {
                 let ids = unsafe { std::slice::from_raw_parts(r.ids, 2) };
                 crate::boxes::mark_box_class(ClassId(r.class), ids[0]);

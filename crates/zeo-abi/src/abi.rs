@@ -572,6 +572,14 @@ pub const REFLECT_METHOD: u8 = 3;
 /// refined `Method#owner` reports.
 pub const REG_MARK_REFINEMENT: u8 = 16;
 
+/// Binds a merged package's virtual source root to the real gem root the
+/// HOST resolved at compile time: `a` = the `/zeopkg/<feature>/` prefix,
+/// `b` = the real directory (trailing slash). Backtrace rendering
+/// substitutes the prefix, so a packaged frame shows the path the spliced
+/// world would have baked. Emitted only when the host knows the root (a
+/// bare `--with-package` has none).
+pub const REG_BIND_PKG_ROOT: u8 = 21;
+
 /// A class or module a `Ruby::Box` owns: `class` = the class,
 /// `ids[0]` = the box's internal id. A box's top-level classes are
 /// registered under their bare ruby names -- `Escapee` inside a box is

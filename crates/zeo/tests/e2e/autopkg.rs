@@ -131,3 +131,29 @@ fn no_auto_package_keeps_the_pure_source_road() {
         .unwrap_or(0);
     assert_eq!(entries, 0, "the package cache stays untouched");
 }
+
+#[test]
+fn a_packaged_frame_backtrace_shows_the_real_gem_path() {
+    // A package's frame files are baked under the reproducible
+    // `/zeopkg/<feature>/` spelling; the merge binds that prefix to the
+    // real gem root the resolution recorded, so a backtrace shows the
+    // path the spliced world would have baked.
+    let dir = scratch("btroot");
+    let program = "require \"shellwords\"\nbegin\n  Shellwords.split(\"\\\"\")\nrescue \
+                   ArgumentError => e\n  puts e.backtrace.first\nend";
+    // Cold run packages shellwords; the warm run links it.
+    run_eval(&dir, program);
+    let (out, err) = run_eval(&dir, &format!("{program}\n:warm"));
+    assert!(
+        err.contains("autopkg: linking 'shellwords' from the package cache"),
+        "the warm run links the artifact: {err}"
+    );
+    assert!(
+        out.contains("/shellwords.rb:") && out.contains(":in 'block in Shellwords.shellsplit'"),
+        "the frame names the gem file: {out}"
+    );
+    assert!(
+        !out.contains("/zeopkg/"),
+        "the virtual root is bound to the real path: {out}"
+    );
+}

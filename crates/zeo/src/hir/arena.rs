@@ -110,6 +110,10 @@ pub struct Hir {
     /// pads the class-id band past them; emit appends their rows to this
     /// program's one desc.
     pub pkg_merge: Vec<crate::package::Manifest>,
+    /// Parallel to [`Hir::pkg_merge`]: each package's real source root on
+    /// this machine, when the resolution tier knew it. The merge binds the
+    /// package's `/zeopkg/<feature>/` prefix to it for backtrace display.
+    pub pkg_source_roots: Vec<Option<std::path::PathBuf>>,
     /// [`Hir::uses_proc_binding`]'s memo -- computed on first ask, after
     /// lowering has finished adding nodes.
     proc_binding: std::sync::OnceLock<bool>,
