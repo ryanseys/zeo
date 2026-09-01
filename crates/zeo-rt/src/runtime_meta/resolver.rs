@@ -52,20 +52,19 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
         // module beat the includer's own compiled `def m` -- ruby keeps the
         // class's own.
         //
-        // Only a position the FROZEN walk reaches IN THE SAME ORDER can stop
-        // it, which is the prefix the two chains share. A run-time
-        // `include`/`prepend` splices a module the frozen flat table knows
-        // nothing about, and from the splice onward the frozen walk's order is
-        // a different one -- so those rows reach the receiver through the
-        // host's `prepended` map, further along this same walk, and stopping
-        // early would lose them.
+        // Only a FROZEN-CHAIN member, reached in frozen order, can stop it.
+        // A run-time `include`/`prepend` only INSERTS modules, so the frozen
+        // members keep their relative order inside the live chain -- and when
+        // the walk reaches one, every earlier frozen member has already been
+        // walked with no hit, so the flat table's answer IS this ancestor's
+        // own definition. A spliced module itself must never stop the walk:
+        // its rows live in a host's `prepended` map further along, and the
+        // flat table cannot see them.
         let chain = ancestors_of_value(id);
         let frozen = crate::dispatch::frozen_ancestors(id);
         let c = maps().classes.read().unwrap();
-        // The walk itself never stops early: a run-time `prepend`'s body is
-        // filed under the HOST, which sits BEHIND the module it spliced in.
-        let mut trusted = true;
-        for (at, anc) in chain.iter().enumerate() {
+        let mut fi = 0;
+        for anc in chain.iter() {
             let (mine, shared) = box_first(anc.0);
             if let Some(m) = mine
                 .and_then(|k| c.get(&k))
@@ -74,11 +73,11 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
             {
                 return Some(m.clone());
             }
-            trusted &= frozen.get(at) == Some(anc);
-            if trusted
-                && crate::dispatch::class_defines_own_instance_method_if_registered(*anc, name)
-            {
-                return None;
+            if frozen.get(fi) == Some(anc) {
+                fi += 1;
+                if crate::dispatch::class_defines_own_instance_method_if_registered(*anc, name) {
+                    return None;
+                }
             }
         }
         None
