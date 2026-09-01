@@ -45,6 +45,10 @@ const SKIPPED: &[(&str, &str)] = &[
     // Requiring irb reaches a runtime-refinement construct zeo does not lower
     // yet. It is tracked as a gap, and irb is not usable AOT regardless.
     ("irb", "runtime refinements (known gap)"),
+    // rss's maker layer mints its base classes DYNAMICALLY (const_set of a
+    // built class, then `class Authors < AuthorsBase` over it), which the
+    // static superclass resolution cannot see yet. Tracked as a gap.
+    ("rss", "dynamically minted superclasses (known gap)"),
 ];
 
 fn skip_reason(dir: &str) -> Option<&'static str> {
