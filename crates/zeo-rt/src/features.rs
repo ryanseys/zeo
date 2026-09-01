@@ -145,7 +145,6 @@ pub fn build_carries_ext(feature: &str) -> bool {
         "prism" => cfg!(feature = "ext-prism"),
         "psych" => cfg!(feature = "ext-psych"),
         "pty" => cfg!(feature = "ext-pty"),
-        "readline" => cfg!(feature = "ext-readline"),
         "socket" => cfg!(feature = "ext-socket"),
         "stringio" => cfg!(feature = "ext-stringio"),
         "strscan" => cfg!(feature = "ext-strscan"),

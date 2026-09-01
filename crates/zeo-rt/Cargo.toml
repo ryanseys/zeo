@@ -34,7 +34,6 @@ features = [
     "ext-io-console",
     "ext-pty",
     "ext-syslog",
-    "ext-readline",
     "ext-nkf",
     "ext-bigdecimal",
     "ext-coverage",
@@ -124,9 +123,6 @@ digest = { workspace = true, optional = true }
 # `deflate`/`inflate`/`gzip`/`gunzip`. Pulled in only by `ext-zlib`.
 flate2 = { workspace = true, optional = true }
 
-# `readline` extension: rustyline is the pure-Rust line editor behind
-# `Readline.readline` on a terminal (non-tty reads bypass it entirely).
-rustyline = { workspace = true, optional = true }
 # `psych`/`yaml` extension: yaml-rust2 is the maintained pure-Rust YAML 1.2
 # parser+emitter (serde_yaml is deprecated/archived). Pulled in only by
 # `ext-psych`.
@@ -162,7 +158,7 @@ libc.workspace = true
 # used only in `ext/*/ext/*/src/`, which build.rs wires in as modules, so
 # machete never sees them; `md-5` is also imported as `md5`. All are used.
 [package.metadata.cargo-machete]
-ignored = ["md-5", "sha1", "sha2", "digest", "flate2", "rustyline", "yaml-rust2", "openssl"]
+ignored = ["md-5", "sha1", "sha2", "digest", "flate2", "yaml-rust2", "openssl"]
 
 [build-dependencies]
 # `csrc/cext_jmp.c`, built only under the `cext` feature. `cc` is already in
@@ -200,7 +196,6 @@ ext-all = [
     "ext-io-console",
     "ext-pty",
     "ext-syslog",
-    "ext-readline",
     "ext-nkf",
     "ext-bigdecimal",
     "ext-coverage",
@@ -225,7 +220,6 @@ ext-fcntl = []
 ext-io-console = []
 ext-pty = []
 ext-syslog = []
-ext-readline = ["dep:rustyline"]
 ext-nkf = []
 ext-bigdecimal = []
 ext-monitor = []

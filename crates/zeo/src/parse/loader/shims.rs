@@ -57,6 +57,7 @@ fn synthetic_shim_static(feature: &str) -> Option<&'static str> {
         )),
         "securerandom" => Some(include_str!("../shims/securerandom.rb")),
         "gem-securerandom" => Some(include_str!("../shims/gem_securerandom.rb")),
+        "gem-readline" => Some(include_str!("../shims/gem_readline.rb")),
         // CRuby's C `erb/escape` extension -- defined as a pure-Ruby shim over
         // the native `CGI.escapeHTML` (see `shims/erb_escape.rb`).
         "erb/escape" => Some(include_str!("../shims/erb_escape.rb")),
@@ -72,6 +73,12 @@ fn synthetic_shim_static(feature: &str) -> Option<&'static str> {
 /// different `vendor/` roots) redirect to the same native-backed shim.
 pub(super) fn vendored_shim_feature(canonical: &Path) -> Option<&'static str> {
     let path = canonical.to_string_lossy().replace('\\', "/");
-    path.ends_with("vendor/securerandom/lib/securerandom.rb")
-        .then_some("gem-securerandom")
+    if path.ends_with("vendor/securerandom/lib/securerandom.rb") {
+        return Some("gem-securerandom");
+    }
+    // The readline gem's entry file, from any installed store copy: its
+    // load-time probe for the C readline extension has one possible outcome
+    // under zeo (see `shims/gem_readline.rb`).
+    (path.contains("/gems/readline-") && path.ends_with("/lib/readline.rb"))
+        .then_some("gem-readline")
 }

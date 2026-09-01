@@ -448,8 +448,10 @@ pub const DIGEST_SHA512_CLASS: ClassId = ClassId(54);
 /// `Digest::SHA384`, and `Digest::SHA2` -- the BIT-LENGTH-parameterized
 /// class, which is a real class of its own rather than an alias for one of
 /// the fixed-width rows.
-pub const DIGEST_SHA384_CLASS: ClassId = ClassId(179);
-pub const DIGEST_SHA2_CLASS: ClassId = ClassId(180);
+/// (These two hold the 107/108 slots retired by the readline deletion --
+/// `BUILTINS` must stay contiguous, so the then-highest ids moved down.)
+pub const DIGEST_SHA384_CLASS: ClassId = ClassId(107);
+pub const DIGEST_SHA2_CLASS: ClassId = ClassId(108);
 /// `json`: the `JSON` module (parser/generator). Scaffolded (see docs/EXTENSIONS.md).
 pub const JSON_MODULE: ClassId = ClassId(55);
 /// `date`: `Date`/`DateTime`. Scaffolded.
@@ -774,16 +776,10 @@ pub const PTY_MODULE: ClassId = ClassId(105);
 /// `Constants`/`Level`/`Option`/`Facility`/`Macros` submodules live in the
 /// gem's Ruby half (`ext/syslog`).
 pub const SYSLOG_MODULE: ClassId = ClassId(106);
-/// `readline`: the `Readline` module -- `readline` line input (rustyline on a
-/// terminal, a plain read everywhere else) plus the completion/word-break
-/// attribute surface.
-pub const READLINE_MODULE: ClassId = ClassId(107);
-/// The class of the `Readline::HISTORY` singleton -- the one history list as
-/// an Enumerable object (`push`/`<<`/`[]`/`delete_at`/`each`/...). Not
-/// constructible from Ruby. Deliberately NOT named `Readline::HISTORY`: the
-/// compiler resolves a builtin's name as a CONSTANT PATH, and that spelling
-/// must resolve to the runtime-seeded singleton OBJECT, not to its class.
-pub const READLINE_HISTORY_CLASS: ClassId = ClassId(108);
+// ClassIds 107 and 108 were `Readline` and its history class. The native
+// readline extension is deleted -- the official pure readline gem rides the
+// lock and answers `Readline` as reline, ruby's own arrangement -- and the
+// ids stay retired so no row ever reuses them.
 /// `nkf`: the `NKF` module -- Network Kanji Filter, Japanese text encoding
 /// conversion (`.nkf` over an option string, `.guess`) rebuilt over the
 /// runtime's own encoding engine. The `Kconv` wrapper is the gem's Ruby
