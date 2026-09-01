@@ -51,6 +51,12 @@ pub(crate) enum DebugFlag {
     /// verdict to stderr. The instrument the packaged devirtualization
     /// tests read -- a disassembly cannot see an address-materialized call.
     TraceTyped,
+    /// `no-auto-package`: keep a linking compile from consulting or filling
+    /// the first-use package cache (`zeo::autopkg`) -- every bundled gem
+    /// splices from source, today's whole-program path exactly. The
+    /// spliced side of the spliced-vs-packaged differential, and the
+    /// escape hatch when the package tier is suspected.
+    NoAutoPackage,
 }
 
 const NAMES: &[(&str, DebugFlag)] = &[
@@ -65,6 +71,7 @@ const NAMES: &[(&str, DebugFlag)] = &[
     ("packaged-ids", DebugFlag::PackagedIds),
     ("outline-frames", DebugFlag::OutlineFrames),
     ("trace-typed", DebugFlag::TraceTyped),
+    ("no-auto-package", DebugFlag::NoAutoPackage),
 ];
 
 /// Whether `flag` was named in `ZEO_DEBUG`.

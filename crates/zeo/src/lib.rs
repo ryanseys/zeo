@@ -36,6 +36,7 @@ static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 pub mod analyze;
 pub mod analyze_error;
+pub mod autopkg;
 pub mod package;
 pub mod backend;
 pub mod builtin_surface;
@@ -185,6 +186,13 @@ pub struct CompileOptions {
     /// contributes its manifest rows to THIS compile's one `ProgramDesc`;
     /// the caller links each package's object beside the emitted one.
     pub use_packages: Vec<package::UsePackage>,
+    /// Consult the machine package cache for every bundled gem this
+    /// compile activates, and link the artifacts it holds
+    /// (see [`autopkg`]). Set by the CLI's LINKING roads only -- the
+    /// in-process JIT cannot link a package object -- and never for a
+    /// package build (a package compiles alone). Off by default, so
+    /// library callers and eval compiles keep the pure source road.
+    pub auto_package: bool,
     /// Extra arguments for the `cc` link line (`--link <arg>`, repeatable;
     /// `ZEO_LINK_ARGS` is the env spelling), passed VERBATIM and in order
     /// after the platform libraries, before the dead-strip flag. What carries
@@ -250,6 +258,10 @@ pub struct ObjectOutput {
     /// drop that recompiled from source apart from one that left the
     /// program unable to load the feature at all.
     pub unresolvable_requires: Vec<String>,
+    /// Bundled gems this compile spliced that the package cache could not
+    /// answer. The CLI builds each one AFTER the program succeeds
+    /// ([`autopkg::build_and_cache`]), so the next compile links it.
+    pub auto_package_misses: Vec<autopkg::Candidate>,
 }
 
 /// The Cranelift pipeline: front end, then `clif::emit`.
@@ -307,22 +319,37 @@ pub fn compile_to_object_with_package_fallback(
     let outcome = loop {
         match compile_to_object_with(source, &opts, debuginfo) {
             Ok(compiled) => break Ok(compiled),
-            Err(e) if !opts.use_packages.is_empty() => {
+            Err(e) => {
                 let msg = e.to_string();
                 let refused = opts.use_packages.iter().position(|p| {
                     package::feature_of_manifest_text(&p.manifest_text)
                         .is_some_and(|f| msg.contains(&format!("package '{f}'")))
                 });
-                let Some(i) = refused else { break Err(e) };
-                let p = opts.use_packages.remove(i);
-                let dropped = DroppedPackage {
-                    feature: package::feature_of_manifest_text(&p.manifest_text)
-                        .unwrap_or_else(|| "?".to_string()),
-                    reason: msg.lines().next().unwrap_or_default().to_string(),
-                };
-                drops.push((dropped, e));
+                if let Some(i) = refused {
+                    let p = opts.use_packages.remove(i);
+                    let dropped = DroppedPackage {
+                        feature: package::feature_of_manifest_text(&p.manifest_text)
+                            .unwrap_or_else(|| "?".to_string()),
+                        reason: msg.lines().next().unwrap_or_default().to_string(),
+                    };
+                    drops.push((dropped, e));
+                    continue;
+                }
+                // A refusal naming a DISCOVERED artifact: auto-packaging
+                // merged it inside the compile, so it is not in
+                // `use_packages` and cannot be removed one at a time.
+                // Retry once with discovery off -- the pure source road,
+                // which is what every drop falls back to anyway.
+                if opts.auto_package && msg.contains("package '") {
+                    tracing::debug!(
+                        "a discovered package artifact refused; recompiling from source: {}",
+                        msg.lines().next().unwrap_or_default()
+                    );
+                    opts.auto_package = false;
+                    continue;
+                }
+                break Err(e);
             }
-            Err(e) => break Err(e),
         }
     };
     let compiled = outcome?;
@@ -383,10 +410,27 @@ impl FrontEnd {
 fn analyze_on_this_thread(
     source: &str,
     opts: &CompileOptions,
-) -> Result<(analyze::Analyzed, FrontEnd), CompileError> {
+) -> Result<(analyze::Analyzed, FrontEnd, autopkg::AutoPackages), CompileError> {
     let start = std::time::Instant::now();
     memguard::set_phase(memguard::Phase::ParseLower);
-    let (mut hir, root, gem_records) = parse::parse_and_lower_with(source, opts)?;
+    let (mut hir, mut root, mut gem_records) = parse::parse_and_lower_with(source, opts)?;
+    // First-use auto-packaging: consult the machine cache for every
+    // bundled gem this parse activated, and re-parse with the artifacts
+    // merged so their sources stop splicing. Bounded, because hits only
+    // grow and a re-parse can activate no gem the spliced parse did not.
+    let mut auto = autopkg::AutoPackages::default();
+    if opts.auto_package && opts.package_build.is_none() && progcache::enabled() {
+        let mut local = opts.clone();
+        for _ in 0..4 {
+            let new = autopkg::consult_new(&hir, &local.use_packages, &mut auto);
+            if new.is_empty() {
+                break;
+            }
+            local.use_packages.extend(new);
+            (hir, root, gem_records) = parse::parse_and_lower_with(source, &local)?;
+        }
+        auto.use_packages = local.use_packages;
+    }
     // A `require`/`load` that SURVIVED lowering is one the loader could not
     // resolve. `--strict-static-require` makes that an error HERE rather
     // than a run-time question -- the same predicate
@@ -426,6 +470,7 @@ fn analyze_on_this_thread(
             nodes,
             node_bytes,
         },
+        auto,
     ))
 }
 
@@ -434,7 +479,7 @@ fn compile_object_on_this_thread(
     opts: &CompileOptions,
     debuginfo: bool,
 ) -> Result<ObjectOutput, CompileError> {
-    let (analyzed, front) = analyze_on_this_thread(source, opts)?;
+    let (analyzed, front, auto) = analyze_on_this_thread(source, opts)?;
     let t_emit = std::time::Instant::now();
     // Does any require in the whole program load a C extension? The arena is
     // the only place that is written down, and the LINK needs to know: an
@@ -469,14 +514,25 @@ fn compile_object_on_this_thread(
         .iter()
         .cloned()
         .collect();
+    // The EFFECTIVE merge set: discovery may have widened the caller's
+    // list, and the discovered artifacts' sources join the cache manifest
+    // so a gem edit invalidates the cached program too.
+    let linked = if auto.use_packages.is_empty() {
+        &opts.use_packages
+    } else {
+        &auto.use_packages
+    };
+    let mut inputs: Vec<progcache::Input> = inputs;
+    inputs.extend(auto.extra_inputs);
     Ok(ObjectOutput {
         object,
         debuginfo,
         loads_cext,
         inputs,
-        extra_objects: opts.use_packages.iter().map(|p| p.object.clone()).collect(),
+        extra_objects: linked.iter().map(|p| p.object.clone()).collect(),
         link_args: opts.link_args.clone(),
         unresolvable_requires,
+        auto_package_misses: auto.misses,
     })
 }
 
@@ -533,7 +589,7 @@ pub fn analyze_program(
             .name("zeo-compile".into())
             .stack_size(COMPILE_STACK_SIZE)
             .spawn_scoped(scope, || {
-                analyze_on_this_thread(source, opts).map(|(a, _)| a)
+                analyze_on_this_thread(source, opts).map(|(a, _, _)| a)
             })
             .expect("spawning the compiler thread")
             .join()
@@ -573,7 +629,7 @@ pub fn run_jit_with(
             .name("zeo-compile".into())
             .stack_size(COMPILE_STACK_SIZE)
             .spawn_scoped(scope, || {
-                let (analyzed, _front) = analyze_on_this_thread(source, opts)?;
+                let (analyzed, _front, _auto) = analyze_on_this_thread(source, opts)?;
                 backend::jit::compile(analyzed)
             })
             .expect("spawning the compiler thread")
@@ -592,7 +648,7 @@ pub fn compile_to_clif_text(source: &str, opts: &CompileOptions) -> Result<Strin
             .name("zeo-compile".into())
             .stack_size(COMPILE_STACK_SIZE)
             .spawn_scoped(scope, || {
-                let (analyzed, front) = analyze_on_this_thread(source, opts)?;
+                let (analyzed, front, _auto) = analyze_on_this_thread(source, opts)?;
                 let t_emit = std::time::Instant::now();
                 let (_bytes, text) = clif::emit::compile_with_clif(&analyzed)
                     .map_err(|e| CompileError::from_codegen(e, &analyzed.compiler.hir.files))?;

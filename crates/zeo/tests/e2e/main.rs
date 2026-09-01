@@ -20,6 +20,7 @@ mod paths;
 #[path = "../harness/zeo_bin.rs"]
 mod zeo_bin;
 
+mod autopkg;
 mod blocks_procs;
 mod boxes;
 mod bundler_parity;

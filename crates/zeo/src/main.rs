@@ -1240,6 +1240,9 @@ fn run() -> Result<(), MainError> {
         required_libraries: args.required_libraries.clone(),
         package_build,
         use_packages,
+        // The LINKING roads flip this on below (`link_opts`); a package
+        // build compiles alone and the in-process JIT links nothing.
+        auto_package: false,
         link_args: args.link_args.clone(),
     };
     // Parse only, then say so -- ruby's `Syntax OK`, byte for byte. A syntax
@@ -1291,6 +1294,14 @@ fn run() -> Result<(), MainError> {
         let out = args.output.as_ref().expect("--package checked -o above");
         return build_package(&source, &opts, out);
     }
+    // The LINKING roads consult the first-use package cache (the cached
+    // binary and the AOT artifact both link objects); the in-process JIT
+    // cannot, so its options keep the flag off.
+    let link_opts = {
+        let mut o = opts.clone();
+        o.auto_package = zeo::autopkg::enabled();
+        o
+    };
     if backend == zeo::backend::Backend::Jit {
         // Silently honouring nothing is the one answer that would be
         // wrong: DWARF describes an artifact, and the in-process JIT
@@ -1319,7 +1330,7 @@ fn run() -> Result<(), MainError> {
             Source::Irb => "irb".to_string(),
         };
         if args.backend.is_none() && zeo::progcache::enabled() {
-            run_from_cache(&source, &opts, &program_name, &args.program_args);
+            run_from_cache(&source, &link_opts, &program_name, &args.program_args);
         }
         // The cache's linked binary took them (they are in its key); the
         // in-process JIT links nothing, so here they would be dropped.
@@ -1341,10 +1352,11 @@ fn run() -> Result<(), MainError> {
     }
     let compiled = match backend {
         zeo::backend::Backend::Aot => {
-            compile_dropping_refused_packages(&source, &opts, args.debuginfo)?
+            compile_dropping_refused_packages(&source, &link_opts, args.debuginfo)?
         }
         zeo::backend::Backend::Jit => unreachable!("the jit branch above never falls through"),
     };
+    build_missed_packages(&compiled);
     zeo::memguard::set_phase(zeo::memguard::Phase::Build);
     let program = zeo::backend::CompiledProgram::Aot(&compiled);
 
@@ -1682,6 +1694,18 @@ fn place_package(
     Ok(())
 }
 
+/// Package every bundled gem the compile spliced because the cache could
+/// not answer, so the NEXT compile links it. After the program's own
+/// success only -- a broken program should not pay for gem builds -- and
+/// best-effort: a failed build is a log line, never a failed run.
+fn build_missed_packages(compiled: &zeo::ObjectOutput) {
+    for cand in &compiled.auto_package_misses {
+        if let Err(e) = zeo::autopkg::build_and_cache(cand) {
+            tracing::warn!("could not package '{}': {e}", cand.feature);
+        }
+    }
+}
+
 /// The library's package-fallback compile, with each drop reported to
 /// stderr as it happens -- so the warning still lands when a later error
 /// (a feature whose source is nowhere) ends the compile.
@@ -1745,6 +1769,7 @@ fn run_from_cache(
     if let Err(e) = zeo::progcache::commit(&key, &compiled.inputs) {
         tracing::warn!("could not record the program cache manifest: {e}");
     }
+    build_missed_packages(&compiled);
     exec(&bin, program_name, program_args);
 }
 

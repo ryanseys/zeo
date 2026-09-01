@@ -624,6 +624,86 @@ fn two_packages_share_a_namespace_module() {
 }
 
 #[test]
+fn a_second_packages_band_shift_keeps_unit_interior_reads_right() {
+    // The class-id ARRAYS a runtime call reads (a const read's cref
+    // chain, a rescue's matcher list) once rode in rodata as LOCAL ids --
+    // untranslatable at merge, and correct only while the band happened
+    // to be the identity. A first package's band shifts the second's, so
+    // the second package's unit-interior lexical const read is the
+    // sharpest probe: `V = G` inside `class S` walks [S, Bbb] by id.
+    let dir = scratch("bandshift");
+    let aaa = build_inline_package(&dir, "aaa", "module Aaa\n  ONE = 1\nend\n");
+    let bbb = build_inline_package(
+        &dir,
+        "bbb",
+        "module Bbb\n  G = 42\n  class S\n    V = G\n  end\n  begin\n    raise S.name\n  \
+         rescue RuntimeError => e\n    TAG = e.message\n  end\nend\n",
+    );
+    let host = dir.join("host.rb");
+    std::fs::write(&host, "require \"bbb\"\np Bbb::S::V\np Bbb::TAG\n").expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--with-package")
+        .arg(&aaa)
+        .arg("--with-package")
+        .arg(&bbb)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(ok(&mut Command::new(&bin)), "42\n\"Bbb::S\"\n");
+}
+
+#[test]
+fn a_definition_the_package_cannot_resolve_refuses_instead_of_dropping() {
+    // A whole-program compile may DROP a `class X < Unknown` definition
+    // (the bare-constant-read fallback, exactly ruby when the superclass
+    // is truly missing). A package build must not: its world excludes the
+    // foreign gems the host provides, so the drop would ship an artifact
+    // silently missing the class -- net-http's `HTTP < Protocol` is the
+    // shape. The refusal names the superclass, and the gem splices.
+    let dir = scratch("pkg-refuse-drop");
+    let gems = dir.join("gems");
+    let proto = gems.join("proto");
+    let webby = gems.join("webby");
+    std::fs::create_dir_all(proto.join("lib")).expect("mkdir");
+    std::fs::create_dir_all(webby.join("lib")).expect("mkdir");
+    let spec = |name: &str| {
+        format!(
+            "Gem::Specification.new do |s|\n  s.name = \"{name}\"; s.version = \"1.0.0\"\n  \
+             s.summary = \"t\"; s.require_paths = [\"lib\"]\nend\n"
+        )
+    };
+    std::fs::write(proto.join("proto.gemspec"), spec("proto")).expect("write spec");
+    std::fs::write(webby.join("webby.gemspec"), spec("webby")).expect("write spec");
+    std::fs::write(
+        proto.join("lib/proto.rb"),
+        "module Netx\n  class Protocol\n  end\nend\n",
+    )
+    .expect("write proto");
+    std::fs::write(
+        webby.join("lib/webby.rb"),
+        "require \"proto\"\nmodule Netx\n  class Web < Protocol\n  end\nend\n",
+    )
+    .expect("write webby");
+    let out = run(zeo()
+        .arg("--gems")
+        .arg(&gems)
+        .arg("--package")
+        .arg("webby")
+        .arg("-o")
+        .arg(dir.join("webby.zeopkg"))
+        .arg(webby.join("lib/webby.rb"))
+        .env("ZEO_CACHE", "0"));
+    assert!(!out.status.success(), "the package build refuses");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("unknown superclass `Protocol` (defined outside this package)"),
+        "the refusal names the superclass: {err}"
+    );
+}
+
+#[test]
 fn regexp_and_flip_flop_sites_get_disjoint_strides() {
     // Both packages mint their FIRST regexp literal as local site 0; the
     // runtime caches one frozen regexp per site id, so a collided id would
@@ -1352,12 +1432,17 @@ fn a_packaged_builtin_feature_defers_to_the_merged_unit() {
     let root = crate::paths::workspace_root();
     let store = root.join("vendor/bundle/ruby/4.0.0");
     let tmpdir_rb = store.join("gems/tmpdir-0.3.1/lib/tmpdir.rb");
-    if !tmpdir_rb.is_file() {
-        eprintln!("skipping: the resolved store has no tmpdir 0.3.1 (run `make deps`)");
+    let fileutils_rb = store.join("gems/fileutils-1.8.0/lib/fileutils.rb");
+    if !tmpdir_rb.is_file() || !fileutils_rb.is_file() {
+        eprintln!("skipping: the resolved store has no tmpdir/fileutils (run `make deps`)");
         return;
     }
     let dir = scratch("packaged-builtin");
     let pkg = build_named_package(&dir, "tmpdir", &tmpdir_rb);
+    // tmpdir's unit requires fileutils at run time (a deferred foreign
+    // feature in its manifest), so the dependency artifact merges beside
+    // it -- the test must not lean on whatever the machine's store holds.
+    let dep = build_named_package(&dir, "fileutils", &fileutils_rb);
 
     let host = dir.join("host.rb");
     std::fs::write(&host, "require \"tmpdir\"\np Dir.respond_to?(:tmpdir)\n")
@@ -1372,6 +1457,8 @@ fn a_packaged_builtin_feature_defers_to_the_merged_unit() {
         .arg(&store)
         .arg("--with-package")
         .arg(&pkg)
+        .arg("--with-package")
+        .arg(&dep)
         .arg("-o")
         .arg(&bin)
         .env("ZEO_CACHE", "0"));

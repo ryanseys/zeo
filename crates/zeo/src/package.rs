@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped when the manifest schema changes shape. Independent of
 /// `zeo_abi::ABI_VERSION`: the manifest is a compiler-to-compiler file.
-pub const MANIFEST_VERSION: u32 = 6;
+pub const MANIFEST_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -78,6 +78,14 @@ pub struct Manifest {
     /// `(feature spelling, unit fn symbol)` -- both spellings a require can
     /// build, exactly as `UnitRow`s carry them.
     pub units: Vec<(String, String)>,
+    /// Foreign features the package's units require at RUN time -- targets
+    /// the build resolved to nothing because they live outside this gem
+    /// (another gem, a `-I` root, or nowhere). The host answers each one:
+    /// its own splice, another merged package, or the runtime search. The
+    /// auto-packaging tier reads these to decide whether an artifact can
+    /// serve a compile without leaving a require unanswerable. Sorted.
+    #[serde(default)]
+    pub host_features: Vec<String>,
     /// The package object's exported site-table initializer, run from the
     /// host's own `zeo_unit_init`.
     pub unit_init: Option<String>,
@@ -478,6 +486,7 @@ mod tests {
             foreign: vec![],
             meta: vec![],
             units: vec![("pureleaf".into(), "zeo_pkg_pureleaf_unit_0".into())],
+            host_features: vec![],
             unit_init: Some("zeo_pkg_pureleaf_unit_init".into()),
             callers: vec![u32::MAX, 400],
             class_tables: vec![],

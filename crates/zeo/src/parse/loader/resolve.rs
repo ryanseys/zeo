@@ -284,16 +284,22 @@ impl Loader {
             }
         }
         let mut hits: Vec<(PathBuf, &Gem)> = Vec::new();
+        let mut foreign_hit = false;
         for pkg in &self.packages {
             // A package build carries ONE gem. A feature another gem owns
             // is the host's to answer -- from its own splice or that gem's
             // own package -- so it resolves to nothing here and the require
-            // stays a call.
+            // stays a call. WHICH features took this road is recorded: the
+            // artifact's manifest names them (`host_features`), so a
+            // consumer can tell "the host must provide this" apart from a
+            // require that resolves nowhere on any road.
             if self
                 .pkg_own_gem
                 .as_ref()
                 .is_some_and(|own| own != &pkg.name)
             {
+                foreign_hit = foreign_hit
+                    || pkg.roots.iter().any(|r| r.join(&fname).is_file());
                 continue;
             }
             // At most one hit per package: a package's OWN roots are
@@ -308,7 +314,12 @@ impl Loader {
             }
         }
         match hits.len() {
-            0 => Ok(None),
+            0 => {
+                if foreign_hit {
+                    self.pkg_foreign.borrow_mut().insert(feature.to_string());
+                }
+                Ok(None)
+            }
             1 => {
                 let (path, pkg) = hits.remove(0);
                 Ok(Some((path, Some(pkg.name.clone()))))
@@ -423,6 +434,40 @@ impl Loader {
             out.extend(pkg.roots.iter().map(|p| p.display().to_string()));
         }
         out
+    }
+
+    /// Write the activation summary the auto-packaging tier reads onto the
+    /// Hir: which BUNDLED gems this compile reached (with the features each
+    /// answered), and which features resolved out of any gem tier at all.
+    /// Runs once, after every resolution, beside the `$LOAD_PATH` fill.
+    pub(super) fn record_activation_summary(&self, hir: &mut crate::hir::Hir) {
+        let memo = self.require_memo.borrow();
+        hir.loader.pkg_foreign_requires = self.pkg_foreign.borrow().clone();
+        hir.loader.activated_bundled = self
+            .activated
+            .borrow()
+            .iter()
+            .filter_map(|name| {
+                let pkg = self.packages.iter().find(|g| &g.name == name)?;
+                if pkg.provenance != GemProvenance::Bundled {
+                    return None;
+                }
+                let mut features: Vec<String> = memo
+                    .iter()
+                    .filter_map(|(f, r)| match r {
+                        Some((_, Some(n))) if n == name => Some(f.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                features.sort();
+                Some(crate::hir::ActivatedBundled {
+                    name: pkg.name.clone(),
+                    version: pkg.version.clone(),
+                    roots: pkg.roots.clone(),
+                    features,
+                })
+            })
+            .collect();
     }
 
     /// `load "path"`: no `.rb` appending, ever (CRuby's `rb_find_file` has

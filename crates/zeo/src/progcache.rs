@@ -191,6 +191,45 @@ pub fn pkg_commit(key: &str, inputs: &[Input]) -> std::io::Result<()> {
     std::fs::write(pkg_root().join(key).join("manifest"), rows_for(inputs)?)
 }
 
+/// The recorded refusal for `key`: a package build that failed stays
+/// failed for as long as the key holds -- and the key hashes zeo's own
+/// identity, so a rebuilt compiler retries every refusal exactly once.
+/// `None` means no refusal is on record.
+pub fn pkg_refusal(key: &str) -> Option<String> {
+    std::fs::read_to_string(pkg_root().join(format!("{key}.refused"))).ok()
+}
+
+/// Record that the package build for `key` refused, so later compiles
+/// skip the retry. Best-effort: an unwritable cache costs a retry, not a
+/// failed compile.
+pub fn pkg_record_refusal(key: &str, reason: &str) {
+    let root = pkg_root();
+    let _ = std::fs::create_dir_all(&root);
+    let _ = std::fs::write(root.join(format!("{key}.refused")), reason);
+}
+
+/// The stored manifest rows for the package cache entry at `key` -- what
+/// [`pkg_commit`] wrote. `None` when the entry has none.
+pub fn pkg_manifest_rows(key: &str) -> Option<String> {
+    std::fs::read_to_string(pkg_root().join(key).join("manifest")).ok()
+}
+
+/// The file paths a manifest's `F` rows name -- every source the compile
+/// that built the entry read. Rows that are not files (the `D` directory
+/// stamps, the header) contribute nothing.
+pub fn manifest_files(rows: &str) -> Vec<PathBuf> {
+    rows.lines()
+        .filter_map(|line| {
+            let (kind, rest) = line.split_once(' ')?;
+            if kind != "F" {
+                return None;
+            }
+            let (_hash, path) = rest.split_once(' ')?;
+            Some(PathBuf::from(path))
+        })
+        .collect()
+}
+
 /// A `.zeopkg`'s embedded object, landed where a link line can name it:
 /// `<pkg root>/objects/<digest>.o`. Content-addressed, so an existing file
 /// is already the right bytes; a read-only cache degrades to the system

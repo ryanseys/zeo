@@ -151,30 +151,70 @@ pub fn survey_lock(lockfile: &Path, stores: &[PathBuf]) -> Result<Vec<GemRow>, S
 /// their store homes, built by THIS compiler for THIS target. Anything
 /// else is passed over without a word -- the artifact is a cache entry,
 /// and a cache answers or it does not.
+///
+/// One more gate, because a packaged gem's interior requires are
+/// invisible to the host's parse: an artifact whose `host_features` (the
+/// foreign features its units require at run time) are not all covered
+/// by OTHER kept artifacts is passed over too. Linking it would leave a
+/// runtime require nothing answers -- tmpdir's `require "fileutils"`
+/// with fileutils' artifact stale is the shape. Dropping one artifact
+/// shrinks the covered set, so this runs to a fixpoint.
 pub fn linkable(rows: &[GemRow]) -> Vec<PathBuf> {
-    rows.iter()
+    struct Cand {
+        path: PathBuf,
+        features: Vec<String>,
+        host_features: Vec<String>,
+    }
+    let mut cands: Vec<Cand> = rows
+        .iter()
         .filter_map(|row| {
             [row.home.as_ref(), row.shipped.as_ref()]
                 .into_iter()
                 .flatten()
-                .find(|c| artifact_matches(c))
-                .cloned()
+                .find_map(|c| {
+                    let m = read_matching_manifest(c)?;
+                    let mut features: Vec<String> =
+                        m.units.iter().map(|(f, _)| f.clone()).collect();
+                    features.push(m.feature.clone());
+                    Some(Cand {
+                        path: c.clone(),
+                        features,
+                        host_features: m.host_features,
+                    })
+                })
         })
-        .collect()
+        .collect();
+    loop {
+        let covered: std::collections::HashSet<&str> = cands
+            .iter()
+            .flat_map(|c| c.features.iter().map(String::as_str))
+            .collect();
+        let uncovered = cands.iter().position(|c| {
+            c.host_features
+                .iter()
+                .any(|f| !covered.contains(f.as_str()))
+        });
+        let Some(i) = uncovered else { break };
+        cands.remove(i);
+    }
+    cands.into_iter().map(|c| c.path).collect()
+}
+
+/// The manifest at `path`, if the artifact was built by THIS compiler for
+/// THIS target -- `None` otherwise, unreadable included.
+fn read_matching_manifest(path: &Path) -> Option<crate::package::Manifest> {
+    let (manifest_text, _) = crate::package::read_zeopkg(path).ok()?;
+    let m = crate::package::Manifest::parse(&manifest_text).ok()?;
+    (m.compiler == crate::package::compiler_identity()
+        && m.target == crate::backend::link::host_triple())
+    .then_some(m)
 }
 
 /// Whether the artifact at `path` was built by THIS compiler for THIS
 /// target -- the whole acceptance contract (decision 7: exact match, no
 /// stable tag). Unreadable or unparseable answers false.
 pub fn artifact_matches(path: &Path) -> bool {
-    let Ok((manifest_text, _)) = crate::package::read_zeopkg(path) else {
-        return false;
-    };
-    let Ok(m) = crate::package::Manifest::parse(&manifest_text) else {
-        return false;
-    };
-    m.compiler == crate::package::compiler_identity()
-        && m.target == crate::backend::link::host_triple()
+    read_matching_manifest(path).is_some()
 }
 
 /// RubyGems' name for this build's platform (`Gem::Platform.local`).
@@ -262,5 +302,81 @@ pub fn store_linkable(lockfile: &Path, stores: &[PathBuf]) -> Vec<PathBuf> {
     match survey_lock(lockfile, stores) {
         Ok(rows) => linkable(&rows),
         Err(_) => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal valid artifact for `feature`, at `<dir>/<feature>.zeopkg`.
+    fn artifact(dir: &Path, feature: &str, host_features: &[&str]) -> PathBuf {
+        let m = crate::package::Manifest {
+            manifest_version: crate::package::MANIFEST_VERSION,
+            abi_version: zeo_abi::abi::ABI_VERSION,
+            compiler: crate::package::compiler_identity(),
+            target: crate::backend::link::host_triple().to_string(),
+            source_digest: "0".into(),
+            iface_hash: "0".into(),
+            prefix: format!("zeo_pkg_{feature}"),
+            feature: feature.into(),
+            first_class_id: 400,
+            n_class_ids: 0,
+            n_units: 1,
+            n_regexp_sites: 0,
+            n_flip_flops: 0,
+            classes: vec![],
+            vm: vec![],
+            vis: vec![],
+            obj: vec![],
+            cm: vec![],
+            reg: vec![],
+            foreign: vec![],
+            meta: vec![],
+            redef_metas: vec![],
+            units: vec![(feature.to_string(), format!("zeo_pkg_{feature}_unit_0"))],
+            host_features: host_features.iter().map(|s| (*s).to_string()).collect(),
+            unit_init: None,
+            callers: vec![],
+            class_tables: vec![],
+            facts: Default::default(),
+            iface: vec![],
+        };
+        let path = dir.join(format!("{feature}.zeopkg"));
+        crate::package::write_zeopkg(&path, &m.to_json(), b"obj").expect("write artifact");
+        path
+    }
+
+    fn row(name: &str, home: &Path) -> GemRow {
+        GemRow {
+            name: name.into(),
+            version: "1.0.0".into(),
+            feature: name.into(),
+            entry: Some(home.to_path_buf()),
+            home: Some(home.to_path_buf()),
+            shipped: None,
+            skip: None,
+        }
+    }
+
+    #[test]
+    fn linkable_drops_an_artifact_whose_dependency_artifact_is_missing() {
+        let dir = std::env::temp_dir().join(format!(
+            "zeo-linkable-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let a = artifact(&dir, "aaa", &["bbb"]);
+        let b = artifact(&dir, "bbb", &[]);
+        let both = linkable(&[row("aaa", &a), row("bbb", &b)]);
+        assert_eq!(both.len(), 2, "both artifacts link: {both:?}");
+        // The dependency's artifact gone: aaa's runtime `require "bbb"`
+        // would have no answer, so aaa is passed over too and both gems
+        // compile from source.
+        std::fs::remove_file(&b).expect("remove the dependency");
+        let alone = linkable(&[row("aaa", &a), row("bbb", &b)]);
+        assert!(alone.is_empty(), "aaa is passed over: {alone:?}");
     }
 }

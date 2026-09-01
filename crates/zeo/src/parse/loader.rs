@@ -235,6 +235,11 @@ pub(super) struct Loader {
     /// root. Recorded here rather than derived from `packages`, which lists
     /// every gem zeo ships whether the program reached it or not.
     activated: std::cell::RefCell<Vec<String>>,
+    /// Features a PACKAGE build deferred because a FOREIGN gem owns them
+    /// (the `pkg_own_gem` gate). The manifest ships them as
+    /// `host_features`: the artifact's runtime requires the host must be
+    /// able to answer. Always empty outside a package build.
+    pkg_foreign: std::cell::RefCell<std::collections::BTreeSet<String>>,
 }
 
 /// `resolve_require`'s success shape: the found path plus the owning
@@ -453,6 +458,7 @@ pub(super) fn lower_main_file(
         require_memo: std::cell::RefCell::new(HashMap::new()),
         ambiguous_features: std::cell::RefCell::new(HashMap::new()),
         activated: std::cell::RefCell::new(Vec::new()),
+        pkg_foreign: std::cell::RefCell::new(std::collections::BTreeSet::new()),
     };
     // `ZEO_DISABLE_BUILTIN` retires zeo's implementation of a library, and
     // the ext tier's Ruby half IS part of that implementation -- it sits on
@@ -701,6 +707,7 @@ pub(super) fn lower_main_file(
     // `$LOAD_PATH` when a require reaches it, which is CRuby's own rule.
     hir.loader.search_root_count = loader.roots.len();
     hir.loader.search_roots = loader.load_path();
+    loader.record_activation_summary(hir);
     Ok((lowered, loader.gem_records))
 }
 

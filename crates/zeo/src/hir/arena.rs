@@ -525,6 +525,27 @@ pub struct LoaderState {
     /// for the same reason the loader does: without it the fold eats the call
     /// and activates zeo's row, and the store gem is never loaded at all.
     pub store_overrides: crate::compiler::FSet<String>,
+    /// Every BUNDLED gem a `require` activated, in activation order, with
+    /// what this compile asked of it -- the auto-packaging tier's candidate
+    /// rows (see `zeo::autopkg`). Empty for any compile that reached no
+    /// bundled gem.
+    pub activated_bundled: Vec<ActivatedBundled>,
+    /// Features a PACKAGE build deferred because a FOREIGN gem owns them
+    /// -- the manifest's `host_features`. A require that resolves NOWHERE
+    /// is deliberately not here: it behaves the same packaged or spliced,
+    /// so it constrains no consumer. Always empty outside a package build.
+    pub pkg_foreign_requires: std::collections::BTreeSet<String>,
+}
+
+/// One activated bundled gem -- see `LoaderState::activated_bundled`.
+#[derive(Clone)]
+pub struct ActivatedBundled {
+    pub name: String,
+    pub version: Option<String>,
+    /// The gem's require-path roots, absolute, in `require_paths` order.
+    pub roots: Vec<std::path::PathBuf>,
+    /// Feature spellings this compile resolved into the gem, sorted.
+    pub features: Vec<String>,
 }
 
 /// One compiled-in load-path file -- see `LoaderState::feature_units`. Its statements

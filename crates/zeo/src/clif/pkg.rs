@@ -321,6 +321,13 @@ pub(crate) fn finish_package(
             .map(|(feature, f)| Ok((feature.clone(), symbol_of(em, *f)?)))
             .collect::<CResult<_>>()?,
         unit_init: unit_init.map(|f| symbol_of(em, f)).transpose()?,
+        host_features: compiler
+            .hir
+            .loader
+            .pkg_foreign_requires
+            .iter()
+            .cloned()
+            .collect(),
         callers: em.callsites.clone(),
         class_tables: super::statics::needed_class_tables(analyzed)
             .iter()
