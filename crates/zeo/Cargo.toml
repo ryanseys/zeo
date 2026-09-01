@@ -100,7 +100,92 @@ path = "benches/programs.rs"
 harness = false
 
 [features]
-default = []
+# The stock build carries every runtime extension and the C-extension
+# surface, exactly as before this crate owned the choice. The default is the
+# EXPLICIT per-ext list, never a forward to zeo-rt's umbrella: the compiler's
+# own `cfg!(feature = "ext-*")` is what `lower::features::build_carries_ext`
+# reads, so a runtime feature the compiler cannot see would make it lie.
+# `--no-default-features --features <every ext but one>` builds a zeo whose
+# loader serves that gem's `pure/` Ruby tree (or answers LoadError) instead
+# of the absent Rust half -- the dual-build switch. `pure-stdlib` is the
+# named subtraction set for the pure-Ruby lane gems.
+default = [
+    "cext",
+    "ext-base64",
+    "ext-monitor",
+    "ext-stringio",
+    "ext-strscan",
+    "ext-cgi",
+    "ext-digest",
+    "ext-json",
+    "ext-date",
+    "ext-zlib",
+    "ext-psych",
+    "ext-socket",
+    "ext-openssl",
+    "ext-ffi",
+    "ext-etc",
+    "ext-fcntl",
+    "ext-io-console",
+    "ext-pty",
+    "ext-syslog",
+    "ext-readline",
+    "ext-nkf",
+    "ext-bigdecimal",
+    "ext-coverage",
+    "ext-tracepoint",
+    "ext-prism",
+]
+cext = ["zeo-rt/cext"]
+ext-base64 = ["zeo-rt/ext-base64"]
+ext-monitor = ["zeo-rt/ext-monitor"]
+ext-stringio = ["zeo-rt/ext-stringio"]
+ext-strscan = ["zeo-rt/ext-strscan"]
+ext-cgi = ["zeo-rt/ext-cgi"]
+ext-digest = ["zeo-rt/ext-digest"]
+ext-json = ["zeo-rt/ext-json"]
+ext-date = ["zeo-rt/ext-date"]
+ext-zlib = ["zeo-rt/ext-zlib"]
+ext-psych = ["zeo-rt/ext-psych"]
+ext-socket = ["zeo-rt/ext-socket"]
+ext-openssl = ["zeo-rt/ext-openssl"]
+ext-ffi = ["zeo-rt/ext-ffi"]
+ext-etc = ["zeo-rt/ext-etc"]
+ext-fcntl = ["zeo-rt/ext-fcntl"]
+ext-io-console = ["zeo-rt/ext-io-console"]
+ext-pty = ["zeo-rt/ext-pty"]
+ext-syslog = ["zeo-rt/ext-syslog"]
+ext-readline = ["zeo-rt/ext-readline"]
+ext-nkf = ["zeo-rt/ext-nkf"]
+ext-bigdecimal = ["zeo-rt/ext-bigdecimal"]
+ext-coverage = ["zeo-rt/ext-coverage"]
+ext-tracepoint = ["zeo-rt/ext-tracepoint"]
+ext-prism = ["zeo-rt/ext-prism"]
+# Everything except the pure-Ruby lane gems' Rust (base64, strscan,
+# stringio, readline, cgi) and the C-extension surface. Usable per gem as
+# its `pure/` tree lands; a require of a lane gem with no tree yet answers
+# LoadError, which is ruby-without-the-ext's answer too.
+pure-stdlib = [
+    "ext-monitor",
+    "ext-digest",
+    "ext-json",
+    "ext-date",
+    "ext-zlib",
+    "ext-psych",
+    "ext-socket",
+    "ext-openssl",
+    "ext-ffi",
+    "ext-etc",
+    "ext-fcntl",
+    "ext-io-console",
+    "ext-pty",
+    "ext-syslog",
+    "ext-nkf",
+    "ext-bigdecimal",
+    "ext-coverage",
+    "ext-tracepoint",
+    "ext-prism",
+]
 
 # What a zeo-built program starts with, before its own first line. Each one
 # is the DEFAULT of the matching `--enable=`/`--disable=` dial in

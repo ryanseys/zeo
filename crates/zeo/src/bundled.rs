@@ -89,7 +89,21 @@ pub fn dev_tree_libraries(root: &Path) -> Vec<Library> {
     let mut out = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for tier in [EXT_TIER, BOOTSTRAP_TIER] {
-        for lib in libraries_in(&root.join(tier)) {
+        for mut lib in libraries_in(&root.join(tier)) {
+            // The dual-build switch. An ext-tier library whose Rust half this
+            // BUILD did not compile must not serve its `lib/` (it requires
+            // the native half beside it). The sibling `pure/` tree -- itself
+            // a library directory, gemspec and `lib/` inside -- answers
+            // instead when it exists; with no pure tree the library drops
+            // and its `require` raises LoadError, ruby-without-the-ext's
+            // answer.
+            if tier == EXT_TIER && !ext_build_carried(&lib.name) {
+                let pure = lib.dir.join("pure");
+                if !pure.join("lib").is_dir() {
+                    continue;
+                }
+                lib.dir = pure;
+            }
             if seen.insert(lib.name.clone()) {
                 out.push(lib);
             }
@@ -101,6 +115,15 @@ pub fn dev_tree_libraries(root: &Path) -> Vec<Library> {
         }
     }
     out
+}
+
+/// Whether this build compiled the Rust half behind the ext-tier library
+/// `name`. A directory whose feature names no gated ABI class (`fiddle`,
+/// pure Ruby over zeo's ffi) is always carried. The dir name maps to the
+/// require spelling by the same rule `ZEO_DISABLE_BUILTIN` uses.
+fn ext_build_carried(name: &str) -> bool {
+    let feature = name.replace('-', "/");
+    crate::lower::features::build_carries_ext(&feature)
 }
 
 /// The `<name>/` directories under one name-keyed tier, name-sorted. A

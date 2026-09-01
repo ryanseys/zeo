@@ -40,7 +40,30 @@ pub const PRELOADED_AT_BOOT: &[&str] = zeo_abi::PRELOADED_AT_BOOT;
 /// `is_builtin_feature` stays the question "does zeo HAVE a row for this",
 /// which the gated-constant resolver still needs whatever the dial says.
 pub fn zeo_provides(feature: &str) -> bool {
-    is_builtin_feature(feature) && !crate::debug_flags::builtin_disabled(feature)
+    is_builtin_feature(feature)
+        && !crate::debug_flags::builtin_disabled(feature)
+        && build_carries_ext(feature)
+}
+
+/// Whether THIS build compiled the native half behind a gated ext feature --
+/// the dual-build switch. The answer lives in zeo-rt, where the cargo
+/// features actually are; the compiler links that same build, so its loader
+/// and the runtime's `Kernel#require` agree by construction. A feature-off
+/// extension's `require` must resolve to a file (the `pure/` tree, or a
+/// runtime LoadError) rather than activate a class the runtime does not
+/// carry.
+pub fn build_carries_ext(feature: &str) -> bool {
+    zeo_rt::features::build_carries_ext(feature)
+}
+
+/// [`build_carries_ext`] by class id, for the emitted table-symbol list: a
+/// feature-off extension's `zeo_ctable_*` symbol is absent from `libzeo.a`,
+/// so an emitted program must not reference it.
+pub fn build_carries_class(id: zeo_abi::ClassId) -> bool {
+    match zeo_abi::feature_of_gated_class(id) {
+        Some(feature) => build_carries_ext(feature),
+        None => true,
+    }
 }
 
 /// Whether `feature` names a stdlib feature the runtime compiles in, so

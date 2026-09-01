@@ -184,6 +184,17 @@ pub fn is_ext_feature(name: &str) -> bool {
     BUILTINS.iter().any(|b| b.feature == Some(name))
 }
 
+/// The require gate on a class, if it has one: the `feature` of `id`'s
+/// BUILTINS row. The dual-build switch asks it to tell a feature-gated
+/// extension class (absent from a build whose cargo feature is off) from an
+/// always-on one.
+pub fn feature_of_gated_class(id: ClassId) -> Option<&'static str> {
+    BUILTINS
+        .iter()
+        .find(|b| b.id.0 == id.0)
+        .and_then(|b| b.feature)
+}
+
 /// The stdlib features the runtime compiles in that name no GATED class, so
 /// requiring one is a pure no-op. `zeo::lower::features::is_builtin_feature`
 /// carries the per-name reasoning; this is the list itself.

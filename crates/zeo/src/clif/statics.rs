@@ -2033,7 +2033,13 @@ fn define_class_tables(em: &mut Emitter, analyzed: &Analyzed) -> CResult<Option<
 /// unresolved `require` both reach the embedded compiler, which can name any
 /// class at all.
 pub(crate) fn needed_class_tables(analyzed: &Analyzed) -> Vec<&'static str> {
-    let all = crate::builtin_surface::CLASS_TABLE_SYMBOLS;
+    // The symbol list is generated from the ext TREE; a feature-off
+    // extension's table is absent from `libzeo.a`, so referencing its
+    // symbol would fail the link (the dual-build switch).
+    let all: Vec<&(zeo_abi::ClassId, &'static str)> = crate::builtin_surface::CLASS_TABLE_SYMBOLS
+        .iter()
+        .filter(|(id, _)| crate::lower::features::build_carries_class(*id))
+        .collect();
     // The measurement hatch: drop the named tables so a link can price them.
     // See `debug_flags::dropped_tables` -- the miss is loud, not silent.
     let dropped = crate::debug_flags::dropped_tables();

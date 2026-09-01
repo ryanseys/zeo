@@ -128,7 +128,8 @@ impl Loader {
                         .or_else(|| feature.strip_suffix(".bundle"))
                         .or_else(|| feature.strip_suffix(".o"))
                         .unwrap_or(feature);
-                    is_builtin_feature(bare)
+                    (is_builtin_feature(bare)
+                        && crate::lower::features::build_carries_ext(bare))
                         || self.store_exclusions.contains_key(bare)
                         // A gem shipping its C as source: zeo builds it, so
                         // the require HAS a compile-time verdict.

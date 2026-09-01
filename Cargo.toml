@@ -27,7 +27,7 @@ categories = ["compilers", "command-line-utilities"]
 # crates in lockstep.
 zeo = { path = "crates/zeo", version = "=0.1.0" }
 zeo-abi = { path = "crates/zeo-abi", version = "=0.1.0" }
-zeo-rt = { path = "crates/zeo-rt", version = "=0.1.0" }
+zeo-rt = { path = "crates/zeo-rt", version = "=0.1.0", default-features = false }
 zeo-dsl = { path = "crates/zeo-dsl", version = "=0.1.0" }
 zeo-macros = { path = "crates/zeo-macros", version = "=0.1.0" }
 

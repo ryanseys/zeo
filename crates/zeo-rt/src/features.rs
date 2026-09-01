@@ -117,8 +117,42 @@ fn resolve_feature_path(feature: &str) -> Option<(&'static str, RubyValue)> {
     if zeo_abi::CORE_WITH_NO_FILE.contains(&zeo_abi::canonical_ext_feature(bare)) {
         return None;
     }
-    zeo_abi::is_builtin_feature(bare)
+    (zeo_abi::is_builtin_feature(bare) && build_carries_ext(bare))
         .then(|| ("so", RubyValue::Str(crate::string_new(bare.to_string()))))
+}
+
+/// Whether THIS build compiled the native half behind a gated ext feature --
+/// the dual-build switch's ground truth, asked where the cargo features
+/// actually live. The zeo compiler links this same build and forwards its
+/// own `ext-*` features here, so its loader and this runtime's
+/// `Kernel#require` agree by construction. A feature the match does not
+/// name is not ext-gated and is always carried.
+pub fn build_carries_ext(feature: &str) -> bool {
+    match zeo_abi::canonical_ext_feature(feature) {
+        "base64" => cfg!(feature = "ext-base64"),
+        "bigdecimal" => cfg!(feature = "ext-bigdecimal"),
+        "cgi/escape" => cfg!(feature = "ext-cgi"),
+        "coverage" => cfg!(feature = "ext-coverage"),
+        "date" => cfg!(feature = "ext-date"),
+        "digest" => cfg!(feature = "ext-digest"),
+        "etc" => cfg!(feature = "ext-etc"),
+        "fcntl" => cfg!(feature = "ext-fcntl"),
+        "ffi" => cfg!(feature = "ext-ffi"),
+        "json" => cfg!(feature = "ext-json"),
+        "monitor" => cfg!(feature = "ext-monitor"),
+        "nkf" => cfg!(feature = "ext-nkf"),
+        "openssl" => cfg!(feature = "ext-openssl"),
+        "prism" => cfg!(feature = "ext-prism"),
+        "psych" => cfg!(feature = "ext-psych"),
+        "pty" => cfg!(feature = "ext-pty"),
+        "readline" => cfg!(feature = "ext-readline"),
+        "socket" => cfg!(feature = "ext-socket"),
+        "stringio" => cfg!(feature = "ext-stringio"),
+        "strscan" => cfg!(feature = "ext-strscan"),
+        "syslog" => cfg!(feature = "ext-syslog"),
+        "zlib" => cfg!(feature = "ext-zlib"),
+        _ => true,
+    }
 }
 
 /// Installs `resolve_feature_path` on the `$LOAD_PATH` array.
@@ -647,7 +681,7 @@ pub fn decline_reason(feature: &str) -> Option<&'static str> {
 /// already recorded -- and `false` even on the first require of one CRuby
 /// loads before line 1.
 pub fn load_builtin_feature(feature: &str, box_id: u32) -> Option<bool> {
-    if !zeo_abi::is_builtin_feature(feature) {
+    if !zeo_abi::is_builtin_feature(feature) || !build_carries_ext(feature) {
         return None;
     }
     let canonical = zeo_abi::canonical_ext_feature(feature);
