@@ -857,13 +857,17 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
         // direct-call table: each plain exported body is declared as an
         // IMPORT here, so a host call site on a packaged receiver goes
         // direct into the package's compiled code.
-        if let Some(pi) = class.imported_pkg {
-            let m = &compiler.hir.pkg_merge[pi as usize];
-            let local = compiler
+        if class.imported_pkg.is_some() {
+            // Every (package, local id) pair aliased onto this class: a
+            // shared namespace maps two packages' locals to one host id,
+            // and each method's tramp lives in whichever package's
+            // manifest defined it.
+            let pairs: Vec<(u32, u32)> = compiler
                 .pkg_class_map
                 .iter()
-                .find(|((mp, _), v)| *mp == pi && v.0 == idx as u32)
-                .map(|((_, l), _)| *l);
+                .filter(|(_, v)| v.0 == idx as u32)
+                .map(|((mp, l), _)| (*mp, *l))
+                .collect();
             for sid in &class.own_methods {
                 let scope = compiler.scope(*sid);
                 let Some(sym) = scope.extern_symbol.as_deref() else {
@@ -876,10 +880,11 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 if !layout.plain || class.box_id != 0 {
                     continue;
                 }
-                let tramp_sym = local.and_then(|l| {
-                    m.obj
+                let tramp_sym = pairs.iter().find_map(|(mp, l)| {
+                    compiler.hir.pkg_merge[*mp as usize]
+                        .obj
                         .iter()
-                        .find(|r| r.class == l && r.name == scope.name)
+                        .find(|r| r.class == *l && r.name == scope.name)
                         .map(|r| r.f.clone())
                 });
                 let Some(tramp_sym) = tramp_sym else { continue };

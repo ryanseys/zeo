@@ -365,8 +365,6 @@ pub(crate) fn merge_rows(
     // `warn_on_colliding_unit_features` already emits.
     let mut claimed_spellings: std::collections::HashSet<&str> =
         unit_rows.iter().map(|(s, _)| s.as_str()).collect();
-    let mut claimed_class_names: std::collections::HashSet<&str> =
-        class_specs.iter().map(|c| c.name.as_str()).collect();
     for m in &manifests {
         for (spelling, _) in &m.units {
             if !claimed_spellings.insert(spelling.as_str()) {
@@ -381,24 +379,18 @@ pub(crate) fn merge_rows(
                 ));
             }
         }
-        // A shared namespace (`module Rack` in two objects) is ordinary
-        // Ruby, but merging it needs id-table ALIASING (later in M2): two
-        // ClassSpecs under one name would resolve by registration order,
-        // silently. Refuse it by name until then.
-        for c in &m.classes {
-            if !claimed_class_names.insert(c.name.as_str()) {
-                return Err(CodegenError::unsupported(
-                    format!(
-                        "class {} is defined by package '{}' and by another object \
-                         in this program; a cross-object reopen needs id-table \
-                         aliasing (M2)",
-                        c.name, m.feature
-                    ),
-                    None,
-                ));
-            }
-        }
     }
+    // A shared namespace (`module Rack` in two packages) ALIASES: the
+    // registration pass mapped both local ids onto one host id and held
+    // the compatibility line (one ancestry side, disjoint methods), so
+    // here the second package's class row folds into the first's -- the
+    // merged desc keeps ONE row per final id, patched per field with
+    // whichever side actually contributed that field.
+    let mut merged_class_row_at: std::collections::HashMap<u32, usize> = Default::default();
+    // A singleton-class SURROGATE seeds the runtime's mint for its owner,
+    // and the runtime keeps one; two packages each bringing a surrogate
+    // for one aliased owner would race that seed.
+    let mut surrogate_owner_from: std::collections::HashMap<u32, String> = Default::default();
 
     let vsig = super::params::value_fn_sig(em);
     let usig = unit_sig(em);
@@ -453,7 +445,7 @@ pub(crate) fn merge_rows(
             define_u32s(em, &format!("{}_callers", m.prefix), &callers)?;
         }
         for c in m.classes {
-            class_specs.push(super::classes::ClassSpec {
+            let spec = super::classes::ClassSpec {
                 id: rb(c.id),
                 name: c.name,
                 ancestors: c.ancestors.iter().map(|&a| rb(a)).collect(),
@@ -461,7 +453,33 @@ pub(crate) fn merge_rows(
                 hidden: c.hidden,
                 members: c.members,
                 kind: c.kind,
-            });
+            };
+            match merged_class_row_at.entry(spec.id) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(class_specs.len());
+                    class_specs.push(spec);
+                }
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    // An aliased class: fold onto the standing row. Each
+                    // field was contributed by at most one side (the
+                    // registration pass refused anything else), so the
+                    // fuller side of each is the merged truth.
+                    let row = &mut class_specs[*e.get()];
+                    debug_assert_eq!(row.name, spec.name, "aliased rows share a name");
+                    if spec.ancestors.len() > row.ancestors.len() {
+                        row.ancestors = spec.ancestors;
+                    }
+                    if row.ivars.is_empty() {
+                        row.ivars = spec.ivars;
+                    }
+                    // `hidden` counts the trailing hidden members, so it
+                    // travels with the members list it describes.
+                    if row.members.is_empty() {
+                        row.members = spec.members;
+                        row.hidden = spec.hidden;
+                    }
+                }
+            }
         }
         for r in m.obj {
             let f = import(em, &r.f, &vsig)?;
@@ -505,6 +523,22 @@ pub(crate) fn merge_rows(
             // re-register without the native constructor. A row only the
             // package emits (a gated builtin the host never reaches) stays.
             let class = rb(r.class);
+            if r.kind == zeo_abi::abi::REG_SINGLETON_SURROGATE {
+                let owner = ids[0]; // already remapped by the kind match
+                if let Some(other) =
+                    surrogate_owner_from.insert(owner, m.feature.clone())
+                {
+                    return Err(CodegenError::unsupported(
+                        format!(
+                            "packages '{other}' and '{}' both bring a singleton-\
+                             class surrogate for one aliased class; the runtime \
+                             mint seeds once -- compile one of them from source",
+                            m.feature
+                        ),
+                        None,
+                    ));
+                }
+            }
             let bootstrap_dup = matches!(
                 r.kind,
                 zeo_abi::abi::REG_EXTENDS | zeo_abi::abi::REG_REGISTER_BUILTIN

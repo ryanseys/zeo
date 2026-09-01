@@ -359,3 +359,138 @@ fn a_package_carrying_main_code_is_refused_by_name() {
         "the refusal names eval: {err}"
     );
 }
+
+/// Compile any entry file as a package named `feature` into `dir`.
+fn build_named_package(dir: &Path, feature: &str, entry: &Path) -> PathBuf {
+    let object = dir.join(format!("{feature}.o"));
+    ok(zeo()
+        .arg("--experimental-pkg")
+        .arg(feature)
+        .arg("-o")
+        .arg(&object)
+        .arg(entry)
+        .env("ZEO_CACHE", "0"));
+    object
+}
+
+fn build_inline_package(dir: &Path, feature: &str, src: &str) -> PathBuf {
+    let entry = dir.join(format!("{feature}.rb"));
+    std::fs::write(&entry, src).expect("write package source");
+    build_named_package(dir, feature, &entry)
+}
+
+/// Merge two packages into one host expecting a refusal; answer stderr.
+fn refuse_merge(dir: &Path, a: &Path, b: &Path, host_src: &str) -> String {
+    let host = dir.join("host.rb");
+    std::fs::write(&host, host_src).expect("write host");
+    let out = run(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(a)
+        .arg("--experimental-use-pkg")
+        .arg(b)
+        .arg("-o")
+        .arg(dir.join("host-bin"))
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert!(!out.status.success(), "the merge must refuse");
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+#[test]
+fn two_packages_share_a_namespace_module() {
+    // `module Sharedspace` in both gems: registration ALIASES the two
+    // local ids onto one host id, the merged desc keeps one class row,
+    // and both packages' methods land on it -- ruby's ordinary reopen,
+    // across two precompiled objects. Verified against ruby 4.0.6.
+    let dir = scratch("alias");
+    let fixtures = fixture_gem().parent().expect("fixtures dir").to_path_buf();
+    let alpha =
+        build_named_package(&dir, "alphapart", &fixtures.join("alphapart/lib/alphapart.rb"));
+    let beta = build_named_package(&dir, "betapart", &fixtures.join("betapart/lib/betapart.rb"));
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"alphapart\"\nrequire \"betapart\"\n\
+         p Sharedspace::Alpha.new.a\np Sharedspace::Beta.new.b(3)\n\
+         p [Sharedspace.alpha_tag, Sharedspace.beta_tag]\np Sharedspace::ALPHA_W\n",
+    )
+    .expect("write host");
+    const ALIAS_WANT: &str = "\"alpha\"\n\"beta-3\"\n[:alpha, :beta]\n4\n";
+    let packaged_bin = dir.join("host-packaged");
+    ok(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&alpha)
+        .arg("--experimental-use-pkg")
+        .arg(&beta)
+        .arg("-o")
+        .arg(&packaged_bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(
+        ok(&mut Command::new(&packaged_bin)),
+        ALIAS_WANT,
+        "the packaged program's answers"
+    );
+    let spliced_bin = dir.join("host-spliced");
+    ok(zeo()
+        .arg("--gems")
+        .arg(&fixtures)
+        .arg("-o")
+        .arg(&spliced_bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(
+        ok(&mut Command::new(&spliced_bin)),
+        ALIAS_WANT,
+        "the spliced program's answers"
+    );
+}
+
+#[test]
+fn two_packages_defining_one_method_on_a_shared_class_are_refused() {
+    // A cross-package redefinition: the earlier package's typed sites
+    // compiled against ITS body with no guard for a static replacement.
+    // Patch rows lift this in M4; today it refuses by name.
+    let dir = scratch("clash-method");
+    let a = build_inline_package(&dir, "clasha", "module Shk\n  def self.tag = :a\nend\n");
+    let b = build_inline_package(&dir, "clashb", "module Shk\n  def self.tag = :b\nend\n");
+    let err = refuse_merge(&dir, &a, &b, "require \"clasha\"\nrequire \"clashb\"\np Shk.tag\n");
+    assert!(
+        err.contains("defines `Shk.tag`") && err.contains("another merged package"),
+        "the refusal names the method: {err}"
+    );
+}
+
+#[test]
+fn a_shared_name_with_a_kind_mismatch_is_refused() {
+    let dir = scratch("clash-kind");
+    let a = build_inline_package(&dir, "kinda", "module Shp\n  def self.x = 1\nend\n");
+    let b = build_inline_package(&dir, "kindb", "class Shp\n  def x = 1\nend\n");
+    let err = refuse_merge(&dir, &a, &b, "require \"kinda\"\nrequire \"kindb\"\n");
+    assert!(
+        err.contains("defines `Shp` as a class") && err.contains("as a module"),
+        "the refusal names the kind clash: {err}"
+    );
+}
+
+#[test]
+fn a_shared_class_with_two_ancestries_is_refused() {
+    // Each package hangs the shared class off its OWN superclass; a chain
+    // assembled from both would match neither compiled object.
+    let dir = scratch("clash-parent");
+    let a = build_inline_package(
+        &dir,
+        "parenta",
+        "class Shqbase\nend\nclass Shqthing < Shqbase\n  def t = 1\nend\n",
+    );
+    let b = build_inline_package(
+        &dir,
+        "parentb",
+        "class Shqother\nend\nclass Shqthing < Shqother\n  def u = 2\nend\n",
+    );
+    let err = refuse_merge(&dir, &a, &b, "require \"parenta\"\nrequire \"parentb\"\n");
+    assert!(
+        err.contains("reopens `Shqthing` with a different ancestry"),
+        "the refusal names the ancestry clash: {err}"
+    );
+}

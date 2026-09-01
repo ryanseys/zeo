@@ -31,7 +31,10 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
             ));
         }
         // Pass 1: mint every interface class, so references between them
-        // resolve in any order.
+        // resolve in any order. A name another PACKAGE already claimed is
+        // not an error -- `module Rack` in two gems is ordinary Ruby -- it
+        // ALIASES: both local ids map onto the one host id, and passes 2-3
+        // hold the compatibility line (one shape, disjoint methods).
         for ic in &m.iface {
             let Some(mc) = m.classes.iter().find(|c| c.id == ic.id) else {
                 return Err(format!(
@@ -39,19 +42,59 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                     m.feature, ic.id
                 ));
             };
-            if let Some(taken) = compiler.classes.iter().find(|c| c.name == mc.name) {
-                return Err(format!(
-                    "package '{}' defines `{}`, which this program already has \
-                     ({}); a shared namespace between packages lands with \
-                     id-table aliasing",
-                    m.feature,
-                    mc.name,
-                    if taken.imported_pkg.is_some() {
-                        "from another package"
+            if let Some((taken_idx, taken)) = compiler
+                .classes
+                .iter()
+                .enumerate()
+                .find(|(_, c)| c.name == mc.name)
+            {
+                if taken.imported_pkg.is_none() {
+                    return Err(format!(
+                        "package '{}' defines `{}`, which this program already \
+                         has (a builtin); a package reopen of a builtin lands \
+                         with box rebasing (M4)",
+                        m.feature, mc.name
+                    ));
+                }
+                if taken.is_module != ic.is_module {
+                    let kind = |m: bool| if m { "module" } else { "class" };
+                    return Err(format!(
+                        "package '{}' defines `{}` as a {}, but another merged \
+                         package defines it as a {}",
+                        m.feature,
+                        mc.name,
+                        kind(ic.is_module),
+                        kind(taken.is_module)
+                    ));
+                }
+                // The ivar LAYOUT is ABI: each package's bodies compiled
+                // slot indices from its own list, so the lists must agree
+                // (or one side must carry none at all).
+                let merge_ivars = |mine: &Vec<String>,
+                                   theirs: &mut Vec<String>|
+                 -> bool {
+                    if theirs.is_empty() {
+                        *theirs = mine.clone();
+                        true
                     } else {
-                        "a builtin"
+                        mine.is_empty() || mine == theirs
                     }
-                ));
+                };
+                let ci = &mut compiler.classes[taken_idx];
+                if !merge_ivars(&mc.ivars, &mut ci.ivars)
+                    || !merge_ivars(&ic.hidden_ivars, &mut ci.hidden_ivars)
+                {
+                    return Err(format!(
+                        "package '{}' reopens `{}` with a different instance-\
+                         variable layout than another merged package compiled \
+                         against; compile one of them from source",
+                        m.feature, mc.name
+                    ));
+                }
+                compiler
+                    .pkg_class_map
+                    .insert((pi as u32, ic.id), ClassId(taken_idx as u32));
+                continue;
             }
             let cid = compiler.add_class(mc.name.clone(), None, ic.is_module);
             let ci = &mut compiler.classes[cid.0 as usize];
@@ -93,10 +136,52 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
             for e in &ic.extends {
                 extends.push(map(compiler, *e)?);
             }
+            let owned = compiler.class(cid).imported_pkg == Some(pi as u32);
+            if owned {
+                let ci = &mut compiler.classes[cid.0 as usize];
+                ci.parent = parent;
+                ci.mixin_order = mixins;
+                ci.extends = extends;
+                continue;
+            }
+            // ALIASED onto an earlier package's class. The ANCESTRY --
+            // parent plus mixin order -- must come whole from ONE side: a
+            // chain assembled from both would match neither package's
+            // compiled class row, and the merged desc keeps exactly one.
+            // A bare opening (no `< Super`, no mixins) contributes nothing
+            // and merges onto anything; `extend`s union, their runtime
+            // rows being additive.
+            let bare = |p: &Option<ClassId>, mix: &[(ClassId, bool)]| {
+                mix.is_empty()
+                    && match p {
+                        None => true,
+                        Some(c) => *c == crate::compiler::OBJECT_CLASS,
+                    }
+            };
+            let taken_name = compiler.class(cid).name.clone();
             let ci = &mut compiler.classes[cid.0 as usize];
-            ci.parent = parent;
-            ci.mixin_order = mixins;
-            ci.extends = extends;
+            let same =
+                ci.parent == parent && ci.mixin_order == mixins;
+            if !same && !bare(&parent, &mixins) {
+                if bare(&ci.parent, &ci.mixin_order) {
+                    ci.parent = parent;
+                    ci.mixin_order = mixins;
+                    ci.explicit_superclass = ic.parent.is_some() && !ic.is_module;
+                } else {
+                    return Err(format!(
+                        "package '{}' reopens `{taken_name}` with a different \
+                         ancestry (superclass or mixins) than another merged \
+                         package; compile one of them from source",
+                        m.feature
+                    ));
+                }
+            }
+            let ci = &mut compiler.classes[cid.0 as usize];
+            for e in extends {
+                if !ci.extends.contains(&e) {
+                    ci.extends.push(e);
+                }
+            }
         }
         // Pass 3: the methods, as body-less scopes. The SHAPE numbers come
         // from the manifest -- the package's own `layout_of` verdict -- so
@@ -144,12 +229,28 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                         accessor: None,
                         extern_symbol: Some(im.body.clone().unwrap_or_default()),
                     });
+                    let taken_name = compiler.class(cid).name.clone();
+                    let aliased = compiler.class(cid).imported_pkg != Some(pi as u32);
                     let ci = &mut compiler.classes[cid.0 as usize];
                     let (list, index) = if class_side {
                         (&mut ci.own_class_methods, &mut ci.own_class_method_at)
                     } else {
                         (&mut ci.own_methods, &mut ci.own_method_at)
                     };
+                    // On an ALIASED class, the two packages' method sets
+                    // union like a reopen -- but the SAME name in both is a
+                    // static redefinition the earlier package's typed sites
+                    // never guarded against.
+                    if aliased && index.contains_key(&im.name) {
+                        let sep = if class_side { "." } else { "#" };
+                        return Err(format!(
+                            "package '{}' defines `{taken_name}{sep}{}`, which \
+                             another merged package also defines; a cross-\
+                             package redefinition needs M4's patch rows -- \
+                             compile one of them from source",
+                            m.feature, im.name
+                        ));
+                    }
                     index.insert(im.name.clone(), list.len());
                     list.push(sid);
                 }
