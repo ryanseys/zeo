@@ -470,8 +470,20 @@ pub fn backend_is_aot() -> bool {
 /// rejection now surfaces as the compiler's own error on the child's
 /// stderr, which the comparison fails on like any other divergence.
 #[allow(clippy::too_many_arguments)] // the golden's sidecars, one per parameter
+/// Which road the spawned CLI takes: an explicit `--backend` (today's
+/// legs), or the DEFAULT cache road -- no backend flag, so the CLI's
+/// progcache-first path runs with auto-packaging on -- against a pinned
+/// program/package cache pair (the true spliced-vs-packaged leg).
+enum CliRoad<'a> {
+    Backend(&'a str),
+    PackagedCache {
+        programs: &'a Path,
+        packages: &'a Path,
+    },
+}
+
 fn run_via_cli(
-    backend: &str,
+    road: CliRoad<'_>,
     rb: &Path,
     source: &str,
     opts: &zeo::CompileOptions,
@@ -480,12 +492,24 @@ fn run_via_cli(
     run_cwd: &Path,
     extra_debug: Option<&str>,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
-    // The AOT leg links the archive, which a test run does not build.
-    if backend != "jit" {
+    // The AOT and cache roads link the archive, which a test run does not
+    // build.
+    if !matches!(road, CliRoad::Backend("jit")) {
         crate::paths::runtime_archive()?;
     }
     let mut cmd = Command::new(zeo_cli()?);
-    cmd.arg("--backend").arg(backend);
+    match road {
+        CliRoad::Backend(backend) => {
+            cmd.arg("--backend").arg(backend);
+        }
+        CliRoad::PackagedCache { programs, packages } => {
+            // ZEO_CACHE=1 beats an ambient off switch: this leg exists to
+            // run the cache road.
+            cmd.env("ZEO_CACHE", "1")
+                .env("ZEO_PROGRAM_CACHE", programs)
+                .env("ZEO_PACKAGE_CACHE", packages);
+        }
+    }
     // A differential-oracle child: the same compile with one debug flag
     // added (`no-typed-calls`, `packaged-ids`). APPENDS to an ambient
     // ZEO_DEBUG so the leg composes with other debug flags.
@@ -569,7 +593,7 @@ fn compile_and_run_debug(
         ..Default::default()
     };
     run_via_cli(
-        &golden_backend(),
+        CliRoad::Backend(&golden_backend()),
         rb,
         source,
         &opts,
@@ -578,6 +602,87 @@ fn compile_and_run_debug(
         run_cwd,
         extra_debug,
     )
+}
+
+/// [`compile_and_run`] down the CLI's default cache road with
+/// auto-packaging on -- the packaged diff leg's second child. Bundled gems
+/// the program requires link as precompiled packages (built into the suite
+/// cache on first use).
+fn compile_and_run_packaged(
+    rb: &Path,
+    source: &str,
+    args: &[String],
+    stdin: Option<&[u8]>,
+    run_cwd: &Path,
+    env: &SuiteEnv,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let mut load_roots = env.load_roots.clone();
+    if let Some(fixture) = &env.cext {
+        load_roots.push(cext_root(fixture)?);
+    }
+    let opts = zeo::CompileOptions {
+        input_path: Some(rb.to_path_buf()),
+        package_dirs: env.package_dirs.clone(),
+        load_roots,
+        ..Default::default()
+    };
+    let (programs, packages) = suite_pkg_cache()?;
+    run_via_cli(
+        CliRoad::PackagedCache {
+            programs: &programs,
+            packages: &packages,
+        },
+        rb,
+        source,
+        &opts,
+        args,
+        stdin,
+        run_cwd,
+        None,
+    )
+}
+
+/// The persistent cache pair the packaged leg pins, keyed on this BUILD of
+/// the compiler (CLI + runtime archive stamps): a rebuilt zeo must never
+/// link artifacts an older build compiled -- the package key's compiler
+/// identity is a stable version string, so the directory has to carry the
+/// distinction. Within one build the caches persist, so a gem packages
+/// once and every later golden links it.
+fn suite_pkg_cache() -> Result<(PathBuf, PathBuf), String> {
+    static DIRS: std::sync::OnceLock<Result<(PathBuf, PathBuf), String>> =
+        std::sync::OnceLock::new();
+    DIRS.get_or_init(|| {
+        let stamp = |p: &Path| -> Result<String, String> {
+            let m = std::fs::metadata(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            let t = m
+                .modified()
+                .map_err(|e| e.to_string())?
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            Ok(format!("{}-{}", t.as_millis(), m.len()))
+        };
+        let key = format!(
+            "{}_{}",
+            stamp(&zeo_cli()?)?,
+            stamp(&crate::paths::runtime_archive()?)?
+        );
+        let root = crate::paths::profile_dir()?.join("zeo-golden-pkgcache");
+        // One build's cache at a time: an older build's directory holds
+        // only artifacts nothing can link again.
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            for e in entries.flatten() {
+                if e.file_name() != *key.as_str() {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+        }
+        let dir = root.join(&key);
+        let pair = (dir.join("programs"), dir.join("packages"));
+        std::fs::create_dir_all(&pair.0).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&pair.1).map_err(|e| e.to_string())?;
+        Ok(pair)
+    })
+    .clone()
 }
 
 // ---- C extensions, built for the zeo side ----
@@ -926,6 +1031,50 @@ pub fn run_golden_env(
                 String::from_utf8_lossy(&norm(&off_out, rb, run_cwd)),
                 String::from_utf8_lossy(&norm(on_err, rb, run_cwd)),
                 String::from_utf8_lossy(&norm(&off_err, rb, run_cwd)),
+            )
+            .into());
+        }
+    }
+
+    // The TRUE spliced-vs-packaged leg (decision 11 at M6 scope): the same
+    // program runs a second time down the CLI's default cache road with
+    // auto-packaging on, against a persistent per-build suite cache --
+    // bundled gems it requires link as precompiled packages (built into
+    // the cache on first use), and the two runs must agree byte-for-byte.
+    // The first suite run seeds the cache; later goldens and later runs
+    // link. A refused package drops to splice inside the child, so both
+    // roads stay comparable corpus-wide.
+    if std::env::var_os("ZEO_GOLDEN_DIFF_PACKAGED").is_some_and(|v| v == "1")
+        && let Ok((on_out, on_err)) = &actual
+    {
+        let (pk_out, pk_err) =
+            compile_and_run_packaged(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env)
+                .map_err(|e| {
+                    format!(
+                        "{}: the packaged compile/run failed where the plain one ran: {e}",
+                        rb.display()
+                    )
+                })?;
+        if norm(on_out, rb, run_cwd) != norm(&pk_out, rb, run_cwd)
+            || norm(on_err, rb, run_cwd) != norm(&pk_err, rb, run_cwd)
+        {
+            return Err(format!(
+                "{}: PACKAGED DIVERGENCE -- the same program answers \
+                 differently spliced vs linked against packaged gems (a \
+                 miscompile in one road).
+--- spliced stdout ---
+{}
+--- packaged stdout ---
+{}
+--- spliced stderr ---
+{}
+--- packaged stderr ---
+{}",
+                rb.display(),
+                String::from_utf8_lossy(&norm(on_out, rb, run_cwd)),
+                String::from_utf8_lossy(&norm(&pk_out, rb, run_cwd)),
+                String::from_utf8_lossy(&norm(on_err, rb, run_cwd)),
+                String::from_utf8_lossy(&norm(&pk_err, rb, run_cwd)),
             )
             .into());
         }

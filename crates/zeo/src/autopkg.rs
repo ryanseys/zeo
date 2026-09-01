@@ -90,6 +90,9 @@ pub(crate) fn entry_for(
     roots: &[PathBuf],
     required: &[String],
 ) -> Option<(String, PathBuf)> {
+    if ext_backed(name) {
+        return None;
+    }
     required
         .iter()
         .cloned()
@@ -101,6 +104,15 @@ pub(crate) fn entry_for(
                 .find(|p| p.is_file())
                 .map(|p| (feature, p))
         })
+}
+
+/// A gem whose feature this build serves NATIVELY never auto-packages:
+/// its Ruby half rides the builtin's class tables, and a merged package
+/// would shadow the native rows (json's `module_function` singletons
+/// vanished behind exactly this). The same rule `zeo install`'s survey
+/// applies as its native-ext skip.
+fn ext_backed(name: &str) -> bool {
+    crate::lower::features::zeo_provides(&name.replace('-', "/"))
 }
 
 /// Whether the machine cache holds a servable artifact for the gem --
@@ -131,6 +143,9 @@ fn bundled_provider(feature: &str) -> Option<Candidate> {
     crate::parse::bundled_gem_roots()
         .into_iter()
         .find_map(|(name, roots)| {
+            if ext_backed(&name) {
+                return None;
+            }
             let entry = roots
                 .iter()
                 .map(|r| r.join(format!("{feature}.rb")))
@@ -357,7 +372,9 @@ pub(crate) fn consult_new(
             h.required
                 .iter()
                 .chain(&h.host_features)
-                .find(|f| !covered.contains(*f))
+                // A feature the build serves natively is covered by the
+                // host binary itself; its gem never packages (`ext_backed`).
+                .find(|f| !covered.contains(*f) && !crate::lower::features::zeo_provides(f))
                 .map(|f| (i, f.clone()))
         }) else {
             break;

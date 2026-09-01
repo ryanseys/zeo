@@ -190,9 +190,11 @@ pub fn linkable(rows: &[GemRow]) -> Vec<PathBuf> {
             .flat_map(|c| c.features.iter().map(String::as_str))
             .collect();
         let uncovered = cands.iter().position(|c| {
-            c.host_features
-                .iter()
-                .any(|f| !covered.contains(f.as_str()))
+            c.host_features.iter().any(|f| {
+                // A feature the build serves natively is covered by the
+                // host binary itself; no artifact exists for such a gem.
+                !covered.contains(f.as_str()) && !crate::lower::features::zeo_provides(f)
+            })
         });
         let Some(i) = uncovered else { break };
         cands.remove(i);

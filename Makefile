@@ -172,8 +172,8 @@ test-typed: all  ## every golden twice, with typed emission on and off, diffed
 # byte-for-byte. At M2 scope this proves the packaged CODEGEN (the id-table
 # loads and the variable patched-bit guard) over the whole corpus; when M6
 # compiles gems as packages, the leg widens to true spliced-vs-packaged.
-test-packaged: all  ## every golden twice, with packaged id codegen on and off, diffed
-	ZEO_GOLDEN_DIFF_PKGIDS=1 $(NEXTEST) -p zeo --test goldens --no-fail-fast
+test-packaged: all  ## every golden thrice: packaged id codegen diffed, and spliced vs packaged-gem link diffed
+	ZEO_GOLDEN_DIFF_PKGIDS=1 ZEO_GOLDEN_DIFF_PACKAGED=1 $(NEXTEST) -p zeo --test goldens --no-fail-fast
 
 # The pure-stdlib build: no C-extension machinery, and the lane-P gems
 # served by their pure-Ruby trees instead of the Rust extensions. This leg
