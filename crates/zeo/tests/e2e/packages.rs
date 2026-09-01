@@ -385,6 +385,50 @@ fn a_package_carrying_a_box_is_refused_by_name() {
 }
 
 #[test]
+fn a_packages_redefinition_timeline_survives_the_boundary() {
+    // Each package's redefinition rows sit at the front of the merged
+    // reflection table at a link-time stride; the mid-body call answers
+    // the FIRST body, later calls the second, and `source_location`
+    // proves the SECOND package's rows resolve past the first's.
+    // Verified against ruby 4.0.6.
+    let dir = scratch("redef");
+    let one = build_inline_package(
+        &dir,
+        "redefgem",
+        "class Redefgem\n  def face = :first\n  FIRST = Redefgem.new.face\n  def face(n = 0) = [:second, n]\nend\n",
+    );
+    let two = build_inline_package(
+        &dir,
+        "redefgem2",
+        "class Redefgem2\n  def voice = :quiet\n  EARLY = Redefgem2.new.voice\n  def voice = :loud\nend\n",
+    );
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"redefgem\"\nrequire \"redefgem2\"\n\
+         p Redefgem::FIRST\np Redefgem2::EARLY\n\
+         p Redefgem.new.face(2)\np Redefgem2.new.voice\n\
+         p Redefgem.new.method(:face).arity\n\
+         p Redefgem2.instance_method(:voice).source_location&.last\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&one)
+        .arg("--experimental-use-pkg")
+        .arg(&two)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(
+        ok(&mut Command::new(&bin)),
+        ":first\n:quiet\n[:second, 2]\n:loud\n-1\n4\n"
+    );
+}
+
+#[test]
 fn a_host_includes_and_extends_a_packaged_module() {
     // A module's instance methods ride the manifest's value-channel rows;
     // the host's includer flattens them onto itself through the exported

@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped when the manifest schema changes shape. Independent of
 /// `zeo_abi::ABI_VERSION`: the manifest is a compiler-to-compiler file.
-pub const MANIFEST_VERSION: u32 = 5;
+pub const MANIFEST_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -70,6 +70,11 @@ pub struct Manifest {
     pub reg: Vec<MRegRow>,
     pub foreign: Vec<(u32, String)>,
     pub meta: Vec<MMetaRow>,
+    /// One row per BODY of a method with an observable redefinition
+    /// timeline, indexed by this package's `REG_BOOT_REDEF` rows and its
+    /// positional installs. The merged table puts every package's rows at
+    /// the front, in merge order; the host's own follow.
+    pub redef_metas: Vec<MMetaRow>,
     /// `(feature spelling, unit fn symbol)` -- both spellings a require can
     /// build, exactly as `UnitRow`s carry them.
     pub units: Vec<(String, String)>,
@@ -484,6 +489,7 @@ mod tests {
                 }],
                 ..MIfaceClass::default()
             }],
+            redef_metas: vec![],
         }
     }
 

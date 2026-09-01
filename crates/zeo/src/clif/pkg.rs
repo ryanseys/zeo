@@ -73,9 +73,6 @@ pub(crate) fn finish_package(
     if compiler.hir.boxes > 0 {
         return refuse("Ruby::Box");
     }
-    if !rows.redef_metas.is_empty() {
-        return refuse("an observable redefinition timeline");
-    }
     // Value-channel rows on the package's OWN classes (an ordinary
     // module's instance methods) travel in the manifest and remap like
     // any other row. A row on a BUILTIN (a reopen) or on `Object` (a
@@ -315,19 +312,8 @@ pub(crate) fn finish_package(
             })
             .collect::<CResult<_>>()?,
         foreign: rows.foreign.to_vec(),
-        meta: rows
-            .meta
-            .iter()
-            .map(|r| MMetaRow {
-                class: r.class,
-                singleton: r.singleton,
-                name: r.name.clone(),
-                params: r.params.clone(),
-                file: r.file.clone(),
-                line: r.line,
-                aliased_from: r.aliased_from.clone(),
-            })
-            .collect(),
+        meta: rows.meta.iter().map(m_meta_row).collect(),
+        redef_metas: rows.redef_metas.iter().map(m_meta_row).collect(),
         units: rows
             .unit
             .iter()
@@ -374,6 +360,18 @@ pub(crate) fn finish_package(
         })
 }
 
+fn m_meta_row(r: &MetaRowSpec) -> MMetaRow {
+    MMetaRow {
+        class: r.class,
+        singleton: r.singleton,
+        name: r.name.clone(),
+        params: r.params.clone(),
+        file: r.file.clone(),
+        line: r.line,
+        aliased_from: r.aliased_from.clone(),
+    }
+}
+
 /// The host side: append each merged manifest's rows to this program's
 /// own, declaring every named symbol as an import. A no-op when nothing
 /// merges, which keeps ordinary compiles byte-identical.
@@ -390,6 +388,7 @@ pub(crate) fn merge_rows(
     reg_rows: &mut Vec<RegRowSpec>,
     foreign: &mut Vec<(u32, String)>,
     meta_rows: &mut Vec<MetaRowSpec>,
+    redef_meta_rows: &mut Vec<MetaRowSpec>,
     unit_rows: &mut Vec<(String, FuncId)>,
 ) -> CResult<()> {
     if analyzed.compiler.hir.pkg_merge.is_empty() {
@@ -473,6 +472,7 @@ pub(crate) fn merge_rows(
     let mut next_stride: u32 = 0;
     let mut next_regexp: u32 = 0;
     let mut next_flip_flop: u32 = 0;
+    let mut next_redef: u32 = 0;
     for (pi, m) in manifests.into_iter().enumerate() {
         let first = m.first_class_id;
         let stride = next_stride;
@@ -481,6 +481,8 @@ pub(crate) fn merge_rows(
         next_regexp += m.n_regexp_sites;
         let flip_flop_stride = next_flip_flop;
         next_flip_flop += m.n_flip_flops;
+        let redef_stride = next_redef;
+        next_redef += m.redef_metas.len() as u32;
         // Local id -> final id. An INTERFACE-REGISTERED class already has
         // its host id (`pkg_class_map`, minted right after the bootstrap
         // band); only the unregistered residue -- singleton surrogates --
@@ -513,6 +515,7 @@ pub(crate) fn merge_rows(
         bases[super::module::BASE_UNIT as usize] = stride;
         bases[super::module::BASE_REGEXP as usize] = regexp_stride;
         bases[super::module::BASE_FLIPFLOP as usize] = flip_flop_stride;
+        bases[super::module::BASE_REDEF as usize] = redef_stride;
         define_u32s(em, &format!("{}_bases", m.prefix), &bases)?;
         if !m.callers.is_empty() {
             let callers: Vec<u32> = m.callers.iter().map(|&c| rb(c)).collect();
@@ -598,6 +601,9 @@ pub(crate) fn merge_rows(
                 zeo_abi::abi::REG_CONCEAL_METHOD => {
                     r.ids.iter().map(|&i| i + stride).collect()
                 }
+                zeo_abi::abi::REG_BOOT_REDEF => {
+                    r.ids.iter().map(|&i| i + redef_stride).collect()
+                }
                 _ => r.ids,
             };
             // The shared-bootstrap rows both sides emit (a builtin's boot
@@ -663,6 +669,24 @@ pub(crate) fn merge_rows(
                 line: r.line,
                 aliased_from: r.aliased_from,
             });
+        }
+        // Redef-meta rows sit at the FRONT of the one table, package by
+        // package in merge order -- the host's own were indexed past the
+        // total when its map was filled, so document order needs no
+        // rewrite there.
+        for (i, r) in m.redef_metas.into_iter().enumerate() {
+            redef_meta_rows.insert(
+                (redef_stride as usize) + i,
+                MetaRowSpec {
+                    class: rb(r.class),
+                    singleton: r.singleton,
+                    name: r.name,
+                    params: r.params,
+                    file: r.file,
+                    line: r.line,
+                    aliased_from: r.aliased_from,
+                },
+            );
         }
         for (spelling, sym) in m.units {
             let f = import(em, &sym, &usig)?;

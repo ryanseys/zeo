@@ -170,7 +170,8 @@ pub(crate) enum IdMode {
 pub(crate) const BASE_UNIT: u32 = 0;
 pub(crate) const BASE_REGEXP: u32 = 1;
 pub(crate) const BASE_FLIPFLOP: u32 = 2;
-pub(crate) const N_BASES: usize = 3;
+pub(crate) const BASE_REDEF: u32 = 3;
+pub(crate) const N_BASES: usize = 4;
 
 /// pool, and the capi import cache.
 pub(crate) struct Emitter {
@@ -247,6 +248,9 @@ pub(crate) struct Emitter {
     /// The first flip-flop latch id THIS compile may use, on
     /// `unit_base`'s rule: merged packages own `[0, flip_flop_base)`.
     pub flip_flop_base: u32,
+    /// The first redef-meta row THIS compile may use, on the same rule;
+    /// the merged packages' rows sit at the front of the one table.
+    pub redef_base: u32,
     pub syms: super::statics::SymPool,
     rodata: Vec<u8>,
     rodata_offsets: HashMap<Vec<u8>, u32>,
@@ -497,6 +501,7 @@ impl Emitter {
             bases_id: None,
             unit_base: 0,
             flip_flop_base: 0,
+            redef_base: 0,
             callsites: Vec::new(),
             cm_sites_id,
             cm_sites: 0,

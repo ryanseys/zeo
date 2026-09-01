@@ -632,6 +632,13 @@ impl<'e, 'f> Fx<'e, 'f> {
         self.strided_value(super::module::BASE_FLIPFLOP, local, immediate)
     }
 
+    /// A redef-meta row index as a machine value. The emitter's map
+    /// already carries this compile's base, so the immediate is the map
+    /// value itself; a PACKAGE adds the loaded stride instead.
+    pub fn redef_meta_value(&mut self, index: u32) -> ir::Value {
+        self.strided_value(super::module::BASE_REDEF, index, index)
+    }
+
     /// The patched-class bitmap's base address, on [`Fx::gates_base`]'s
     /// declare-once/materialize-per-site rule.
     pub fn patched_bits_base(&mut self) -> ir::Value {

@@ -130,6 +130,13 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         .iter()
         .map(|m| m.n_flip_flops)
         .sum();
+    em.redef_base = analyzed
+        .compiler
+        .hir
+        .pkg_merge
+        .iter()
+        .map(|m| m.redef_metas.len() as u32)
+        .sum();
     // A package reads its own-band class ids through the id-translation
     // table the host fills -- position independence. The `packaged-ids`
     // debug flag forces the same emission program-wide over an identity
@@ -206,8 +213,10 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         // Each body's reflection row rides the same key. It is the half of a
         // redefinition timeline the overlay did not carry: the body installed
         // where it stands, and `#arity`/`#parameters`/`#source_location`
-        // still answering from the LAST one.
-        em.redef_metas.insert((m.owner.0, m.scope.0), i as u32);
+        // still answering from the LAST one. Merged packages' rows sit at
+        // the front of the one table, so this compile's start past them.
+        em.redef_metas
+            .insert((m.owner.0, m.scope.0), em.redef_base + i as u32);
     }
     for def in &defs {
         let func = em.methods[&def.name].body;
@@ -999,6 +1008,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     let mut obj_rows = obj_rows;
     let mut cm_rows = cm_rows;
     let mut unit_rows = unit_rows;
+    let mut redef_metas = redef_metas;
     super::pkg::merge_rows(
         em,
         analyzed,
@@ -1010,6 +1020,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         &mut reg_rows,
         &mut foreign,
         &mut meta_rows,
+        &mut redef_metas,
         &mut unit_rows,
     )?;
     // A package build writes those same rows to a

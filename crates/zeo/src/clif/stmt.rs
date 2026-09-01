@@ -978,7 +978,7 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             // parameters, source location -- installs at the same position,
             // or the window keeps answering for the last body written.
             let meta = fx.em.redef_metas[&(class, scope)];
-            let idx = fx.b.ins().iconst(types::I32, i64::from(meta));
+            let idx = fx.redef_meta_value(meta);
             fx.call("zeo_rt_install_meta_row", &[idx]);
             // A `def` carries a VISIBILITY as well as a body, and both belong
             // at the `def`'s own position. This mark is also what CLEARS an
