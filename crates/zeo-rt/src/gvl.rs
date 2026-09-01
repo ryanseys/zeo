@@ -518,8 +518,14 @@ pub fn process_gvl() -> &'static Arc<Gvl> {
 /// anyone. Clearing it costs a lock per container access and is never wrong.
 ///
 /// Answers whether the Gvl actually armed.
+/// The one line every GVL arming logs. A CONSTANT so the instrument that
+/// asserts the zeo-native stdlib never arms (pure_gems e2e) and this
+/// producer cannot drift apart.
+pub const CEXT_ARMED_SENTINEL: &str =
+    "a C extension armed the GVL; the lock-free path is off process-wide";
+
 pub fn arm_for_cext() -> bool {
-    tracing::debug!("a C extension armed the GVL; the lock-free path is off process-wide");
+    tracing::debug!("{CEXT_ARMED_SENTINEL}");
     clear_sole_thread();
     MULTI_THREADED.store(true, Ordering::Release);
     // A `false` here is not a failure: the program asked for the parallel

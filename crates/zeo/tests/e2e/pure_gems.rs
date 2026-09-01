@@ -151,6 +151,58 @@ fn the_monitor_ruby_half_passes_the_upstream_suite() {
     );
 }
 
+/// The zeo-native stdlib NEVER arms the GVL: a program requiring the whole
+/// surface runs with the parallel default and the sole-thread claim intact.
+/// The sentinel is the runtime's own arming log line (a shared constant, so
+/// producer and instrument cannot drift), watched at debug level. Only a
+/// genuine third-party C extension may print it.
+#[test]
+fn the_zeo_native_stdlib_never_arms_the_gvl() {
+    let result = crate::support::run_ruby_configured(
+        r#"
+        require "json"
+        require "yaml"
+        require "date"
+        require "zlib"
+        require "digest"
+        require "openssl"
+        require "socket"
+        require "stringio"
+        require "strscan"
+        require "base64"
+        require "securerandom"
+        require "monitor"
+        require "etc"
+        require "fcntl"
+        require "bigdecimal"
+        require "nkf"
+        require "syslog"
+        require "io/console"
+        require "erb"
+        require "csv"
+        require "time"
+        require "tempfile"
+        require "fileutils"
+        require "logger"
+        require "uri"
+        puts "loaded"
+        "#,
+        &[("ZEO_LOG", "debug")],
+        &[],
+    );
+    assert!(
+        result.status.success(),
+        "the stdlib program failed: {}",
+        result.stderr
+    );
+    assert!(result.stdout.contains("loaded"), "stdout: {}", result.stdout);
+    assert!(
+        !result.stderr.contains(zeo_rt::gvl::CEXT_ARMED_SENTINEL),
+        "requiring the zeo-native stdlib armed the GVL:\n{}",
+        result.stderr
+    );
+}
+
 /// The `-I` really shadows ruby's own strscan: the loaded feature is the
 /// pure tree's `.rb`, and no native strscan library loads beside it. Without
 /// this, a miss in the pure tree would fall through to the C gem and the
