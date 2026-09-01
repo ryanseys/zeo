@@ -2112,12 +2112,18 @@ ruby_class! {
     private def "initialize" params "year = nil, mon = nil, mday = nil, hour = nil, min = nil, sec = nil, zone = nil, in: nil, precision: 9" (_recv, *_args, &_block) {
         Err(type_error!("already initialized Time"))
     }
-    private def "initialize_copy"(_recv, other) {
+    private def "initialize_copy"(recv, other) {
         // The SOURCE is read first: copying a blank Time is refused for being
         // blank, not for the target being built already. `Time.allocate.dup`
         // says `uninitialized Time` in ruby, and the order is the only thing
         // that decides which message comes out.
         recv_time(other)?;
+        // dup/clone's fresh copy already carries the source's payload
+        // (`dup_object`), which is what CRuby's init_copy fills there. Only
+        // the direct spelling on a built receiver refuses.
+        if crate::builtins::kernel::in_copy_hook() {
+            return Ok(recv.clone());
+        }
         Err(type_error!("already initialized Time"))
     }
 

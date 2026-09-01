@@ -1258,9 +1258,27 @@ fn copy_via_hook(
                 RubyValue::Bool(f),
             )])));
         }
-        crate::dispatch::send_value(&copy, hook, &args, None)?;
+        // The depth marker tells a native `initialize_copy` row this receiver
+        // is dup/clone's FRESH copy -- CRuby's init_copy fills an
+        // uninitialized allocation there, a job `dup_object` already did, so
+        // the row must accept it while the direct spelling on a built
+        // receiver keeps refusing (`Time#dup` raised through its own row).
+        COPY_HOOK_DEPTH.with(|d| d.set(d.get() + 1));
+        let sent = crate::dispatch::send_value(&copy, hook, &args, None);
+        COPY_HOOK_DEPTH.with(|d| d.set(d.get() - 1));
+        sent?;
     }
     Ok(copy)
+}
+
+thread_local! {
+    static COPY_HOOK_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether the current call sits inside `dup`/`clone`'s copy-hook send --
+/// the receiver is the fresh copy, not a built object. See `copy_via_hook`.
+pub fn in_copy_hook() -> bool {
+    COPY_HOOK_DEPTH.with(|d| d.get()) > 0
 }
 
 /// The `require`/`require_relative` runtime body, shared by the Kernel rows
