@@ -21,13 +21,184 @@ fn type_err(what: &str, v: &RubyValue) -> Signal {
     type_error!("cannot convert {got} into an FFI {what}")
 }
 
-/// A Ruby value bound to a C integer argument (`:int`/`:long`/`:uintN`/…). The
-/// caller narrows the returned `i64` to the exact C width with an `as` cast.
+/// An Integer where the runtime wants a plain machine word (a pointer
+/// offset, an element count). A C-typed ARGUMENT goes through [`to_c_int`],
+/// which knows the declared type's range.
 pub fn to_i64(v: &RubyValue) -> Result<i64, Signal> {
     match v {
         RubyValue::Int(i) => Ok(*i),
         _ => Err(type_err("integer", v)),
     }
+}
+
+/// A Ruby value bound to a C integer of `kind`, as the two's-complement bit
+/// pattern the slot stores (the caller narrows with `as`). The gem reaches C
+/// through CRuby's `NUM2*` converters, and THE CONVERTER decides both the
+/// accepted range and the error text, not the slot's width: every signed
+/// type up to 32 bits goes through `NUM2INT` (so a `:char` past `INT_MAX`
+/// raises and one past 127 truncates), the unsigned ones through `NUM2UINT`,
+/// `:long`/`:ulong` through `NUM2LONG`/`NUM2ULONG`, and the exact 64-bit
+/// spellings through `NUM2LL`/`NUM2ULL`. The unsigned converters WRAP a
+/// negative value, which is how `-1` reaches C as `UINT_MAX`. Every message
+/// below is oracle-verified against the gem.
+#[cfg(feature = "ext-ffi")]
+pub fn to_c_int(kind: FfiKind, v: &RubyValue) -> Result<u64, Signal> {
+    use FfiKind::*;
+    Ok(match kind {
+        I8 | I16 | I32 => num2int(v)? as u64,
+        U8 | U16 | U32 => num2uint(v)?,
+        Long => num2long(v)? as u64,
+        ULong => num2ulong(v)?.0,
+        I64 => num2ll(v)? as u64,
+        U64 => num2ull(v)?,
+        Void | F32 | F64 | Bool | Str | Pointer => return Err(type_err("integer", v)),
+    })
+}
+
+/// An unsigned 64-bit C value as a Ruby Integer: past `i64::MAX` it is a
+/// Bignum, which is what `:ulong`/`:uint64` returns above 2**63 are.
+#[cfg(feature = "ext-ffi")]
+pub fn from_c_uint(u: u64) -> RubyValue {
+    match i64::try_from(u) {
+        Ok(i) => RubyValue::Int(i),
+        Err(_) => crate::builtins::integer::int_value(num_bigint::BigInt::from(u)),
+    }
+}
+
+/// `FLOAT_OUT_OF_RANGE`: CRuby prints the float with `%-.10g`.
+#[cfg(feature = "ext-ffi")]
+fn float_range(f: f64, of: &str) -> Signal {
+    crate::builtins::range_error!(
+        "float {} out of range of {of}",
+        crate::builtins::convert::fmt_g_prec(f, 10)
+    )
+}
+
+/// `rb_num2long`: a Float truncates when it fits `[-2**63, 2**63)`, `nil`
+/// has its own wording, a Bignum never fits, anything else goes through
+/// `to_int` first.
+#[cfg(feature = "ext-ffi")]
+fn num2long(v: &RubyValue) -> Result<i64, Signal> {
+    const TWO_63: f64 = 9_223_372_036_854_775_808.0;
+    match v {
+        RubyValue::Int(i) => Ok(*i),
+        RubyValue::Float(f) if f.is_finite() && (-TWO_63..TWO_63).contains(f) => Ok(*f as i64),
+        RubyValue::Float(f) => Err(float_range(*f, "integer")),
+        RubyValue::BigInt(_) => Err(bignum_too_big("long")),
+        RubyValue::Nil => Err(type_error!("no implicit conversion from nil to integer")),
+        other => num2long(&crate::builtins::convert::to_int(other)?),
+    }
+}
+
+/// `rb_num2int`: `rb_num2long`, then the `int` range check.
+#[cfg(feature = "ext-ffi")]
+fn num2int(v: &RubyValue) -> Result<i64, Signal> {
+    let n = num2long(v)?;
+    if n < i64::from(i32::MIN) {
+        return Err(too_small_to_convert(n, "int"));
+    }
+    if n > i64::from(i32::MAX) {
+        return Err(too_big_to_convert(n as u64, "int"));
+    }
+    Ok(n)
+}
+
+/// `rb_num2ulong`: the bit pattern plus whether the value was negative (the
+/// `wrap` flag `rb_num2uint`'s range check needs). A Float is accepted on
+/// `[-2**63, 2**64)`; a negative Bignum wraps while its magnitude fits a
+/// `long` and is "out of range" beyond that, a Bignum too wide for the slot
+/// is "too big" on either side.
+#[cfg(feature = "ext-ffi")]
+fn num2ulong(v: &RubyValue) -> Result<(u64, bool), Signal> {
+    num2unsigned(v, "unsigned long", "integer")
+}
+
+#[cfg(feature = "ext-ffi")]
+fn num2unsigned(v: &RubyValue, name: &str, float_of: &str) -> Result<(u64, bool), Signal> {
+    const TWO_63: f64 = 9_223_372_036_854_775_808.0;
+    const TWO_64: f64 = 18_446_744_073_709_551_616.0;
+    match v {
+        RubyValue::Int(i) => Ok((*i as u64, *i < 0)),
+        RubyValue::Float(f) if f.is_finite() && (-TWO_63..TWO_64).contains(f) => {
+            let bits = if *f >= 0.0 {
+                *f as u64
+            } else {
+                (*f as i64) as u64
+            };
+            Ok((bits, *f <= -1.0))
+        }
+        RubyValue::Float(f) => Err(float_range(*f, float_of)),
+        RubyValue::BigInt(b) => {
+            let Some(mag) = num_traits::ToPrimitive::to_u64(b.magnitude()) else {
+                return Err(bignum_too_big(name));
+            };
+            if b.sign() != num_bigint::Sign::Minus {
+                Ok((mag, false))
+            } else if mag <= 1 << 63 {
+                Ok((mag.wrapping_neg(), true))
+            } else {
+                Err(crate::builtins::range_error!(
+                    "bignum out of range of {name}"
+                ))
+            }
+        }
+        other => num2unsigned(&crate::builtins::convert::to_int(other)?, name, float_of),
+    }
+}
+
+/// `rb_num2uint`: `rb_num2ulong`, then the `unsigned int` range check --
+/// a negative value may reach down to `INT_MIN` (it wraps), a positive one
+/// up to `UINT_MAX`.
+#[cfg(feature = "ext-ffi")]
+fn num2uint(v: &RubyValue) -> Result<u64, Signal> {
+    let (bits, negative) = num2ulong(v)?;
+    if negative && (bits as i64) < i64::from(i32::MIN) {
+        return Err(too_small_to_convert(bits as i64, "unsigned int"));
+    }
+    if !negative && bits > u64::from(u32::MAX) {
+        return Err(too_big_to_convert(bits, "unsigned int"));
+    }
+    Ok(bits)
+}
+
+/// `rb_num2ll`: as `rb_num2long`, with `long long` in every message and the
+/// terse type errors of its own it raises before `to_int`.
+#[cfg(feature = "ext-ffi")]
+fn num2ll(v: &RubyValue) -> Result<i64, Signal> {
+    const TWO_63: f64 = 9_223_372_036_854_775_808.0;
+    match v {
+        RubyValue::Nil => Err(type_error!("no implicit conversion from nil")),
+        RubyValue::Int(i) => Ok(*i),
+        RubyValue::Float(f) if f.is_finite() && (-TWO_63..TWO_63).contains(f) => Ok(*f as i64),
+        RubyValue::Float(f) => Err(float_range(*f, "long long")),
+        RubyValue::BigInt(_) => Err(bignum_too_big("long long")),
+        RubyValue::Str(_) => Err(type_error!("no implicit conversion from string")),
+        RubyValue::Bool(_) => Err(type_error!("no implicit conversion from boolean")),
+        other => num2ll(&crate::builtins::convert::to_int(other)?),
+    }
+}
+
+/// The gem's `unsigned long long` conversion: `rb_num2ull`'s numeric rules,
+/// with a non-numeric value going through `to_int` first (so `nil` gets the
+/// generic wording, unlike `rb_num2ll`).
+#[cfg(feature = "ext-ffi")]
+fn num2ull(v: &RubyValue) -> Result<u64, Signal> {
+    Ok(num2unsigned(v, "unsigned long long", "unsigned long long")?.0)
+}
+
+#[cfg(feature = "ext-ffi")]
+fn bignum_too_big(name: &str) -> Signal {
+    crate::builtins::range_error!("bignum too big to convert into '{name}'")
+}
+
+#[cfg(feature = "ext-ffi")]
+fn too_big_to_convert(n: u64, name: &str) -> Signal {
+    crate::builtins::range_error!("integer {n} too big to convert to '{name}'")
+}
+
+#[cfg(feature = "ext-ffi")]
+fn too_small_to_convert(n: i64, name: &str) -> Signal {
+    crate::builtins::range_error!("integer {n} too small to convert to '{name}'")
 }
 
 /// A Ruby value bound to a C float argument (`:float`/`:double`). An Integer is
@@ -313,11 +484,11 @@ fn kind_type(k: FfiKind) -> libffi::middle::Type {
         I8 => Type::i8(),
         I16 => Type::i16(),
         I32 => Type::i32(),
-        I64 => Type::i64(),
+        I64 | Long => Type::i64(),
         U8 => Type::u8(),
         U16 => Type::u16(),
         U32 => Type::u32(),
-        U64 => Type::u64(),
+        U64 | ULong => Type::u64(),
         F32 => Type::f32(),
         F64 => Type::f64(),
         // A C `_Bool` is one byte; `^`/pointer are register-sized pointers.
@@ -327,12 +498,15 @@ fn kind_type(k: FfiKind) -> libffi::middle::Type {
 }
 
 /// The C default argument promotions applied to a variadic argument: an
-/// integer narrower than `int` widens to `int`, and `float` widens to `double`.
+/// integer narrower than `int` widens to `int` -- keeping its signedness,
+/// as the gem's `Variadic.c` does, so a `:uint8` converts as an `unsigned
+/// int` -- and `float` widens to `double`.
 #[cfg(feature = "ext-ffi")]
 fn promote(k: FfiKind) -> FfiKind {
     use FfiKind::*;
     match k {
-        I8 | I16 | U8 | U16 | Bool => I32,
+        I8 | I16 | Bool => I32,
+        U8 | U16 => U32,
         F32 => F64,
         other => other,
     }
@@ -452,14 +626,14 @@ fn marshal_va(kind: FfiKind, v: &RubyValue) -> Result<VaVal, Signal> {
         _owner: None,
     };
     Ok(match kind {
-        I8 => plain(VaInner::I8(to_i64(v)? as i8)),
-        I16 => plain(VaInner::I16(to_i64(v)? as i16)),
-        I32 => plain(VaInner::I32(to_i64(v)? as i32)),
-        I64 => plain(VaInner::I64(to_i64(v)?)),
-        U8 => plain(VaInner::U8(to_i64(v)? as u8)),
-        U16 => plain(VaInner::U16(to_i64(v)? as u16)),
-        U32 => plain(VaInner::U32(to_i64(v)? as u32)),
-        U64 => plain(VaInner::U64(to_i64(v)? as u64)),
+        I8 => plain(VaInner::I8(to_c_int(kind, v)? as i8)),
+        I16 => plain(VaInner::I16(to_c_int(kind, v)? as i16)),
+        I32 => plain(VaInner::I32(to_c_int(kind, v)? as i32)),
+        I64 | Long => plain(VaInner::I64(to_c_int(kind, v)? as i64)),
+        U8 => plain(VaInner::U8(to_c_int(kind, v)? as u8)),
+        U16 => plain(VaInner::U16(to_c_int(kind, v)? as u16)),
+        U32 => plain(VaInner::U32(to_c_int(kind, v)? as u32)),
+        U64 | ULong => plain(VaInner::U64(to_c_int(kind, v)?)),
         F32 => plain(VaInner::F32(to_f64(v)? as f32)),
         F64 => plain(VaInner::F64(to_f64(v)?)),
         Bool => plain(VaInner::I32(i32::from(to_bool(v)))),
@@ -1026,11 +1200,11 @@ unsafe fn call_and_wrap(
             I8 => RubyValue::Int(cif.call::<i8>(code, args) as i64),
             I16 => RubyValue::Int(cif.call::<i16>(code, args) as i64),
             I32 => RubyValue::Int(cif.call::<i32>(code, args) as i64),
-            I64 => RubyValue::Int(cif.call::<i64>(code, args)),
+            I64 | Long => RubyValue::Int(cif.call::<i64>(code, args)),
             U8 => RubyValue::Int(cif.call::<u8>(code, args) as i64),
             U16 => RubyValue::Int(cif.call::<u16>(code, args) as i64),
             U32 => RubyValue::Int(cif.call::<u32>(code, args) as i64),
-            U64 => RubyValue::Int(cif.call::<u64>(code, args) as i64),
+            U64 | ULong => from_c_uint(cif.call::<u64>(code, args)),
             F32 => RubyValue::Float(cif.call::<f32>(code, args) as f64),
             F64 => RubyValue::Float(cif.call::<f64>(code, args)),
             Bool => RubyValue::Bool(cif.call::<u8>(code, args) != 0),
@@ -1210,11 +1384,11 @@ unsafe fn read_c_arg(kind: FfiKind, slot: *const c_void) -> RubyValue {
             I8 => RubyValue::Int(*(slot as *const i8) as i64),
             I16 => RubyValue::Int(*(slot as *const i16) as i64),
             I32 => RubyValue::Int(*(slot as *const i32) as i64),
-            I64 => RubyValue::Int(*(slot as *const i64)),
+            I64 | Long => RubyValue::Int(*(slot as *const i64)),
             U8 => RubyValue::Int(*(slot as *const u8) as i64),
             U16 => RubyValue::Int(*(slot as *const u16) as i64),
             U32 => RubyValue::Int(*(slot as *const u32) as i64),
-            U64 => RubyValue::Int(*(slot as *const u64) as i64),
+            U64 | ULong => from_c_uint(*(slot as *const u64)),
             F32 => RubyValue::Float(*(slot as *const f32) as f64),
             F64 => RubyValue::Float(*(slot as *const f64)),
             Bool => RubyValue::Bool(*(slot as *const u8) != 0),
@@ -1225,7 +1399,10 @@ unsafe fn read_c_arg(kind: FfiKind, slot: *const c_void) -> RubyValue {
     }
 }
 
-/// Convert the Proc's Ruby result to a machine-word C return value.
+/// Convert the Proc's Ruby result to a machine-word C return value. The gem
+/// zero-fills the slot for `nil` and otherwise converts through the return
+/// type's `NUM2*`, so an out-of-range Integer raises from the attached call
+/// the callback ran under (stashed here, like an exception from the body).
 #[cfg(feature = "ext-ffi")]
 fn ruby_to_word(kind: FfiKind, v: &RubyValue) -> libffi::low::ffi_arg {
     use FfiKind::*;
@@ -1235,7 +1412,14 @@ fn ruby_to_word(kind: FfiKind, v: &RubyValue) -> libffi::low::ffi_arg {
             .unwrap_or(0),
         Bool => libffi::low::ffi_arg::from(to_bool(v)),
         Void => 0,
-        _ => to_i64(v).unwrap_or(0) as libffi::low::ffi_arg,
+        _ if v.is_nil() => 0,
+        _ => match to_c_int(kind, v) {
+            Ok(bits) => bits as libffi::low::ffi_arg,
+            Err(sig) => {
+                store_callback_error(sig);
+                0
+            }
+        },
     }
 }
 

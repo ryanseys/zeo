@@ -379,15 +379,18 @@ fn read_int_m(
     Ok(slot_value(unsafe { p.read_int(off, bytes, signed) }, bytes, signed))
 }
 
-/// `write_*(value)` (offset 0) / `put_*(offset, value)`.
+/// `write_*(value)` (offset 0) / `put_*(offset, value)`. `kind` is the
+/// accessor's own spelling, not just a width: `write_long` and
+/// `write_int64` store the same eight bytes but convert through different
+/// `NUM2*`s, whose out-of-range messages name different C types.
 fn write_int_m(
     recv: &RubyValue,
     off: usize,
     value: &RubyValue,
-    bytes: usize,
-    signed: bool,
+    kind: crate::ffi::FfiKind,
 ) -> Result<RubyValue, Signal> {
-    let v = to_slot_int(value, bytes, signed)?;
+    let v = crate::ffi::to_c_int(kind, value)? as i64;
+    let bytes = kind.size();
     let p = ptr_of(recv);
     p.check_bounds(off, bytes)?;
     unsafe { p.write_int(off, bytes, v) };
@@ -398,83 +401,10 @@ fn write_int_m(
 /// `i64`, but a `uint64` past 2**63 does not: it comes back with the sign bit
 /// set and has to be re-read unsigned, which makes it a Bignum.
 fn slot_value(raw: i64, bytes: usize, signed: bool) -> RubyValue {
-    if bytes == 8 && !signed && raw < 0 {
-        return crate::builtins::integer::int_value(num_bigint::BigInt::from(raw as u64));
+    if bytes == 8 && !signed {
+        return crate::ffi::from_c_uint(raw as u64);
     }
     RubyValue::Int(raw)
-}
-
-/// The bit pattern an integer slot stores, converted the way the gem does.
-///
-/// The gem reaches C through `NUM2INT`/`NUM2UINT` for a 1-, 2- or 4-byte
-/// slot and `NUM2LL`/`NUM2ULL` for an 8-byte one, so THE SLOT'S WIDTH IS NOT
-/// THE RANGE CHECKED: a 1- or 2-byte slot truncates whatever the 32-bit
-/// converter accepted, while a 4-byte one refuses past the 32-bit limits.
-/// The unsigned converters take a negative number and wrap it, which is how
-/// `write_uint64(-1)` reads back as 2**64-1.
-fn to_slot_int(value: &RubyValue, bytes: usize, signed: bool) -> Result<i64, Signal> {
-    let (name, low, high) = match (bytes, signed) {
-        (8, true) => ("long long", -(1i128 << 63), 1i128 << 63),
-        (8, false) => ("unsigned long long", -(1i128 << 63), 1i128 << 64),
-        (_, true) => ("int", -(1i128 << 31), 1i128 << 31),
-        (_, false) => ("unsigned int", -(1i128 << 31), 1i128 << 32),
-    };
-    let n = match value {
-        // A Float truncates toward zero, and names ITSELF when it is out of
-        // range -- CRuby's `FLOAT_OUT_OF_RANGE` prints it with `%-.10g`.
-        RubyValue::Float(f) => {
-            let n = (!f.is_nan() && f.trunc().abs() < 1.8e19).then(|| f.trunc() as i128);
-            match n.filter(|n| (low..high).contains(n)) {
-                Some(n) => n,
-                None => {
-                    return Err(crate::builtins::range_error!(
-                        "float {} out of range of {name}",
-                        crate::builtins::convert::fmt_g_prec(*f, 10)
-                    ));
-                }
-            }
-        }
-        _ => {
-            let n = crate::builtins::convert::to_int(value)?;
-            let n = match &n {
-                RubyValue::Int(i) => i128::from(*i),
-                RubyValue::BigInt(b) => match i128::try_from(b.as_ref()) {
-                    Ok(n) => n,
-                    // Past i128 there is no doubt which side it fell off.
-                    Err(_) => return Err(bignum_range(name, b.as_ref().sign())),
-                },
-                _ => 0,
-            };
-            if !(low..high).contains(&n) {
-                return Err(if bytes == 8 {
-                    bignum_range(
-                        name,
-                        if n < low {
-                            num_bigint::Sign::Minus
-                        } else {
-                            num_bigint::Sign::Plus
-                        },
-                    )
-                } else {
-                    let side = if n < low { "small" } else { "big" };
-                    crate::builtins::range_error!("integer {n} too {side} to convert to '{name}'")
-                });
-            }
-            n
-        }
-    };
-    Ok(n as u64 as i64)
-}
-
-/// The two messages CRuby's `rb_num2ll`/`rb_num2ull` raise for a bignum. The
-/// unsigned converter has a message of its own for the NEGATIVE side, where
-/// the signed one says "too big" in both directions.
-fn bignum_range(name: &str, sign: num_bigint::Sign) -> Signal {
-    if name == "unsigned long long" && sign == num_bigint::Sign::Minus {
-        crate::builtins::range_error!("bignum out of range of {name}")
-    } else {
-        crate::builtins::range_error!("bignum too big to convert into '{name}'")
-    }
 }
 
 fn read_float_m(recv: &RubyValue, off: usize, bytes: usize) -> Result<RubyValue, Signal> {
@@ -536,14 +466,14 @@ fn write_int_array(
     recv: &RubyValue,
     off: usize,
     ary: &RubyValue,
-    bytes: usize,
-    signed: bool,
+    kind: crate::ffi::FfiKind,
 ) -> Result<RubyValue, Signal> {
     let elems = array_elems(ary)?;
+    let bytes = kind.size();
     let p = ptr_of(recv);
     p.check_bounds(off, elems.len() * bytes)?;
     for (i, e) in elems.iter().enumerate() {
-        let v = to_slot_int(e, bytes, signed)?;
+        let v = crate::ffi::to_c_int(kind, e)? as i64;
         unsafe { p.write_int(off + i * bytes, bytes, v) };
     }
     Ok(recv.clone())

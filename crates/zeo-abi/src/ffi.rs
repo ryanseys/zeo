@@ -22,6 +22,13 @@ pub enum CScalar {
     U16,
     U32,
     U64,
+    /// `:long`/`:ulong` (and the gem's `:size_t`/`:ssize_t` aliases): the
+    /// same eight bytes as `I64`/`U64` on LP64, kept apart because the gem
+    /// converts them through `NUM2LONG`/`NUM2ULONG` rather than
+    /// `NUM2LL`/`NUM2ULL`, whose out-of-range and type errors are worded
+    /// differently, and because `FFI::Type::LONG` is not `INT64`.
+    Long,
+    ULong,
     F32,
     F64,
     /// A C `_Bool` -- one byte in memory.
@@ -42,7 +49,13 @@ impl CScalar {
             CScalar::I8 | CScalar::U8 | CScalar::Bool => 1,
             CScalar::I16 | CScalar::U16 => 2,
             CScalar::I32 | CScalar::U32 | CScalar::F32 => 4,
-            CScalar::I64 | CScalar::U64 | CScalar::F64 | CScalar::Str | CScalar::Pointer => 8,
+            CScalar::I64
+            | CScalar::U64
+            | CScalar::Long
+            | CScalar::ULong
+            | CScalar::F64
+            | CScalar::Str
+            | CScalar::Pointer => 8,
         }
     }
 
@@ -71,6 +84,8 @@ impl CScalar {
             CScalar::Bool => 11,
             CScalar::Str => 12,
             CScalar::Pointer => 13,
+            CScalar::Long => 14,
+            CScalar::ULong => 15,
         }
     }
 
@@ -91,6 +106,8 @@ impl CScalar {
             11 => CScalar::Bool,
             12 => CScalar::Str,
             13 => CScalar::Pointer,
+            14 => CScalar::Long,
+            15 => CScalar::ULong,
             _ => return None,
         })
     }
@@ -108,6 +125,8 @@ impl CScalar {
             CScalar::U16 => "U16",
             CScalar::U32 => "U32",
             CScalar::U64 => "U64",
+            CScalar::Long => "Long",
+            CScalar::ULong => "ULong",
             CScalar::F32 => "F32",
             CScalar::F64 => "F64",
             CScalar::Bool => "Bool",
@@ -130,6 +149,8 @@ impl CScalar {
             CScalar::U16 => "uint16",
             CScalar::U32 => "uint32",
             CScalar::U64 => "uint64",
+            CScalar::Long => "long",
+            CScalar::ULong => "ulong",
             CScalar::F32 => "float",
             CScalar::F64 => "double",
             CScalar::Bool => "bool",
@@ -148,11 +169,13 @@ impl CScalar {
             "char" | "int8" => CScalar::I8,
             "short" | "int16" => CScalar::I16,
             "int" | "int32" => CScalar::I32,
-            "long" | "long_long" | "int64" | "ssize_t" => CScalar::I64,
+            "long_long" | "int64" => CScalar::I64,
+            "long" | "ssize_t" => CScalar::Long,
             "uchar" | "uint8" => CScalar::U8,
             "ushort" | "uint16" => CScalar::U16,
             "uint" | "uint32" => CScalar::U32,
-            "ulong" | "ulong_long" | "uint64" | "size_t" => CScalar::U64,
+            "ulong_long" | "uint64" => CScalar::U64,
+            "ulong" | "size_t" => CScalar::ULong,
             "float" => CScalar::F32,
             "double" => CScalar::F64,
             "bool" => CScalar::Bool,
@@ -255,8 +278,10 @@ impl CScalar {
             "USHORT" | "UINT16" => CScalar::U16,
             "INT" | "INT32" => CScalar::I32,
             "UINT" | "UINT32" => CScalar::U32,
-            "LONG" | "LONG_LONG" | "INT64" => CScalar::I64,
-            "ULONG" | "ULONG_LONG" | "UINT64" => CScalar::U64,
+            "LONG_LONG" | "INT64" => CScalar::I64,
+            "ULONG_LONG" | "UINT64" => CScalar::U64,
+            "LONG" => CScalar::Long,
+            "ULONG" => CScalar::ULong,
             "FLOAT" | "FLOAT32" => CScalar::F32,
             "DOUBLE" | "FLOAT64" => CScalar::F64,
             _ => return None,
@@ -270,8 +295,9 @@ mod tests {
 
     #[test]
     fn widths_are_lp64() {
-        assert_eq!(CScalar::from_keyword("long"), Some(CScalar::I64));
-        assert_eq!(CScalar::from_keyword("size_t"), Some(CScalar::U64));
+        assert_eq!(CScalar::from_keyword("long"), Some(CScalar::Long));
+        assert_eq!(CScalar::from_keyword("size_t"), Some(CScalar::ULong));
+        assert_eq!(CScalar::Long.size(), 8);
         assert_eq!(CScalar::I32.size(), 4);
         assert_eq!(CScalar::Pointer.size(), 8);
         assert_eq!(CScalar::Bool.size(), 1);
@@ -288,7 +314,7 @@ mod tests {
 
     #[test]
     fn type_constants_cover_both_int_spellings() {
-        assert_eq!(CScalar::from_type_constant("LONG"), Some(CScalar::I64));
+        assert_eq!(CScalar::from_type_constant("LONG"), Some(CScalar::Long));
         assert_eq!(CScalar::from_type_constant("INT64"), Some(CScalar::I64));
         assert_eq!(CScalar::from_type_constant("VARARGS"), None);
     }

@@ -54,6 +54,8 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
     let (get, put) = match ty {
         Int(w) => (format!("get_int{w}"), format!("put_int{w}")),
         Uint(w) => (format!("get_uint{w}"), format!("put_uint{w}")),
+        Long => ("get_long".into(), "put_long".into()),
+        Ulong => ("get_ulong".into(), "put_ulong".into()),
         Float(w) => (format!("get_float{w}"), format!("put_float{w}")),
         // An enum field is a C `int` in memory, a bool a one-byte `_Bool`.
         // Neither reads back as the number it stores; the generated accessor
@@ -83,10 +85,6 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
 /// A field's `FFI::StructLayout::Field` DESCRIPTOR -- the Field subclass and
 /// the type object CRuby answers from `.layout.fields`, built from the same
 /// walked layout the accessors are built from.
-///
-/// Divergence recorded once, here: a `:long` field answers
-/// `Type::Builtin::INT64` rather than `LONG`, because both fold to one width
-/// before a layout is recorded and the spelling is gone by now.
 fn ffi_field_descriptor(name: &str, ty: &crate::hir::FfiType, off: usize) -> PResult<String> {
     use crate::hir::FfiType::*;
     let (size, align) = {
@@ -97,6 +95,8 @@ fn ffi_field_descriptor(name: &str, ty: &crate::hir::FfiType, off: usize) -> PRe
     let scalar_name = |ty: &crate::hir::FfiType| match ty {
         Int(w) => Some(format!("INT{w}")),
         Uint(w) => Some(format!("UINT{w}")),
+        Long => Some("LONG".to_string()),
+        Ulong => Some("ULONG".to_string()),
         Float(w) => Some(format!("FLOAT{w}")),
         Bool => Some("BOOL".to_string()),
         Str => Some("STRING".to_string()),

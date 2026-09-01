@@ -13,6 +13,7 @@ use super::{
     read_string_array, read_typed_array, str_bytes, wrap_address, write_float_array, write_float_m,
     write_int_array, write_int_m, write_pointer_array, write_typed_array,
 };
+use crate::ffi::FfiKind;
 use crate::builtins::{index_error, type_error};
 use crate::{RubyValue, Symbol};
 use zeo_abi::FFI_POINTER_CLASS;
@@ -57,24 +58,28 @@ ruby_class! {
     def "get_uint64" | "get_ulong" | "get_ulong_long"(r, offset) { read_int_m(r, off_arg(Some(offset))?, 8, false) }
 
     // -- integer writes (offset 0) --
-    def "write_int8" | "write_char"(r, value) { write_int_m(r, 0, value, 1, true) }
-    def "write_uint8" | "write_uchar"(r, value) { write_int_m(r, 0, value, 1, false) }
-    def "write_int16" | "write_short"(r, value) { write_int_m(r, 0, value, 2, true) }
-    def "write_uint16" | "write_ushort"(r, value) { write_int_m(r, 0, value, 2, false) }
-    def "write_int32" | "write_int"(r, value) { write_int_m(r, 0, value, 4, true) }
-    def "write_uint32" | "write_uint"(r, value) { write_int_m(r, 0, value, 4, false) }
-    def "write_int64" | "write_long" | "write_long_long"(r, value) { write_int_m(r, 0, value, 8, true) }
-    def "write_uint64" | "write_ulong" | "write_ulong_long"(r, value) { write_int_m(r, 0, value, 8, false) }
+    def "write_int8" | "write_char"(r, value) { write_int_m(r, 0, value, FfiKind::I8) }
+    def "write_uint8" | "write_uchar"(r, value) { write_int_m(r, 0, value, FfiKind::U8) }
+    def "write_int16" | "write_short"(r, value) { write_int_m(r, 0, value, FfiKind::I16) }
+    def "write_uint16" | "write_ushort"(r, value) { write_int_m(r, 0, value, FfiKind::U16) }
+    def "write_int32" | "write_int"(r, value) { write_int_m(r, 0, value, FfiKind::I32) }
+    def "write_uint32" | "write_uint"(r, value) { write_int_m(r, 0, value, FfiKind::U32) }
+    def "write_int64" | "write_long_long"(r, value) { write_int_m(r, 0, value, FfiKind::I64) }
+    def "write_long"(r, value) { write_int_m(r, 0, value, FfiKind::Long) }
+    def "write_uint64" | "write_ulong_long"(r, value) { write_int_m(r, 0, value, FfiKind::U64) }
+    def "write_ulong"(r, value) { write_int_m(r, 0, value, FfiKind::ULong) }
 
     // -- integer writes at an offset --
-    def "put_int8" | "put_char"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 1, true) }
-    def "put_uint8" | "put_uchar"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 1, false) }
-    def "put_int16" | "put_short"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 2, true) }
-    def "put_uint16" | "put_ushort"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 2, false) }
-    def "put_int32" | "put_int"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 4, true) }
-    def "put_uint32" | "put_uint"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 4, false) }
-    def "put_int64" | "put_long" | "put_long_long"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 8, true) }
-    def "put_uint64" | "put_ulong" | "put_ulong_long"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, 8, false) }
+    def "put_int8" | "put_char"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, FfiKind::I8) }
+    def "put_uint8" | "put_uchar"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, FfiKind::U8) }
+    def "put_int16" | "put_short"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, FfiKind::I16) }
+    def "put_uint16" | "put_ushort"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, FfiKind::U16) }
+    def "put_int32" | "put_int"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, FfiKind::I32) }
+    def "put_uint32" | "put_uint"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, FfiKind::U32) }
+    def "put_int64" | "put_long_long"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, FfiKind::I64) }
+    def "put_long"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, FfiKind::Long) }
+    def "put_uint64" | "put_ulong_long"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, FfiKind::U64) }
+    def "put_ulong"(r, offset, value) { write_int_m(r, off_arg(Some(offset))?, value, FfiKind::ULong) }
 
     // -- floats --
     def "read_float"(r) { read_float_m(r, 0, 4) }
@@ -215,14 +220,16 @@ ruby_class! {
     def "read_array_of_uint32" | "read_array_of_uint"(r, count) { read_int_array(r, 0, count, 4, false) }
     def "read_array_of_int64" | "read_array_of_long" | "read_array_of_long_long"(r, count) { read_int_array(r, 0, count, 8, true) }
     def "read_array_of_uint64" | "read_array_of_ulong" | "read_array_of_ulong_long"(r, count) { read_int_array(r, 0, count, 8, false) }
-    def "write_array_of_int8" | "write_array_of_char"(r, ary) { write_int_array(r, 0, ary, 1, true) }
-    def "write_array_of_uint8" | "write_array_of_uchar"(r, ary) { write_int_array(r, 0, ary, 1, false) }
-    def "write_array_of_int16" | "write_array_of_short"(r, ary) { write_int_array(r, 0, ary, 2, true) }
-    def "write_array_of_uint16" | "write_array_of_ushort"(r, ary) { write_int_array(r, 0, ary, 2, false) }
-    def "write_array_of_int32" | "write_array_of_int"(r, ary) { write_int_array(r, 0, ary, 4, true) }
-    def "write_array_of_uint32" | "write_array_of_uint"(r, ary) { write_int_array(r, 0, ary, 4, false) }
-    def "write_array_of_int64" | "write_array_of_long" | "write_array_of_long_long"(r, ary) { write_int_array(r, 0, ary, 8, true) }
-    def "write_array_of_uint64" | "write_array_of_ulong" | "write_array_of_ulong_long"(r, ary) { write_int_array(r, 0, ary, 8, false) }
+    def "write_array_of_int8" | "write_array_of_char"(r, ary) { write_int_array(r, 0, ary, FfiKind::I8) }
+    def "write_array_of_uint8" | "write_array_of_uchar"(r, ary) { write_int_array(r, 0, ary, FfiKind::U8) }
+    def "write_array_of_int16" | "write_array_of_short"(r, ary) { write_int_array(r, 0, ary, FfiKind::I16) }
+    def "write_array_of_uint16" | "write_array_of_ushort"(r, ary) { write_int_array(r, 0, ary, FfiKind::U16) }
+    def "write_array_of_int32" | "write_array_of_int"(r, ary) { write_int_array(r, 0, ary, FfiKind::I32) }
+    def "write_array_of_uint32" | "write_array_of_uint"(r, ary) { write_int_array(r, 0, ary, FfiKind::U32) }
+    def "write_array_of_int64" | "write_array_of_long_long"(r, ary) { write_int_array(r, 0, ary, FfiKind::I64) }
+    def "write_array_of_long"(r, ary) { write_int_array(r, 0, ary, FfiKind::Long) }
+    def "write_array_of_uint64" | "write_array_of_ulong_long"(r, ary) { write_int_array(r, 0, ary, FfiKind::U64) }
+    def "write_array_of_ulong"(r, ary) { write_int_array(r, 0, ary, FfiKind::ULong) }
     def "read_array_of_double"(r, count) { read_float_array(r, 0, count, 8) }
     def "read_array_of_float"(r, count) { read_float_array(r, 0, count, 4) }
     def "write_array_of_double"(r, ary) { write_float_array(r, 0, ary, 8) }
@@ -239,14 +246,16 @@ ruby_class! {
     def "get_array_of_uint32" | "get_array_of_uint"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 4, false) }
     def "get_array_of_int64" | "get_array_of_long" | "get_array_of_long_long"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 8, true) }
     def "get_array_of_uint64" | "get_array_of_ulong" | "get_array_of_ulong_long"(r, off, count) { read_int_array(r, off_arg(Some(off))?, count, 8, false) }
-    def "put_array_of_int8" | "put_array_of_char"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 1, true) }
-    def "put_array_of_uint8" | "put_array_of_uchar"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 1, false) }
-    def "put_array_of_int16" | "put_array_of_short"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 2, true) }
-    def "put_array_of_uint16" | "put_array_of_ushort"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 2, false) }
-    def "put_array_of_int32" | "put_array_of_int"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 4, true) }
-    def "put_array_of_uint32" | "put_array_of_uint"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 4, false) }
-    def "put_array_of_int64" | "put_array_of_long" | "put_array_of_long_long"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 8, true) }
-    def "put_array_of_uint64" | "put_array_of_ulong" | "put_array_of_ulong_long"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, 8, false) }
+    def "put_array_of_int8" | "put_array_of_char"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, FfiKind::I8) }
+    def "put_array_of_uint8" | "put_array_of_uchar"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, FfiKind::U8) }
+    def "put_array_of_int16" | "put_array_of_short"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, FfiKind::I16) }
+    def "put_array_of_uint16" | "put_array_of_ushort"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, FfiKind::U16) }
+    def "put_array_of_int32" | "put_array_of_int"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, FfiKind::I32) }
+    def "put_array_of_uint32" | "put_array_of_uint"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, FfiKind::U32) }
+    def "put_array_of_int64" | "put_array_of_long_long"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, FfiKind::I64) }
+    def "put_array_of_long"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, FfiKind::Long) }
+    def "put_array_of_uint64" | "put_array_of_ulong_long"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, FfiKind::U64) }
+    def "put_array_of_ulong"(r, off, ary) { write_int_array(r, off_arg(Some(off))?, ary, FfiKind::ULong) }
     def "get_array_of_float64" | "get_array_of_double"(r, off, count) { read_float_array(r, off_arg(Some(off))?, count, 8) }
     def "get_array_of_float32" | "get_array_of_float"(r, off, count) { read_float_array(r, off_arg(Some(off))?, count, 4) }
     def "put_array_of_float64" | "put_array_of_double"(r, off, ary) { write_float_array(r, off_arg(Some(off))?, ary, 8) }

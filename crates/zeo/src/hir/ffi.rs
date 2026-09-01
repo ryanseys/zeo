@@ -12,10 +12,16 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FfiType {
     Void,
-    /// `:char`/`:int8`, `:short`/`:int16`, `:int`/`:int32`, `:long`/`:int64`.
+    /// `:char`/`:int8`, `:short`/`:int16`, `:int`/`:int32`, `:long_long`/`:int64`.
     Int(u8), // width in BITS: 8/16/32/64
-    /// `:uchar`/`:uint8` … `:ulong`/`:uint64`, and `:size_t` (→ 64 here, LP64).
+    /// `:uchar`/`:uint8` … `:ulong_long`/`:uint64`.
     Uint(u8),
+    /// `:long`/`:ssize_t` and `:ulong`/`:size_t`: eight bytes like `Int(64)`
+    /// and `Uint(64)` (LP64), kept apart because the gem marshals them
+    /// through `NUM2LONG`/`NUM2ULONG`, whose error text differs from the
+    /// exact-width converters', and `FFI::Type::LONG` is not `INT64`.
+    Long,
+    Ulong,
     /// `:float` (32) / `:double` (64).
     Float(u8),
     /// `:bool` -- a C `bool`/`_Bool`.
@@ -102,6 +108,8 @@ impl From<zeo_abi::ffi::CScalar> for FfiType {
             S::U16 => FfiType::Uint(16),
             S::U32 => FfiType::Uint(32),
             S::U64 => FfiType::Uint(64),
+            S::Long => FfiType::Long,
+            S::ULong => FfiType::Ulong,
             S::F32 => FfiType::Float(32),
             S::F64 => FfiType::Float(64),
             S::Bool => FfiType::Bool,
@@ -132,6 +140,8 @@ impl FfiType {
                 64 => S::U64,
                 _ => S::U32,
             },
+            FfiType::Long => S::Long,
+            FfiType::Ulong => S::ULong,
             FfiType::Float(64) => S::F64,
             FfiType::Float(_) => S::F32,
             FfiType::Bool => S::Bool,
