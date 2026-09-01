@@ -212,10 +212,15 @@ macro_rules! compiled_object_impl {
                 self.ivars.get(slot)
             }
 
-            fn ivar_slot_set(&self, slot: usize, value: RubyValue) {
+            fn has_ivar_slots(&self) -> bool {
+                true
+            }
+
+            fn ivar_slot_set(&self, slot: usize, value: RubyValue) -> bool {
                 if slot < self.layout.slots() {
                     self.ivars.set(slot, value);
                 }
+                true
             }
 
             fn take_linked_ivars(&self, out: &mut Vec<RubyValue>) {

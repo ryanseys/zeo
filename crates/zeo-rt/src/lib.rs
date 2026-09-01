@@ -594,10 +594,14 @@ macro_rules! ruby_class {
                     $crate::RubyValue::Nil
                 }
             }
-            fn ivar_slot_set(&self, slot: usize, value: $crate::RubyValue) {
+            fn has_ivar_slots(&self) -> bool {
+                true
+            }
+            fn ivar_slot_set(&self, slot: usize, value: $crate::RubyValue) -> bool {
                 if slot < Self::__IVAR_BASE + Self::__IVAR_NAMES.len() {
                     self.__ivars.set(slot, value);
                 }
+                true
             }
             fn gc_visit(&self, out: &mut Vec<$crate::RubyValue>, take: bool) {
                 self.__ivars.gc_visit(out, take);

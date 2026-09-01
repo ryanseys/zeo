@@ -271,6 +271,14 @@ pub fn ivar_slot_get_dyn_isolated(
     Ok(ivar_slot_get_dyn(recv, slot, name))
 }
 
+/// The declared name of `slot` on `cid`'s compiled layout, for the doors
+/// that must route a slot access on a SLOTLESS receiver -- a C-allocated
+/// instance of a compiled class -- to the name-keyed store.
+pub(crate) fn slot_ivar_name(cid: crate::ClassId, slot: usize) -> Option<&'static str> {
+    let layout = crate::compiled_object::layout_of(cid)?;
+    layout.names.get(slot.checked_sub(layout.hidden)?).copied()
+}
+
 /// Read `@name` from a receiver whose class is one of a known set that all
 /// place `@name` at `slot` -- the shared-body form of `ivar_get_dyn`.
 ///
@@ -281,7 +289,7 @@ pub fn ivar_slot_get_dyn_isolated(
 #[inline]
 pub fn ivar_slot_get_dyn(recv: &RubyValue, slot: usize, name: &str) -> RubyValue {
     match recv {
-        RubyValue::Object(o) => o.ivar_slot_get(slot),
+        RubyValue::Object(o) if o.has_ivar_slots() => o.ivar_slot_get(slot),
         other => ivar_get_dyn(other, name),
     }
 }
@@ -298,7 +306,9 @@ pub fn ivar_slot_set_dyn(
     match recv {
         RubyValue::Object(o) => {
             crate::builtins::check_frozen(recv)?;
-            o.ivar_slot_set(slot, v.clone());
+            if !o.ivar_slot_set(slot, v.clone()) {
+                return ivar_set_dyn(recv, name, v);
+            }
             Ok(v)
         }
         other => ivar_set_dyn(other, name, v),

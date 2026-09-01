@@ -202,10 +202,24 @@ pub trait RubyObject: Any + Send + Sync {
         RubyValue::Nil
     }
 
-    /// Write one ivar BY SLOT -- `ivar_slot_get`'s counterpart. The caller has
-    /// already checked frozenness, exactly as the by-name path's own guard
-    /// does at its call site.
-    fn ivar_slot_set(&self, _slot: usize, _value: RubyValue) {}
+    /// Whether this object HAS slot storage. False for the runtime's
+    /// hand-written objects and for a C-allocated instance of a compiled
+    /// class (a CData receiver): the emitted slot road must then fall back
+    /// to the name-keyed store, or a compiled `@x = v` in `initialize`
+    /// silently vanishes -- psych's `Psych::Parser.new(h).handler` was nil
+    /// for exactly this reason.
+    fn has_ivar_slots(&self) -> bool {
+        false
+    }
+
+    /// Write one ivar BY SLOT -- `ivar_slot_get`'s counterpart. The caller
+    /// has already checked frozenness, exactly as the by-name path's own
+    /// guard does at its call site. Answers whether the write LANDED; the
+    /// default has nowhere to put it and says so, and the caller routes the
+    /// value to the name-keyed store instead of dropping it.
+    fn ivar_slot_set(&self, _slot: usize, _value: RubyValue) -> bool {
+        false
+    }
 
     /// Move every ivar holding another OBJECT into `out`, leaving `nil` behind.
     ///

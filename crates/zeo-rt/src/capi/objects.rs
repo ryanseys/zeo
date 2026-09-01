@@ -127,8 +127,15 @@ pub unsafe extern "C" fn zeo_rt_ivar_get_slot(
     slot: usize,
     out: *mut RubyValue,
 ) {
-    let v = match unsafe { &*obj } {
-        RubyValue::Object(o) => o.ivar_slot_get(slot),
+    let recv = unsafe { &*obj };
+    let v = match recv {
+        RubyValue::Object(o) if o.has_ivar_slots() => o.ivar_slot_get(slot),
+        // A C-allocated instance of a compiled class has no slot storage;
+        // its ivars live in the name-keyed store.
+        RubyValue::Object(o) => match crate::dispatch::slot_ivar_name(o.class_id(), slot) {
+            Some(name) => crate::dispatch::ivar_get_dyn(recv, name),
+            None => RubyValue::Nil,
+        },
         other => {
             debug_assert!(false, "ivar_get_slot on a non-object receiver: {other:?}");
             RubyValue::Nil
@@ -155,7 +162,18 @@ pub unsafe extern "C" fn zeo_rt_ivar_set_slot(
         return STATUS_SIGNAL;
     }
     match recv {
-        RubyValue::Object(o) => o.ivar_slot_set(slot, value),
+        RubyValue::Object(o) => {
+            if !o.ivar_slot_set(slot, value.clone()) {
+                // No slot storage (a C-allocated instance of a compiled
+                // class): the write must LAND, in the name-keyed store.
+                let landed = crate::dispatch::slot_ivar_name(o.class_id(), slot)
+                    .map(|name| crate::dispatch::ivar_set_dyn(recv, name, value));
+                if let Some(Err(sig)) = landed {
+                    crate::signal::set_pending(sig);
+                    return STATUS_SIGNAL;
+                }
+            }
+        }
         other => debug_assert!(false, "ivar_set_slot on a non-object receiver: {other:?}"),
     }
     STATUS_OK
@@ -184,6 +202,7 @@ pub unsafe extern "C" fn zeo_rt_attr_read(
         && !crate::runtime_meta::gates_moved(gates)
         && let RubyValue::Object(o) = r
         && o.class_id().0 == cid
+        && o.has_ivar_slots()
     {
         let v = o.ivar_slot_get(slot);
         super::leakcheck::created(&v);
@@ -220,6 +239,7 @@ pub unsafe extern "C" fn zeo_rt_attr_write(
         && !crate::runtime_meta::gates_moved(gates)
         && let RubyValue::Object(o) = r
         && o.class_id().0 == cid
+        && o.has_ivar_slots()
     {
         if let Err(sig) = crate::builtins::check_frozen(r) {
             crate::signal::set_pending(sig);
