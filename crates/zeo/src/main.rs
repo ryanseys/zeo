@@ -50,11 +50,11 @@ struct Args {
     /// `--strict-static-require`: a `require`/`load` target the compiler
     /// cannot resolve is an error HERE, not at run time.
     strict_static_require: bool,
-    /// EXPERIMENTAL (M0): `--experimental-pkg <feature>` -- compile the
+    /// `--experimental-pkg <feature>` -- compile the
     /// positional file as a separately linked package for that feature
     /// spelling; `-o` names the object, `<object>.zman` gets the manifest.
     experimental_pkg: Option<String>,
-    /// EXPERIMENTAL (M0): `--experimental-use-pkg <object>` (repeatable) --
+    /// `--experimental-use-pkg <object>` (repeatable) --
     /// merge that package (manifest at `<object>.zman`) into this program.
     experimental_use_pkgs: Vec<PathBuf>,
     /// `--root-gem <name>`: the distinguished root package -- it outranks
@@ -903,7 +903,7 @@ fn run() -> Result<(), MainError> {
         Source::Eval(code) => (code.clone(), None),
         Source::Irb => (IRB_DRIVER.to_string(), None),
     };
-    // EXPERIMENTAL (M0): a package build compiles its entry as a FEATURE
+    // A package build compiles its entry as a FEATURE
     // UNIT, not as `<main>` -- the main source is empty and the entry rides
     // `CompileOptions::package_build` into the loader.
     let source = if args.experimental_pkg.is_some() {
@@ -955,7 +955,7 @@ fn run() -> Result<(), MainError> {
             Some(dir.join("zeo-gems.json"))
         }
     };
-    // EXPERIMENTAL (M0): the package options. A package build takes the
+    // The package options. A package build takes the
     // positional file as its ENTRY and `-o` as its object; the manifest
     // lands beside the object as `<output>.zman`. A host names package
     // objects with `--experimental-use-pkg`; their manifests are read here
@@ -973,6 +973,11 @@ fn run() -> Result<(), MainError> {
                 entry: entry.clone(),
                 feature: feature.clone(),
                 manifest_out: out.with_extension("zman"),
+                root: entry
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .canonicalize()
+                    .map_err(|e| format!("resolving {}: {e}", entry.display()))?,
             })
         }
         None => None,
@@ -981,27 +986,43 @@ fn run() -> Result<(), MainError> {
         .experimental_use_pkgs
         .iter()
         .map(|obj| {
+            // Two artifact spellings: a bare object with the manifest
+            // beside it, or the single-file `.zeopkg` bundle. A bundle's
+            // object lands in the content-addressed pool, where the link
+            // line can name it.
+            if obj.extension().is_some_and(|e| e == "zeopkg") {
+                let (manifest_text, bytes) = zeo::package::read_zeopkg(obj)?;
+                let object_digest = zeo::package::fnv64(&bytes);
+                let object = zeo::progcache::pkg_object_file(object_digest, &bytes)
+                    .map_err(|e| format!("unpacking {}: {e}", obj.display()))?;
+                return Ok(zeo::package::UsePackage {
+                    manifest_path: obj.clone(),
+                    manifest_text,
+                    object,
+                    object_digest,
+                });
+            }
             let manifest_path = obj.with_extension("zman");
             let manifest_text = std::fs::read_to_string(&manifest_path)
                 .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
             let bytes = std::fs::read(obj).map_err(|e| format!("reading {}: {e}", obj.display()))?;
-            let object_digest = {
-                use std::hash::{Hash, Hasher};
-                let mut h = std::hash::DefaultHasher::new();
-                bytes.hash(&mut h);
-                h.finish()
-            };
             Ok(zeo::package::UsePackage {
                 manifest_path,
                 manifest_text,
                 object: obj.clone(),
-                object_digest,
+                object_digest: zeo::package::fnv64(&bytes),
             })
         })
         .collect::<Result<_, String>>()?;
     let opts = zeo::CompileOptions {
         input_path: input_path.clone(),
-        file_name: None,
+        // A package build's MAIN source is synthetic (empty -- the entry
+        // rides in as a feature unit), so it carries a synthetic name: the
+        // entry path would otherwise register with empty text, and the
+        // package cache's manifest could never verify that row.
+        file_name: package_build
+            .as_ref()
+            .map(|pb| std::path::PathBuf::from(format!("<package {}>", pb.feature))),
         line_offset: 0,
         mode: zeo::CompileMode::Program,
         load_roots: args.load_roots.clone(),
@@ -1058,15 +1079,12 @@ fn run() -> Result<(), MainError> {
     // The JIT is run-in-place by definition: compile into this process and
     // exit with the program's status. An artifact request needs a backend
     // that produces one.
-    // EXPERIMENTAL (M0): a package build writes its OBJECT (the compile
-    // already wrote the manifest beside it) and stops -- there is nothing
-    // to run or link.
+    // A package build writes its artifact and stops -- there
+    // is nothing to run or link. It goes through the machine-wide package
+    // cache first.
     if opts.package_build.is_some() {
-        let compiled = zeo::compile_to_object_with(&source, &opts, false)?;
         let out = args.output.as_ref().expect("--experimental-pkg checked -o above");
-        std::fs::write(out, &compiled.object)
-            .map_err(|e| format!("writing {}: {e}", out.display()))?;
-        return Ok(());
+        return build_package(&source, &opts, out);
     }
     if backend == zeo::backend::Backend::Jit {
         // Silently honouring nothing is the one answer that would be
@@ -1109,7 +1127,9 @@ fn run() -> Result<(), MainError> {
         match zeo::run_jit_with(&source, &opts, &program_name, &args.program_args)? {}
     }
     let compiled = match backend {
-        zeo::backend::Backend::Aot => zeo::compile_to_object_with(&source, &opts, args.debuginfo)?,
+        zeo::backend::Backend::Aot => {
+            compile_dropping_refused_packages(&source, &opts, args.debuginfo)?
+        }
         zeo::backend::Backend::Jit => unreachable!("the jit branch above never falls through"),
     };
     zeo::memguard::set_phase(zeo::memguard::Phase::Build);
@@ -1135,6 +1155,82 @@ fn run() -> Result<(), MainError> {
         p
     });
     Ok(zeo::backend::build_artifact(&program, &output)?)
+}
+
+/// Compile a package, through the machine-wide package
+/// cache. `-o pkg.zeopkg` writes the single-file artifact; any other `-o`
+/// writes the raw object with the manifest beside it. A cache write that
+/// fails (a read-only cache directory) degrades to "compiled, not cached"
+/// with a log line, never to a failed build.
+fn build_package(
+    source: &str,
+    opts: &zeo::CompileOptions,
+    out: &std::path::Path,
+) -> Result<(), MainError> {
+    let bundled = out.extension().is_some_and(|e| e == "zeopkg");
+    let pb = opts.package_build.as_ref().expect("a package build");
+    let manifest_out = pb.manifest_out.clone();
+    let key = zeo::progcache::pkg_key(source, opts);
+    if zeo::progcache::enabled()
+        && let Some(hit) = zeo::progcache::pkg_lookup(&key)
+    {
+        let (manifest_json, object) = zeo::package::read_zeopkg(&hit)?;
+        return place_package(out, bundled, &manifest_json, &object, &manifest_out);
+    }
+    let compiled = zeo::compile_to_object_with(source, opts, false)?;
+    let manifest_json = std::fs::read_to_string(&manifest_out)
+        .map_err(|e| format!("reading {}: {e}", manifest_out.display()))?;
+    place_package(out, bundled, &manifest_json, &compiled.object, &manifest_out)?;
+    if zeo::progcache::enabled() {
+        let cached: std::io::Result<()> = (|| {
+            let slot = zeo::progcache::pkg_reserve(&key)?;
+            zeo::package::write_zeopkg(&slot, &manifest_json, &compiled.object)?;
+            zeo::progcache::pkg_commit(&key, &compiled.inputs)
+        })();
+        if let Err(e) = cached {
+            tracing::warn!("could not record the package cache entry: {e}");
+        }
+    }
+    Ok(())
+}
+
+/// Land a package's two halves at `-o`.
+fn place_package(
+    out: &std::path::Path,
+    bundled: bool,
+    manifest_json: &str,
+    object: &[u8],
+    manifest_out: &std::path::Path,
+) -> Result<(), MainError> {
+    if bundled {
+        zeo::package::write_zeopkg(out, manifest_json, object)
+            .map_err(|e| format!("writing {}: {e}", out.display()))?;
+        // The bundle carries the manifest inside; a compile may have left
+        // the loose copy beside the output.
+        let _ = std::fs::remove_file(manifest_out);
+    } else {
+        std::fs::write(out, object).map_err(|e| format!("writing {}: {e}", out.display()))?;
+        std::fs::write(manifest_out, manifest_json)
+            .map_err(|e| format!("writing {}: {e}", manifest_out.display()))?;
+    }
+    Ok(())
+}
+
+/// The library's package-fallback compile, with each drop reported to
+/// stderr as it happens -- so the warning still lands when a later error
+/// (a feature whose source is nowhere) ends the compile.
+fn compile_dropping_refused_packages(
+    source: &str,
+    opts: &zeo::CompileOptions,
+    debuginfo: bool,
+) -> Result<zeo::ObjectOutput, zeo::CompileError> {
+    zeo::compile_to_object_with_package_fallback(source, opts, debuginfo, |d| {
+        eprintln!(
+            "zeo: warning: dropping the precompiled artifact for '{}' and \
+             compiling it from source: {}",
+            d.feature, d.reason
+        );
+    })
 }
 
 /// Run this program from the compiled-program cache, and never return.
@@ -1168,7 +1264,7 @@ fn run_from_cache(
         exec(&bin, program_name, program_args);
         return;
     }
-    let Ok(compiled) = zeo::compile_to_object_with(source, opts, false) else {
+    let Ok(compiled) = compile_dropping_refused_packages(source, opts, false) else {
         return;
     };
     let Ok(bin) = zeo::progcache::reserve(&key) else {

@@ -1,4 +1,4 @@
-//! EXPERIMENTAL (M0): separate compilation's merge spine.
+//! Separate compilation's merge spine.
 //!
 //! A gem compiles ONCE to its own object plus a row manifest
 //! (`--experimental-pkg`); a host program merges the manifest into its one
@@ -450,7 +450,7 @@ fn two_packages_share_a_namespace_module() {
 fn two_packages_defining_one_method_on_a_shared_class_are_refused() {
     // A cross-package redefinition: the earlier package's typed sites
     // compiled against ITS body with no guard for a static replacement.
-    // Patch rows lift this in M4; today it refuses by name.
+    // Patch rows will lift this; today it refuses by name.
     let dir = scratch("clash-method");
     let a = build_inline_package(&dir, "clasha", "module Shk\n  def self.tag = :a\nend\n");
     let b = build_inline_package(&dir, "clashb", "module Shk\n  def self.tag = :b\nend\n");
@@ -502,7 +502,7 @@ fn a_package_defining_a_top_level_method_is_refused_today() {
     // host def of the same name -- and no manifest fact carries that
     // today (the unit-blanket split deliberately keeps packaged names
     // out of `patched_names`). The value-channel refusal is what keeps
-    // the shape unreachable; lifting it (M4) must revisit the Object
+    // the shape unreachable; lifting it must revisit the Object
     // channel's facts.
     let dir = scratch("toplevel");
     let entry = dir.join("topgem.rb");
@@ -524,4 +524,217 @@ fn a_package_defining_a_top_level_method_is_refused_today() {
         err.contains("a package build cannot carry a builtin reopen"),
         "the refusal names the channel: {err}"
     );
+}
+
+#[test]
+fn a_zeopkg_bundle_builds_links_and_runs() {
+    // `-o pkg.zeopkg` bundles the object and the manifest into ONE file --
+    // the shippable artifact -- and a host consumes it exactly like the
+    // two-file spelling.
+    let dir = scratch("bundle");
+    let artifact = dir.join("pureleaf.zeopkg");
+    ok(zeo()
+        .arg("--experimental-pkg")
+        .arg("pureleaf")
+        .arg("-o")
+        .arg(&artifact)
+        .arg(fixture_gem().join("lib/pureleaf.rb"))
+        .env("ZEO_CACHE", "0"));
+    assert!(artifact.is_file(), "the bundle was written");
+    assert!(
+        !artifact.with_extension("zman").is_file(),
+        "the bundle carries the manifest inside; no loose copy remains"
+    );
+    let host = dir.join("host.rb");
+    std::fs::write(&host, "require \"pureleaf\"\np Pureleaf.new.tagged(5)\n").expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&artifact)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(ok(&mut Command::new(&bin)), "\"leaf-5\"\n");
+}
+
+#[test]
+fn a_package_build_is_reproducible_across_directories() {
+    // Decision 6, CI-asserted: the same gem compiled from two different
+    // checkouts answers byte-identical artifacts. The virtual-root
+    // respelling is what keeps the build directory out of the object's
+    // rodata and the manifest's meta rows.
+    let dir = scratch("repro");
+    for side in ["one", "two"] {
+        let copy = dir.join(side);
+        std::fs::create_dir_all(copy.join("lib")).expect("mkdir");
+        std::fs::copy(
+            fixture_gem().join("lib/pureleaf.rb"),
+            copy.join("lib/pureleaf.rb"),
+        )
+        .expect("copy the gem source");
+        ok(zeo()
+            .arg("--experimental-pkg")
+            .arg("pureleaf")
+            .arg("-o")
+            .arg(dir.join(format!("{side}.zeopkg")))
+            .arg(copy.join("lib/pureleaf.rb"))
+            .env("ZEO_CACHE", "0"));
+    }
+    let one = std::fs::read(dir.join("one.zeopkg")).expect("read one");
+    let two = std::fs::read(dir.join("two.zeopkg")).expect("read two");
+    assert!(one == two, "the two builds are byte-identical");
+}
+
+#[test]
+fn the_package_cache_serves_hits_and_invalidates_on_edit() {
+    // The machine-wide package cache, proven the only way a deterministic
+    // compiler can be: MARK the cached artifact, and the next build serves
+    // the mark; edit the source, and the build stops serving it.
+    let dir = scratch("pkgcache");
+    let cache = dir.join("cache");
+    // The source sits in its own directory: the cache manifest stamps the
+    // directories a compile read, so an output landing beside the source
+    // would read as a change.
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).expect("mkdir");
+    let entry = src.join("cachegem.rb");
+    std::fs::write(&entry, "class Cachegem\n  def go = :one\nend\n").expect("write the gem");
+    let build = |out: &Path| {
+        ok(zeo()
+            .arg("--experimental-pkg")
+            .arg("cachegem")
+            .arg("-o")
+            .arg(out)
+            .arg(&entry)
+            .env("ZEO_CACHE", "1")
+            .env("ZEO_PACKAGE_CACHE", &cache));
+    };
+    build(&dir.join("first.zeopkg"));
+    let cached = std::fs::read_dir(&cache)
+        .expect("the cache dir exists")
+        .filter_map(Result::ok)
+        .map(|e| e.path().join("pkg.zeopkg"))
+        .find(|p| p.is_file())
+        .expect("one cache entry");
+    let (manifest, object) = zeo::package::read_zeopkg(&cached).expect("read the entry");
+    let marked = manifest.replace("\"iface_hash\": \"", "\"iface_hash\": \"cafe");
+    assert_ne!(marked, manifest, "the mark landed");
+    zeo::package::write_zeopkg(&cached, &marked, &object).expect("mark the entry");
+
+    build(&dir.join("second.zeopkg"));
+    let (manifest, _) =
+        zeo::package::read_zeopkg(&dir.join("second.zeopkg")).expect("read the second build");
+    let listing: Vec<String> = std::fs::read_dir(&cache)
+        .map(|es| {
+            es.filter_map(Result::ok)
+                .map(|e| {
+                    let names: Vec<String> = std::fs::read_dir(e.path())
+                        .map(|fs| {
+                            fs.filter_map(Result::ok)
+                                .map(|f| f.file_name().to_string_lossy().into_owned())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let rows = std::fs::read_to_string(e.path().join("manifest"))
+                        .unwrap_or_default();
+                    format!("{}: {names:?} rows: {rows}", e.file_name().to_string_lossy())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        manifest.contains("\"iface_hash\": \"cafe"),
+        "the second build was served from the cache; cache dirs: {listing:?}"
+    );
+
+    std::fs::write(&entry, "class Cachegem\n  def go = :two\nend\n").expect("edit the gem");
+    build(&dir.join("third.zeopkg"));
+    let (manifest, _) =
+        zeo::package::read_zeopkg(&dir.join("third.zeopkg")).expect("read the third build");
+    assert!(
+        !manifest.contains("\"iface_hash\": \"cafe"),
+        "the source edit invalidated the entry"
+    );
+}
+
+#[test]
+fn a_refused_artifact_drops_to_the_source_splice() {
+    // The fallback tier: the same host reopen that REFUSES when only the
+    // artifact exists compiles from source when the gem is resolvable --
+    // with a warning naming the package, never silently.
+    let dir = scratch("drop");
+    let object = build_package(&dir);
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"pureleaf\"\nclass Pureleaf\n  def extra = :host_extra\nend\n\
+         p Pureleaf.new.extra\np Pureleaf.new.tagged(1)\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host-bin");
+    let out = run(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&object)
+        .arg("--gems")
+        .arg(fixture_gem().parent().expect("fixtures dir"))
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert!(out.status.success(), "the drop compiles from source");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("dropping the precompiled artifact for 'pureleaf'"),
+        "the drop warns by name: {err}"
+    );
+    assert_eq!(ok(&mut Command::new(&bin)), ":host_extra\n\"leaf-1\"\n");
+}
+
+#[test]
+fn a_target_mismatch_refuses_by_name() {
+    // No stable package ABI is promised: the identity contract is an exact
+    // match, and a mismatch names itself instead of surfacing as a link
+    // error.
+    let dir = scratch("target");
+    let artifact = dir.join("pureleaf.zeopkg");
+    ok(zeo()
+        .arg("--experimental-pkg")
+        .arg("pureleaf")
+        .arg("-o")
+        .arg(&artifact)
+        .arg(fixture_gem().join("lib/pureleaf.rb"))
+        .env("ZEO_CACHE", "0"));
+    let (manifest, object) = zeo::package::read_zeopkg(&artifact).expect("read");
+    let foreign = manifest.replace(
+        &format!("\"target\": \"{}\"", target_of(&manifest)),
+        "\"target\": \"wasm32-unknown-unknown\"",
+    );
+    assert_ne!(foreign, manifest, "the target was rewritten");
+    zeo::package::write_zeopkg(&artifact, &foreign, &object).expect("rewrite");
+    let host = dir.join("host.rb");
+    std::fs::write(&host, "require \"pureleaf\"\n").expect("write host");
+    let out = run(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&artifact)
+        .arg("-o")
+        .arg(dir.join("host-bin"))
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert!(!out.status.success(), "a foreign target must refuse");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("was compiled for wasm32-unknown-unknown"),
+        "the refusal names both targets: {err}"
+    );
+}
+
+/// The `target` value inside a manifest's JSON text.
+fn target_of(manifest: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(manifest)
+        .expect("a manifest parses")
+        .get("target")
+        .and_then(|t| t.as_str())
+        .expect("a manifest names its target")
+        .to_string()
 }

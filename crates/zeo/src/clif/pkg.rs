@@ -1,4 +1,4 @@
-//! EXPERIMENTAL (M0): the two halves of a package link.
+//! The two halves of a package link.
 //!
 //! `finish_package` is the package side -- the spec rows every compile
 //! already builds are written to a MANIFEST instead of a desc, and every
@@ -51,7 +51,7 @@ fn export(em: &mut Emitter, f: FuncId) -> CResult<()> {
     Ok(())
 }
 
-/// The package side: refuse the shapes M0 does not carry, export the
+/// The package side: refuse the shapes a package cannot carry yet, export the
 /// row-referenced bodies, and write the manifest beside the object.
 /// Returns a FuncId for `emit_program`'s signature; the object path
 /// ignores it.
@@ -65,7 +65,7 @@ pub(crate) fn finish_package(
     let compiler = &analyzed.compiler;
     let refuse = |what: &str| {
         Err(CodegenError::unsupported(
-            format!("a package build cannot carry {what} yet (M0)"),
+            format!("a package build cannot carry {what} yet"),
             None,
         ))
     };
@@ -207,9 +207,30 @@ pub(crate) fn finish_package(
         });
     }
 
+    // The identity half: what a cache key and a host validation read.
+    // The source digest hashes TEXTS only, in file order -- names carry the
+    // build directory, and two checkouts of one gem must key the same.
+    let source_digest = {
+        let mut h: u64 = 0;
+        for f in &compiler.hir.files {
+            h ^= crate::package::fnv64(f.source.as_bytes()).rotate_left(17);
+            h = h.wrapping_mul(0x100_0000_01b3);
+        }
+        format!("{h:016x}")
+    };
+    let iface_hash = format!(
+        "{:016x}",
+        crate::package::fnv64(
+            serde_json::to_string(&iface).expect("an iface serializes").as_bytes()
+        )
+    );
     let manifest = Manifest {
         manifest_version: crate::package::MANIFEST_VERSION,
         abi_version: zeo_abi::abi::ABI_VERSION,
+        compiler: format!("zeo {}", env!("CARGO_PKG_VERSION")),
+        target: em.module.isa().triple().to_string(),
+        source_digest,
+        iface_hash,
         prefix: pkg.prefix(),
         feature: pkg.feature.clone(),
         first_class_id: compiler.first_program_class_id,
@@ -353,7 +374,7 @@ pub(crate) fn merge_rows(
     meta_rows: &mut Vec<MetaRowSpec>,
     unit_rows: &mut Vec<(String, FuncId)>,
 ) -> CResult<()> {
-    let _ = vm_rows; // packages carry no vm rows in M0
+    let _ = vm_rows; // packages carry no vm rows yet
     if analyzed.compiler.hir.pkg_merge.is_empty() {
         return Ok(());
     }
@@ -365,7 +386,33 @@ pub(crate) fn merge_rows(
     // `warn_on_colliding_unit_features` already emits.
     let mut claimed_spellings: std::collections::HashSet<&str> =
         unit_rows.iter().map(|(s, _)| s.as_str()).collect();
+    // Identity: no stable ABI tag exists yet, so the
+    // contract is an EXACT match on compiler version and ISA triple --
+    // anything else is a refusal that names the package, which the
+    // drop-to-splice tier turns into a source recompile when it can.
+    let host_triple = em.module.isa().triple().to_string();
+    let host_compiler = format!("zeo {}", env!("CARGO_PKG_VERSION"));
     for m in &manifests {
+        if m.target != host_triple {
+            return Err(CodegenError::unsupported(
+                format!(
+                    "package '{}' was compiled for {}, and this build targets \
+                     {host_triple}; rebuild the package",
+                    m.feature, m.target
+                ),
+                None,
+            ));
+        }
+        if m.compiler != host_compiler {
+            return Err(CodegenError::unsupported(
+                format!(
+                    "package '{}' was built by {}, and this is {host_compiler}; \
+                     no stable package ABI is promised yet -- rebuild the package",
+                    m.feature, m.compiler
+                ),
+                None,
+            ));
+        }
         for (spelling, _) in &m.units {
             if !claimed_spellings.insert(spelling.as_str()) {
                 return Err(CodegenError::unsupported(

@@ -232,7 +232,17 @@ impl Loader {
             if !self.required.insert((0, canonical.clone())) {
                 continue; // already spliced: it runs at its own position
             }
-            let absolute = canonical.with_extension("").to_string_lossy().into_owned();
+            // The unit's absolute spelling must MATCH the frame file a
+            // run-time `require_relative` absolutizes against, so a package
+            // build derives both from the same respelled root.
+            let absolute = hir
+                .pkg_build
+                .as_ref()
+                .and_then(|pb| pb.respell(&canonical))
+                .unwrap_or_else(|| canonical.clone())
+                .with_extension("")
+                .to_string_lossy()
+                .into_owned();
             // A single-file unit has NOT run when the program starts, so
             // every constant its body assigns is undefined until something
             // loads it -- whatever spelling reaches it. `defined?` and every
@@ -418,14 +428,29 @@ impl Loader {
             collect_parse_warnings(hir, &result, &canonical.display().to_string(), &source);
         }
         self.splicing.push(canonical.to_path_buf());
+        // A PACKAGE build respells its own source paths against a virtual
+        // root, so the artifact carries no build-directory spelling and
+        // two checkouts byte-compare. The spelled path feeds every
+        // downstream consumer -- `__FILE__`, the frame file,
+        // `$LOADED_FEATURES`, meta rows -- while `canonical` keeps naming
+        // the REAL file for reads, errors and cache rows.
+        let spelled: std::path::PathBuf = hir
+            .pkg_build
+            .as_ref()
+            .and_then(|pb| pb.respell(canonical))
+            .unwrap_or_else(|| canonical.to_path_buf());
         // A required file's `__FILE__` is ITSELF, not whoever required it.
         // Popped by the guard's Drop, so the parent's own statements after
         // the splice see their own path again.
-        let _file = SourceFileFrame::push(Some(canonical), 0);
+        let _file = SourceFileFrame::push(Some(&spelled), 0);
         let file_id = hir.add_file(
-            canonical.display().to_string(),
+            spelled.display().to_string(),
             std::sync::Arc::clone(&source),
         );
+        if spelled != *canonical {
+            hir.files[file_id.0 as usize].real_path =
+                Some(canonical.display().to_string());
+        }
         let prev_file = hir.lowering_file.replace(file_id);
         // `loaded_files` and `files` are indexed independently (splice
         // instances vs. span provenance), so the owning package rides
@@ -473,7 +498,7 @@ impl Loader {
         statements.insert(
             0,
             hir.push(HirNode::FeatureLoaded {
-                entry: canonical.display().to_string(),
+                entry: spelled.display().to_string(),
                 feature: None,
             }),
         );

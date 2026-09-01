@@ -122,6 +122,78 @@ pub fn lookup(key: &str) -> Option<PathBuf> {
     verify(&manifest).then_some(bin)
 }
 
+// ---- The package cache: the same mechanism, holding `.zeopkg`s. ---------
+//
+// A separately compiled package caches machine-wide exactly the way a
+// program does: the key hashes the entry, the options and zeo's identity;
+// the manifest re-reads every source the compile used. `ZEO_CACHE=0`
+// turns both caches off together, and `ZEO_PACKAGE_CACHE` relocates this
+// one the way `ZEO_PROGRAM_CACHE` relocates the other.
+
+/// `<build root>/packages`, beside `programs`.
+fn pkg_root() -> PathBuf {
+    match std::env::var_os("ZEO_PACKAGE_CACHE") {
+        Some(dir) => PathBuf::from(dir),
+        None => crate::home::build_root().join("packages"),
+    }
+}
+
+/// The package cache's key: [`key`], with the OUTPUT spelling neutralized
+/// first -- `manifest_out` names a destination, not an input, so one
+/// cache entry serves every `-o`.
+pub fn pkg_key(source: &str, opts: &crate::CompileOptions) -> String {
+    let mut keyed = opts.clone();
+    if let Some(pb) = &mut keyed.package_build {
+        pb.manifest_out = PathBuf::new();
+    }
+    key(source, &keyed)
+}
+
+/// The cached artifact for `key`, when its manifest still vouches for it.
+pub fn pkg_lookup(key: &str) -> Option<PathBuf> {
+    let dir = pkg_root().join(key);
+    let artifact = dir.join("pkg.zeopkg");
+    if !artifact.is_file() {
+        return None;
+    }
+    let manifest = std::fs::read_to_string(dir.join("manifest")).ok()?;
+    verify(&manifest).then_some(artifact)
+}
+
+/// Where a fresh package build should land; the caller writes the artifact,
+/// then calls [`pkg_commit`]. An artifact with no manifest never reads as a
+/// hit.
+pub fn pkg_reserve(key: &str) -> std::io::Result<PathBuf> {
+    let dir = pkg_root().join(key);
+    std::fs::create_dir_all(&dir)?;
+    let _ = std::fs::remove_file(dir.join("manifest"));
+    Ok(dir.join("pkg.zeopkg"))
+}
+
+/// Record what the cached artifact at `key` was built from.
+pub fn pkg_commit(key: &str, inputs: &[Input]) -> std::io::Result<()> {
+    std::fs::write(pkg_root().join(key).join("manifest"), rows_for(inputs)?)
+}
+
+/// A `.zeopkg`'s embedded object, landed where a link line can name it:
+/// `<pkg root>/objects/<digest>.o`. Content-addressed, so an existing file
+/// is already the right bytes; a read-only cache degrades to the system
+/// temp directory rather than failing the compile.
+pub fn pkg_object_file(digest: u64, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let place = |dir: PathBuf| -> std::io::Result<PathBuf> {
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("{digest:016x}.o"));
+        if !path.is_file() {
+            let tmp = dir.join(format!("{digest:016x}.{}.tmp", std::process::id()));
+            std::fs::write(&tmp, bytes)?;
+            std::fs::rename(&tmp, &path)?;
+        }
+        Ok(path)
+    };
+    place(pkg_root().join("objects"))
+        .or_else(|_| place(std::env::temp_dir().join("zeo-pkg-objects")))
+}
+
 /// Where a fresh build should be linked. The caller links here, then calls
 /// [`commit`]; a binary with no manifest beside it never reads as a hit.
 pub fn reserve(key: &str) -> std::io::Result<PathBuf> {
@@ -219,16 +291,7 @@ fn dir_stamp(dir: &Path) -> Option<u128> {
         .map(|d| d.as_nanos())
 }
 
-/// FNV-1a, the same shape the cext build key and the default-gem store use.
-/// A hash, not a signature: the cache is per-user and local, and the thing it
-/// guards against is a stale file, not an adversary.
-fn hash(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in bytes {
-        h = (h ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
-    }
-    h
-}
+use crate::package::fnv64 as hash;
 
 #[cfg(test)]
 mod tests {

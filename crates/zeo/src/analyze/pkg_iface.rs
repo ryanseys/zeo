@@ -1,4 +1,4 @@
-//! EXPERIMENTAL (M2): register a merged package's compile-time INTERFACE.
+//! Register a merged package's compile-time INTERFACE.
 //!
 //! A `--experimental-use-pkg` manifest carries `iface` rows -- what the
 //! package IS. This pass turns each into a real `ClassInfo` plus BODY-LESS
@@ -51,8 +51,8 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                 if taken.imported_pkg.is_none() {
                     return Err(format!(
                         "package '{}' defines `{}`, which this program already \
-                         has (a builtin); a package reopen of a builtin lands \
-                         with box rebasing (M4)",
+                         has (a builtin); a package reopen of a builtin is \
+                         not supported yet",
                         m.feature, mc.name
                     ));
                 }
@@ -246,7 +246,7 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                         return Err(format!(
                             "package '{}' defines `{taken_name}{sep}{}`, which \
                              another merged package also defines; a cross-\
-                             package redefinition needs M4's patch rows -- \
+                             package redefinition is not supported yet -- \
                              compile one of them from source",
                             m.feature, im.name
                         ));
@@ -260,12 +260,20 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
     Ok(())
 }
 
-/// The v1 boundary: a HOST definition that would change a packaged class
-/// needs M4's patch rows to stay sound, so it refuses by name today. Runs
+/// The boundary: a HOST definition that would change a packaged class has
+/// no sound mechanism yet, so it refuses -- naming the PACKAGE, which is
+/// what lets the drop-to-splice tier retry that gem from source. Runs
 /// after the whole registration walk, when every reopen and superclass is
 /// known.
 pub(super) fn refuse_host_edits_of_imports(compiler: &Compiler) -> Result<(), String> {
-    for class in &compiler.classes {
+    let feature_of = |id: ClassId| -> &str {
+        compiler
+            .class(id)
+            .imported_pkg
+            .map(|pi| compiler.hir.pkg_merge[pi as usize].feature.as_str())
+            .unwrap_or("?")
+    };
+    for (idx, class) in compiler.classes.iter().enumerate() {
         if class.imported_pkg.is_some() {
             // A host `def` on the class lands as an arena-backed (non-extern)
             // scope in the own-method tables; a body statement of any other
@@ -277,10 +285,11 @@ pub(super) fn refuse_host_edits_of_imports(compiler: &Compiler) -> Result<(), St
                 .any(|sid| compiler.scope(*sid).extern_symbol.is_none());
             if host_def || !class.class_body_stmts.is_empty() {
                 return Err(format!(
-                    "this program reopens `{}`, which a merged package provides; \
+                    "this program reopens `{}`, which package '{}' provides; \
                      a host reopen of a packaged class is not supported yet \
                      (compile the gem from source instead)",
-                    class.name
+                    class.name,
+                    feature_of(ClassId(idx as u32))
                 ));
             }
             continue;
@@ -293,29 +302,32 @@ pub(super) fn refuse_host_edits_of_imports(compiler: &Compiler) -> Result<(), St
         };
         if class.parent.as_ref().is_some_and(touches) {
             return Err(format!(
-                "`{}` subclasses `{}`, which a merged package provides; \
+                "`{}` subclasses `{}`, which package '{}' provides; \
                  subclassing a packaged class is not supported yet \
                  (compile the gem from source instead)",
                 class.name,
-                compiler.class(class.parent.unwrap()).name
+                compiler.class(class.parent.unwrap()).name,
+                feature_of(class.parent.unwrap())
             ));
         }
         if let Some((mid, _)) = class.mixin_order.iter().find(|(mid, _)| touches(mid)) {
             return Err(format!(
-                "`{}` mixes in `{}`, which a merged package provides; mixing \
+                "`{}` mixes in `{}`, which package '{}' provides; mixing \
                  in a packaged module is not supported yet (compile the gem \
                  from source instead)",
                 class.name,
-                compiler.class(*mid).name
+                compiler.class(*mid).name,
+                feature_of(*mid)
             ));
         }
         if let Some(e) = class.extends.iter().find(|e| touches(e)) {
             return Err(format!(
-                "`{}` extends `{}`, which a merged package provides; extending \
+                "`{}` extends `{}`, which package '{}' provides; extending \
                  a packaged module is not supported yet (compile the gem from \
                  source instead)",
                 class.name,
-                compiler.class(*e).name
+                compiler.class(*e).name,
+                feature_of(*e)
             ));
         }
     }

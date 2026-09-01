@@ -50,6 +50,10 @@ pub struct DataSection {
 #[derive(Clone)]
 pub struct SourceFile {
     pub name: String,
+    /// Set when `name` is a package build's respelled (virtual-root)
+    /// spelling: the file's REAL path, which the program cache's manifest
+    /// rows re-read for invalidation.
+    pub real_path: Option<String>,
     /// Shared rather than owned: the loader parses from this same text and
     /// must keep it alive while `ruby_prism` borrows it, so an owned `String`
     /// here forced a full copy of every Ruby file it read.
@@ -141,6 +145,7 @@ impl Hir {
         }
         self.files.push(SourceFile {
             name: name.into(),
+            real_path: None,
             source,
             frozen_string_literal,
             line_starts,

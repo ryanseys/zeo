@@ -9,24 +9,38 @@
 //! runtime still registers exactly one program. See the plan's Part III
 //! (decision 9: link-time merge, one desc, an untouched runtime).
 //!
-//! Class ids in a manifest are FINAL: the package minted its classes
-//! densely right after the shared bootstrap, and the host pads its own
-//! minting past the recorded band, so both objects' baked immediates are
-//! correct without rewriting. The id-translation tier that makes a package
-//! position-independent replaces this scheme in M2.
+//! Class ids in a manifest are LOCAL: the package minted them densely
+//! right after the shared bootstrap band, and the host remaps them onto
+//! the ids it assigns at merge -- rows through the kind-aware rewrite in
+//! `clif::pkg::merge_rows`, code through the `{prefix}_cids`
+//! id-translation table the host defines, which is what makes one
+//! compiled object correct in any program.
 
 use serde::{Deserialize, Serialize};
 
 /// Bumped when the manifest schema changes shape. Independent of
 /// `zeo_abi::ABI_VERSION`: the manifest is a compiler-to-compiler file.
-pub const MANIFEST_VERSION: u32 = 3;
+pub const MANIFEST_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
     pub manifest_version: u32,
     pub abi_version: u32,
+    /// The compiler that built this artifact. Decision 7: no stable ABI
+    /// tag is promised yet, so the version string stands in and an exact
+    /// match is the contract.
+    pub compiler: String,
+    /// The ISA triple the object was compiled for; the host refuses a
+    /// mismatch by name rather than letting the link discover it.
+    pub target: String,
+    /// FNV-64 over every source text this compile read, in file order --
+    /// the content half of a cache key.
+    pub source_digest: String,
+    /// FNV-64 over the serialized `iface` section -- what a dependent
+    /// package will record, so an interface change invalidates by hash.
+    pub iface_hash: String,
     /// The symbol prefix this package's exported unit machinery carries
-    /// (`zeo_pkg_<name>`); bodies keep their natural names until M1.
+    /// (`zeo_pkg_<name>`); bodies are prefixed too.
     pub prefix: String,
     /// The feature spelling the package was built for (`require "<this>"`).
     pub feature: String,
@@ -200,6 +214,118 @@ pub struct MMetaRow {
     pub aliased_from: String,
 }
 
+/// The feature a manifest text names, read leniently: a manifest too old
+/// or too new to parse as [`Manifest`] must still be identifiable, so the
+/// fallback tier can drop its package by name.
+pub fn feature_of_manifest_text(text: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()?
+        .get("feature")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+// ---- The store-adjacent artifact tier. ----------------------------------
+//
+// The authoritative home for a resolved gem's compiled artifact is INSIDE
+// the gem store, a sibling of RubyGems' own `extensions/` directory. The
+// lifecycle is right by construction: wiped on reinstall and `gem
+// pristine`, cleaned by `gem cleanup` and `bundle clean`, shipped inside a
+// `vendor/bundle` deployment, per-target and per-ABI by path. When the
+// store cannot be written (a read-only mount, a system ruby), the machine
+// cache stays the authority and resolution serves from there.
+
+/// `<store>/zeo/<target>/zeo-<abi>/<name>-<version>/pkg.zeopkg`.
+pub fn store_artifact_home(
+    store_root: &std::path::Path,
+    target: &str,
+    name: &str,
+    version: &str,
+) -> std::path::PathBuf {
+    store_root
+        .join("zeo")
+        .join(target)
+        .join(format!("zeo-{}", zeo_abi::abi::ABI_VERSION))
+        .join(format!("{name}-{version}"))
+        .join("pkg.zeopkg")
+}
+
+/// Install `artifact` at its store `home`, by hardlink where the two share
+/// a device and by copy where they do not. `Ok(false)` means the store is
+/// not writable -- the caller keeps serving from the machine cache, which
+/// is the tolerated degradation, never an error.
+pub fn store_install(
+    home: &std::path::Path,
+    artifact: &std::path::Path,
+) -> std::io::Result<bool> {
+    let dir = home.parent().expect("a store home has a directory");
+    if std::fs::create_dir_all(dir).is_err() {
+        return Ok(false);
+    }
+    let _ = std::fs::remove_file(home);
+    if std::fs::hard_link(artifact, home).is_ok() {
+        return Ok(true);
+    }
+    match std::fs::copy(artifact, home) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// FNV-1a, the same shape the program cache uses. A hash, not a
+/// signature: it guards against a stale artifact, not an adversary.
+pub fn fnv64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        h = (h ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
+    }
+    h
+}
+
+// ---- The `.zeopkg` artifact: one file carrying both halves. -------------
+//
+// Layout: an 8-byte magic, then each section as a little-endian u64 length
+// followed by its bytes -- manifest JSON first, object second. Deliberately
+// dumb: the manifest already carries every version and identity field, so
+// the container only has to hold bytes together deterministically.
+
+const ZEOPKG_MAGIC: &[u8; 8] = b"ZEOPKG1\n";
+
+pub fn write_zeopkg(
+    path: &std::path::Path,
+    manifest_json: &str,
+    object: &[u8],
+) -> std::io::Result<()> {
+    let mut bytes =
+        Vec::with_capacity(8 + 16 + manifest_json.len() + object.len());
+    bytes.extend_from_slice(ZEOPKG_MAGIC);
+    bytes.extend_from_slice(&(manifest_json.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(manifest_json.as_bytes());
+    bytes.extend_from_slice(&(object.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(object);
+    std::fs::write(path, bytes)
+}
+
+pub fn read_zeopkg(path: &std::path::Path) -> Result<(String, Vec<u8>), String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let bad = || format!("{} is not a zeo package artifact", path.display());
+    let mut rest = bytes.strip_prefix(ZEOPKG_MAGIC).ok_or_else(bad)?;
+    let section = |rest: &mut &[u8]| -> Result<Vec<u8>, String> {
+        let (len, tail) = rest.split_at_checked(8).ok_or_else(bad)?;
+        let len = u64::from_le_bytes(len.try_into().expect("eight bytes")) as usize;
+        let (body, tail) = tail.split_at_checked(len).ok_or_else(bad)?;
+        *rest = tail;
+        Ok(body.to_vec())
+    };
+    let manifest = String::from_utf8(section(&mut rest)?).map_err(|_| bad())?;
+    let object = section(&mut rest)?;
+    if !rest.is_empty() {
+        return Err(bad());
+    }
+    Ok((manifest, object))
+}
+
 impl Manifest {
     pub fn parse(text: &str) -> Result<Manifest, String> {
         let m: Manifest =
@@ -249,9 +375,25 @@ pub struct PackageBuild {
     pub feature: String,
     /// Where the manifest lands, beside the object.
     pub manifest_out: std::path::PathBuf,
+    /// The entry file's CANONICAL directory -- the root every package
+    /// source path is respelled against (see [`PackageBuild::respell`]).
+    pub root: std::path::PathBuf,
 }
 
 impl PackageBuild {
+    /// The reproducible spelling for a package-owned source path
+    /// (decision 6): `/zeopkg/<feature>/<path relative to the entry's
+    /// directory>`. Two checkouts of one gem then emit byte-identical
+    /// artifacts. Every consumer of the spelling stays consistent by
+    /// derivation -- frame files, the unit's absolute feature row,
+    /// `$LOADED_FEATURES`, meta rows, `__FILE__` -- which is what
+    /// `require_relative`'s absolutize-against-the-frame contract needs.
+    /// A path outside the entry's directory keeps its real spelling.
+    pub fn respell(&self, canonical: &std::path::Path) -> Option<std::path::PathBuf> {
+        let rel = canonical.strip_prefix(&self.root).ok()?;
+        Some(std::path::Path::new("/zeopkg").join(&self.feature).join(rel))
+    }
+
     /// The exported-symbol prefix: the feature spelling with every
     /// non-identifier byte folded to `_`.
     pub fn prefix(&self) -> String {
@@ -272,6 +414,10 @@ mod tests {
         Manifest {
             manifest_version: MANIFEST_VERSION,
             abi_version: zeo_abi::abi::ABI_VERSION,
+            compiler: "zeo 0.1.0".into(),
+            target: "aarch64-apple-darwin".into(),
+            source_digest: "00000000000000aa".into(),
+            iface_hash: "00000000000000bb".into(),
             prefix: "zeo_pkg_pureleaf".into(),
             feature: "pureleaf".into(),
             first_class_id: 400,
@@ -339,5 +485,80 @@ mod tests {
         m.manifest_version += 1;
         let err = Manifest::parse(&m.to_json()).unwrap_err();
         assert!(err.contains("manifest version"), "{err}");
+    }
+
+    /// The lenient reader answers the feature even for a manifest the
+    /// strict parser refuses -- that is its whole reason to exist.
+    #[test]
+    fn the_feature_reads_from_an_unparsable_manifest() {
+        let mut m = sample();
+        m.manifest_version += 7;
+        assert_eq!(
+            feature_of_manifest_text(&m.to_json()).as_deref(),
+            Some("pureleaf")
+        );
+        assert_eq!(feature_of_manifest_text("not json"), None);
+    }
+
+    #[test]
+    fn a_zeopkg_bundle_round_trips() {
+        let dir = std::env::temp_dir().join(format!("zeo-zeopkg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        let path = dir.join("pkg.zeopkg");
+        let object = vec![0u8, 159, 146, 150, 255];
+        write_zeopkg(&path, "{\"feature\": \"x\"}", &object).expect("write");
+        let (manifest, back) = read_zeopkg(&path).expect("read");
+        assert_eq!(manifest, "{\"feature\": \"x\"}");
+        assert_eq!(back, object);
+        // A truncated bundle refuses rather than answering half a section.
+        let bytes = std::fs::read(&path).expect("reread");
+        std::fs::write(&path, &bytes[..bytes.len() - 2]).expect("truncate");
+        assert!(read_zeopkg(&path).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_store_home_is_a_sibling_of_extensions() {
+        let home = store_artifact_home(
+            std::path::Path::new("/store"),
+            "aarch64-apple-darwin",
+            "rack",
+            "3.1.0",
+        );
+        assert_eq!(
+            home,
+            std::path::PathBuf::from(format!(
+                "/store/zeo/aarch64-apple-darwin/zeo-{}/rack-3.1.0/pkg.zeopkg",
+                zeo_abi::abi::ABI_VERSION
+            ))
+        );
+    }
+
+    #[test]
+    fn a_store_install_lands_and_a_read_only_store_degrades() {
+        let dir = std::env::temp_dir().join(format!("zeo-store-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        let artifact = dir.join("built.zeopkg");
+        std::fs::write(&artifact, b"artifact bytes").expect("write the artifact");
+
+        let home = store_artifact_home(&dir.join("store"), "t", "gem", "1.0.0");
+        assert!(store_install(&home, &artifact).expect("install"));
+        assert_eq!(std::fs::read(&home).expect("read back"), b"artifact bytes");
+
+        // A store that cannot be written is a degradation, not an error:
+        // the machine cache stays the authority.
+        let frozen = dir.join("frozen");
+        std::fs::create_dir_all(&frozen).expect("mkdir");
+        let mut perms = std::fs::metadata(&frozen).expect("meta").permissions();
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o555);
+        std::fs::set_permissions(&frozen, perms.clone()).expect("chmod");
+        let home = store_artifact_home(&frozen, "t", "gem", "1.0.0");
+        assert!(!store_install(&home, &artifact).expect("degrade"));
+        perms.set_mode(0o755);
+        let _ = std::fs::set_permissions(&frozen, perms);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

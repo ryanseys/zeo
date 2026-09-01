@@ -108,7 +108,7 @@ impl CompileMode {
 /// see `parse::parse_and_lower_with`. `Default` (no path, no roots) keeps
 /// the pathless `-e` behavior: `require_relative` then fails with
 /// CRuby's own "cannot infer basepath", and a plain `require` finds nothing.
-#[derive(Default, Hash)]
+#[derive(Clone, Default, Hash)]
 pub struct CompileOptions {
     /// The main file's own path -- the base for its `require_relative`s.
     pub input_path: Option<std::path::PathBuf>,
@@ -176,11 +176,11 @@ pub struct CompileOptions {
     /// every line number the program reports, and ruby's own `-r` runs in a
     /// file of its own.
     pub required_libraries: Vec<String>,
-    /// EXPERIMENTAL (M0): compile ONE gem entry file as a separately linked
+    /// Compile ONE gem entry file as a separately linked
     /// package -- an object whose bodies are exported plus a row manifest --
     /// instead of a runnable program. See [`package`].
     pub package_build: Option<package::PackageBuild>,
-    /// EXPERIMENTAL (M0): packages to merge into this program. Each
+    /// Packages to merge into this program. Each
     /// contributes its manifest rows to THIS compile's one `ProgramDesc`;
     /// the caller links each package's object beside the emitted one.
     pub use_packages: Vec<package::UsePackage>,
@@ -231,9 +231,14 @@ pub struct ObjectOutput {
     ///
     /// Collecting them costs an `Arc` bump per file, not a copy.
     pub inputs: Vec<progcache::Input>,
-    /// EXPERIMENTAL (M0): package objects the LINK must include beside this
+    /// Package objects the LINK must include beside this
     /// one (`--experimental-use-pkg`). Empty for every ordinary compile.
     pub extra_objects: Vec<std::path::PathBuf>,
+    /// Features a `require` names that resolve NOWHERE -- the loader's
+    /// resolvability pre-scan. The package fallback reads this to tell a
+    /// drop that recompiled from source apart from one that left the
+    /// program unable to load the feature at all.
+    pub unresolvable_requires: Vec<String>,
 }
 
 /// The Cranelift pipeline: front end, then `clif::emit`.
@@ -253,6 +258,76 @@ pub fn compile_to_object_with(
             .join()
             .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
     })
+}
+
+/// A precompiled artifact a compile refused and fell back from -- its
+/// feature compiles from source instead. See
+/// [`compile_to_object_with_package_fallback`].
+pub struct DroppedPackage {
+    pub feature: String,
+    /// The refusal's first line -- why the artifact could not merge.
+    pub reason: String,
+}
+
+/// [`compile_to_object_with`], with the package fallback tier: a compile
+/// that REFUSES one of the named packages retries without that artifact,
+/// so its require resolves from source like any other. Precompilation is
+/// an optimization with a validity predicate, never a semantic change --
+/// the program built after a drop is the program a source compile always
+/// built.
+///
+/// Attribution rests on one contract: every package refusal (the
+/// interface registration, the row merge, the host-edit checks) names its
+/// package as `package '<feature>'`.
+///
+/// A drop stands only when the gem really recompiled from source. When
+/// the retry instead DEFERRED the feature to the runtime loader -- no
+/// source anywhere -- the program would be born unable to load it, so the
+/// original refusal comes back as the error. `on_drop` fires once per
+/// drop that stands, before this returns.
+pub fn compile_to_object_with_package_fallback(
+    source: &str,
+    opts: &CompileOptions,
+    debuginfo: bool,
+    mut on_drop: impl FnMut(&DroppedPackage),
+) -> Result<ObjectOutput, CompileError> {
+    let mut opts = opts.clone();
+    let mut drops: Vec<(DroppedPackage, CompileError)> = Vec::new();
+    let outcome = loop {
+        match compile_to_object_with(source, &opts, debuginfo) {
+            Ok(compiled) => break Ok(compiled),
+            Err(e) if !opts.use_packages.is_empty() => {
+                let msg = e.to_string();
+                let refused = opts.use_packages.iter().position(|p| {
+                    package::feature_of_manifest_text(&p.manifest_text)
+                        .is_some_and(|f| msg.contains(&format!("package '{f}'")))
+                });
+                let Some(i) = refused else { break Err(e) };
+                let p = opts.use_packages.remove(i);
+                let dropped = DroppedPackage {
+                    feature: package::feature_of_manifest_text(&p.manifest_text)
+                        .unwrap_or_else(|| "?".to_string()),
+                    reason: msg.lines().next().unwrap_or_default().to_string(),
+                };
+                drops.push((dropped, e));
+            }
+            Err(e) => break Err(e),
+        }
+    };
+    let compiled = outcome?;
+    let unresolved = |feature: &str| {
+        compiled
+            .unresolvable_requires
+            .iter()
+            .any(|d| d == feature || d.starts_with(&format!("{feature}/")))
+    };
+    if let Some(i) = drops.iter().position(|(d, _)| unresolved(&d.feature)) {
+        return Err(drops.swap_remove(i).1);
+    }
+    for (dropped, _) in &drops {
+        on_drop(dropped);
+    }
+    Ok(compiled)
 }
 
 /// What the front end spent, for `ZEO_TIMINGS`. Recorded by
@@ -369,9 +444,19 @@ fn compile_object_on_this_thread(
         .files
         .iter()
         .map(|f| progcache::Input {
-            name: f.name.clone(),
+            // A package build's respelled file names its REAL path here, so
+            // the cache manifest re-reads the file that actually exists.
+            name: f.real_path.clone().unwrap_or_else(|| f.name.clone()),
             source: std::sync::Arc::clone(&f.source),
         })
+        .collect();
+    let unresolvable_requires = analyzed
+        .compiler
+        .hir
+        .loader
+        .unresolvable_requires
+        .iter()
+        .cloned()
         .collect();
     Ok(ObjectOutput {
         object,
@@ -379,6 +464,7 @@ fn compile_object_on_this_thread(
         loads_cext,
         inputs,
         extra_objects: opts.use_packages.iter().map(|p| p.object.clone()).collect(),
+        unresolvable_requires,
     })
 }
 

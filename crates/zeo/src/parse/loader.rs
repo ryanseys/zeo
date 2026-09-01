@@ -621,7 +621,7 @@ pub(super) fn lower_main_file(
     hir.lowering_file = prev_file;
     hir.lowering_dir = prev_dir;
     let lowered = lowered?;
-    // EXPERIMENTAL (M0): a package build compiles its entry file as a
+    // A package build compiles its entry file as a
     // FEATURE UNIT under the requested spelling -- the same machinery a
     // dynamically required file rides -- inside an empty main the emitter
     // then discards. Seeded here so the loop below materializes it.
