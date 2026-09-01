@@ -467,12 +467,20 @@ fn rustfmt_would_write(text: &str) -> Result<String, Error> {
     let path = tmp.path().join("stubs.rs");
     std::fs::write(&path, text)
         .map_err(|e| Error::new(format!("writing {}: {e}", path.display())))?;
-    exec::run(
+    let out = exec::run(
         &[Path::new("rustfmt"), Path::new("--edition"), Path::new("2024"), &path],
         root(),
         &[],
         Capture::Both,
     )?;
+    // A toolchain without the rustfmt component fails here, not later as a
+    // 3,000-line "stale" diff against the formatted committed tables.
+    if !out.success() {
+        return Err(Error::new(format!(
+            "rustfmt failed (is the component installed?):\n{}",
+            out.stderr_text().trim_end()
+        )));
+    }
     read(&path)
 }
 

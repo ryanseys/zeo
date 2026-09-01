@@ -5,5 +5,6 @@ channel = "1.97.1"
 # llvm-tools supplies the toolchain's llvm-profdata -- `cargo xtask dist --pgo`
 # merges training profiles with it (profraw formats are LLVM-version-locked,
 # so a system llvm-profdata is never an answer). clippy is what `make lint`
-# runs; CI installs this file's toolchain and nothing else, so it rides here.
-components = ["llvm-tools", "clippy"]
+# runs, and rustfmt is what `cargo xtask cext api` formats its tables with;
+# CI installs this file's toolchain and nothing else, so both ride here.
+components = ["llvm-tools", "clippy", "rustfmt"]
