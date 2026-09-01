@@ -58,7 +58,10 @@ use crate::zeo_bin::zeo_cli;
 /// FAILURE naming the bound, which is what the corpus wants: a hang is a
 /// divergence from ruby like any other.
 const MAX_CAPTURE: usize = 64 << 20; // 64 MiB per stream
-const RUN_DEADLINE: Duration = Duration::from_secs(60);
+// 120s, not 60: a whole-gem golden (`require "rss"`) compiles in ~12s alone
+// and ran past 60s under the loaded full suite. A hang still dies, just
+// later.
+const RUN_DEADLINE: Duration = Duration::from_secs(120);
 
 /// The third bound, and the one the other two miss: a child that ALLOCATES
 /// without writing. `(1..).to_a` -- an endless range zeo evaluates eagerly --
@@ -68,9 +71,11 @@ const RUN_DEADLINE: Duration = Duration::from_secs(60);
 /// Measured, on a 16 GiB machine: four such children at `--test-threads 4`
 /// took free memory from 6.9 GiB to 0.06 GiB in five and a half seconds, and
 /// the corpus has six of them. Against that, 741 ordinary golden children peak
-/// at 13 MiB. So the cap can sit far below anything legitimate: 512 MiB is 40x
-/// the observed normal peak and a fraction of what a runaway wants.
-const MAX_CHILD_RSS: u64 = 512 << 20; // 512 MiB
+/// at 13 MiB. So the cap can sit far below anything legitimate -- but the
+/// corpus now carries whole-gem compiles too: `require "rss"` peaks at 385
+/// MiB alone and crossed a 512 MiB cap only under a loaded suite. 768 MiB is
+/// 2x that gem-graph peak and still a fraction of what a runaway wants.
+const MAX_CHILD_RSS: u64 = 768 << 20; // 768 MiB
 
 /// [`MAX_CHILD_RSS`], with an env override (`ZEO_GOLDEN_MAX_RSS`, in MiB)
 /// for the cases that legitimately need more, the same way
