@@ -55,11 +55,13 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
         // Only a FROZEN-CHAIN member, reached in frozen order, can stop it.
         // A run-time `include`/`prepend` only INSERTS modules, so the frozen
         // members keep their relative order inside the live chain -- and when
-        // the walk reaches one, every earlier frozen member has already been
-        // walked with no hit, so the flat table's answer IS this ancestor's
-        // own definition. A spliced module itself must never stop the walk:
-        // its rows live in a host's `prepended` map further along, and the
-        // flat table cannot see them.
+        // the walk reaches one, every earlier chain position has already
+        // answered or missed, so the flat table's answer IS this ancestor's
+        // own definition. An UNALIGNED member is a run-time-spliced frozen
+        // module: it answers its own static method at its chain position --
+        // the same impl `overlay_prepended_methods` copies from -- because
+        // the flat table cannot see it, and a copy in a host's `prepended`
+        // map may sit behind a frozen member that also defines the name.
         let chain = ancestors_of_value(id);
         let frozen = crate::dispatch::frozen_ancestors(id);
         let c = maps().classes.read().unwrap();
@@ -78,6 +80,8 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
                 if crate::dispatch::class_defines_own_instance_method_if_registered(*anc, name) {
                     return None;
                 }
+            } else if let Some(m) = crate::dispatch::registry_value_method_impl(*anc, name) {
+                return Some(m);
             }
         }
         None
