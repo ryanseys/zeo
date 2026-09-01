@@ -60,15 +60,16 @@ struct State {
 
 /// A mode string's three answers. CRuby reads the first character and then
 /// a `+`; anything else in the string (`b`, `t`, an `:encoding` tail) does
-/// not change the direction.
-fn mode_bits(mode: &str) -> (bool, bool, bool) {
+/// not change the direction. A first character outside r/w/a is CRuby's
+/// `ArgumentError: invalid access mode <mode>`.
+fn mode_bits(mode: &str) -> Option<(bool, bool, bool)> {
     let head = mode.split(':').next().unwrap_or(mode);
     let plus = head.contains('+');
     match head.chars().next() {
-        Some('r') => (true, plus, false),
-        Some('w') => (plus, true, false),
-        Some('a') => (plus, true, true),
-        _ => (true, true, false),
+        Some('r') => Some((true, plus, false)),
+        Some('w') => Some((plus, true, false)),
+        Some('a') => Some((plus, true, true)),
+        _ => None,
     }
 }
 
@@ -318,14 +319,18 @@ fn unget_bytes(
     if bytes.is_empty() {
         return Ok(RubyValue::Nil);
     }
+    // Back over what position allows and overwrite it; whatever cannot be
+    // backed over is INSERTED, growing the buffer -- CRuby's rule, which is
+    // what makes an unget at position 0 a prepend rather than an overwrite
+    // of the head.
     let back = bytes.len().min(s.pos);
     s.pos -= back;
     let at = s.pos;
-    // Grow first if the write runs past the end, then overwrite in place.
-    if at + bytes.len() > s.bytes.len() {
-        s.bytes.resize(at + bytes.len(), 0);
+    if at > s.bytes.len() {
+        s.bytes.resize(at, 0);
     }
-    s.bytes[at..at + bytes.len()].copy_from_slice(&bytes);
+    let replaced = at + back.min(s.bytes.len() - at);
+    s.bytes.splice(at..replaced, bytes.iter().copied());
     Ok(RubyValue::Nil)
 }
 
@@ -452,11 +457,31 @@ ruby_class! {
         if s.pos >= s.bytes.len() {
             return Ok(RubyValue::Nil);
         }
+        // An empty separator is PARAGRAPH mode: skip the newlines the last
+        // paragraph left behind, then read through the next blank line and
+        // every newline that follows it.
+        if matches!(&opts.sep, Some(sep) if sep.is_empty()) {
+            while s.pos < s.bytes.len() && s.bytes[s.pos] == b'\n' {
+                s.pos += 1;
+            }
+            if s.pos >= s.bytes.len() {
+                return Ok(RubyValue::Nil);
+            }
+        }
         let rest = &s.bytes[s.pos..];
         let mut end = match &opts.sep {
             // A nil separator slurps the rest.
             None => s.bytes.len(),
-            Some(sep) if sep.is_empty() => s.bytes.len(),
+            Some(sep) if sep.is_empty() => match find_sub(rest, b"\n\n") {
+                Some(i) => {
+                    let mut e = s.pos + i + 2;
+                    while e < s.bytes.len() && s.bytes[e] == b'\n' {
+                        e += 1;
+                    }
+                    e
+                }
+                None => s.bytes.len(),
+            },
             Some(sep) => find_sub(rest, sep)
                 .map(|i| s.pos + i + sep.len())
                 .unwrap_or(s.bytes.len()),
@@ -523,7 +548,11 @@ ruby_class! {
         Ok(RubyValue::Bool(s.pos >= s.bytes.len()))
     }
     def "rewind" (recv) {
-        live_io(recv)?.state.lock().pos = 0;
+        let mut s = live_io(recv)?.state.lock();
+        s.pos = 0;
+        // Unlike `seek`/`pos=`, rewind also resets the line counter --
+        // IO#rewind's own contract.
+        s.lineno = 0;
         Ok(RubyValue::Int(0))
     }
     def "pos" | "tell" (recv) {
@@ -531,7 +560,10 @@ ruby_class! {
     }
     def "pos=" (recv, arg) {
         let n = &crate::builtins::convert::to_index(arg)?;
-        live_io(recv)?.state.lock().pos = (*n).max(0) as usize;
+        if *n < 0 {
+            return Err(raise_error("Errno::EINVAL", "Invalid argument".to_string()));
+        }
+        live_io(recv)?.state.lock().pos = *n as usize;
         Ok((*arg).clone())
     }
     def "size" | "length" (recv) {
@@ -795,7 +827,7 @@ ruby_class! {
         };
         let target = base + off;
         if target < 0 {
-            return Err(raise_error("Errno::EINVAL", "Invalid argument - invalid seek".to_string()));
+            return Err(raise_error("Errno::EINVAL", "Invalid argument".to_string()));
         }
         s.pos = target as usize;
         Ok(RubyValue::Int(0))
@@ -852,6 +884,18 @@ ruby_class! {
         s.pos += 1;
         Ok(RubyValue::Int(i64::from(b)))
     }
+    // `readchar` -- `getc`, but raising `EOFError` at end.
+    def "readchar" (recv) {
+        check_readable(recv)?;
+        let mut s = live_io(recv)?.state.lock();
+        if s.pos >= s.bytes.len() {
+            return Err(eof_error!("end of file reached"));
+        }
+        let len = char_len(s.enc, s.bytes[s.pos]).min(s.bytes.len() - s.pos);
+        let ch = s.bytes[s.pos..s.pos + len].to_vec();
+        s.pos += len;
+        Ok(bytes_to_str(&ch, s.enc))
+    }
     // `readline([sep][, limit][, chomp:])` -- `gets`, but raising at end.
     def "readline" (recv, _sep?, _limit?, **_opts, &_blk) {
         match gets(recv, __args, None)? {
@@ -876,7 +920,10 @@ ruby_class! {
         check_writable(recv)?;
         let len = &crate::builtins::convert::to_index(arg)?;
         if *len < 0 {
-            return Err(raise_error("Errno::EINVAL", "Invalid argument".to_string()));
+            return Err(raise_error(
+                "Errno::EINVAL",
+                "Invalid argument - negative length".to_string(),
+            ));
         }
         live_io(recv)?.state.lock().bytes.resize(*len as usize, 0);
         Ok(RubyValue::Int(0))
@@ -925,16 +972,24 @@ fn new_stringio(
             (s.bytes().to_vec(), s.encoding())
         }
     };
+    let frozen_source = matches!(string, Some(RubyValue::Str(s)) if s.is_frozen());
     let (readable, writable, append) = match mode {
-        None | Some(RubyValue::Nil) => (true, true, false),
-        Some(v) => mode_bits(&crate::builtins::convert::to_rstr(v)?.lock().to_utf8_lossy()),
+        // No mode: read-write -- except over a FROZEN string, where CRuby
+        // defaults to read-only rather than refusing.
+        None | Some(RubyValue::Nil) => (true, !frozen_source, false),
+        Some(v) => {
+            let text = crate::builtins::convert::to_rstr(v)?.lock().to_utf8_lossy().into_owned();
+            match mode_bits(&text) {
+                Some(bits) => bits,
+                None => {
+                    return Err(crate::builtins::arg_error!("invalid access mode {text}"));
+                }
+            }
+        }
     };
-    // A FROZEN source with a writable mode is `Errno::EACCES` -- the buffer
-    // would have to be modified in place, and it cannot be.
-    if writable
-        && let Some(RubyValue::Str(s)) = string
-        && s.is_frozen()
-    {
+    // A FROZEN source with an EXPLICITLY writable mode is `Errno::EACCES` --
+    // the buffer would have to be modified in place, and it cannot be.
+    if writable && frozen_source {
         return Err(raise_error(
             "Errno::EACCES",
             "Permission denied".to_string(),
