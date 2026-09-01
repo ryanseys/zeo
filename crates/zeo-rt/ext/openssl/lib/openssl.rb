@@ -3,6 +3,11 @@
 # `ext/strscan/lib/strscan.rb` for the same shape and the reason for it.
 require "openssl.so"
 
+# The official gem's own buffered-IO mixin, vendored verbatim. The native
+# half supplies the primitives it is written against -- `sysread`,
+# `syswrite`, `sysclose` and the nonblock pair -- on `SSLSocket`.
+require "openssl/buffering"
+
 module OpenSSL
   # CRuby defines these in C (`ossl.c` and friends), but a feature-gated
   # native class cannot register a constructible exception in this runtime

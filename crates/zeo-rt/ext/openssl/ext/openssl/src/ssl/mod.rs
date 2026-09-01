@@ -30,7 +30,6 @@
 //! BLOCKING descriptor (they never answer `:wait_readable`), so a caller's
 //! socket timeout does not interrupt them.
 
-pub(crate) mod buffering;
 pub(crate) mod cert;
 pub(crate) mod context;
 pub(crate) mod socket;

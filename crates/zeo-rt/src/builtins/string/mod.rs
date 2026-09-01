@@ -856,6 +856,17 @@ ruby_class! {
                     extra.push((&**b & num_bigint::BigInt::from(0xFF)).to_u8().unwrap_or(0));
                 }
                 RubyValue::Str(s) => extra.extend_from_slice(s.lock().bytes()),
+                // A String SUBCLASS instance is a String here -- ruby checks
+                // the class, not the exact type. `OpenSSL::Buffering::Buffer`
+                // is the caller that found this.
+                other
+                    if crate::builtins::value_subclass::value_root_of(other.class_id())
+                        == Some(zeo_abi::STRING_CLASS) =>
+                {
+                    extra.extend_from_slice(
+                        crate::builtins::convert::to_rstr(other)?.lock().bytes(),
+                    );
+                }
                 other => {
                     return Err(type_error!("wrong argument type {} (expected String or Integer)",
                             crate::builtins::check_type_name(other)))
