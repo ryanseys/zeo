@@ -3461,6 +3461,7 @@ pub(crate) const API: &[(&str, &str, &str, &str)] = &[
     ("rb_zeo_ary_aset", "fn", "zeo", "void (VALUE, long, VALUE)"),
     ("rb_zeo_no_field", "fn", "zeo", "void *(const char *)"),
     ("rb_zeo_rarray", "fn", "zeo", "struct RArray *(VALUE)"),
+    ("rb_zeo_rbasic_class", "fn", "zeo", "VALUE (VALUE)"),
     ("rb_zeo_rdata", "fn", "zeo", "struct RData *(VALUE)"),
     ("rb_zeo_rfile", "fn", "zeo", "struct RFile *(VALUE)"),
     ("rb_zeo_rmatch", "fn", "zeo", "struct RMatch *(VALUE)"),
