@@ -169,7 +169,6 @@ fn cached_send_core(
     })
 }
 
-#[expect(clippy::too_many_arguments)]
 fn cached_send_core_inner(
     site: &'static CallSite,
     box_id: u32,
@@ -251,12 +250,12 @@ fn cached_send_core_inner(
                             // caches its SLOT; the first call still runs
                             // the trampoline (arity truth), hits ride the
                             // slot from then on.
-                            let cached = match REGISTRY.get().and_then(|r| r.accessor_slot(id, name))
-                            {
-                                Some((slot, true)) => Cached::IvarWrite(slot),
-                                Some((slot, false)) => Cached::IvarRead(slot),
-                                None => Cached::CObj(*f),
-                            };
+                            let cached =
+                                match REGISTRY.get().and_then(|r| r.accessor_slot(id, name)) {
+                                    Some((slot, true)) => Cached::IvarWrite(slot),
+                                    Some((slot, false)) => Cached::IvarRead(slot),
+                                    None => Cached::CObj(*f),
+                                };
                             let _ = site.hit.set((id.0, cached));
                             return crate::capi::dispatch::call_value_fn(*f, recv, args, block);
                         }

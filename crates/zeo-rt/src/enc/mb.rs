@@ -219,7 +219,8 @@ pub(crate) fn mb_encode_char(family: MbFamily, c: char) -> Option<Vec<u8>> {
 /// The `(deny, allow)` delta for the two families whose WHATWG encode table
 /// disagrees with CRuby's. The vendor rows riding a family's walk share its
 /// delta, exactly as they share its backend.
-fn encode_delta(family: MbFamily) -> Option<(&'static [char], &'static [(char, &'static [u8])])> {
+type EncodeDelta = (&'static [char], &'static [(char, &'static [u8])]);
+fn encode_delta(family: MbFamily) -> Option<EncodeDelta> {
     use crate::enc::mb_encode_delta as d;
     match family {
         MbFamily::Big5 => Some((d::BIG5_DENY, d::BIG5_ALLOW)),

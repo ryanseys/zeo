@@ -40,13 +40,16 @@ use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_long, c_void};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// One view: the struct's type, the object's address, the boxed block.
+type View = (TypeId, usize, Box<dyn Any>);
+
 thread_local! {
     /// One refilled view per object per struct, alive until the scope pops.
     ///
     /// Keyed by [`TypeId`] as well as by the object, because an address a
     /// collected object freed can come back as a different kind. The blocks
     /// are boxed, so pushing another entry never moves one C already holds.
-    static VIEWS: RefCell<Vec<(TypeId, usize, Box<dyn Any>)>> = const {
+    static VIEWS: RefCell<Vec<View>> = const {
         RefCell::new(Vec::new())
     };
 }
@@ -333,7 +336,7 @@ fn ivar_projection(obj: Value) -> Result<Vec<mri::VALUE>, Signal> {
     };
     let mut out = Vec::with_capacity(names.len());
     for name in &names {
-        let got = super::object::send(&recv, "instance_variable_get", &[name.clone()])?;
+        let got = super::object::send(&recv, "instance_variable_get", std::slice::from_ref(name))?;
         out.push(super::convert::to_value(&got)? as mri::VALUE);
     }
     Ok(out)
@@ -342,7 +345,9 @@ fn ivar_projection(obj: Value) -> Result<Vec<mri::VALUE>, Signal> {
 /// Group begin and end offsets, in bytes, group 0 first -- which is onig's
 /// own register order. A group that did not participate is `-1` in both,
 /// which is `ONIG_REGION_NOTPOS`.
-fn group_offsets(m: &RubyValue) -> Result<(Vec<mri::OnigPosition>, Vec<mri::OnigPosition>), Signal> {
+fn group_offsets(
+    m: &RubyValue,
+) -> Result<(Vec<mri::OnigPosition>, Vec<mri::OnigPosition>), Signal> {
     let n = match super::object::send(m, "size", &[])? {
         RubyValue::Int(n) => n.max(0) as usize,
         _ => 1,
@@ -351,7 +356,7 @@ fn group_offsets(m: &RubyValue) -> Result<(Vec<mri::OnigPosition>, Vec<mri::Onig
     let mut end = Vec::with_capacity(n);
     for i in 0..n {
         let at = RubyValue::Int(i as i64);
-        let b = super::object::send(m, "begin", &[at.clone()])?;
+        let b = super::object::send(m, "begin", std::slice::from_ref(&at))?;
         let e = super::object::send(m, "end", &[at])?;
         beg.push(offset_or_notpos(&b));
         end.push(offset_or_notpos(&e));

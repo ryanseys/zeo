@@ -997,14 +997,13 @@ pub fn negotiate_encoding(
 }
 
 /// [`sprintf_cached`] that also answers the result's encoding.
-pub fn sprintf_encoded(
-    template: &crate::RStr,
-    args: &[RubyValue],
-) -> Result<RubyValue, Signal> {
+pub fn sprintf_encoded(template: &crate::RStr, args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let mut used = Vec::new();
     let text = sprintf_collect(template, args, &mut used)?;
     let enc = negotiate_encoding(template, &used)?;
-    Ok(crate::builtins::string::encode::str_value_in_enc(enc, &text))
+    Ok(crate::builtins::string::encode::str_value_in_enc(
+        enc, &text,
+    ))
 }
 
 /// The parsed-template cache behind [`sprintf_cached`]: FROZEN templates
@@ -1012,9 +1011,8 @@ pub fn sprintf_encoded(
 /// allocation alive, so the address can never be reused while its entry
 /// stands (no ABA); a frozen string's bytes can never change, so the
 /// parse stays valid forever.
-static TEMPLATES: std::sync::Mutex<
-    Option<crate::FMap<usize, (crate::RStr, std::sync::Arc<Template>)>>,
-> = std::sync::Mutex::new(None);
+type Templates = crate::FMap<usize, (crate::RStr, std::sync::Arc<Template>)>;
+static TEMPLATES: std::sync::Mutex<Option<Templates>> = std::sync::Mutex::new(None);
 
 /// [`sprintf`] for a caller holding the template as an `RStr`: a frozen
 /// template (the common literal `"..." % args` shape under

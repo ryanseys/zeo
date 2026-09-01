@@ -652,18 +652,16 @@ pub(super) fn encode_impl(
             other => other.to_display_string(),
         }
     };
-    let from_raw = positional.get(1).map(|v| name_of(v));
-    let to_raw = positional.first().map(|v| name_of(v));
+    let from_raw = positional.get(1).map(&name_of);
+    let to_raw = positional.first().map(name_of);
     let from_enc = match positional.get(1) {
-        Some(v) => crate::builtins::encoding::arg_encoding(v).map_err(|e| {
-            converter_not_found(&e, from_raw.as_deref(), to_raw.as_deref(), &src)
-        })?,
+        Some(v) => crate::builtins::encoding::arg_encoding(v)
+            .map_err(|e| converter_not_found(&e, from_raw.as_deref(), to_raw.as_deref(), src))?,
         None => src.lock().encoding(),
     };
     let to_enc = match positional.first() {
-        Some(v) => crate::builtins::encoding::arg_encoding(v).map_err(|e| {
-            converter_not_found(&e, from_raw.as_deref(), to_raw.as_deref(), &src)
-        })?,
+        Some(v) => crate::builtins::encoding::arg_encoding(v)
+            .map_err(|e| converter_not_found(&e, from_raw.as_deref(), to_raw.as_deref(), src))?,
         None => encoding::default_internal().unwrap_or_else(|| src.lock().encoding()),
     };
     let opts = parse_encode_opts(opts_hash.as_ref())?;

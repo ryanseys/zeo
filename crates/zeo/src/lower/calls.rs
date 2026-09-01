@@ -1360,7 +1360,7 @@ fn lower_require_call(
         // to the runtime `Kernel#require`, which answers `false` for an
         // already-loaded feature and raises `LoadError` otherwise.
         if matches!(name, "require" | "require_relative") {
-            if let Some(feature) = single_literal_string_arg(result, hir, &call)? {
+            if let Some(feature) = single_literal_string_arg(result, hir, call)? {
                 // A DUAL-HOMED feature -- one that is both a gated builtin and
                 // a vendored gem -- must not fold when the loader kept its
                 // call. `tmpdir` is the shape: the ext half supplies the
@@ -1471,7 +1471,7 @@ fn lower_require_call(
                     return Ok(Some(hir.push(HirNode::BoolLit(!again))));
                 }
             } else if name == "require_relative"
-                && let Some(dir) = computed_relative_demand_dir(&call)
+                && let Some(dir) = computed_relative_demand_dir(call)
             {
                 // A computed `require_relative` gets a BOUNDED demand, not
                 // the package-wide one: either the literal directory prefix

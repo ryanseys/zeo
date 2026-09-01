@@ -358,8 +358,7 @@ fn imported_tramp(
                 .find(|r| r.class == *l && r.name == name)
                 .map(|r| r.f.clone())
                 .or_else(|| {
-                    m.vm
-                        .iter()
+                    m.vm.iter()
                         .find(|r| r.class == *l && r.name == name && r.box_id == 0)
                         .map(|r| r.f.clone())
                 })
@@ -426,7 +425,10 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
     // Object, Kernel, BasicObject -- the tail every ancestry ends with, so a
     // definition here is inherited by every class in the program. `ancestors`
     // starts with the class itself, so this is exactly those three.
-    let universal_spine: Vec<ClassId> = compiler.class(crate::compiler::OBJECT_CLASS).ancestors.clone();
+    let universal_spine: Vec<ClassId> = compiler
+        .class(crate::compiler::OBJECT_CLASS)
+        .ancestors
+        .clone();
     // A definition's one emitted trampoline, keyed by the SCOPE that
     // defined it -- never by name, which two owners can share. Filled as
     // each owner's own row is declared, and read by the carriers that
@@ -453,9 +455,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
         // and the registrar's `expect` on that lookup ABORTED the process.
         // The method rows already redirect to the root the overlay patches
         // (`target`, below); these have to as well.
-        let owner = class
-            .builtin_overlay
-            .map_or(idx as u32, |root| root.0);
+        let owner = class.builtin_overlay.map_or(idx as u32, |root| root.0);
         for (new, old, eager) in &class.builtin_aliases {
             alias_rows.push((owner, new.clone(), old.clone(), false, class.box_id, *eager));
         }
@@ -768,7 +768,11 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             let sig = params::body_sig(em, layout.n_slots, has_blk);
             let body_fn = em
                 .module
-                .declare_function(&em.pkg_symbol(names::method_symbol(&sym, &mname)), Linkage::Local, &sig)
+                .declare_function(
+                    &em.pkg_symbol(names::method_symbol(&sym, &mname)),
+                    Linkage::Local,
+                    &sig,
+                )
                 .map_err(|e| CodegenError::internal(format!("declaring {name}#{mname}: {e}")))?;
             match scope.visibility {
                 crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
@@ -831,7 +835,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     hir_params: p.clone(),
                     has_blk,
                     ruby2_keywords: scope.ruby2_keywords,
-                shared: false,
+                    shared: false,
                 });
             }
         }
@@ -980,15 +984,11 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                         Linkage::Import,
                         &params::body_sig(em, layout.n_slots, has_blk),
                     )
-                    .map_err(|e| {
-                        CodegenError::internal(format!("importing {sym}: {e}"))
-                    })?;
+                    .map_err(|e| CodegenError::internal(format!("importing {sym}: {e}")))?;
                 let tramp = em
                     .module
                     .declare_function(&tramp_sym, Linkage::Import, &params::value_fn_sig(em))
-                    .map_err(|e| {
-                        CodegenError::internal(format!("importing {tramp_sym}: {e}"))
-                    })?;
+                    .map_err(|e| CodegenError::internal(format!("importing {tramp_sym}: {e}")))?;
                 if crate::debug_flags::debug(crate::debug_flags::DebugFlag::TraceTyped) {
                     eprintln!("extern typed method ({}, {})", idx, scope.name);
                 }
@@ -1224,7 +1224,11 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 let sig = params::body_sig(em, layout.n_slots, has_blk);
                 let body_fn = em
                     .module
-                    .declare_function(&em.pkg_symbol(names::method_symbol(&sym, &mname)), Linkage::Local, &sig)
+                    .declare_function(
+                        &em.pkg_symbol(names::method_symbol(&sym, &mname)),
+                        Linkage::Local,
+                        &sig,
+                    )
                     .map_err(|e| {
                         CodegenError::internal(format!("declaring {name}#{mname}: {e}"))
                     })?;
@@ -1264,7 +1268,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     hir_params: p.clone(),
                     has_blk,
                     ruby2_keywords: scope.ruby2_keywords,
-                shared: false,
+                    shared: false,
                 });
             }
         }
@@ -1329,8 +1333,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             // the package object, and an arena compile of the body-less
             // scope would emit an empty shell that answers nil.
             if scope.extern_symbol.is_some() {
-                let Some(tramp) =
-                    imported_tramp(compiler, em, scope.defining_class, &mname)?
+                let Some(tramp) = imported_tramp(compiler, em, scope.defining_class, &mname)?
                 else {
                     // No exported trampoline (the package never emitted this
                     // shape); dispatch walks to the merged parent row.
@@ -1392,9 +1395,8 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             // its own bodies read name-keyed ivars, and so does an
             // `Object`-owned body, so the two agree. Excluding it left every
             // `Gem::` exception class taking private copies of `Kernel#pp`.
-            let shareable = !class.own_methods.contains(&entry.def)
-                && accessor.is_none()
-                && class.box_id == 0;
+            let shareable =
+                !class.own_methods.contains(&entry.def) && accessor.is_none() && class.box_id == 0;
             // A definition on an ORDINARY MODULE is the same argument one
             // step out. The module's own value-channel row is already
             // emitted name-keyed -- the includer's object-channel copy
@@ -1435,9 +1437,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             } else {
                 None
             };
-            if shareable
-                && let Some(shared) = shared_tramp
-            {
+            if shareable && let Some(shared) = shared_tramp {
                 // The visibility row is the class's, not the shared body's,
                 // and it is pushed further down the ordinary path -- so it
                 // has to be pushed here too. A top-level `def` is PRIVATE in
@@ -1496,7 +1496,11 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 let sig = params::body_sig(em, layout.n_slots, has_blk);
                 Some(
                     em.module
-                        .declare_function(&em.pkg_symbol(names::method_symbol(&sym, &mname)), Linkage::Local, &sig)
+                        .declare_function(
+                            &em.pkg_symbol(names::method_symbol(&sym, &mname)),
+                            Linkage::Local,
+                            &sig,
+                        )
                         .map_err(|e| {
                             CodegenError::internal(format!("declaring {name}#{mname}: {e}"))
                         })?,
@@ -1537,7 +1541,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     hir_params: p.clone(),
                     has_blk,
                     ruby2_keywords: scope.ruby2_keywords,
-                shared: false,
+                    shared: false,
                 });
                 continue;
             }
@@ -1647,7 +1651,10 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                     Some(
                         em.module
                             .declare_function(
-                                &em.pkg_symbol(names::method_symbol(&sym, &format!("__own_{mname}"))),
+                                &em.pkg_symbol(names::method_symbol(
+                                    &sym,
+                                    &format!("__own_{mname}"),
+                                )),
                                 Linkage::Local,
                                 &sig,
                             )
@@ -1707,8 +1714,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             // reads flattened rows, and an arena compile of the body-less
             // scope would answer nil.
             if scope.extern_symbol.is_some() {
-                let Some(tramp) =
-                    imported_cm_tramp(compiler, em, scope.defining_class, &mname)?
+                let Some(tramp) = imported_cm_tramp(compiler, em, scope.defining_class, &mname)?
                 else {
                     continue;
                 };
@@ -1910,8 +1916,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
 /// Shared by the plain-class loop and the builtin-reopen loop: a REOPENED
 /// builtin extended with a module needs exactly the same rows, and
 /// `minitest` reopens `Warning` that way.
-#[allow(clippy::too_many_arguments)]
-
+///
 /// Declare a trampoline and body function for every body of a method with
 /// an observable redefinition timeline -- the superseded ones AND the final
 /// one, each installed at its own document position by a spliced
@@ -1949,7 +1954,7 @@ fn collect_redef_scopes(
         let tramp = em
             .module
             .declare_function(
-                &em.pkg_symbol(names::trampoline_symbol(&sym, &suffix)),
+                &em.pkg_symbol(names::trampoline_symbol(sym, &suffix)),
                 Linkage::Local,
                 &params::value_fn_sig(em),
             )
@@ -1957,7 +1962,7 @@ fn collect_redef_scopes(
         let body_fn = em
             .module
             .declare_function(
-                &em.pkg_symbol(names::method_symbol(&sym, &suffix)),
+                &em.pkg_symbol(names::method_symbol(sym, &suffix)),
                 Linkage::Local,
                 &params::body_sig(em, layout.n_slots, has_blk),
             )
@@ -1980,6 +1985,7 @@ fn collect_redef_scopes(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // the emitter's state, one table per parameter
 fn emit_singleton_super_targets(
     compiler: &crate::compiler::Compiler,
     em: &mut Emitter,
@@ -2025,7 +2031,10 @@ fn emit_singleton_super_targets(
         let tramp = em
             .module
             .declare_function(
-                &em.pkg_symbol(names::class_trampoline_symbol(sym, &format!("__sst_{}_{mname}", m.0))),
+                &em.pkg_symbol(names::class_trampoline_symbol(
+                    sym,
+                    &format!("__sst_{}_{mname}", m.0),
+                )),
                 Linkage::Local,
                 &params::value_fn_sig(em),
             )
@@ -2034,7 +2043,10 @@ fn emit_singleton_super_targets(
         let body_fn = em
             .module
             .declare_function(
-                &em.pkg_symbol(names::class_method_symbol(sym, &format!("__sst_{}_{mname}", m.0))),
+                &em.pkg_symbol(names::class_method_symbol(
+                    sym,
+                    &format!("__sst_{}_{mname}", m.0),
+                )),
                 Linkage::Local,
                 &sig,
             )
@@ -2130,10 +2142,10 @@ fn ivar_slots_agree(
     carrier: crate::compiler::ClassId,
     sid: crate::compiler::ScopeId,
 ) -> bool {
-    scope_ivar_names(compiler, sid).iter().all(|name| {
-        match body_ivar_slot(compiler, owner, name) {
+    scope_ivar_names(compiler, sid)
+        .iter()
+        .all(|name| match body_ivar_slot(compiler, owner, name) {
             None => true,
             slot => slot == body_ivar_slot(compiler, carrier, name),
-        }
-    })
+        })
 }

@@ -1651,7 +1651,6 @@ fn union_of(recv: &crate::collections::RArray, others: &[Vec<RubyValue>]) -> Vec
     out
 }
 
-
 /// A random index in `0..bound`, from the supplied RNG (`random.rand(bound)`)
 /// or the shared PRNG. `bound` is assumed nonzero by the callers.
 fn rand_below(random: &Option<RubyValue>, bound: usize) -> Result<usize, crate::Signal> {
@@ -1721,7 +1720,7 @@ pub fn array_aset_int_checked(
     } else {
         Err(index_error!(
             "index {i} too small for array; minimum: {}",
-            -(crate::array_len(arr) as i64)
+            -crate::array_len(arr)
         ))
     }
 }

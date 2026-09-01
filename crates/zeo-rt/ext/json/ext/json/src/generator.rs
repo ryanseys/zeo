@@ -254,7 +254,7 @@ fn emit_one(
                     let sorted = crate::dispatch::send_value(
                         f,
                         crate::Symbol::intern("call"),
-                        &[v.clone()],
+                        std::slice::from_ref(v),
                         None,
                     )?;
                     match &sorted {

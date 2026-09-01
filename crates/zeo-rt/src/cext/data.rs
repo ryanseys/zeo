@@ -193,7 +193,10 @@ impl CData {
     /// typed form keeps `fields_obj` and `type`, which is why the untyped arm
     /// writes the two function pointers into the same words. MRI's two
     /// structs disagree about those words in exactly the same way.
-    pub fn refill_cell(&self, basic: crate::cext::layout::RBasic) -> *mut crate::cext::layout::RTypedData {
+    pub fn refill_cell(
+        &self,
+        basic: crate::cext::layout::RBasic,
+    ) -> *mut crate::cext::layout::RTypedData {
         self.cell.basic[0].store(basic.flags as usize, Ordering::Relaxed);
         self.cell.basic[1].store(basic.klass as usize, Ordering::Relaxed);
         let (w1, w2) = match self.dtype.is_null() {
@@ -283,9 +286,9 @@ pub(super) fn retain_write(old: super::value::Value, young: super::value::Value)
     if let Some(d) = o.as_any().downcast_ref::<CData>() {
         let mut r = d.retained.lock();
         // The same value re-stored (`#string=` in a loop) pins once.
-        if !r.contains(&(young as usize)) {
-            super::handles::pin_raw(young as usize);
-            r.push(young as usize);
+        if !r.contains(&{ young }) {
+            super::handles::pin_raw(young);
+            r.push(young);
         }
     }
 }
@@ -546,4 +549,3 @@ mod tests {
         assert_eq!(FREED.load(Ordering::Relaxed), 1);
     }
 }
-

@@ -308,7 +308,8 @@ fn lookup_table(id: ClassId) -> Option<&'static BuiltinClassTable> {
         }
         Map { dense, sparse }
     });
-    let found = if id.0 < DENSE_LIMIT {
+
+    if id.0 < DENSE_LIMIT {
         BY_ID.dense.get(id.0 as usize).copied().flatten()
     } else {
         BY_ID
@@ -316,8 +317,7 @@ fn lookup_table(id: ClassId) -> Option<&'static BuiltinClassTable> {
             .iter()
             .find(|(key, _)| *key == id.0)
             .map(|(_, t)| *t)
-    };
-    found
+    }
 }
 
 /// The four always-on builtins that declare no `ruby_class!` table at all --

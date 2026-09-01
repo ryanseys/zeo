@@ -258,7 +258,11 @@ pub fn runtime_replace_class_method_c(id: ClassId, name: Symbol, f: crate::capi:
     mark_live();
 }
 
-fn replace_method_impl(id: ClassId, name: Symbol, imp: crate::dispatch::MethodImpl) -> Vec<ClassId> {
+fn replace_method_impl(
+    id: ClassId,
+    name: Symbol,
+    imp: crate::dispatch::MethodImpl,
+) -> Vec<ClassId> {
     // A redefinition on a MODULE has to reach the copies analyze materialized
     // onto every including class, or it writes a row nothing reads: the host's
     // own flattened copy answers first and holds the LAST body from program
@@ -1864,7 +1868,12 @@ pub fn runtime_define_singleton_method(
             );
             {
                 let mut w = maps().classes.write().unwrap();
-                let e = w.entry(crate::boxes::box_record_for_write(crate::boxes::current_box(), cid.0)).or_insert_with(OverlayEntry::delta);
+                let e = w
+                    .entry(crate::boxes::box_record_for_write(
+                        crate::boxes::current_box(),
+                        cid.0,
+                    ))
+                    .or_insert_with(OverlayEntry::delta);
                 e.class_methods.insert(name, body);
                 e.extended_class_methods.remove(&name);
             }
@@ -2382,10 +2391,7 @@ fn check_mixin_cycle(cid: ClassId, module_val: &RubyValue) -> Result<(), Signal>
     let RubyValue::Class(mid) = module_val else {
         return Ok(());
     };
-    let cycles = *mid == cid
-        || crate::dispatch::ancestors_of_value(*mid)
-            .iter()
-            .any(|&a| a == cid);
+    let cycles = *mid == cid || crate::dispatch::ancestors_of_value(*mid).contains(&cid);
     match cycles {
         true => Err(arg_error!("cyclic include detected")),
         false => Ok(()),

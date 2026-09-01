@@ -184,6 +184,7 @@ pub(crate) fn fusable_block(fx: &Fx<'_, '_>, block: NodeId, max_required: usize)
 /// the block's required names bind (see [`Bind`]); `init` = `inject`'s
 /// explicit seed, lowered HERE so each execution evaluates it exactly
 /// once (the slow arm lowers its own copy as the send argument).
+#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 pub(crate) fn lower_counted(
     fx: &mut Fx,
     site: NodeId,
@@ -905,6 +906,7 @@ fn replace_cell(fx: &mut Fx, name: &str) {
 /// `want_result` is false in statement position, where `each`'s value (the
 /// receiver) is discarded -- which spares the arm a retain and a release
 /// per call, and that is most of them.
+#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 pub(crate) fn lower_array_each(
     fx: &mut Fx,
     site: NodeId,
@@ -1091,6 +1093,7 @@ pub(crate) fn lower_counted_int(
 /// BOTH. That is why the hook fuses only an IntegerLit/FloatLit/
 /// LocalRead argument: re-lowering those is observationally identical,
 /// so the double evaluation cannot be seen.
+#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 pub(crate) fn lower_up_down_int(
     fx: &mut Fx,
     site: NodeId,

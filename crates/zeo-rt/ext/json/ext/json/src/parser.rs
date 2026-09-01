@@ -804,8 +804,8 @@ mod tests {
         let RubyValue::Array(a) = v else {
             panic!("array")
         };
-        let e = a.lock()[0].clone();
-        e
+        
+        a.lock()[0].clone()
     }
 
     #[test]
@@ -1010,7 +1010,7 @@ mod tests {
     fn every_broken_unicode_escape_terminates() {
         for pre in [r#""\u"#, r#""\ud8"#, r#""\ud800\u"#] {
             for i in 0..=pre.len() {
-                let _ = refuses(pre[..i].as_bytes());
+                let _ = refuses(&pre.as_bytes()[..i]);
             }
         }
         for b in 0u8..=255 {

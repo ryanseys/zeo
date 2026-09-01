@@ -297,9 +297,12 @@ pub fn in_box<T>(b: u32, f: impl FnOnce() -> T) -> T {
 /// one is a bug, so nothing may return a shadow as a class.
 const SHADOW_BASE: u32 = 0xF000_0000;
 
-static SHADOWS: OnceLock<RwLock<(crate::FMap<(u32, u32), u32>, u32)>> = OnceLock::new();
+/// `(box_id, owner) -> shadow`, and the next shadow id to mint.
+type Shadows = (crate::FMap<(u32, u32), u32>, u32);
 
-fn shadows() -> &'static RwLock<(crate::FMap<(u32, u32), u32>, u32)> {
+static SHADOWS: OnceLock<RwLock<Shadows>> = OnceLock::new();
+
+fn shadows() -> &'static RwLock<Shadows> {
     SHADOWS.get_or_init(|| RwLock::new((crate::FMap::default(), SHADOW_BASE)))
 }
 
@@ -314,7 +317,12 @@ pub fn box_record_for_write(box_id: u32, owner: u32) -> u32 {
         return owner;
     }
     let key = (box_id, owner);
-    if let Some(&s) = shadows().read().expect("no poisoned shadow readers").0.get(&key) {
+    if let Some(&s) = shadows()
+        .read()
+        .expect("no poisoned shadow readers")
+        .0
+        .get(&key)
+    {
         return s;
     }
     let mut w = shadows().write().expect("no poisoned shadow writers");

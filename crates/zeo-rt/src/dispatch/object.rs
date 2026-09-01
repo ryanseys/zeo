@@ -180,7 +180,9 @@ pub fn is_main_private_singleton(recv: &RubyValue, name: Symbol) -> bool {
     };
     o.class_id() == zeo_abi::OBJECT_CLASS
         && is_main_object(o)
-        && MAIN_PRIVATE_SINGLETONS.iter().any(|n| *n == name.name_str())
+        && MAIN_PRIVATE_SINGLETONS
+            .iter()
+            .any(|n| *n == name.name_str())
 }
 
 /// `main`'s private singleton methods: each lands on `Object`, which is what
@@ -206,7 +208,7 @@ pub(super) fn main_mixin(
     // `spinel::anon_double_splat_forward.rb`'s `def prepend(**)` is an
     // ordinary method that happens to share the name.
     let target = RubyValue::Class(zeo_abi::OBJECT_CLASS);
-    match &*name.name_str() {
+    match name.name_str() {
         "include" => Some(crate::runtime_meta::runtime_include(&target, args)),
         // `private`, `public` and `define_method` are `Module`'s own rows on
         // Object. Without them a bare `private` at top level -- plain Ruby,

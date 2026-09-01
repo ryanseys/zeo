@@ -521,7 +521,7 @@ crate::cext_fn! {
         } else {
             // SAFETY: the caller promised a readable `struct timeval`.
             let t = unsafe { tv.read() };
-            let ms = (t.tv_sec as i64) * 1000 + (t.tv_usec as i64) / 1000;
+            let ms = t.tv_sec * 1000 + (t.tv_usec as i64) / 1000;
             c_int::try_from(ms.max(0)).unwrap_or(c_int::MAX)
         };
         let mut pfd = libc::pollfd { fd, events: events as i16, revents: 0 };
@@ -612,7 +612,11 @@ fn wait_retry(fd: c_int, event: i16) -> Result<c_int, Signal> {
     if errno != libc::EAGAIN && errno != libc::EWOULDBLOCK {
         return Ok(0);
     }
-    let mut pfd = libc::pollfd { fd, events: event, revents: 0 };
+    let mut pfd = libc::pollfd {
+        fd,
+        events: event,
+        revents: 0,
+    };
     loop {
         // SAFETY: one `pollfd` this frame owns. `-1` is "no timeout": the
         // caller asked to wait until the descriptor is ready.
@@ -789,7 +793,11 @@ fn fmode_modestr(fmode: c_int) -> &'static str {
         (false, true, true) => "rb+",
         (false, true, false) => "r+",
         (false, false, _) if fmode & FMODE_WRITABLE != 0 => {
-            if fmode & FMODE_BINMODE != 0 { "wb" } else { "w" }
+            if fmode & FMODE_BINMODE != 0 {
+                "wb"
+            } else {
+                "w"
+            }
         }
         (false, false, true) => "rb",
         (false, false, false) => "r",

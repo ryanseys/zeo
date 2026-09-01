@@ -129,8 +129,7 @@ fn is_const_path(name: &str) -> bool {
 /// substituted `"Object"` for it made every anonymous module report as
 /// `Object` -- which is a second, quieter bug in the same place.
 fn module_label(cid: crate::ClassId) -> String {
-    crate::dispatch::class_name(cid)
-        .unwrap_or_else(|| RubyValue::Class(cid).inspect_string())
+    crate::dispatch::class_name(cid).unwrap_or_else(|| RubyValue::Class(cid).inspect_string())
 }
 
 /// A class or module that IS `owner`'s constant `name` but was never written
@@ -1549,12 +1548,6 @@ fn cvar_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
         )),
     }
 }
-
-/// The `:@x`/`"@x"` argument of the `instance_variable_*` family, as the
-/// BARE name (`x`) the `civars` table is keyed on -- matching what codegen
-/// keys a static class-ivar access on, which is `safe_ident`'s output over
-/// an already-`@`-less HIR name.
-///
 
 #[cfg(test)]
 mod tests {

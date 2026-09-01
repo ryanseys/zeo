@@ -347,7 +347,8 @@ fn container_style(src: &str, at: usize) -> i64 {
 /// applies them and emits no event, so an event-only reader cannot see them
 /// and `Nodes::Document#version` would always be empty. The same pre-pass
 /// that recovers anchor names collects these.
-pub(super) fn directives(src: &str) -> (Option<(i64, i64)>, Vec<(String, String)>) {
+pub(super) type Directives = (Option<(i64, i64)>, Vec<(String, String)>);
+pub(super) fn directives(src: &str) -> Directives {
     let mut version = None;
     let mut tags = Vec::new();
     for token in yaml_rust2::scanner::Scanner::new(src.chars()) {

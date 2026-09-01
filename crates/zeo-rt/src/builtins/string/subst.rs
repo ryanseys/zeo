@@ -112,7 +112,7 @@ pub(super) fn slice_bang_impl(
     };
     let removed: String = chars[start..end].iter().collect();
     chars.drain(start..end);
-    write_back(&handle, chars);
+    write_back(handle, chars);
     Ok(str_value(removed))
 }
 
@@ -256,7 +256,7 @@ pub(super) fn index_set_impl(
     };
     let repl_chars: Vec<char> = repl.lock().to_utf8_lossy().chars().collect();
     chars.splice(start..end, repl_chars);
-    write_back(&handle, chars);
+    write_back(handle, chars);
     Ok(val.clone())
 }
 

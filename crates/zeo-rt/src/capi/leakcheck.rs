@@ -79,9 +79,8 @@ static TRACE_TAG: std::sync::OnceLock<Option<u8>> = std::sync::OnceLock::new();
 
 /// value address -> (net crossings, a clone that KEEPS the address from being
 /// recycled under a later value, the backtrace of the first crossing).
-static TRACED: std::sync::Mutex<
-    Option<std::collections::HashMap<usize, (i64, RubyValue, String)>>,
-> = std::sync::Mutex::new(None);
+type Traced = std::collections::HashMap<usize, (i64, RubyValue, String)>;
+static TRACED: std::sync::Mutex<Option<Traced>> = std::sync::Mutex::new(None);
 
 fn trace_tag() -> Option<u8> {
     *TRACE_TAG.get_or_init(|| {

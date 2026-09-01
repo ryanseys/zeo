@@ -255,6 +255,30 @@ fn value_addr(v: &RubyValue) -> Option<usize> {
     })
 }
 
+/// The kinds of the RECLAIMED nodes `pick` selects -- one half of a census
+/// row's ring description. Only reclaimed nodes are named: a live holder
+/// would have made this node live too, so every node in the ring is here.
+fn ring_labels(
+    nodes: &[registry::Strong],
+    live: &[bool],
+    mut pick: impl FnMut(usize) -> bool,
+) -> Vec<String> {
+    let mut out: Vec<String> = (0..nodes.len())
+        .filter(|&j| !live[j] && pick(j))
+        .map(|j| nodes[j].ring_label())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn join_or_none(labels: &[String]) -> String {
+    match labels.is_empty() {
+        true => "nothing".to_string(),
+        false => labels.join("+"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,29 +352,5 @@ mod tests {
         let (a, b) = garbage_cycle();
         assert_eq!(collect(), 0);
         assert!(a.upgrade().is_some() && b.upgrade().is_some());
-    }
-}
-
-/// The kinds of the RECLAIMED nodes `pick` selects -- one half of a census
-/// row's ring description. Only reclaimed nodes are named: a live holder
-/// would have made this node live too, so every node in the ring is here.
-fn ring_labels(
-    nodes: &[registry::Strong],
-    live: &[bool],
-    mut pick: impl FnMut(usize) -> bool,
-) -> Vec<String> {
-    let mut out: Vec<String> = (0..nodes.len())
-        .filter(|&j| !live[j] && pick(j))
-        .map(|j| nodes[j].ring_label())
-        .collect();
-    out.sort();
-    out.dedup();
-    out
-}
-
-fn join_or_none(labels: &[String]) -> String {
-    match labels.is_empty() {
-        true => "nothing".to_string(),
-        false => labels.join("+"),
     }
 }

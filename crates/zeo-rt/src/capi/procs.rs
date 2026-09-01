@@ -212,6 +212,7 @@ pub unsafe extern "C" fn zeo_rt_cell_store(cell: *mut Cell, v: *mut RubyValue) {
 /// The shared head of the two construction entries: the retained cells,
 /// the borrowed views, the env, the `#binding` capture and the home.
 /// Params/location/outer differ per entry and are added by the caller.
+#[allow(clippy::too_many_arguments)] // one C argument per parameter
 unsafe fn proc_builder_of(
     f: BlockFn,
     cells: *const *mut Cell,
@@ -285,9 +286,8 @@ pub unsafe extern "C" fn zeo_rt_proc_new(
     outer_len: usize,
     out: *mut RubyValue,
 ) {
-    let mut b = unsafe {
-        proc_builder_of(f, cells, n_cells, self_, lexical_blk, binding, arity, flags)
-    };
+    let mut b =
+        unsafe { proc_builder_of(f, cells, n_cells, self_, lexical_blk, binding, arity, flags) };
     if n_params > 0 {
         let rows = unsafe { std::slice::from_raw_parts(params, n_params) };
         b = b.params(rows.iter().map(param_meta_of).collect());
@@ -314,9 +314,8 @@ fn param_meta_of(p: &zeo_abi::abi::ParamC) -> crate::ProcParamMeta {
 /// FIRST construction from that shape and leaked (the shape itself lives
 /// for the process); every later construction borrows it, which is what
 /// keeps the shaped entry allocation-free per proc.
-static SHAPE_PARAMS: std::sync::Mutex<
-    Option<crate::FMap<usize, &'static [crate::ProcParamMeta]>>,
-> = std::sync::Mutex::new(None);
+static SHAPE_PARAMS: std::sync::Mutex<Option<crate::FMap<usize, &'static [crate::ProcParamMeta]>>> =
+    std::sync::Mutex::new(None);
 
 fn shape_param_rows(s: &zeo_abi::abi::ProcShapeC) -> &'static [crate::ProcParamMeta] {
     let key = s.params as usize;
@@ -326,8 +325,12 @@ fn shape_param_rows(s: &zeo_abi::abi::ProcShapeC) -> &'static [crate::ProcParamM
         return rows;
     }
     let rows = unsafe { std::slice::from_raw_parts(s.params, s.n_params as usize) };
-    let table: &'static [crate::ProcParamMeta] =
-        Box::leak(rows.iter().map(param_meta_of).collect::<Vec<_>>().into_boxed_slice());
+    let table: &'static [crate::ProcParamMeta] = Box::leak(
+        rows.iter()
+            .map(param_meta_of)
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
     map.insert(key, table);
     table
 }
@@ -355,7 +358,14 @@ pub unsafe extern "C" fn zeo_rt_proc_new_shaped(
     let s = unsafe { &*shape };
     let mut b = unsafe {
         proc_builder_of(
-            f, cells, n_cells, self_, lexical_blk, binding, s.arity, s.flags,
+            f,
+            cells,
+            n_cells,
+            self_,
+            lexical_blk,
+            binding,
+            s.arity,
+            s.flags,
         )
     };
     if s.n_params > 0 {

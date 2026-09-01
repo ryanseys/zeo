@@ -233,7 +233,10 @@ impl RubyObject for RIo {
     // A File instance carries FILE_CLASS so its own MRO (`File < IO`) finds
     // File's rows before IO's; the std streams are plain IOs.
     fn class_id(&self) -> ClassId {
-        match self.class_override.load(std::sync::atomic::Ordering::Relaxed) {
+        match self
+            .class_override
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
             0 => {}
             c => return ClassId(c),
         }
@@ -465,8 +468,9 @@ pub(crate) fn file_value_mode(
 /// `NoMemoryError: failed to allocate memory`, and so does this.
 fn read_buffer(n: usize) -> Result<Vec<u8>, Signal> {
     let mut buf: Vec<u8> = Vec::new();
-    buf.try_reserve_exact(n)
-        .map_err(|_| crate::dispatch::raise_error("NoMemoryError", "failed to allocate memory".to_string()))?;
+    buf.try_reserve_exact(n).map_err(|_| {
+        crate::dispatch::raise_error("NoMemoryError", "failed to allocate memory".to_string())
+    })?;
     buf.resize(n, 0);
     Ok(buf)
 }
@@ -2007,10 +2011,8 @@ impl<'a> Sink<'a> {
     fn write(&mut self, bytes: Vec<u8>) -> Result<(), Signal> {
         match self {
             Sink::Io(dst) => {
-                let s = RubyValue::Str(crate::string_from_bytes(
-                    bytes,
-                    crate::encoding::ASCII_8BIT,
-                ));
+                let s =
+                    RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT));
                 crate::dispatch::send_value(dst, crate::Symbol::intern("write"), &[s], None)?;
                 Ok(())
             }
@@ -3585,14 +3587,14 @@ ruby_class! {
         // the whole file and a negative offset reads from the start.
         let limit: Option<u64> = match copy_length {
             None | Some(RubyValue::Nil) => None,
-            Some(v) => match offset_of(&v)? {
+            Some(v) => match offset_of(v)? {
                 n if n < 0 => None,
                 n => Some(n as u64),
             },
         };
         let offset: Option<u64> = match src_offset {
             None | Some(RubyValue::Nil) => None,
-            Some(v) => match offset_of(&v)? {
+            Some(v) => match offset_of(v)? {
                 n if n < 0 => None,
                 n => Some(n as u64),
             },

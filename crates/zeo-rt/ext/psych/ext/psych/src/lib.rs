@@ -362,15 +362,15 @@ ruby_module! {
         // overloaded: a Hash there IS the options, which is how
         // `YAML.dump(x, indentation: 4)` reaches them.
         let options = match (&io, &options) {
-            (Some(RubyValue::Hash(_)), None) => io.clone(),
-            _ => options.clone(),
+            (Some(RubyValue::Hash(_)), None) => io,
+            _ => options,
         };
         let text = emitter::Emitter::new(&dump_opts(options.as_ref().copied())).dump(obj)?;
         let out = RubyValue::Str(string_new(text));
         match io {
             Some(port) if !matches!(port, RubyValue::Hash(_) | RubyValue::Nil) => {
                 crate::dispatch::send_value(
-                    &port,
+                    port,
                     crate::Symbol::intern("write"),
                     &[out],
                     None,

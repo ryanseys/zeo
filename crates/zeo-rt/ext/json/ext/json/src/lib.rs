@@ -207,7 +207,7 @@ fn revive_additions(v: RubyValue) -> Result<RubyValue, Signal> {
                     None,
                 )?;
                 if has.truthy() {
-                    return crate::dispatch::send_value(&class, create, &[v.clone()], None);
+                    return crate::dispatch::send_value(&class, create, std::slice::from_ref(&v), None);
                 }
             }
         }

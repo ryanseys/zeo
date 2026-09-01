@@ -888,9 +888,8 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     }));
     // Builtin-source alias name-indirection rows.
     reg_rows.extend(
-        alias_rows
-            .iter()
-            .map(|(class, new, old, is_class, box_id, eager)| statics::RegRowSpec {
+        alias_rows.iter().map(
+            |(class, new, old, is_class, box_id, eager)| statics::RegRowSpec {
                 kind: if *is_class {
                     zeo_abi::abi::REG_CLASS_ALIAS
                 } else {
@@ -908,7 +907,8 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
                 // aliasing class writes the SOURCE name later, and a live
                 // indirection would follow that later `def`.
                 flag: u8::from(*eager),
-            }),
+            },
+        ),
     );
     // Reflection rows: one per emitted method scope, in the order the
     // tables above register them.
@@ -1004,10 +1004,8 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     // A host merging packages appends their manifest
     // rows to its own before the one desc is emitted; a no-op without any.
     let mut class_specs = class_specs;
-    let mut vm_rows = vm_rows;
     let mut obj_rows = obj_rows;
     let mut cm_rows = cm_rows;
-    let mut unit_rows = unit_rows;
     let mut redef_metas = redef_metas;
     super::pkg::merge_rows(
         em,
@@ -1136,11 +1134,6 @@ pub(crate) fn param_entries(params: &crate::hir::Params, block: bool) -> Vec<(u8
     }
     out
 }
-
-/// What `define_method_body` compiles: any owner's ordinary method.
-/// What runs at one class-body site: the declaration's
-/// `const_source_location` record, then the compiled body (absent when
-/// analyze consumed every statement -- the `class C; def a; end; end`
 
 /// The installs that belong to the PROGRAM, not to a top-level scope:
 /// alias validation for body-less classes, `TOPLEVEL_BINDING`, and the class

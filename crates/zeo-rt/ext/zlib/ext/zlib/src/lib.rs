@@ -277,8 +277,8 @@ pub(super) fn crc32_combine(crc1: u32, crc2: u32, len2: u64) -> u32 {
     let mut odd = [0u32; 32];
     odd[0] = 0xedb8_8320;
     let mut row = 1u32;
-    for n in 1..32 {
-        odd[n] = row;
+    for slot in odd.iter_mut().skip(1) {
+        *slot = row;
         row <<= 1;
     }
     square(&mut even, &odd);
