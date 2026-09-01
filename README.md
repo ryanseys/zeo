@@ -96,16 +96,20 @@ project's own resolved gems are used only when `--bundle-gemfile` and
 
 ## Using Zeo
 
-There are no subcommands. The command line follows `ruby`'s. `zeo foo.rb`
-compiles **and runs**; a binary artifact is the opt-in (`-o` / `--compile`).
+The command line follows `ruby`'s. `zeo foo.rb` compiles **and runs**; a
+binary artifact is the opt-in (`zeo build`, `-o`, or `--compile`). A handful
+of verbs sit in front of that — `build`, `install`, `flags`, `gem`,
+`bundle` — and each is a fixed name: a script really called `build` still
+runs as `zeo ./build`.
 
 ```console
 # Run a program, like `ruby foo.rb`. Compiles in memory, runs in process.
 $ zeo hello.rb
 
 # Write a native binary instead of running.
-$ zeo -o build/hello hello.rb
-$ zeo --compile hello.rb          # writes ./hello
+$ zeo build hello.rb              # writes ./hello
+$ zeo build hello.rb -o dist/hello
+$ zeo -o build/hello hello.rb     # the flag spelling of the same thing
 
 # Inline code, like `ruby -e`. Works with -o too.
 $ zeo -e 'puts "hello, world"'
@@ -158,6 +162,32 @@ can never load — that object is built against CRuby's ABI — and Zeo says so,
 naming the gem and the fix (install the ruby-platform variant). See
 [`docs/EXTENSIONS.md`](docs/EXTENSIONS.md).
 
+### Precompile the gems once, link them everywhere
+
+A gem compiles once into a **package** — a position-independent object plus
+its interface — and later compiles of any program link the artifact instead
+of recompiling the gem. Correctness never depends on it: an artifact whose
+compiler or target does not match is passed over silently, and one the
+merge refuses falls back to the source compile with a warning.
+
+```console
+$ zeo install                     # precompile the lockfile's gems into the store
+  install rack 3.1.0
+     skip nokogiri 1.16.0 (ships a native extension)
+$ zeo -o app app.rb               # a store-active compile links them by itself
+$ zeo flags                       # the same handoff, spelled out for a Makefile
+--gem-path '…' --bundle-gemfile '…' --with-package '…/rack-3.1.0/pkg.zeopkg'
+```
+
+`zeo install` reads `Gemfile.lock` and the installed store; it never runs
+Bundler and never touches the network (`zeo bundle install` is Bundler's own
+install, first). A gem author can ship the artifact inside a platform gem:
+`zeo gem precompile`, run in the gem's directory, builds
+`<name>-<version>-<platform>.gem` through RubyGems' own `Gem::Package` with
+the artifact at `zeo/pkg.zeopkg` — installing that gem gives every consumer
+the precompiled package, on an exact compiler-and-target match, with the
+full Ruby source beside it as the permanent fallback.
+
 ---
 
 ## Command-line reference
@@ -170,12 +200,21 @@ Run `zeo --help` for the authoritative list. Every long option also accepts
 `--flag=<value>`. An unknown option is an error, and Zeo names the
 replacement for any removed spelling.
 
+| Verb | Function |
+|---|---|
+| `build <input.rb>` | Compile to a binary, do not run. A build has no program `ARGV`, so its options may also follow the file: `zeo build app.rb -o dist/app`. |
+| `install [names…]` | Precompile the lockfile's gems into the gem store, so later compiles link them. Never runs Bundler; a gem the package tier cannot carry is reported and keeps compiling from source. |
+| `flags [--json]` | Print, shell-quoted on one line, the flags a compile of this project implies — for `$(zeo flags)` in a Makefile. `--json` is the tools' form. |
+| `gem <args…>` / `bundle <args…>` | Run the vendored RubyGems / Bundler, no ruby needed. `zeo gem precompile` is zeo's own: build this gem's platform gem with its precompiled artifact inside. |
+
 | Option | Function |
 |---|---|
 | `<input.rb>` | Compile and run immediately. Option parsing **stops here**, as in ruby: everything after the file name becomes `ARGV`, so `zeo test.rb --seed 42` works. Zeo's own options go **before** the file. |
 | `-e <code>` | Compile and run inline code (repeatable; joined with newlines). With `-o`, writes a binary instead. |
 | `-o <output>` | Write a native binary here instead of running. |
 | `--compile` | Write a native binary at the input path minus its extension. |
+| `--package <feature>` | Compile the input as a precompiled package for that require spelling; the artifact is a `.zeopkg` (default name `<feature>.zeopkg`). |
+| `--with-package <artifact>` | Link a precompiled package into this program (repeatable). Accepted only on an exact compiler-and-target match; a refused merge drops back to the source compile with a warning. |
 | `--backend <jit\|aot>` | Pick the output mode. Default: `jit` when running, `aot` with `-o`. `ZEO_BACKEND` is the env spelling. |
 | `-I <dir>` | Add a `require` search root (repeatable; `-I<dir>` and `-I=<dir>` too). |
 | `--gems <dir>` | Add a directory of vendored gems — each subdirectory with a `.gemspec` is one gem (repeatable). |
