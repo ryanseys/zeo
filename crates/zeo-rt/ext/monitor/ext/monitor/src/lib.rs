@@ -13,11 +13,10 @@
 //! the execution that holds the lock, which is what makes a plain relaxed
 //! atomic sufficient here.
 //!
-//! **Not implemented: `MonitorMixin`.** Its methods all delegate through a
-//! `@mon_data` ivar that `extend_object`/`mon_initialize` install, which is a
-//! module-mixin lifecycle this runtime has no other user for. `include
-//! MonitorMixin` is therefore a loud `NameError` rather than a half-working
-//! mixin whose `@mon_data` is nil.
+//! `MonitorMixin` and `MonitorMixin::ConditionVariable` live in the gem's
+//! Ruby half (`lib/monitor.rb`) -- pure delegation onto this object, the
+//! same split CRuby uses. `wait_for_cond` below is the one engine call the
+//! Ruby `ConditionVariable` needs.
 
 use crate::RubyValue;
 use crate::builtins::{need_block, thread_error};
@@ -141,6 +140,34 @@ ruby_class! {
     }
     def "mon_locked?" (recv) {
         Ok(RubyValue::Bool(mutex_locked(&monitor_of(recv).mutex)))
+    }
+    def "mon_check_owner" (recv) {
+        if !mutex_owned(&monitor_of(recv).mutex) {
+            return Err(thread_error("current thread not owner"));
+        }
+        Ok(RubyValue::Nil)
+    }
+    // `MonitorMixin::ConditionVariable#wait`'s engine half, CRuby's
+    // `monitor_wait_for_cond`: fully release the monitor by handing its own
+    // mutex to `cond.wait` (which unlocks, parks and re-acquires), with the
+    // nesting count parked at zero for the duration and restored on the way
+    // out -- error or not, exactly monitor.c's ensure.
+    def "wait_for_cond" params "cond, timeout" (recv, arg1, arg2) {
+        let m = monitor_of(recv);
+        if !mutex_owned(&m.mutex) {
+            return Err(thread_error("current thread not owner"));
+        }
+        let count = m.count.swap(0, Ordering::Relaxed);
+        let waited = crate::dispatch::send_value(
+            arg1,
+            crate::Symbol::intern("wait"),
+            &[RubyValue::Mutex(m.mutex.clone()), arg2.clone()],
+            None,
+        );
+        m.count.store(count, Ordering::Relaxed);
+        // CRuby truthy-maps the underlying wait: `true` for a wakeup,
+        // `false` when the timeout ran out (the wait answered nil).
+        waited.map(|v| RubyValue::Bool(v.truthy()))
     }
     def "mon_owned?" (recv) {
         Ok(RubyValue::Bool(mutex_owned(&monitor_of(recv).mutex)))

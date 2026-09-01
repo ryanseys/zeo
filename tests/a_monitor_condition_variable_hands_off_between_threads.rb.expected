@@ -1,0 +1,10 @@
+MonitorMixin::ConditionVariable
+ThreadError
+ThreadError
+[0, 1, 2]
+false
+false
+true
+true
+false
+:handoff

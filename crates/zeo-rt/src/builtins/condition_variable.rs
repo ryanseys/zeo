@@ -114,20 +114,28 @@ ruby_class! {
         if let Err(msg) = crate::thread::mutex_unlock(rm) {
             return Err(thread_error!("{msg}"));
         }
+        let began = std::time::Instant::now();
         // The park itself runs with an armed process Gvl released (a no-op
         // when disabled, the default) -- the signaller needs to RUN to
         // signal.
+        let mut expired = false;
         crate::gvl::without_gvl(|| {
             match timeout {
                 None => cv.cond.wait(&mut guard),
                 Some(dur) => {
-                    let _ = cv.cond.wait_for(&mut guard, dur);
+                    expired = cv.cond.wait_for(&mut guard, dur).timed_out();
                 }
             }
             drop(guard);
         });
         crate::thread::mutex_lock(rm).map_err(crate::thread::WaitFailure::signal)?;
-        Ok(recv.clone())
+        // `Mutex#sleep`'s contract, which CRuby's wait delegates to: the
+        // seconds slept (rounded) on a wakeup, `nil` when the timeout ran
+        // out with no signal.
+        if expired {
+            return Ok(RubyValue::Nil);
+        }
+        Ok(RubyValue::Int(began.elapsed().as_secs_f64().round() as i64))
     }
     // Wake at most one waiter; returns self.
     // Re-init is a permitted no-op, like Mutex's.

@@ -94,6 +94,31 @@ fn the_pure_string_scanner_passes_the_upstream_suite() {
     );
 }
 
+/// The vendored upstream monitor suite (ruby/ruby's test_monitor.rb at the
+/// ruby-headers.lock rev) against zeo's RUBY HALF, overlaid on CRuby's own
+/// C Monitor -- which exports the same enter/exit/wait_for_cond surface as
+/// zeo's Rust half, so the delegation layer is what differs.
+#[test]
+fn the_monitor_ruby_half_passes_the_upstream_suite() {
+    let Some(ruby) = oracle_ruby() else {
+        eprintln!("skipping: this machine has no ruby to run the suite");
+        return;
+    };
+    let out = Command::new(&ruby)
+        .arg(root().join("crates/zeo-rt/ext/monitor/test/run_pure.rb"))
+        .env("BUNDLE_GEMFILE", root().join("Gemfile"))
+        .env_remove("RUBYOPT")
+        .env_remove("RUBYLIB")
+        .output()
+        .expect("ruby spawns");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains(", 0 failures, 0 errors,"),
+        "upstream monitor suite failed:\n{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// The `-I` really shadows ruby's own strscan: the loaded feature is the
 /// pure tree's `.rb`, and no native strscan library loads beside it. Without
 /// this, a miss in the pure tree would fall through to the C gem and the
