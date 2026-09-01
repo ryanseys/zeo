@@ -977,16 +977,23 @@ fn materialize_class_methods(
                 singleton_targets.push((m, sid));
             }
         }
-        // NOTE: a runtime-conditional `def self.x` (and a conditional def
-        // reached through `extend`) DOES keep its static row here, unlike the
-        // instance-side rule in `materialize_methods`. That is deliberate:
-        // the row is the compile-time SHIM the extend path dispatches through
-        // (fileutils' `StreamUtils_#fu_windows?`, defined under a `case` and
-        // reached as `FileUtils.fu_windows?`), with last-wins picking the
-        // branch the static target takes. The name still rides
-        // `runtime_patches`, so a live overlay row from the branch that
-        // actually ran outranks the shim at every call site.
+        // A `def self.x` under a guard zeo cannot decide contributes
+        // nothing to this table -- the instance-side rule in
+        // `materialize_methods`, for the same reason: it must not CLAIM the
+        // name (an ancestor's unconditional definition materializes here
+        // and answers while the guard is false), and it must not promise a
+        // body that may never install. What the guard does install goes
+        // into the runtime overlay, which outranks this table -- proven by
+        // fileutils' `fu_windows?` (conditional defs reached through
+        // `extend`), which dispatches through that road. Claiming the name
+        // here severed an INHERITED class method for the whole program:
+        // rubygems' `NoAliasYAMLTree` guards its `def self.create` with
+        // `unless respond_to? :create`, and the claimed-but-unemitted row
+        // made the guard false and the inherited `create` unreachable.
         for &sid in &compiler.class(cid).own_class_methods {
+            if compiler.scope(sid).runtime_conditional {
+                continue;
+            }
             let name_id = scope_name_ids[sid.0 as usize];
             let is_winner = seen.insert(name_id);
             if undefined.contains(compiler.scope(sid).name.as_str()) {
@@ -1018,6 +1025,13 @@ fn materialize_class_methods(
                 // emitted in THIS class's context so its own `super`
                 // resumes the chain here -- the `own_impls` distinction,
                 // on the singleton side.
+                //
+                // The conditional-def rule above holds here too: a guarded
+                // def in an extended module must not claim the name away
+                // from an ancestor's unconditional one.
+                if compiler.scope(sid).runtime_conditional {
+                    continue;
+                }
                 let name_id = scope_name_ids[sid.0 as usize];
                 let is_winner = seen.insert(name_id);
                 if undefined.contains(compiler.scope(sid).name.as_str()) {

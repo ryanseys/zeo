@@ -162,12 +162,12 @@ fn install_with_ruby(ruby: &Path, root: &Path) -> Run {
     finish(cmd.output().expect("running ruby's install"), root)
 }
 
-/// zeo's side. `zeo install` IS `bundle install`, so this is the command a
-/// user types.
+/// zeo's side. Bundler's install is spelled `zeo bundle install` (bare
+/// `zeo install` is zeo's own store-precompile verb).
 fn install_with_zeo(root: &Path) -> Run {
     let zeo = crate::zeo_bin::zeo_cli().unwrap_or_else(|e| panic!("{e}"));
     let mut cmd = Command::new(zeo);
-    cmd.args(["install", "--local"]);
+    cmd.args(["bundle", "install", "--local"]);
     hermetic(&mut cmd, root);
     // A shared compiled-program cache would let one side's run answer for the
     // other's; each tree keeps its own.

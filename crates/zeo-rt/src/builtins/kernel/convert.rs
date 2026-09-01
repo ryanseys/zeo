@@ -90,15 +90,24 @@ pub(crate) fn integer_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             parse_integer_strict(&text, base)
                 .ok_or_else(|| arg_error!("invalid value for Integer(): {:?}", text))
         }
-        // A `to_int` duck converts (CRuby tries to_int, then to_i); the
-        // rest keep Kernel#Integer's own "can't convert" shape.
-        other => match crate::builtins::convert::check_to_int(other)? {
-            Some(n) => Ok(n),
-            None => Err(type_error!(
-                "can't convert {} into Integer",
-                crate::builtins::convert_name_of(other)
-            )),
-        },
+        // A `to_int` duck converts, and a `to_i` one behind it -- CRuby's
+        // `rb_Integer` tries both in that order (`Integer(Time.at(5))` is 5,
+        // and rubygems' tar writer formats an mtime TIME with `%o`). nil is
+        // refused BEFORE the `to_i` rung: it has a `to_i`, and ruby still
+        // raises. The rest keep Kernel#Integer's own "can't convert" shape.
+        other => {
+            let ducked = match crate::builtins::convert::check_to_int(other)? {
+                Some(n) => Some(n),
+                None if matches!(other, RubyValue::Nil) => None,
+                None => crate::builtins::convert::check_convert(other, "Integer", "to_i")?,
+            };
+            ducked.ok_or_else(|| {
+                type_error!(
+                    "can't convert {} into Integer",
+                    crate::builtins::convert_name_of(other)
+                )
+            })
+        }
     }
 }
 
