@@ -403,9 +403,11 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // class whose declaration has not run yet.
     conceal_observed_namespace_members(compiler);
 
-    // A host definition touching a package's class has no sound mechanism
-    // yet, so it refuses by name here, before materialization folds
-    // anything against the edit.
+    // Two static bodies for one BUILTIN-class name -- the host's and a
+    // merged package's -- cannot hold their document order, so the shape
+    // refuses by package name here, before materialization folds anything
+    // against either body.
+    pkg_iface::refuse_host_spine_redefinitions(compiler)?;
 
     mro::materialize(compiler, &main_statements)?;
 

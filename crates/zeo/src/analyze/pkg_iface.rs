@@ -17,6 +17,50 @@
 use crate::compiler::{ClassId, Compiler, Scope};
 use crate::hir::Visibility;
 
+/// A HOST static definition on a BUILTIN method that a merged package also
+/// defines (a top-level def both write, a builtin method both reopen) is
+/// two bodies for one name on the one class the two share with no id
+/// boundary. The host's row and the package's row would race at boot
+/// instead of installing in document order, so the shape refuses -- naming
+/// the PACKAGE, which is what lets the drop-to-splice tier retry that gem
+/// from source.
+pub(super) fn refuse_host_spine_redefinitions(compiler: &Compiler) -> Result<(), String> {
+    if compiler.hir.pkg_merge.is_empty() {
+        return Ok(());
+    }
+    let feature_of = |cid: u32, name: &str, class_side: bool| -> String {
+        compiler
+            .hir
+            .pkg_merge
+            .iter()
+            .find(|m| {
+                if class_side {
+                    m.cm.iter().any(|r| r.class == cid && r.name == name)
+                } else {
+                    m.vm.iter().any(|r| r.class == cid && r.name == name)
+                }
+            })
+            .map(|m| m.feature.clone())
+            .unwrap_or_else(|| "?".into())
+    };
+    // The registration walk records each displacement at its one
+    // replacement site (`add_own_method_at`): the host's def took the
+    // list slot the package's body held, so a scan here could no longer
+    // see both.
+    if let Some((class, name, class_side)) = compiler.pkg_spine_redefs.first() {
+        let sep = if *class_side { "." } else { "#" };
+        return Err(format!(
+            "this program defines `{}{sep}{name}`, which package '{}' also \
+             defines; two static bodies for one shared-class name cannot \
+             hold their document order yet (compile the gem from source \
+             instead)",
+            compiler.class(*class).name,
+            feature_of(class.0, name, *class_side)
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(), String> {
     if compiler.hir.pkg_merge.is_empty() {
         return Ok(());
@@ -36,6 +80,12 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
         // ALIASES: both local ids map onto the one host id, and passes 2-3
         // hold the compatibility line (one shape, disjoint methods).
         for ic in &m.iface {
+            // A BUILTIN row is a package REOPEN of a class the host already
+            // has, under the same untranslated id: no class to mint, no
+            // ancestry to wire -- pass 3 registers its added methods.
+            if ic.id < m.first_class_id {
+                continue;
+            }
             let Some(mc) = m.classes.iter().find(|c| c.id == ic.id) else {
                 return Err(format!(
                     "package '{}': interface class {} has no class row",
@@ -123,6 +173,9 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                 })
         };
         for ic in &m.iface {
+            if ic.id < m.first_class_id {
+                continue; // a builtin reopen wires no ancestry
+            }
             let cid = compiler.pkg_class_map[&(pi as u32, ic.id)];
             let parent = match ic.parent {
                 Some(p) => Some(map(compiler, p)?),
@@ -187,7 +240,13 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
         // from the manifest -- the package's own `layout_of` verdict -- so
         // the host cannot disagree with the compiled body's ABI.
         for ic in &m.iface {
-            let cid = compiler.pkg_class_map[&(pi as u32, ic.id)];
+            // A BUILTIN row registers onto the host's class of the same
+            // untranslated id -- a package reopen of a shared class.
+            let cid = if ic.id < m.first_class_id {
+                ClassId(ic.id)
+            } else {
+                compiler.pkg_class_map[&(pi as u32, ic.id)]
+            };
             for (class_side, list) in [(false, &ic.methods), (true, &ic.class_methods)] {
                 for im in list {
                     let params = if im.plain {
@@ -231,6 +290,28 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                     });
                     let taken_name = compiler.class(cid).name.clone();
                     let aliased = compiler.class(cid).imported_pkg != Some(pi as u32);
+                    // A package OPERATOR reopen on a numeric lane stands
+                    // down the native fast paths, exactly as the host's own
+                    // reopen would at registration.
+                    if ic.id < m.first_class_id
+                        && !class_side
+                        && !im.name.starts_with(|c: char| c.is_alphabetic() || c == '_')
+                    {
+                        match taken_name.as_str() {
+                            "Integer" => {
+                                compiler.redefined_int_ops.insert(im.name.clone());
+                            }
+                            "Float" => {
+                                compiler.redefined_float_ops.insert(im.name.clone());
+                            }
+                            "Numeric" | "Comparable" | "Object" | "Kernel"
+                            | "BasicObject" => {
+                                compiler.redefined_int_ops.insert(im.name.clone());
+                                compiler.redefined_float_ops.insert(im.name.clone());
+                            }
+                            _ => {}
+                        }
+                    }
                     let ci = &mut compiler.classes[cid.0 as usize];
                     let (list, index) = if class_side {
                         (&mut ci.own_class_methods, &mut ci.own_class_method_at)
@@ -240,8 +321,15 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                     // On an ALIASED class, the two packages' method sets
                     // union like a reopen -- but the SAME name in both is a
                     // static redefinition the earlier package's typed sites
-                    // never guarded against.
-                    if aliased && index.contains_key(&im.name) {
+                    // never guarded against. A PRELUDE body (ruby's own,
+                    // `native_default`) is not a competitor: reopening it is
+                    // an ordinary builtin reopen, and the standing entry
+                    // gives way.
+                    if aliased && let Some(&at) = index.get(&im.name) {
+                        if compiler.scopes[list[at].0 as usize].native_default {
+                            list[at] = sid;
+                            continue;
+                        }
                         let sep = if class_side { "." } else { "#" };
                         return Err(format!(
                             "package '{}' defines `{taken_name}{sep}{}`, which \

@@ -716,33 +716,92 @@ fn a_shared_class_with_two_ancestries_is_refused() {
 }
 
 #[test]
-fn a_package_defining_a_top_level_method_is_refused_today() {
-    // Object is the ONE class a package and a host share with no id
-    // boundary, so a package's top-level def could interleave with a
-    // host def of the same name -- and no manifest fact carries that
-    // today (the unit-blanket split deliberately keeps packaged names
-    // out of `patched_names`). The value-channel refusal is what keeps
-    // the shape unreachable; lifting it must revisit the Object
-    // channel's facts.
+fn a_packages_top_level_def_reaches_the_host() {
+    // Object is the one class a package and a host share with no id
+    // boundary. The package's top-level def travels as a value-channel
+    // row on it, and the package's OWN interior call goes through
+    // dispatch rather than binding its body -- this tier carries no
+    // guard, so a direct call could never see a redefinition. A HOST
+    // static def of the same name refuses by package name (two static
+    // bodies for one shared-class name), which the drop-to-splice tier
+    // turns into a source recompile.
     let dir = scratch("toplevel");
-    let entry = dir.join("topgem.rb");
-    std::fs::write(
-        &entry,
+    let object = build_inline_package(
+        &dir,
+        "topgem",
         "def shade = :package\nclass Topgem\n  def call_shade = shade\nend\n",
-    )
-    .expect("write entry");
-    let out = run(zeo()
-        .arg("--experimental-pkg")
-        .arg("topgem")
+    );
+    let host = dir.join("host.rb");
+    std::fs::write(&host, "require \"topgem\"\np shade\np Topgem.new.call_shade\n")
+        .expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&object)
         .arg("-o")
-        .arg(dir.join("topgem.o"))
-        .arg(&entry)
+        .arg(&bin)
+        .arg(&host)
         .env("ZEO_CACHE", "0"));
-    assert!(!out.status.success(), "a top-level def must refuse");
+    assert_eq!(ok(&mut Command::new(&bin)), ":package\n:package\n");
+
+    let collide = dir.join("collide.rb");
+    std::fs::write(
+        &collide,
+        "require \"topgem\"\ndef shade = :host\np shade\n",
+    )
+    .expect("write collide host");
+    let out = run(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&object)
+        .arg("-o")
+        .arg(dir.join("collide-bin"))
+        .arg(&collide)
+        .env("ZEO_CACHE", "0"));
+    assert!(!out.status.success(), "a colliding host def must refuse");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("a package build cannot carry a builtin reopen"),
-        "the refusal names the channel: {err}"
+        err.contains("package 'topgem' also defines"),
+        "the refusal names the package: {err}"
+    );
+}
+
+#[test]
+fn a_package_reopens_builtins_and_the_host_sees_every_road() {
+    // The widest builtin-reopen surface in one program: a Kernel module
+    // method (receiverless AND explicit-receiver), a NEW String method, a
+    // REDEFINED native (`String#length`), and a redefined `Array#map` that
+    // a host block call must reach -- the last is the iterator-fusion
+    // suppression working through the package's interface. Verified
+    // against ruby 4.0.6.
+    let dir = scratch("breopen");
+    let object = build_inline_package(
+        &dir,
+        "kernelgem",
+        "module Kernel\n  def khelper(x) = [:k, x]\nend\n\
+         def toplevel_helper(y) = [:top, y]\n\
+         class String\n  def shout = upcase + \"!\"\n  def length = 999\nend\n\
+         class Array\n  def map = :hijacked\nend\n\
+         class Kernelgem\nend\n",
+    );
+    let host = dir.join("host.rb");
+    std::fs::write(
+        &host,
+        "require \"kernelgem\"\np khelper(1)\np 5.khelper(2)\np toplevel_helper(3)\n\
+         p \"hi\".shout\np \"abcd\".length\n\
+         xs = [1, 2, 3]\np xs.map { |v| v * 2 }\np xs.map\n",
+    )
+    .expect("write host");
+    let bin = dir.join("host-bin");
+    ok(zeo()
+        .arg("--experimental-use-pkg")
+        .arg(&object)
+        .arg("-o")
+        .arg(&bin)
+        .arg(&host)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(
+        ok(&mut Command::new(&bin)),
+        "[:k, 1]\n[:k, 2]\n[:top, 3]\n\"HI!\"\n999\n:hijacked\n:hijacked\n"
     );
 }
 

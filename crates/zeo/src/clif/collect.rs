@@ -35,6 +35,13 @@ pub(super) fn collect_methods(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
         if scope.native_default {
             continue;
         }
+        // A package-compiled spine body (a top-level def or a `module
+        // Kernel` reopen in a merged package) has no arena body here; the
+        // merged value-channel row answers, and a receiverless call site
+        // takes the dynamic path by not finding an `em.methods` entry.
+        if scope.extern_symbol.is_some() {
+            continue;
+        }
         let name = compiler.names.str(entry.name).to_string();
         let span = scope.def_node.and_then(|n| compiler.hir.span(n));
         let refuse = |what: &str| {

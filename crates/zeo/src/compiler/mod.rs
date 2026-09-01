@@ -199,6 +199,11 @@ pub struct Compiler {
     /// -> the host id its interface registration minted. The merge writes
     /// each package's id-translation table from this map.
     pub pkg_class_map: FMap<(u32, u32), ClassId>,
+    /// A HOST static def that displaced a merged PACKAGE's body on a
+    /// BUILTIN class (`(class, name, class_side)`): two static bodies for
+    /// one shared-class name cannot hold their document order, so analyze
+    /// refuses each entry by the providing package's name.
+    pub pkg_spine_redefs: Vec<(ClassId, String, bool)>,
     /// `classes.len()` right after the shared bootstrap
     /// (builtins + exception tail) -- the first id a program or package
     /// mints for itself. Recorded by `pin_builtin_exceptions_tail`; a
@@ -702,6 +707,7 @@ impl Compiler {
             runtime_patches: FSet::default(),
             unit_blanket_names: FSet::default(),
             pkg_class_map: FMap::default(),
+            pkg_spine_redefs: Vec::new(),
             runtime_mixin_super_names: FSet::default(),
             unit_walk: false,
             unit_scopes: FSet::default(),

@@ -90,14 +90,31 @@ pub(crate) fn add_own_method_at(
     } else {
         (&mut ci.own_methods, &mut ci.own_method_at)
     };
+    let mut displaced = None;
     match replaced {
         Some(_) if yields => {}
-        Some(i) => list[i] = sid,
+        Some(i) => {
+            displaced = Some(list[i]);
+            list[i] = sid;
+        }
         None => {
             index.insert(mname.clone(), list.len());
             list.push(sid);
         }
     }
+    // Displacing a merged PACKAGE's body on a BUILTIN class is two static
+    // bodies for one shared-class name; recorded here (the one site every
+    // def registration passes), refused by analyze with the providing
+    // package's name.
+    if let Some(d) = displaced
+        && class_id.0 < compiler.first_program_class_id
+        && compiler.scope(d).extern_symbol.is_some()
+    {
+        compiler
+            .pkg_spine_redefs
+            .push((class_id, mname.clone(), is_class_method));
+    }
+    let ci = &mut compiler.classes[class_id.0 as usize];
     ci.method_history.push((mname, is_class_method, seq, sid));
     if compiler.unit_walk {
         compiler.unit_scopes.insert(sid);

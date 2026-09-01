@@ -73,18 +73,6 @@ pub(crate) fn finish_package(
     if compiler.hir.boxes > 0 {
         return refuse("Ruby::Box");
     }
-    // Value-channel rows on the package's OWN classes (an ordinary
-    // module's instance methods) travel in the manifest and remap like
-    // any other row. A row on a BUILTIN (a reopen) or on `Object` (a
-    // top-level def) lands on a class the host shares, which still needs
-    // its own mechanism; a boxed row rides the box refusal above.
-    if rows
-        .vm
-        .iter()
-        .any(|r| r.class < compiler.first_program_class_id)
-    {
-        return refuse("a builtin reopen (value-channel rows)");
-    }
     if !analyzed.main_statements.is_empty() {
         return refuse("top-level code outside its unit");
     }
@@ -141,13 +129,21 @@ pub(crate) fn finish_package(
     // plain body sits in `typed_methods` names it, and that body is exported
     // here -- the ONE addition to the row-referenced export sweep above.
     let mut iface = Vec::new();
-    for (idx, class) in compiler
-        .classes
-        .iter()
-        .enumerate()
-        .skip(compiler.first_program_class_id as usize)
-    {
+    for (idx, class) in compiler.classes.iter().enumerate() {
         let cid = idx as u32;
+        // A BUILTIN appears only when the package REOPENS it -- its native
+        // surface is the host's own, and the prelude's bodies are skipped
+        // below -- so the row carries just the package's added methods,
+        // which the host registers onto its own class of the same id.
+        if cid < compiler.first_program_class_id
+            && class
+                .own_methods
+                .iter()
+                .chain(&class.own_class_methods)
+                .all(|&sid| compiler.scope(sid).native_default)
+        {
+            continue;
+        }
         // A singleton-class surrogate is minted by the singleton machinery,
         // not registrable as an ordinary class; its ids stay unmapped and the
         // merge assigns them a fresh band as before.
@@ -166,6 +162,11 @@ pub(crate) fn finish_package(
             let mut out = Vec::new();
             for sid in sids {
                 let scope = compiler.scope(*sid);
+                // The prelude's own bodies (`BUILTIN_EXCEPTIONS_RB`) are the
+                // host's already; only what the package WROTE crosses.
+                if scope.native_default {
+                    continue;
+                }
                 let layout = super::params::layout_of(&scope.params)?;
                 let body = if class_side {
                     None

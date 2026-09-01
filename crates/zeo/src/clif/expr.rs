@@ -2613,6 +2613,14 @@ pub(crate) fn bypasses_visibility(fx: &Fx, recv: Option<NodeId>) -> bool {
 /// def the direct-call table holds -- ruby's MRO puts the receiver's own
 /// chain first, so a shadowed name must go through the dynamic send.
 pub(crate) fn method_class_shadows(fx: &Fx, name: &str) -> bool {
+    // A PACKAGE never binds a top-level body directly: this tier carries
+    // no guard, and the program the object links into may redefine the
+    // name. Standing the tier down routes the call through dispatch, which
+    // reads the merged Object row -- and the overlay after a
+    // redefinition -- at its document position.
+    if fx.em.pkg.is_some() {
+        return true;
+    }
     let Some(cid) = fx.method_class else {
         return false;
     };
