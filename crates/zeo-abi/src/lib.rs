@@ -683,7 +683,7 @@ pub const FFI_UNION_CLASS: ClassId = ClassId(175);
 /// `Socket::Constants.ancestors` is just itself -- so this row carries no
 /// edges either. celluloid-io's `Constants = ::Socket::Constants` is the shape
 /// that wanted it.
-pub const SOCKET_CONSTANTS_MODULE: ClassId = ClassId(176);
+pub const SOCKET_CONSTANTS_MODULE: ClassId = ClassId(102);
 
 /// `CGI::Escape` and `CGI::EscapeExt` -- where CRuby's `cgi/escape` actually
 /// puts the escape helpers. `CGI.escapeHTML` is not a class method of `CGI`:
@@ -702,8 +702,8 @@ pub const SOCKET_CONSTANTS_MODULE: ClassId = ClassId(176);
 /// `escape_html`/`unescape_html` snake spellings. erubi asks
 /// `defined?(::CGI::Escape)` and net-http-persistent asks
 /// `defined?(CGI::EscapeExt)`, so both names have to be real.
-pub const CGI_ESCAPE_MODULE: ClassId = ClassId(177);
-pub const CGI_ESCAPE_EXT_MODULE: ClassId = ClassId(178);
+pub const CGI_ESCAPE_MODULE: ClassId = ClassId(103);
+pub const CGI_ESCAPE_EXT_MODULE: ClassId = ClassId(104);
 
 /// `Pathname` -- a path as a value. Reachable with NO `require`: ruby 4.0
 /// loads `pathname.so` before the first line, so the class and 96 of its
@@ -760,12 +760,10 @@ pub const ZLIB_ZSTREAM_CLASS: ClassId = ClassId(99);
 pub const ZLIB_DEFLATE_CLASS: ClassId = ClassId(100);
 /// `Zlib::Inflate < Zlib::ZStream` -- a decompressor.
 pub const ZLIB_INFLATE_CLASS: ClassId = ClassId(101);
-/// `Zlib::GzipFile` -- the gzip header/footer surface both directions share.
-pub const ZLIB_GZIP_FILE_CLASS: ClassId = ClassId(102);
-/// `Zlib::GzipWriter < Zlib::GzipFile` -- an IO-shaped gzip compressor.
-pub const ZLIB_GZIP_WRITER_CLASS: ClassId = ClassId(103);
-/// `Zlib::GzipReader < Zlib::GzipFile` -- an IO-shaped gzip decompressor.
-pub const ZLIB_GZIP_READER_CLASS: ClassId = ClassId(104);
+// ClassIds 102-104 were the native `Zlib::GzipFile` family. The gzip
+// container classes are plain Ruby now (`ext/zlib/lib/zlib.rb`) over the raw
+// `Deflate`/`Inflate` streams, and `SOCKET_CONSTANTS_MODULE` and the two CGI
+// escape modules hold these ids to keep the table contiguous.
 /// `pty`: the `PTY` module -- pseudo-terminal allocation (`.open`) and
 /// child processes run under one (`.spawn`/`.getpty`, `.check`). Its
 /// `ChildExited` exception lives in the gem's Ruby half (`ext/pty`), the
@@ -779,7 +777,7 @@ pub const SYSLOG_MODULE: ClassId = ClassId(106);
 // ClassIds 107 and 108 were `Readline` and its history class. The native
 // readline extension is deleted -- the official pure readline gem rides the
 // lock and answers `Readline` as reline, ruby's own arrangement -- and the
-// ids stay retired so no row ever reuses them.
+// two Digest SHA classes above hold the ids to keep the table contiguous.
 /// `nkf`: the `NKF` module -- Network Kanji Filter, Japanese text encoding
 /// conversion (`.nkf` over an option string, `.guess`) rebuilt over the
 /// runtime's own encoding engine. The `Kconv` wrapper is the gem's Ruby

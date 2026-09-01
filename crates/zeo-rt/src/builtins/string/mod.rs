@@ -2264,10 +2264,17 @@ ruby_class! {
         drop(guard);
         Ok(recv.clone())
     }
+    // ruby's `rb_str_replace`: the receiver takes the source's bytes AND
+    // encoding. A utf8 detour here transcoded binary data (found by the
+    // zlib gzip layer's read-into-buffer road).
     def "replace" (recv, arg) {
         guard_str_frozen(recv)?;
-        let new_text = arg_str!(arg).lock().to_utf8_lossy().into_owned();
-        rstr.lock().replace_utf8(new_text);
+        let s = arg_str!(arg);
+        let (bytes, enc) = {
+            let g = s.lock();
+            (g.bytes().to_vec(), g.encoding())
+        };
+        *rstr.lock() = crate::StrBuf::from_bytes(bytes, enc);
         Ok(recv.clone())
     }
     // ruby's `rb_str_init` as the private row: a source replaces bytes AND

@@ -67,6 +67,24 @@ pub(super) fn stream_error() -> Signal {
     raise_error("Zlib::StreamError", "stream error".to_string())
 }
 
+/// A gzip container fault, as the exception class CRuby's `Zlib.gunzip`
+/// raises for it. The Ruby `GzipReader` raises its own; this serves the
+/// native one-shot path.
+pub(super) fn gz_corrupt(c: Corrupt) -> Signal {
+    let class = match c {
+        Corrupt::CrcMismatch => "Zlib::GzipFile::CRCError",
+        Corrupt::LengthMismatch => "Zlib::GzipFile::LengthError",
+        Corrupt::NotGzip | Corrupt::UnsupportedMethod => "Zlib::GzipFile::Error",
+    };
+    raise_error(class, c.message().to_string())
+}
+
+pub(super) fn now_epoch_seconds() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as u32)
+}
+
 pub(super) fn data_error(msg: &str) -> Signal {
     raise_error("Zlib::DataError", msg.to_string())
 }
@@ -305,22 +323,6 @@ pub(super) fn bytes_of(v: Option<&RubyValue>) -> Result<Vec<u8>, Signal> {
 // ---------------------------------------------------------------- compressing
 
 impl Deflating {
-    /// A bare deflate compressor, no container. `GzipWriter` uses one and
-    /// writes its own gzip header and footer, because it has to expose the
-    /// header's FIELDS -- `mtime`, `orig_name`, `comment` -- which a codec
-    /// that owned the framing would have already spent.
-    pub(super) fn raw(level: Compression) -> Deflating {
-        Deflating {
-            comp: flate2::Compress::new(level, false),
-            wrap: Wrap::Raw,
-            level,
-            strategy: 0,
-            header_written: false,
-            crc: 0,
-            size: 0,
-        }
-    }
-
     /// Feed `input` to the codec, appending everything it produces to `out`.
     /// Answers whether the stream reached its end.
     pub(super) fn run(
@@ -333,7 +335,7 @@ impl Deflating {
             out.extend_from_slice(
                 &Header {
                     xfl: frame::xfl_for_level(self.level.level()),
-                    mtime: super::gzip::now_epoch_seconds(),
+                    mtime: now_epoch_seconds(),
                     ..Header::default()
                 }
                 .encode(),
@@ -505,7 +507,7 @@ impl Inflating {
     /// reports it.
     fn corrupt(&self, c: Corrupt) -> Signal {
         match self.api {
-            Api::GzipFile => super::gzip::gz_corrupt(c),
+            Api::GzipFile => gz_corrupt(c),
             Api::Stream => match c {
                 Corrupt::CrcMismatch => data_error("incorrect data check"),
                 Corrupt::LengthMismatch => data_error("incorrect length check"),
@@ -595,6 +597,7 @@ pub(super) fn run_and_maybe_detach(
     }
     let mut out = std::mem::take(&mut st.out);
     let before = out.len();
+    let mut uncounted = 0;
     let ended = match (&mut st.codec, flush) {
         (Codec::Deflate(d), Flush::Compress(f)) => {
             let gzip = d.wrap == Wrap::Gzip;
@@ -611,7 +614,11 @@ pub(super) fn run_and_maybe_detach(
         }
         (Codec::Inflate(i), Flush::Decompress(f)) => {
             let gzip = i.wrap == Wrap::Gzip;
+            let held_before = i.trailer.len();
             let ended = i.run(input, f, &mut out)?;
+            // zlib counts only the bytes the codec consumed into `total_in`;
+            // what follows a finished member is held, never read.
+            uncounted = i.trailer.len() - held_before;
             let fresh = &out[before..];
             st.adler = if gzip {
                 crc32(fresh, st.adler)
@@ -625,7 +632,7 @@ pub(super) fn run_and_maybe_detach(
         }
         _ => unreachable!("a stream's codec and its flush kind are chosen together"),
     };
-    st.total_in += input.len() as u64;
+    st.total_in += (input.len() - uncounted) as u64;
     st.total_out += (out.len() - before) as u64;
     st.finished = ended;
     if detach {

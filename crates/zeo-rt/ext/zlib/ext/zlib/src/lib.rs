@@ -1,38 +1,35 @@
 //! `zlib` (CRuby's bundled `zlib` gem). `require "zlib"` activates the `Zlib`
-//! module and its six stream classes, mirroring CRuby's:
+//! module and its three native stream classes:
 //!
 //! ```text
 //! Zlib::ZStream        the shared counters/lifecycle      (zstream.rs)
 //!  ├ Zlib::Deflate     a compressor                       (deflate.rs)
 //!  └ Zlib::Inflate     a decompressor                     (inflate.rs)
-//! Zlib::GzipFile       the shared gzip header/footer     (gzip_file.rs)
-//!  ├ Zlib::GzipWriter  writes a gzip member to an IO   (gzip_writer.rs)
-//!  └ Zlib::GzipReader  reads a gzip member from an IO  (gzip_reader.rs)
 //! ```
+//!
+//! This native half is the KERNEL: the incremental codec, the checksums, and
+//! the one-shot module functions. The gzip container classes -- `GzipFile`,
+//! `GzipWriter`, `GzipReader` -- live in `ext/zlib/lib/zlib.rb`, the gem's
+//! Ruby half, driving a raw-window `Deflate`/`Inflate` underneath.
 //!
 //! The checksum functions (`crc32`, `adler32`) are implemented here in Rust;
 //! everything else is `flate2`-backed, driving its LOW-level `Compress`/
 //! `Decompress` rather than the `ZlibEncoder` wrappers, because CRuby's surface
 //! exposes the incremental stream (`Deflate#deflate(s, SYNC_FLUSH)` must hand
 //! back exactly the bytes flushed so far) and a whole-buffer wrapper cannot.
-//! The compression engine itself is [`codec`]; the six classes above are rows
+//! The compression engine itself is [`codec`]; the classes above are rows
 //! over it, one file each because the DSL allows one `ruby_class!` per module.
-//! The gzip framing -- header, CRC-32/ISIZE footer -- is written and parsed by
-//! [`frame`] rather than by flate2, both because `Compress::new_gzip` is absent
-//! from the pure-Rust backend and because `GzipFile`'s accessors need the
-//! header FIELDS (`mtime`/`orig_name`/`comment`/`os_code`), not just the bytes.
+//! The gzip framing `Zlib.gzip`/`Zlib.gunzip` need -- header, CRC-32/ISIZE
+//! footer -- is written and parsed by [`frame`], because `Compress::new_gzip`
+//! is absent from flate2's pure-Rust backend.
 //!
-//! `Zlib`'s thirteen exception classes live in `ext/zlib/lib/zlib.rb`, the
-//! gem's Ruby half -- see `ext/mod.rs` for why an extension cannot define its
-//! own. The native half raises them by name.
+//! `Zlib`'s exception classes live in `ext/zlib/lib/zlib.rb` too -- see
+//! `ext/mod.rs` for why an extension cannot define its own. The native half
+//! raises them by name.
 
 pub(crate) mod codec;
 pub(crate) mod deflate;
 pub(crate) mod frame;
-pub(crate) mod gzip;
-pub(crate) mod gzip_file;
-pub(crate) mod gzip_reader;
-pub(crate) mod gzip_writer;
 pub(crate) mod inflate;
 pub(crate) mod zstream;
 
@@ -164,7 +161,7 @@ ruby_module! {
     // `Zlib.gzip(str, level: nil, strategy: nil)` -- a whole gzip member.
     def self."gzip" cfunc (_recv, string, **opts) {
         let level = level_of(kw(&opts.cloned(), "level").as_ref())?;
-        gzip::gzip_string(&bytes_arg(Some(string))?, level)
+        codec::one_shot_deflate(&bytes_arg(Some(string))?, level, codec::Wrap::Gzip)
     }
     // `Zlib.zlib_version` / `Zlib::VERSION` -- the format version this
     // implements. zeo compresses through flate2's miniz backend rather than
@@ -188,9 +185,12 @@ ruby_module! {
         let n = crate::builtins::convert::to_index(len2)?.max(0) as u64;
         Ok(RubyValue::Int(adler32_combine(a, b, n) as i64))
     }
-    // `Zlib.gunzip(str)` -- decompress a gzip member, footer checked.
+    // `Zlib.gunzip(str)` -- decompress a gzip member, footer checked. Unlike
+    // a `GzipReader`, this always checks: there is no buffer left
+    // half-consumed.
     def self."gunzip" (_recv, string) {
-        gzip::gunzip_string(&bytes_arg(Some(string))?)
+        let (bytes, _, _) = codec::gunzip_bytes(&bytes_arg(Some(string))?)?;
+        Ok(bin_str(bytes))
     }
 }
 
@@ -324,14 +324,6 @@ fn kw(kwargs: &Option<RubyValue>, name: &str) -> Option<RubyValue> {
 /// so is everything `Inflate` produces.
 pub(crate) fn bin_str(bytes: Vec<u8>) -> RubyValue {
     RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT))
-}
-
-/// Wrap raw bytes as a TEXT String, tagged with the external encoding.
-/// `GzipReader` is the one part of this extension that hands back text rather
-/// than bytes -- `#read` and `#gets` are UTF-8 where `Inflate#inflate` is
-/// binary, which is CRuby's split, not an accident of this implementation.
-pub(crate) fn text_str(bytes: Vec<u8>) -> RubyValue {
-    RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::UTF_8))
 }
 
 #[cfg(test)]

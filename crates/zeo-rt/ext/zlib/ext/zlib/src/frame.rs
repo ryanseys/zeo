@@ -106,17 +106,6 @@ pub(crate) fn xfl_for_level(level: u32) -> u8 {
     }
 }
 
-/// The level a header's XFL byte implies, as `GzipFile#level` reports it. Any
-/// value but the two extremes means the writer said nothing, which is
-/// `Zlib::DEFAULT_COMPRESSION`.
-pub(crate) fn level_from_xfl(xfl: u8) -> i64 {
-    match xfl {
-        2 => 9,
-        4 => 1,
-        _ => -1,
-    }
-}
-
 impl Header {
     /// Serialize, ready to precede the member's deflate data. zeo never emits
     /// FEXTRA or FHCRC (nothing in the Ruby surface can ask for them), but
@@ -301,14 +290,14 @@ mod tests {
         );
     }
 
-    /// gzip records only the extremes, so the round-trip is lossy in the
-    /// middle -- which is why `GzipReader#level` answers -1 for level 6.
+    /// gzip records only the extremes; everything between reads back as "no
+    /// information" -- which is why `GzipFile#level` answers -1 for level 6.
     #[test]
     fn xfl_records_only_the_extreme_levels() {
-        assert_eq!(level_from_xfl(xfl_for_level(9)), 9);
-        assert_eq!(level_from_xfl(xfl_for_level(1)), 1);
+        assert_eq!(xfl_for_level(9), 2);
+        assert_eq!(xfl_for_level(1), 4);
         for level in [0, 2, 3, 4, 5, 6, 7, 8] {
-            assert_eq!(level_from_xfl(xfl_for_level(level)), -1);
+            assert_eq!(xfl_for_level(level), 0);
         }
     }
 }
