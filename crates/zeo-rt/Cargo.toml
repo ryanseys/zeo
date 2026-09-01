@@ -127,10 +127,6 @@ flate2 = { workspace = true, optional = true }
 # `readline` extension: rustyline is the pure-Rust line editor behind
 # `Readline.readline` on a terminal (non-tty reads bypass it entirely).
 rustyline = { workspace = true, optional = true }
-# `json` extension: serde_json parses into a `Value` tree we convert to
-# `RubyValue` (generation is hand-rolled for int/float/bignum fidelity).
-# Pulled in only by `ext-json`.
-serde_json = { workspace = true, optional = true }
 # `psych`/`yaml` extension: yaml-rust2 is the maintained pure-Rust YAML 1.2
 # parser+emitter (serde_yaml is deprecated/archived). Pulled in only by
 # `ext-psych`.
@@ -162,10 +158,11 @@ libc.workspace = true
 #
 # This list is the ONLY hand-written half: build.rs declares the modules from
 # the `ext/` tree itself. To ADD an extension see the checklist in `src/ext.rs`.
-# cargo-machete greps for the crate name; `md-5` is imported as `md5`, so it
-# reads as unused. It is not -- see ext/digest/ext/digest/src/lib.rs.
+# cargo-machete greps for each crate name under `src/`. The ext crates are
+# used only in `ext/*/ext/*/src/`, which build.rs wires in as modules, so
+# machete never sees them; `md-5` is also imported as `md5`. All are used.
 [package.metadata.cargo-machete]
-ignored = ["md-5"]
+ignored = ["md-5", "sha1", "sha2", "digest", "flate2", "rustyline", "yaml-rust2", "openssl"]
 
 [build-dependencies]
 # `csrc/cext_jmp.c`, built only under the `cext` feature. `cc` is already in
@@ -236,7 +233,7 @@ ext-stringio = []
 ext-strscan = []
 ext-cgi = []
 ext-digest = ["dep:md-5", "dep:sha1", "dep:sha2", "dep:digest"]
-ext-json = ["dep:serde_json"]
+ext-json = []
 ext-date = []
 ext-zlib = ["dep:flate2"]
 ext-psych = ["dep:yaml-rust2"]

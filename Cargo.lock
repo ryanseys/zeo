@@ -2372,7 +2372,6 @@ dependencies = [
  "ruby-prism",
  "ruby-prism-sys",
  "rustyline",
- "serde_json",
  "sha1",
  "sha2",
  "tracing",
