@@ -675,14 +675,17 @@ pub mod deadlock {
     }
 
     /// Consecutive all-blocked polls with no wake in between before the
-    /// verdict lands -- `STREAK_VERDICT * SLICE`, so about 16ms.
+    /// verdict lands -- `STREAK_VERDICT * SLICE`, about a second.
     ///
     /// One poll was enough to be wrong, and two were enough to be wrong on a
     /// loaded machine: a thread woken by another's push can sit unscheduled
-    /// for several milliseconds while sixteen test jobs run. A deadlock has
-    /// nobody to wake it ever, so waiting longer costs a real verdict
-    /// nothing and costs a false one everything.
-    const STREAK_VERDICT: u32 = 8;
+    /// while sixteen test jobs run, COUNTED AS BLOCKED the whole time, and
+    /// only its own next poll can reset the streak. At 8 polls (16ms) a
+    /// full test gate produced exactly that false fatal in minitest's
+    /// parallel executor. A deadlock has nobody to wake it ever, so waiting
+    /// longer costs a real verdict only latency and costs a false one
+    /// everything.
+    const STREAK_VERDICT: u32 = 512;
 
     /// How long one supervised park lasts before the verdict is re-polled.
     /// Short enough that a deadlock is reported promptly, long enough that a
@@ -723,7 +726,16 @@ pub mod deadlock {
             cv: &parking_lot::Condvar,
             guard: &mut parking_lot::MutexGuard<'_, T>,
         ) -> bool {
-            let _ = cv.wait_for(guard, SLICE);
+            let woke = !cv.wait_for(guard, SLICE).timed_out();
+            if woke {
+                // A SIGNALED wake is progress by definition -- someone
+                // pushed, unlocked, or notified. Reset here too, because
+                // the notifier's own `note_progress` ran at notify time
+                // and every poll since may have rebuilt the streak while
+                // this thread waited for a core.
+                note_progress();
+                return true;
+            }
             !no_progress_possible()
         }
     }
