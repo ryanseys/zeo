@@ -1339,3 +1339,41 @@ fn a_precompiled_platform_gem_ships_its_artifact_to_a_consumer() {
         "hello from the shipped artifact\n"
     );
 }
+
+/// A packaged feature that is ALSO a builtin name, under an active store: the
+/// require must stay a call the merged unit rows answer. `tmpdir` is the
+/// shape -- zeo provides it natively, the lock names it, and an installed
+/// artifact makes it a packaged feature -- and the builtin arm of the
+/// resolvability scan used to claim a compile-time verdict for it, sending
+/// the require down a splice road where the store override had already
+/// dismissed the builtin: `cannot load such file -- tmpdir`.
+#[test]
+fn a_packaged_builtin_feature_defers_to_the_merged_unit() {
+    let root = crate::paths::workspace_root();
+    let store = root.join("vendor/bundle/ruby/4.0.0");
+    let tmpdir_rb = store.join("gems/tmpdir-0.3.1/lib/tmpdir.rb");
+    if !tmpdir_rb.is_file() {
+        eprintln!("skipping: the resolved store has no tmpdir 0.3.1 (run `make deps`)");
+        return;
+    }
+    let dir = scratch("packaged-builtin");
+    let pkg = build_named_package(&dir, "tmpdir", &tmpdir_rb);
+
+    let host = dir.join("host.rb");
+    std::fs::write(&host, "require \"tmpdir\"\np Dir.respond_to?(:tmpdir)\n")
+        .expect("write host");
+    let bin = dir.join("host.bin");
+    ok(zeo()
+        .arg("build")
+        .arg(&host)
+        .arg("--bundle-gemfile")
+        .arg(root.join("Gemfile"))
+        .arg("--gem-path")
+        .arg(&store)
+        .arg("--with-package")
+        .arg(&pkg)
+        .arg("-o")
+        .arg(&bin)
+        .env("ZEO_CACHE", "0"));
+    assert_eq!(ok(&mut Command::new(&bin)), "true\n");
+}

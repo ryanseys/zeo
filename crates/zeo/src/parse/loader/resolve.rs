@@ -122,6 +122,17 @@ impl Loader {
             // a store-located-but-rejected gem (native ext / wrong platform) all
             // count; anything else has no compile-time verdict and defers.
             Ok(None) => {
+                // A merged package carries the feature: deliberately NO
+                // compile-time verdict, so the require stays a call and the
+                // package's unit rows answer it at run time. Checked before
+                // the builtin arm -- a packaged feature that is ALSO a
+                // builtin name (tmpdir, a store override with an artifact)
+                // would otherwise claim a verdict, take the splice road, and
+                // die in the static-ext fallthrough where the override has
+                // already dismissed the builtin.
+                if self.packaged_features.contains(feature) {
+                    return false;
+                }
                 synthetic_shim_source(feature).is_some() || {
                     let bare = feature
                         .strip_suffix(".so")
