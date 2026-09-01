@@ -73,6 +73,13 @@ impl Loader {
         if name == "require" && self.builtin_wins(&feature) {
             return Ok(None);
         }
+        // A synthesized shim has no file on disk; its dedup slot is the
+        // virtual spelling `splice_synthetic_shim` inserts. Answering it here
+        // is what lets the rerequire pre-pass see a second require of one,
+        // so the fold says false the way ruby does for a loaded feature.
+        if name == "require" && synthetic_shim_source(&feature).is_some() {
+            return Ok(Some(PathBuf::from(format!("<zeo-shim>/{feature}.rb"))));
+        }
         let path = match name {
             "require_relative" => resolve_require_relative(&feature, dir).ok(),
             "require" if feature.starts_with("./") || feature.starts_with("../") => {
