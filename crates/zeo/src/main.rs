@@ -50,13 +50,14 @@ struct Args {
     /// `--strict-static-require`: a `require`/`load` target the compiler
     /// cannot resolve is an error HERE, not at run time.
     strict_static_require: bool,
-    /// `--experimental-pkg <feature>` -- compile the
-    /// positional file as a separately linked package for that feature
-    /// spelling; `-o` names the object, `<object>.zman` gets the manifest.
-    experimental_pkg: Option<String>,
-    /// `--experimental-use-pkg <object>` (repeatable) --
-    /// merge that package (manifest at `<object>.zman`) into this program.
-    experimental_use_pkgs: Vec<PathBuf>,
+    /// `--package <feature>` -- compile the positional file as a separately
+    /// linked package for that feature spelling; `-o` names the artifact
+    /// (default: `<feature basename>.zeopkg` in the current directory).
+    pkg_feature: Option<String>,
+    /// `--with-package <artifact>` (repeatable) -- merge that package
+    /// (a `.zeopkg` bundle, or an object with `<object>.zman` beside it)
+    /// into this program.
+    with_packages: Vec<PathBuf>,
     /// `--root-gem <name>`: the distinguished root package -- it outranks
     /// every other provider for an ambiguous feature (Bundler-root
     /// semantics). The gem probe names its subject here.
@@ -212,6 +213,11 @@ modes:
                         ARGV. Option parsing STOPS there, ruby's own rule, so
                         `zeo test.rb --seed 42 -v` passes all three on;
                         zeo's own options go BEFORE the file name
+  build <input.rb>      compile the file to a native binary without running
+                        it: `-o <path>` names the binary (default: the input
+                        path with its extension stripped). A build has no
+                        program ARGV, so its options may also FOLLOW the
+                        file: `zeo build app.rb -o dist/app`
   -o <path> <input.rb>  compile the file to a native binary at <path>
                         instead of running it
   --compile <input.rb>  compile to the default output path (the input path
@@ -238,8 +244,8 @@ subcommands:
   install <args...>     `bundle install` under its own name, with the same
                         arguments -- the verb the rest of the ecosystem
                         spells the same way
-                        A script really named `gem`, `bundle` or `install`
-                        still runs as `zeo ./gem`; the subcommand never
+                        A script really named `build`, `gem`, `bundle` or
+                        `install` still runs as `zeo ./build`; a verb never
                         depends on what is in the current directory.
 
 options:
@@ -287,6 +293,16 @@ options:
                         refuse at COMPILE time a `require`/`load` whose
                         target this compile cannot resolve, instead of
                         leaving it to the run-time loader
+  --package <feature>   compile <input.rb> as a precompiled PACKAGE for that
+                        require spelling, instead of as a program: the
+                        artifact is a `.zeopkg` a later compile links with
+                        --with-package (default output: `<feature>.zeopkg`;
+                        -o renames it)
+  --with-package <artifact>
+                        link a precompiled package into this program
+                        (repeatable). An artifact is accepted only when its
+                        compiler, target and interface hashes match exactly;
+                        anything else is refused by name
   --root-gem <name>     treat the named gem as the root package: it outranks
                         every other provider when a feature is found in
                         multiple gems (Bundler-root semantics)
@@ -352,6 +368,17 @@ fn parse_args() -> Result<Parsed, String> {
 }
 
 fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
+    // `zeo build <file.rb>`: the verb form of `--compile`. Unlike a run,
+    // a build has no program ARGV, so option parsing does NOT stop at the
+    // file -- `zeo build app.rb -o dist/app` reads naturally. The name is
+    // fixed like the other subcommands: a script really called `build`
+    // still runs as `zeo ./build`.
+    let build_verb = argv.first().map(String::as_str) == Some("build");
+    let argv: Vec<String> = if build_verb {
+        argv.into_iter().skip(1).collect()
+    } else {
+        argv
+    };
     // A subcommand becomes `-e <driver> -- <its own arguments>`, and the `--`
     // is what keeps them its own: without it a `zeo gem --version` would read
     // as zeo's `--version` rather than rubygems'.
@@ -377,8 +404,8 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut package_dirs = Vec::new();
     let mut embed_sources = Vec::new();
     let mut strict_static_require = false;
-    let mut experimental_pkg: Option<String> = None;
-    let mut experimental_use_pkgs: Vec<PathBuf> = Vec::new();
+    let mut pkg_feature: Option<String> = None;
+    let mut with_packages: Vec<PathBuf> = Vec::new();
     let mut root_gem: Option<String> = None;
     let mut report = Report::Off;
     let mut gem_paths: Vec<PathBuf> = Vec::new();
@@ -454,11 +481,11 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "irb" => irb = true,
                 "backend" => backend = Some(zeo::backend::Backend::parse(&value("--backend")?)?),
                 "gems" => package_dirs.push(PathBuf::from(value("--gems")?)),
-                "experimental-pkg" => {
-                    experimental_pkg = Some(value("--experimental-pkg")?);
+                "package" => {
+                    pkg_feature = Some(value("--package")?);
                 }
-                "experimental-use-pkg" => {
-                    experimental_use_pkgs.push(PathBuf::from(value("--experimental-use-pkg")?));
+                "with-package" => {
+                    with_packages.push(PathBuf::from(value("--with-package")?));
                 }
                 "embed-sources" => {
                     embed_sources.push(PathBuf::from(value("--embed-sources")?));
@@ -612,7 +639,11 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
             //
             // Options still come BEFORE the file (`zeo -o bin test.rb`), which
             // is where ruby wants them too.
-            collecting_argv = true;
+            //
+            // A build has no program ARGV, so its options may follow the file
+            // (`zeo build app.rb -o dist/app`); a trailing positional is
+            // still rejected below, since nothing runs to receive it.
+            collecting_argv = !build_verb;
         } else {
             program_args.push(arg);
         }
@@ -654,6 +685,22 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     };
     required_libraries.dedup();
 
+    // The verb is `--compile` by another name, and it wants a file: a build
+    // names its binary after the input, which `-e` and a shell lack.
+    if build_verb {
+        if input.is_none() {
+            return Err("zeo build needs a file to compile, e.g. `zeo build app.rb`".to_string());
+        }
+        compile = true;
+    }
+    // A package artifact has a natural default name; `-o` still wins.
+    if pkg_feature.is_some() && output.is_none() {
+        let base = pkg_feature
+            .as_deref()
+            .and_then(|f| f.rsplit('/').next())
+            .expect("pkg_feature checked some above");
+        output = Some(PathBuf::from(format!("{base}.zeopkg")));
+    }
     let source = match (eval, input) {
         (Some(_), Some(_)) => return Err("cannot combine -e with a file argument".to_string()),
         (Some(code), None) => Source::Eval(code),
@@ -772,8 +819,8 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     Ok(Parsed::Run(Box::new(Args {
         embed_sources,
         strict_static_require,
-        experimental_pkg,
-        experimental_use_pkgs,
+        pkg_feature,
+        with_packages,
         source,
         output,
         compile,
@@ -906,7 +953,7 @@ fn run() -> Result<(), MainError> {
     // A package build compiles its entry as a FEATURE
     // UNIT, not as `<main>` -- the main source is empty and the entry rides
     // `CompileOptions::package_build` into the loader.
-    let source = if args.experimental_pkg.is_some() {
+    let source = if args.pkg_feature.is_some() {
         String::new()
     } else {
         source
@@ -958,16 +1005,16 @@ fn run() -> Result<(), MainError> {
     // The package options. A package build takes the
     // positional file as its ENTRY and `-o` as its object; the manifest
     // lands beside the object as `<output>.zman`. A host names package
-    // objects with `--experimental-use-pkg`; their manifests are read here
+    // artifacts with `--with-package`; their manifests are read here
     // so the compile is a function of their TEXT (and the object digest
     // keeps the program cache honest about a body-only rebuild).
-    let package_build = match &args.experimental_pkg {
+    let package_build = match &args.pkg_feature {
         Some(feature) => {
             let Source::File(entry) = &args.source else {
-                return Err("--experimental-pkg needs a gem entry file".to_string().into());
+                return Err("--package needs a gem entry file".to_string().into());
             };
             let Some(out) = &args.output else {
-                return Err("--experimental-pkg needs -o <object path>".to_string().into());
+                return Err("--package needs -o <artifact path>".to_string().into());
             };
             Some(zeo::package::PackageBuild {
                 entry: entry.clone(),
@@ -983,7 +1030,7 @@ fn run() -> Result<(), MainError> {
         None => None,
     };
     let use_packages: Vec<zeo::package::UsePackage> = args
-        .experimental_use_pkgs
+        .with_packages
         .iter()
         .map(|obj| {
             // Two artifact spellings: a bare object with the manifest
@@ -1083,7 +1130,7 @@ fn run() -> Result<(), MainError> {
     // is nothing to run or link. It goes through the machine-wide package
     // cache first.
     if opts.package_build.is_some() {
-        let out = args.output.as_ref().expect("--experimental-pkg checked -o above");
+        let out = args.output.as_ref().expect("--package checked -o above");
         return build_package(&source, &opts, out);
     }
     if backend == zeo::backend::Backend::Jit {
@@ -1118,7 +1165,7 @@ fn run() -> Result<(), MainError> {
         }
         if !opts.use_packages.is_empty() {
             return Err(
-                "--experimental-use-pkg needs the AOT path: the in-process JIT cannot \
+                "--with-package needs the AOT path: the in-process JIT cannot \
                  link a package object (use -o/--compile, or leave the program cache on)"
                     .to_string()
                     .into(),
@@ -1395,6 +1442,47 @@ mod tests {
             Err(e) => e,
             Ok(_) => panic!("expected an error for {args:?}"),
         }
+    }
+
+    /// `zeo build` is `--compile` as a verb, and because a build has no
+    /// program ARGV its options may follow the file.
+    #[test]
+    fn the_build_verb_compiles_without_running() {
+        let a = ok(&["build", "app.rb"]);
+        assert!(a.compile);
+        assert!(matches!(&a.source, Source::File(p) if p == std::path::Path::new("app.rb")));
+
+        let a = ok(&["build", "app.rb", "-o", "dist/app"]);
+        assert!(a.compile);
+        assert_eq!(a.output.as_deref(), Some(std::path::Path::new("dist/app")));
+
+        assert!(err(&["build"]).contains("needs a file"));
+        assert!(err(&["build", "-e", "1"]).contains("needs a file"));
+        // Nothing runs, so a trailing positional has no ARGV to join.
+        assert!(err(&["build", "app.rb", "extra"]).contains("unexpected argument"));
+        // The fixed-name rule: a script called `build` runs via a path.
+        assert!(matches!(
+            &ok(&["./build"]).source,
+            Source::File(p) if p == std::path::Path::new("./build")
+        ));
+    }
+
+    /// `--package` emits an artifact, so it defaults its own output name;
+    /// `--with-package` is repeatable.
+    #[test]
+    fn package_flags_parse_with_a_default_artifact_name() {
+        let a = ok(&["build", "--package", "rack", "entry.rb"]);
+        assert_eq!(a.pkg_feature.as_deref(), Some("rack"));
+        assert_eq!(a.output.as_deref(), Some(std::path::Path::new("rack.zeopkg")));
+
+        // A nested feature names the artifact by its basename.
+        let a = ok(&["--package", "rack/utils", "-o", "x.zeopkg", "entry.rb"]);
+        assert_eq!(a.output.as_deref(), Some(std::path::Path::new("x.zeopkg")));
+        let a = ok(&["--package", "rack/utils", "entry.rb"]);
+        assert_eq!(a.output.as_deref(), Some(std::path::Path::new("utils.zeopkg")));
+
+        let a = ok(&["--with-package", "a.zeopkg", "--with-package", "b.zeopkg", "app.rb"]);
+        assert_eq!(a.with_packages.len(), 2);
     }
 
     /// `zeo gem` / `zeo bundle` run the vendored library, and every argument

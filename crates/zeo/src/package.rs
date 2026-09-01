@@ -1,10 +1,10 @@
 //! The package row manifest -- a separately compiled gem's registration
 //! rows as DATA.
 //!
-//! A package compile (`--experimental-pkg`) emits an object file whose
+//! A package compile (`--package`) emits an object file whose
 //! bodies are exported symbols, plus this manifest: every row its
 //! `ProgramDesc` would have carried, with function pointers named by
-//! SYMBOL. A host compile (`--experimental-use-pkg`) rewrites the rows into
+//! SYMBOL. A host compile (`--with-package`) rewrites the rows into
 //! its own single desc and links the package object beside its own, so the
 //! runtime still registers exactly one program. See the plan's Part III
 //! (decision 9: link-time merge, one desc, an untouched runtime).
@@ -383,7 +383,7 @@ pub struct UsePackage {
     pub object_digest: u64,
 }
 
-/// The package build a compile was asked for (`--experimental-pkg`).
+/// The package build a compile was asked for (`--package`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PackageBuild {
     /// The gem's entry file, compiled as a FEATURE UNIT under `feature`.

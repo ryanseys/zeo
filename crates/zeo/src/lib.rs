@@ -232,7 +232,7 @@ pub struct ObjectOutput {
     /// Collecting them costs an `Arc` bump per file, not a copy.
     pub inputs: Vec<progcache::Input>,
     /// Package objects the LINK must include beside this
-    /// one (`--experimental-use-pkg`). Empty for every ordinary compile.
+    /// one (`--with-package`). Empty for every ordinary compile.
     pub extra_objects: Vec<std::path::PathBuf>,
     /// Features a `require` names that resolve NOWHERE -- the loader's
     /// resolvability pre-scan. The package fallback reads this to tell a

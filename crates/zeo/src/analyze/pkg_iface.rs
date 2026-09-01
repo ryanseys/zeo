@@ -1,6 +1,6 @@
 //! Register a merged package's compile-time INTERFACE.
 //!
-//! A `--experimental-use-pkg` manifest carries `iface` rows -- what the
+//! A `--with-package` manifest carries `iface` rows -- what the
 //! package IS. This pass turns each into a real `ClassInfo` plus BODY-LESS
 //! `Scope`s (`Scope::extern_symbol`), so the host's own analysis resolves
 //! the package's constants, infers receiver types, and nominates typed

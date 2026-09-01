@@ -1,9 +1,9 @@
 //! Separate compilation's merge spine.
 //!
 //! A gem compiles ONCE to its own object plus a row manifest
-//! (`--experimental-pkg`); a host program merges the manifest into its one
+//! (`--package`); a host program merges the manifest into its one
 //! `ProgramDesc` and links the object beside its own
-//! (`--experimental-use-pkg`). These tests hold the two contracts the
+//! (`--with-package`). These tests hold the two contracts the
 //! design rests on: the packaged program answers BYTE FOR BYTE what the
 //! same program answers with the gem spliced (today's whole-program path),
 //! and every refusal names itself rather than mislinking.
@@ -49,7 +49,7 @@ fn ok(cmd: &mut Command) -> String {
 fn build_package(dir: &Path) -> PathBuf {
     let object = dir.join("pureleaf.o");
     ok(zeo()
-        .arg("--experimental-pkg")
+        .arg("--package")
         .arg("pureleaf")
         .arg("-o")
         .arg(&object)
@@ -110,7 +110,7 @@ fn a_precompiled_gem_links_and_answers_like_the_spliced_one() {
     // Road one: the gem PRECOMPILED, merged and linked.
     let packaged_bin = dir.join("host-packaged");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&object)
         .arg("-o")
         .arg(&packaged_bin)
@@ -176,7 +176,7 @@ fn a_package_is_position_independent() {
     .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&object)
         .arg("-o")
         .arg(&bin)
@@ -195,7 +195,7 @@ fn two_packages_link_into_one_host() {
     let leaf = build_package(&dir);
     let second = dir.join("puresecond.o");
     ok(zeo()
-        .arg("--experimental-pkg")
+        .arg("--package")
         .arg("puresecond")
         .arg("-o")
         .arg(&second)
@@ -214,9 +214,9 @@ fn two_packages_link_into_one_host() {
     .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&leaf)
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&second)
         .arg("-o")
         .arg(&bin)
@@ -263,7 +263,7 @@ fn a_host_call_site_compiles_direct_into_the_package_body() {
     .expect("write host");
     let bin = dir.join("driver");
     let out = run(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&object)
         .arg("-o")
         .arg(&bin)
@@ -310,7 +310,7 @@ fn a_host_reopen_of_a_package_class_installs_at_its_position() {
     .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&object)
         .arg("-o")
         .arg(&bin)
@@ -346,7 +346,7 @@ fn a_host_subclass_of_a_package_class_inherits_its_surface() {
     .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&object)
         .arg("-o")
         .arg(&bin)
@@ -370,7 +370,7 @@ fn a_package_carrying_a_box_is_refused_by_name() {
     )
     .expect("write entry");
     let out = run(zeo()
-        .arg("--experimental-pkg")
+        .arg("--package")
         .arg("boxgem")
         .arg("-o")
         .arg(dir.join("boxgem.o"))
@@ -414,9 +414,9 @@ fn a_packages_redefinition_timeline_survives_the_boundary() {
     .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&one)
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&two)
         .arg("-o")
         .arg(&bin)
@@ -456,7 +456,7 @@ fn a_host_includes_and_extends_a_packaged_module() {
     .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&object)
         .arg("-o")
         .arg(&bin)
@@ -492,7 +492,7 @@ fn a_hosts_global_def_hook_hears_a_packages_definitions() {
     .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&object)
         .arg("-o")
         .arg(&bin)
@@ -526,7 +526,7 @@ fn an_eval_bearing_package_links_against_the_hosts_compiler() {
     .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&object)
         .arg("-o")
         .arg(&bin)
@@ -539,7 +539,7 @@ fn an_eval_bearing_package_links_against_the_hosts_compiler() {
 fn build_named_package(dir: &Path, feature: &str, entry: &Path) -> PathBuf {
     let object = dir.join(format!("{feature}.o"));
     ok(zeo()
-        .arg("--experimental-pkg")
+        .arg("--package")
         .arg(feature)
         .arg("-o")
         .arg(&object)
@@ -559,9 +559,9 @@ fn refuse_merge(dir: &Path, a: &Path, b: &Path, host_src: &str) -> String {
     let host = dir.join("host.rb");
     std::fs::write(&host, host_src).expect("write host");
     let out = run(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(a)
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(b)
         .arg("-o")
         .arg(dir.join("host-bin"))
@@ -593,9 +593,9 @@ fn two_packages_share_a_namespace_module() {
     const ALIAS_WANT: &str = "\"alpha\"\n\"beta-3\"\n[:alpha, :beta]\n4\n";
     let packaged_bin = dir.join("host-packaged");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&alpha)
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&beta)
         .arg("-o")
         .arg(&packaged_bin)
@@ -652,9 +652,9 @@ fn regexp_and_flip_flop_sites_get_disjoint_strides() {
     .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&regexgem)
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&flipgem)
         .arg("-o")
         .arg(&bin)
@@ -736,7 +736,7 @@ fn a_packages_top_level_def_reaches_the_host() {
         .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&object)
         .arg("-o")
         .arg(&bin)
@@ -751,7 +751,7 @@ fn a_packages_top_level_def_reaches_the_host() {
     )
     .expect("write collide host");
     let out = run(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&object)
         .arg("-o")
         .arg(dir.join("collide-bin"))
@@ -793,7 +793,7 @@ fn a_package_reopens_builtins_and_the_host_sees_every_road() {
     .expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&object)
         .arg("-o")
         .arg(&bin)
@@ -813,7 +813,7 @@ fn a_zeopkg_bundle_builds_links_and_runs() {
     let dir = scratch("bundle");
     let artifact = dir.join("pureleaf.zeopkg");
     ok(zeo()
-        .arg("--experimental-pkg")
+        .arg("--package")
         .arg("pureleaf")
         .arg("-o")
         .arg(&artifact)
@@ -828,7 +828,7 @@ fn a_zeopkg_bundle_builds_links_and_runs() {
     std::fs::write(&host, "require \"pureleaf\"\np Pureleaf.new.tagged(5)\n").expect("write host");
     let bin = dir.join("host-bin");
     ok(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&artifact)
         .arg("-o")
         .arg(&bin)
@@ -853,7 +853,7 @@ fn a_package_build_is_reproducible_across_directories() {
         )
         .expect("copy the gem source");
         ok(zeo()
-            .arg("--experimental-pkg")
+            .arg("--package")
             .arg("pureleaf")
             .arg("-o")
             .arg(dir.join(format!("{side}.zeopkg")))
@@ -881,7 +881,7 @@ fn the_package_cache_serves_hits_and_invalidates_on_edit() {
     std::fs::write(&entry, "class Cachegem\n  def go = :one\nend\n").expect("write the gem");
     let build = |out: &Path| {
         ok(zeo()
-            .arg("--experimental-pkg")
+            .arg("--package")
             .arg("cachegem")
             .arg("-o")
             .arg(out)
@@ -947,7 +947,7 @@ fn a_refused_artifact_drops_to_the_source_splice() {
     let dir = scratch("drop");
     let artifact = dir.join("pureleaf.zeopkg");
     ok(zeo()
-        .arg("--experimental-pkg")
+        .arg("--package")
         .arg("pureleaf")
         .arg("-o")
         .arg(&artifact)
@@ -969,7 +969,7 @@ fn a_refused_artifact_drops_to_the_source_splice() {
     .expect("write host");
     let bin = dir.join("host-bin");
     let out = run(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&artifact)
         .arg("--gems")
         .arg(fixture_gem().parent().expect("fixtures dir"))
@@ -994,7 +994,7 @@ fn a_target_mismatch_refuses_by_name() {
     let dir = scratch("target");
     let artifact = dir.join("pureleaf.zeopkg");
     ok(zeo()
-        .arg("--experimental-pkg")
+        .arg("--package")
         .arg("pureleaf")
         .arg("-o")
         .arg(&artifact)
@@ -1010,7 +1010,7 @@ fn a_target_mismatch_refuses_by_name() {
     let host = dir.join("host.rb");
     std::fs::write(&host, "require \"pureleaf\"\n").expect("write host");
     let out = run(zeo()
-        .arg("--experimental-use-pkg")
+        .arg("--with-package")
         .arg(&artifact)
         .arg("-o")
         .arg(dir.join("host-bin"))
