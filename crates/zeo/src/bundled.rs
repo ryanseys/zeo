@@ -46,6 +46,12 @@ pub struct Library {
 
 /// zeo's own libraries, relative to the repo root.
 pub const EXT_TIER: &str = "crates/zeo-rt/ext";
+/// The pure-Ruby gem tier: one STANDARD gem directory per name
+/// (`<name>.gemspec` + `lib/`), served when the matching Rust ext is absent
+/// from the build -- the dual-build switch's other half. A build that
+/// carries the Rust half answers the require natively and never reaches
+/// this copy, the same way a builtin outranks a store gem.
+pub const PURE_TIER: &str = "crates/zeo-rt/gems";
 /// The committed bootstrap tier, relative to the repo root.
 pub const BOOTSTRAP_TIER: &str = "lib/ruby";
 
@@ -88,25 +94,27 @@ pub const NOT_SHIPPED: &[(&str, &str)] = &[(
 pub fn dev_tree_libraries(root: &Path) -> Vec<Library> {
     let mut out = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    for tier in [EXT_TIER, BOOTSTRAP_TIER] {
-        for mut lib in libraries_in(&root.join(tier)) {
-            // The dual-build switch. An ext-tier library whose Rust half this
-            // BUILD did not compile must not serve its `lib/` (it requires
-            // the native half beside it). The sibling `pure/` tree -- itself
-            // a library directory, gemspec and `lib/` inside -- answers
-            // instead when it exists; with no pure tree the library drops
-            // and its `require` raises LoadError, ruby-without-the-ext's
-            // answer.
-            if tier == EXT_TIER && !ext_build_carried(&lib.name) {
-                let pure = lib.dir.join("pure");
-                if !pure.join("lib").is_dir() {
-                    continue;
-                }
-                lib.dir = pure;
-            }
-            if seen.insert(lib.name.clone()) {
-                out.push(lib);
-            }
+    // An ext-tier library whose Rust half this BUILD did not compile is
+    // dropped: its `lib/` is the Ruby half OF that Rust and requires the
+    // native module beside it. The pure tier below answers the name
+    // instead, when it holds the gem.
+    for lib in libraries_in(&root.join(EXT_TIER)) {
+        if ext_build_carried(&lib.name) && seen.insert(lib.name.clone()) {
+            out.push(lib);
+        }
+    }
+    // The pure tier serves ONLY names whose Rust half is absent. A carried
+    // builtin must not see a file-backed twin: the dual-homed machinery
+    // would read the pair as tmpdir's shape and splice the file over the
+    // native implementation.
+    for lib in libraries_in(&root.join(PURE_TIER)) {
+        if !ext_build_carried(&lib.name) && seen.insert(lib.name.clone()) {
+            out.push(lib);
+        }
+    }
+    for lib in libraries_in(&root.join(BOOTSTRAP_TIER)) {
+        if seen.insert(lib.name.clone()) {
+            out.push(lib);
         }
     }
     for lib in resolved_libraries(root) {
@@ -211,6 +219,25 @@ pub fn vendored_names(root: &Path) -> Vec<(String, String)> {
         .flat_map(|tier| libraries_in(&root.join(tier)))
         .map(|lib| lib.name)
         .collect();
+    // A carried extension with NO Ruby half (`base64`) supplies its name
+    // with no `lib/` for the scan above to see -- and the pure tier
+    // supplies the flip side when the Rust half is absent. Without these
+    // rows the resolved store's copy of a locked gem would read as
+    // dual-homed and splice over the native implementation.
+    if let Ok(entries) = std::fs::read_dir(root.join(EXT_TIER)) {
+        supplied.extend(
+            entries
+                .flatten()
+                .filter_map(|e| e.file_name().into_string().ok())
+                .filter(|n| ext_build_carried(n)),
+        );
+    }
+    supplied.extend(
+        libraries_in(&root.join(PURE_TIER))
+            .into_iter()
+            .map(|lib| lib.name)
+            .filter(|n| !ext_build_carried(n)),
+    );
     supplied.extend(
         BOOTSTRAP_LOCK_NAMES
             .iter()

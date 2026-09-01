@@ -60,6 +60,7 @@ source "https://rubygems.org"
 # name.
 
 gem "abbrev", "0.1.2"
+gem "base64", "0.3.0"
 gem "benchmark", "0.5.0"
 gem "bigdecimal", "4.1.2"
 gem "csv", "3.3.6"
@@ -115,6 +116,7 @@ gem "rexml", "3.4.4"
 # from here, so the two disagree whenever this leads ruby 4.0.6. bundler
 # rides the same release and stays in step with it.
 gem "rubygems-update", "4.0.19"
+gem "securerandom", "0.4.1"
 gem "shellwords", "0.2.2"
 gem "singleton", "0.3.0"
 gem "strscan", "3.1.8"
