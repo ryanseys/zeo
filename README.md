@@ -215,6 +215,7 @@ replacement for any removed spelling.
 | `--compile` | Write a native binary at the input path minus its extension. |
 | `--package <feature>` | Compile the input as a precompiled package for that require spelling; the artifact is a `.zeopkg` (default name `<feature>.zeopkg`). |
 | `--with-package <artifact>` | Link a precompiled package into this program (repeatable). Accepted only on an exact compiler-and-target match; a refused merge drops back to the source compile with a warning. |
+| `--link <arg>` | Pass `<arg>` to the `cc` link line as written, after the platform libraries and before the dead-strip flag (repeatable, in order; `--link=<arg>` too). Carries a payload section (`-Wl,-sectcreate,__SEG,__sect,file`), an object file, or `-framework`/`AppKit` as two arguments. A symbol Ruby reaches through `FFI::CURRENT_PROCESS` must be exported by hand (`-Wl,-exported_symbol,_name`) — see [docs/CLIF.md](docs/CLIF.md#linking). Only a linked binary reads these. `ZEO_LINK_ARGS` is the env spelling. |
 | `--backend <jit\|aot>` | Pick the output mode. Default: `jit` when running, `aot` with `-o`. `ZEO_BACKEND` is the env spelling. |
 | `-I <dir>` | Add a `require` search root (repeatable; `-I<dir>` and `-I=<dir>` too). |
 | `--gems <dir>` | Add a directory of vendored gems — each subdirectory with a `.gemspec` is one gem (repeatable). |
@@ -241,6 +242,7 @@ replacement for any removed spelling.
 | `RUBYOPT` / `RUBYLIB` | As in CRuby. `RUBYOPT` accepts only `-I`, `-w`, `-W`. |
 | `GEM_PATH` / `BUNDLE_GEMFILE` | Defaults for `--gem-path` / `--bundle-gemfile`. An ambient store alone never changes a compile. |
 | `ZEO_BACKEND` | `jit` or `aot`; the `--backend` flag wins. |
+| `ZEO_LINK_ARGS` | Extra `cc` link arguments, whitespace-separated, each as if given by `--link`; they come before the flag's own. |
 | `ZEO_CACHE` | `0` turns the compiled-program cache off, so the run compiles from scratch. |
 | `ZEO_PROGRAM_CACHE` | Where cached programs live (default: `<build root>/programs`). |
 | `ZEO_LOG` / `RUST_LOG` | A `tracing` `EnvFilter` directive, e.g. `zeo::analyze=debug`. Unset means no subscriber and no output. |

@@ -185,6 +185,13 @@ pub struct CompileOptions {
     /// contributes its manifest rows to THIS compile's one `ProgramDesc`;
     /// the caller links each package's object beside the emitted one.
     pub use_packages: Vec<package::UsePackage>,
+    /// Extra arguments for the `cc` link line (`--link <arg>`, repeatable;
+    /// `ZEO_LINK_ARGS` is the env spelling), passed VERBATIM and in order
+    /// after the platform libraries, before the dead-strip flag. What carries
+    /// a payload section (`-Wl,-sectcreate,...`), an object, or a framework
+    /// into the binary. Meaningful only for a linked artifact; the derived
+    /// `Hash` puts them in the program cache's key.
+    pub link_args: Vec<String>,
 }
 
 /// A gem named by the caller -- the public identity type `CompileOptions`
@@ -235,6 +242,9 @@ pub struct ObjectOutput {
     /// Package objects the LINK must include beside this
     /// one (`--with-package`). Empty for every ordinary compile.
     pub extra_objects: Vec<std::path::PathBuf>,
+    /// Extra `cc` arguments the LINK appends verbatim
+    /// ([`CompileOptions::link_args`]).
+    pub link_args: Vec<String>,
     /// Features a `require` names that resolve NOWHERE -- the loader's
     /// resolvability pre-scan. The package fallback reads this to tell a
     /// drop that recompiled from source apart from one that left the
@@ -465,6 +475,7 @@ fn compile_object_on_this_thread(
         loads_cext,
         inputs,
         extra_objects: opts.use_packages.iter().map(|p| p.object.clone()).collect(),
+        link_args: opts.link_args.clone(),
         unresolvable_requires,
     })
 }

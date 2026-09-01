@@ -106,6 +106,10 @@ struct Args {
     /// is passed to `EnvFilter` as written. Wins over `ZEO_LOG`/`RUST_LOG`,
     /// because a flag is more specific than an ambient variable.
     log_level: Option<String>,
+    /// `--link <arg>` (repeatable): extra arguments for the `cc` link line,
+    /// verbatim and in order. `ZEO_LINK_ARGS` (whitespace-split) is the env
+    /// spelling; its arguments come first. Only a linked artifact reads them.
+    link_args: Vec<String>,
 }
 
 /// A `--dump` kind the FRONT END answers: no emission, no artifact, no
@@ -345,6 +349,16 @@ options:
                         (repeatable). An artifact is accepted only when its
                         compiler, target and interface hashes match exactly;
                         anything else is refused by name
+  --link <arg>          pass <arg> to the `cc` link line as written, after the
+                        platform libraries and before the dead-strip flag
+                        (repeatable, in order). Carries a payload section
+                        (`--link -Wl,-sectcreate,__SEG,__sect,file`), an
+                        object file, or `--link -framework --link AppKit`.
+                        A symbol Ruby reaches through FFI::CURRENT_PROCESS
+                        must be exported by hand
+                        (`--link -Wl,-exported_symbol,_name`); zeo never adds
+                        -export_dynamic for it. Only a linked binary reads
+                        these (ZEO_LINK_ARGS is the env spelling)
   --root-gem <name>     treat the named gem as the root package: it outranks
                         every other provider when a feature is found in
                         multiple gems (Bundler-root semantics)
@@ -391,6 +405,9 @@ environment:
   BUNDLE_GEMFILE        the Gemfile for --bundle-gemfile
   ZEO_BACKEND           `jit` or `aot` -- override the default backend (jit
                         for immediate runs, aot for -o/--compile)
+  ZEO_LINK_ARGS         extra `cc` link arguments, whitespace-separated, each
+                        one as if given by --link; they come before the
+                        flag's own
   ZEO_LOG / RUST_LOG    a `tracing` EnvFilter directive for zeo's internal
                         logs, e.g. `zeo=debug` or
                         `zeo::analyze=debug,zeo::lower=trace`. --log-level is
@@ -464,6 +481,10 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     // The env spelling is read once here so the flag and the variable can
     // never disagree downstream.
     let mut debuginfo = std::env::var_os("ZEO_DEBUGINFO").is_some_and(|v| v != "0");
+    // Likewise: the env spelling seeds the list and every `--link` appends.
+    let mut link_args: Vec<String> = std::env::var("ZEO_LINK_ARGS")
+        .map(|v| v.split_whitespace().map(str::to_string).collect())
+        .unwrap_or_default();
     let mut log_level: Option<String> = None;
     let mut load_roots = Vec::new();
     let mut package_dirs = Vec::new();
@@ -552,6 +573,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 "with-package" => {
                     with_packages.push(PathBuf::from(value("--with-package")?));
                 }
+                "link" => link_args.push(value("--link")?),
                 "embed-sources" => {
                     embed_sources.push(PathBuf::from(value("--embed-sources")?));
                 }
@@ -812,6 +834,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         ("--compile", compile),
         ("--backend", backend.is_some()),
         ("-g", debuginfo),
+        ("--link", !link_args.is_empty()),
     ] {
         if !set {
             continue;
@@ -911,6 +934,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         debuginfo,
         backend,
         log_level,
+        link_args,
     })))
 }
 
@@ -1216,6 +1240,7 @@ fn run() -> Result<(), MainError> {
         required_libraries: args.required_libraries.clone(),
         package_build,
         use_packages,
+        link_args: args.link_args.clone(),
     };
     // Parse only, then say so -- ruby's `Syntax OK`, byte for byte. A syntax
     // error reports itself the way every other compile error does, so the
@@ -1295,6 +1320,14 @@ fn run() -> Result<(), MainError> {
         };
         if args.backend.is_none() && zeo::progcache::enabled() {
             run_from_cache(&source, &opts, &program_name, &args.program_args);
+        }
+        // The cache's linked binary took them (they are in its key); the
+        // in-process JIT links nothing, so here they would be dropped.
+        if !opts.link_args.is_empty() {
+            eprintln!(
+                "zeo: warning: --link arguments apply to a linked binary only; \
+                 this run is in-process (use -o/--compile)"
+            );
         }
         if !opts.use_packages.is_empty() {
             return Err(

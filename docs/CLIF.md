@@ -125,6 +125,34 @@ The system libraries each target needs are a table in `link.rs`, diffed
 against `rustc --print=native-static-libs` by an `#[ignore]`d test that
 the Linux leg runs.
 
+### Extra link arguments
+
+`--link <arg>` (repeatable; `ZEO_LINK_ARGS` is the whitespace-split env
+spelling, and its arguments come first) appends `<arg>` to the `cc` line
+verbatim, after the platform libraries and before the dead-strip flag.
+Nothing is parsed or validated: a payload section
+(`-Wl,-sectcreate,__SOW,__wasm,file`), a carried object file, or a
+framework (`--link -framework --link AppKit`) all ride the same way. The
+arguments are part of `CompileOptions` (`link_args`), so the program cache
+keys on them; a run the in-process JIT takes warns that they apply to a
+linked binary only.
+
+**Symbol visibility.** A symbol in a carried object that Ruby reaches
+through `ffi_lib FFI::CURRENT_PROCESS` + `attach_function` is found at run
+time by `dlsym(RTLD_DEFAULT)`, which reads the export trie -- and under
+`-dead_strip` a symbol nothing references is not there, or not in the binary
+at all. The caller exports it by name:
+
+```console
+$ zeo build main.rb -o app --link engine.o --link -Wl,-exported_symbol,_engine_start
+$ zeo build main.rb -o app --link engine.o --link -Wl,-exported_symbols_list,exports.txt
+```
+
+(`-Wl,--export-dynamic-symbol=engine_start` on Linux.) Zeo does not add
+`-export_dynamic` for `--link`: the export table is what dead-strip prunes
+against, and exporting everything would keep the whole runtime -- the same
+reason it is a flag for C extensions rather than the default.
+
 ## Debug info
 
 `zeo -g -o prog file.rb` (or `ZEO_DEBUGINFO=1`) puts DWARF line tables in

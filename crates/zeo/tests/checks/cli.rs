@@ -521,3 +521,32 @@ fn a_cached_run_keeps_the_programs_own_name() {
         );
     }
 }
+
+/// `--link` is in the help, and so is its env spelling: a tool that wants to
+/// know whether this zeo can carry a section probes `zeo --help` for it.
+#[test]
+fn the_help_names_link_and_its_env_spelling() {
+    let help = zeo().arg("--help").output().expect("spawn zeo");
+    let text = stdout_of(&help);
+    for want in ["--link <arg>", "ZEO_LINK_ARGS"] {
+        assert!(text.contains(want), "`zeo --help` has no `{want}`:\n{text}");
+    }
+}
+
+/// Link arguments describe a linked binary. A run the in-process JIT takes
+/// links nothing, so it says so -- once -- and still runs the program.
+#[test]
+fn link_args_on_an_in_process_run_warn_and_run() {
+    let out = zeo()
+        .env("ZEO_CACHE", "0")
+        .args(["--link", "-Wl,-x", "-e", "puts 1"])
+        .output()
+        .expect("spawn zeo");
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert_eq!(stdout_of(&out), "1\n");
+    let warnings = stderr_of(&out)
+        .lines()
+        .filter(|l| l.contains("--link arguments apply to a linked binary only"))
+        .count();
+    assert_eq!(warnings, 1, "stderr: {}", stderr_of(&out));
+}

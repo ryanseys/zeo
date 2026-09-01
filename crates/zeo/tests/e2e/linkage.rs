@@ -446,3 +446,211 @@ fn a_program_that_never_names_rubyvm_drops_the_parser_tables() {
          be free, and if it is, the drop above is not what made it absent"
     );
 }
+
+// ---- `--link`: what the caller adds to the line. --------------------------
+//
+// Both facts below are silent on failure in the other direction: a dropped
+// `-sectcreate` leaves a binary that runs and has no payload, and a carried
+// object whose symbol is not exported links fine and raises at the FFI call.
+
+/// Compile `source` with `link_args` on the line, link it, run it, and hand
+/// back what it printed. The library-API path: `CompileOptions::link_args`
+/// rides through `ObjectOutput` to the link.
+fn link_and_run(source: &str, link_args: &[String]) -> std::process::Output {
+    crate::paths::runtime_archive().unwrap_or_else(|e| panic!("{e}"));
+    let opts = zeo::CompileOptions {
+        link_args: link_args.to_vec(),
+        ..Default::default()
+    };
+    let compiled = zeo::compile_to_object_with(source, &opts, false)
+        .unwrap_or_else(|e| panic!("compile_to_object_with failed: {e}"));
+    let bin = std::env::temp_dir().join(format!(
+        "zeo-linkarg-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    zeo::backend::build_artifact(&zeo::backend::CompiledProgram::Aot(&compiled), &bin)
+        .unwrap_or_else(|e| panic!("linking the test binary failed: {e}"));
+    let out = std::process::Command::new(&bin)
+        .output()
+        .unwrap_or_else(|e| panic!("running the linked binary: {e}"));
+    let _ = std::fs::remove_file(&bin);
+    out
+}
+
+/// A `-sectcreate` payload survives the link, and the program reads it back
+/// through libSystem's own section API -- the shape an application that
+/// carries its assets as Mach-O sections takes.
+///
+/// macOS only: `-sectcreate` and `getsectiondata` are ld64's and dyld's. The
+/// Linux analogue of "a link argument reaches the binary" is the carried
+/// object below, which runs on both.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_link_arg_carries_a_section_the_program_reads_back() {
+    let payload = std::env::temp_dir().join(format!("zeo-sect-{}.bin", std::process::id()));
+    std::fs::write(&payload, b"sow probe payload\n").expect("writing the payload");
+    let out = link_and_run(
+        r#"
+        require "ffi"
+        module Probe
+          extend FFI::Library
+          ffi_lib FFI::CURRENT_PROCESS
+          attach_function :_dyld_get_image_header, [:uint32], :pointer
+          attach_function :getsectiondata, [:pointer, :string, :string, :pointer], :pointer
+        end
+        size = FFI::MemoryPointer.new(:ulong)
+        data = Probe.getsectiondata(Probe._dyld_get_image_header(0), "__SOW", "__probe", size)
+        print data.read_bytes(size.read_ulong)
+        "#,
+        &[format!(
+            "-Wl,-sectcreate,__SOW,__probe,{}",
+            payload.display()
+        )],
+    );
+    let _ = std::fs::remove_file(&payload);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "sow probe payload\n");
+}
+
+/// `int zeo_probe_add(int, int)` compiled to an object in `dir`, or `None`
+/// when the machine has no C compiler (the test then has nothing to link).
+fn probe_object(dir: &Path) -> Option<PathBuf> {
+    std::fs::create_dir_all(dir).expect("the scratch dir");
+    let c = dir.join("probe.c");
+    let o = dir.join("probe.o");
+    std::fs::write(&c, "int zeo_probe_add(int a, int b) { return a + b; }\n").expect("probe.c");
+    let out = std::process::Command::new("cc")
+        .args(["-c", "-o"])
+        .arg(&o)
+        .arg(&c)
+        .output()
+        .ok()?;
+    assert!(
+        out.status.success(),
+        "cc -c failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Some(o)
+}
+
+/// The linker's spelling for "export this one symbol": ld64's and GNU ld's.
+fn export_flag(symbol: &str) -> String {
+    match cfg!(target_os = "macos") {
+        true => format!("-Wl,-exported_symbol,_{symbol}"),
+        false => format!("-Wl,--export-dynamic-symbol={symbol}"),
+    }
+}
+
+const ADD_RB: &str = r#"
+require "ffi"
+module Probe
+  extend FFI::Library
+  ffi_lib FFI::CURRENT_PROCESS
+  attach_function :zeo_probe_add, [:int, :int], :int
+end
+puts Probe.zeo_probe_add(2, 3)
+"#;
+
+/// `zeo build ... -o bin` with the given `--link` arguments, run once.
+fn build_and_run(
+    dir: &Path,
+    link_flags: &[String],
+    env: &[(&str, String)],
+) -> std::process::Output {
+    let rb = dir.join("add.rb");
+    std::fs::write(&rb, ADD_RB).expect("add.rb");
+    let bin = dir.join("add");
+    let _ = std::fs::remove_file(&bin);
+    let mut cmd = std::process::Command::new(zeo_cli());
+    cmd.env_remove("RUBYOPT").env_remove("RUBYLIB");
+    cmd.arg("build")
+        .arg(&rb)
+        .arg("-o")
+        .arg(&bin)
+        .args(link_flags);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("spawning zeo");
+    assert!(
+        out.status.success(),
+        "zeo build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::process::Command::new(&bin)
+        .output()
+        .unwrap_or_else(|e| panic!("running {}: {e}", bin.display()))
+}
+
+/// A carried C object is linked in through the CLI (both `--link <arg>` and
+/// `--link=<arg>` spellings) and reached from Ruby through
+/// `FFI::CURRENT_PROCESS` -- once its symbol is exported. Without the export
+/// the same link succeeds and the call cannot find the symbol, which is the
+/// rule `docs/CLIF.md` writes down.
+#[test]
+fn a_carried_object_is_reached_through_ffi_when_its_symbol_is_exported() {
+    let dir = std::env::temp_dir().join(format!("zeo-linkobj-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let Some(obj) = probe_object(&dir) else {
+        eprintln!("skipping: this machine has no C compiler");
+        return;
+    };
+    let exported = build_and_run(
+        &dir,
+        &[
+            "--link".to_string(),
+            obj.display().to_string(),
+            format!("--link={}", export_flag("zeo_probe_add")),
+        ],
+        &[],
+    );
+    assert!(
+        exported.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&exported.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&exported.stdout), "5\n");
+
+    let hidden = build_and_run(
+        &dir,
+        &["--link".to_string(), obj.display().to_string()],
+        &[],
+    );
+    assert!(
+        !hidden.status.success(),
+        "an unexported symbol must not be reachable through dlsym; stdout: {}",
+        String::from_utf8_lossy(&hidden.stdout)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `ZEO_LINK_ARGS` is the same list, whitespace-split.
+#[test]
+fn zeo_link_args_is_the_env_spelling_of_link() {
+    let dir = std::env::temp_dir().join(format!("zeo-linkenv-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let Some(obj) = probe_object(&dir) else {
+        eprintln!("skipping: this machine has no C compiler");
+        return;
+    };
+    let out = build_and_run(
+        &dir,
+        &[],
+        &[(
+            "ZEO_LINK_ARGS",
+            format!("{} {}", obj.display(), export_flag("zeo_probe_add")),
+        )],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "5\n",
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

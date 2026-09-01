@@ -377,9 +377,17 @@ pub fn host_triple() -> &'static str {
 /// It is a flag rather than always on because the export table is exactly
 /// what `-dead_strip` prunes against: exporting unconditionally would keep
 /// the whole runtime in every hello-world.
+///
+/// `link_args` (`--link`) go on the line VERBATIM, after the platform
+/// libraries and before the dead-strip flag, so an object or framework they
+/// name resolves like the package objects do and a `-sectcreate` payload
+/// lands in the binary. They do not turn on `-export_dynamic`: a symbol a
+/// carried object wants reachable through `dlsym` is exported by the caller
+/// (`-Wl,-exported_symbol,_name`), which keeps only that symbol.
 pub fn link_binary(
     object: &std::path::Path,
     extra_objects: &[std::path::PathBuf],
+    link_args: &[String],
     output: &std::path::Path,
     debuginfo: bool,
     loads_cext: bool,
@@ -394,6 +402,7 @@ pub fn link_binary(
     if cfg!(target_os = "macos") {
         cmd.arg(format!("-Wl,-force_load,{}", archive.display()));
         cmd.args(natlibs);
+        cmd.args(link_args);
         cmd.arg("-Wl,-dead_strip");
         // The top level runs on the process main thread here (`zeo_rt::
         // exec::run_main`), whose stack only the executable's `LC_MAIN` can
@@ -410,6 +419,7 @@ pub fn link_binary(
         cmd.arg(&archive);
         cmd.arg("-Wl,--no-whole-archive");
         cmd.args(natlibs);
+        cmd.args(link_args);
         cmd.arg("-Wl,--gc-sections");
         if loads_cext {
             cmd.arg("-Wl,--export-dynamic");

@@ -107,7 +107,7 @@ fn every_documented_env_var_has_a_reader() {
         .collect();
 
     // A floor, not a target: a scan that silently reads nothing would make
-    // this test pass forever. The docs name 19 today.
+    // this test pass forever. The docs name 22 today.
     assert!(
         documented.len() >= 15,
         "only {} ZEO_* names found in the docs -- the scan is not reading them",
