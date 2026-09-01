@@ -1,6 +1,18 @@
 require "psych.so"
 require "psych/nodes"
 require "psych/coder"
+require "psych/set"
+require "psych/omap"
+# The tree half rides upstream psych's own pure-Ruby machinery (see
+# UPSTREAM.md): Gem::Specification#to_yaml builds its document through
+# Psych::Visitors::YAMLTree, and zeo's Emitter writes the tree out.
+require "psych/class_loader"
+require "psych/scalar_scanner"
+require "psych/handler"
+require "psych/tree_builder"
+require "psych/visitors/visitor"
+require "psych/visitors/yaml_tree"
+require "psych/visitors/emitter"
 
 module Psych
   # The engine version. Matches the bundled psych gemspec (5.4.0). Gems probe
@@ -27,14 +39,14 @@ module Psych
   class AliasesNotEnabled < BadAlias; end
   class AnchorNotDefined < BadAlias; end
 
-  # `!!set` loads as one of these. CRuby's is a Hash subclass, so a set
-  # answers like the mapping it is written as -- and naming it is what a
-  # caller does to permit it (`permitted_classes: [Psych::Set]`).
-  class Set < ::Hash; end
-
-  # `!!omap` loads as one of these, which is why an ordered map answers
-  # like the Hash it already is.
-  class Omap < ::Hash; end
+  # The custom-tag registries `add_tag`/`add_domain_type` fill and the
+  # YAMLTree visitor consults. Empty by default, exactly as upstream.
+  class << self
+    attr_accessor :load_tags, :dump_tags, :domain_types
+  end
+  self.load_tags = {}
+  self.dump_tags = {}
+  self.domain_types = {}
 end
 
 # A date or timestamp scalar builds a real Date or Time, so the loader

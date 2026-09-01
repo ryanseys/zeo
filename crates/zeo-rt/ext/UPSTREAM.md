@@ -101,6 +101,18 @@ own front end parses with. Two removals, marked in `lib/prism.rb`:
 subclass third-party gems zeo does not ship) and `lib/prism/ffi.rb` (its
 backend, replaced).
 
+**`psych/lib/psych/`** carries six files vendored verbatim from the psych
+5.4.0 gem — `class_loader.rb`, `scalar_scanner.rb`, `tree_builder.rb`,
+`handler.rb`, `visitors/visitor.rb`, `visitors/yaml_tree.rb` — the pure-Ruby
+object-to-node-tree machinery `Gem::Specification#to_yaml` builds its
+document with. One zeo-marked deviation in `tree_builder.rb`: the
+`class_eval`'d bodies spell `Psych::Nodes` in full (zeo's eval does not walk
+the CREF's enclosing modules yet; see the task list). `visitors/emitter.rb`
+is zeo-authored: upstream's Emitter drives libyaml's event emitter, which
+zeo does not carry, so zeo's walks the node tree and writes the text itself
+— valid round-trippable YAML, not byte-parity with libyaml's wrapping.
+`nodes.rb`, `coder.rb`, `set.rb`, `omap.rb` and `psych.rb` are zeo-authored.
+
 A library with no licence file of its own is zeo's code, under the
 repository's MIT OR Apache-2.0. The vendored ones carry their upstream
 licence text.

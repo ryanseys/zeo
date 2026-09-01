@@ -7,10 +7,11 @@
 # `to_ruby` is called -- so a hand-built tree and a parsed one go through one
 # walk.
 #
-# What is NOT here, and refuses rather than pretending: `#yaml`/`#to_yaml`,
-# which emit a tree back to text. zeo's emitter dumps a Ruby VALUE and would
-# silently drop the tags, styles and anchors the tree carries, so it says so.
-# Tracked in tests/gaps/a_psych_node_tree_emits_yaml.rb.
+# `#yaml`/`#to_yaml` emit a tree back to text through
+# `Psych::Visitors::Emitter` (visitors/emitter.rb) -- valid, round-trippable
+# YAML; libyaml's exact wrapping and style election are not reproduced.
+
+require "stringio"
 
 module Psych
   module Nodes
@@ -54,16 +55,24 @@ module Psych
       alias transform to_ruby
 
       def yaml(io = nil, options = {})
-        raise NotImplementedError,
-              "zeo cannot emit a Psych node tree back to YAML yet: its emitter " \
-              "writes a Ruby value, and doing that here would drop the tags, " \
-              "styles and anchors this tree carries"
+        real_io = io || StringIO.new(+"")
+        Psych::Visitors::Emitter.new(real_io, options).accept(self)
+        return real_io.string unless io
+        io
       end
       alias to_yaml yaml
     end
 
     # A whole stream: one child per document.
     class Stream < Node
+      # libyaml's encoding enum, the values upstream re-exports from
+      # Psych::Parser. Spelled numerically: zeo has no Parser class, and
+      # the one consumer (YAMLTree's start_stream) only stores the value.
+      ANY = 0
+      UTF8 = 1
+      UTF16LE = 2
+      UTF16BE = 3
+
       def initialize(encoding = Psych::Parser::UTF8)
         super()
         @encoding = encoding
