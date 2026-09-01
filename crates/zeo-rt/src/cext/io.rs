@@ -703,6 +703,336 @@ crate::cext_fn! {
     }
 }
 
+/// The `FMODE_*` bits, as `ruby/io.h` spells them. `fmode_bits` on the
+/// builtins side answers the same numbers for an IO's own mode word.
+const FMODE_READABLE: c_int = 0x0001;
+const FMODE_WRITABLE: c_int = 0x0002;
+const FMODE_READWRITE: c_int = FMODE_READABLE | FMODE_WRITABLE;
+const FMODE_BINMODE: c_int = 0x0004;
+const FMODE_SYNC: c_int = 0x0008;
+const FMODE_APPEND: c_int = 0x0040;
+const FMODE_CREATE: c_int = 0x0080;
+const FMODE_EXCL: c_int = 0x0400;
+const FMODE_TRUNC: c_int = 0x0800;
+const FMODE_TEXTMODE: c_int = 0x1000;
+const FMODE_SETENC_BY_BOM: c_int = 0x0010_0000;
+
+/// `rb_io_modestr_fmode`'s parse, shared with the oflags spelling.
+fn modestr_fmode(text: &str) -> Result<c_int, Signal> {
+    let bad = || crate::builtins::arg_error!("invalid access mode {text}");
+    let mut chars = text.chars();
+    let mut fmode = match chars.next() {
+        Some('r') => FMODE_READABLE,
+        Some('w') => FMODE_WRITABLE | FMODE_TRUNC | FMODE_CREATE,
+        Some('a') => FMODE_WRITABLE | FMODE_APPEND | FMODE_CREATE,
+        _ => return Err(bad()),
+    };
+    let rest = chars.as_str();
+    for (i, c) in rest.char_indices() {
+        match c {
+            'b' => fmode |= FMODE_BINMODE,
+            't' => fmode |= FMODE_TEXTMODE,
+            '+' => fmode |= FMODE_READWRITE,
+            'x' => {
+                if !text.starts_with('w') {
+                    return Err(bad());
+                }
+                fmode |= FMODE_EXCL;
+            }
+            ':' => {
+                let name = rest[i + 1..].split(':').next().unwrap_or("");
+                if name.len() > 4 && name[..4].eq_ignore_ascii_case("bom|") {
+                    fmode |= FMODE_SETENC_BY_BOM;
+                }
+                break;
+            }
+            _ => return Err(bad()),
+        }
+    }
+    if fmode & FMODE_BINMODE != 0 && fmode & FMODE_TEXTMODE != 0 {
+        return Err(bad());
+    }
+    Ok(fmode)
+}
+
+fn fmode_to_oflags(fmode: c_int) -> c_int {
+    let mut o = match fmode & FMODE_READWRITE {
+        FMODE_READABLE => libc::O_RDONLY,
+        FMODE_WRITABLE => libc::O_WRONLY,
+        FMODE_READWRITE => libc::O_RDWR,
+        _ => 0,
+    };
+    if fmode & FMODE_APPEND != 0 {
+        o |= libc::O_APPEND;
+    }
+    if fmode & FMODE_TRUNC != 0 {
+        o |= libc::O_TRUNC;
+    }
+    if fmode & FMODE_CREATE != 0 {
+        o |= libc::O_CREAT;
+    }
+    if fmode & FMODE_EXCL != 0 {
+        o |= libc::O_EXCL;
+    }
+    o
+}
+
+/// The mode string `fdopen(3)`/`IO.new` want for a set of `FMODE_*` bits --
+/// MRI's `rb_io_oflags_modestr`, asked of the fmode side.
+fn fmode_modestr(fmode: c_int) -> &'static str {
+    let both = fmode & FMODE_READWRITE == FMODE_READWRITE;
+    match (fmode & FMODE_APPEND != 0, both, fmode & FMODE_BINMODE != 0) {
+        (true, true, true) => "ab+",
+        (true, true, false) => "a+",
+        (true, false, true) => "ab",
+        (true, false, false) => "a",
+        (false, true, true) => "rb+",
+        (false, true, false) => "r+",
+        (false, false, _) if fmode & FMODE_WRITABLE != 0 => {
+            if fmode & FMODE_BINMODE != 0 { "wb" } else { "w" }
+        }
+        (false, false, true) => "rb",
+        (false, false, false) => "r",
+    }
+}
+
+/// The IO behind an `fptr`, which the shim stamped with `self_`.
+unsafe fn io_of(fptr: *mut mri::rb_io) -> Result<RubyValue, Signal> {
+    if fptr.is_null() {
+        return Err(crate::builtins::io_error!("uninitialized stream"));
+    }
+    // SAFETY: a non-null fptr came from `rb_zeo_rfile`, which stamps `self_`.
+    Ok(unsafe { value_of((*fptr).self_ as Value) })
+}
+
+/// `rb_io_maybe_wait`'s decision, shared by the three spellings. `EINTR`
+/// answers 0 after the safepoint, the would-block family forwards to
+/// `IO#wait`, and anything else is the caller's error to raise -- MRI's own
+/// arms.
+fn maybe_wait(error: c_int, io: Value, events: RubyValue, timeout: Value) -> Result<Value, Signal> {
+    match error {
+        libc::EINTR => {
+            crate::check_ints()?;
+            to_value(&RubyValue::Int(0))
+        }
+        libc::EAGAIN | libc::EINPROGRESS => {
+            let target = unsafe { value_of(io) };
+            let tm = unsafe { value_of(timeout) };
+            to_value(&send(&target, "wait", &[events, tm])?)
+        }
+        _ => Ok(super::value::Q_FALSE),
+    }
+}
+
+/// The `int` spellings' read of a [`maybe_wait`] answer: the ready events,
+/// or 0 for a falsy result.
+fn maybe_wait_int(error: c_int, io: Value, events: i64, timeout: Value) -> Result<c_int, Signal> {
+    let out = maybe_wait(error, io, RubyValue::Int(events), timeout)?;
+    match unsafe { value_of(out) } {
+        RubyValue::Int(n) => Ok(n as c_int),
+        v if v.truthy() => Err(wrong_arg_type(&v, "Integer")),
+        _ => Ok(0),
+    }
+}
+
+crate::cext_fn! {
+    /// `rb_io_modestr_fmode("r+b")` and friends: the mode-string grammar,
+    /// including the `x` (`w`-only) and `bom|`-prefix rules.
+    fn rb_io_modestr_fmode(modestr: *const c_char) -> c_int {
+        modestr_fmode(&unsafe { cstr(modestr) })
+    }
+
+    fn rb_io_modestr_oflags(modestr: *const c_char) -> c_int {
+        Ok(fmode_to_oflags(modestr_fmode(&unsafe { cstr(modestr) })?))
+    }
+
+    fn rb_io_oflags_fmode(oflags: c_int) -> c_int {
+        let mut fmode = match oflags & libc::O_ACCMODE {
+            libc::O_WRONLY => FMODE_WRITABLE,
+            libc::O_RDWR => FMODE_READWRITE,
+            _ => FMODE_READABLE,
+        };
+        if oflags & libc::O_APPEND != 0 {
+            fmode |= FMODE_APPEND;
+        }
+        if oflags & libc::O_TRUNC != 0 {
+            fmode |= FMODE_TRUNC;
+        }
+        if oflags & libc::O_CREAT != 0 {
+            fmode |= FMODE_CREATE;
+        }
+        if oflags & libc::O_EXCL != 0 {
+            fmode |= FMODE_EXCL;
+        }
+        Ok(fmode)
+    }
+
+    fn rb_io_check_initialized(fptr: *mut mri::rb_io) -> () {
+        if fptr.is_null() {
+            return Err(crate::builtins::io_error!("uninitialized stream"));
+        }
+        Ok(())
+    }
+
+    /// zeo reads bytes, never buffered characters, so the byte and char
+    /// questions are one question and both are the readable check.
+    fn rb_io_check_char_readable(fptr: *mut mri::rb_io) -> () {
+        io_check(fptr, Want::Readable)
+    }
+
+    fn rb_io_check_byte_readable(fptr: *mut mri::rb_io) -> () {
+        io_check(fptr, Want::Readable)
+    }
+
+    /// Whether the IO holds read-ahead bytes -- asked of the IO's own
+    /// buffer, never the view's empty one, or `gets`-then-`getch` idioms
+    /// would wait on a descriptor whose data already arrived.
+    fn rb_io_read_pending(fptr: *mut mri::rb_io) -> c_int {
+        let target = unsafe { io_of(fptr)? };
+        Ok(crate::builtins::io::has_buffered_bytes(&target) as c_int)
+    }
+
+    /// `rb_io_read_check`: block until a read would not. Buffered bytes
+    /// answer at once; otherwise wait on the descriptor.
+    fn rb_io_read_check(fptr: *mut mri::rb_io) -> () {
+        let target = unsafe { io_of(fptr)? };
+        if crate::builtins::io::has_buffered_bytes(&target) {
+            return Ok(());
+        }
+        // SAFETY: a checked fptr; the fd is the caller's own.
+        let fd = unsafe { (*fptr).fd };
+        let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+        loop {
+            // SAFETY: one `pollfd` this frame owns; -1 waits until ready.
+            let n = unsafe { libc::poll(&raw mut pfd, 1, -1) };
+            if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                crate::check_ints()?;
+                continue;
+            }
+            return Ok(());
+        }
+    }
+
+    fn rb_io_set_nonblock(fptr: *mut mri::rb_io) -> () {
+        let target = unsafe { io_of(fptr)? };
+        drop(target);
+        // SAFETY: fcntl on the caller's descriptor.
+        unsafe {
+            let fd = (*fptr).fd;
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags < 0 {
+                return Err(last_errno());
+            }
+            if flags & libc::O_NONBLOCK == 0
+                && libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0
+            {
+                return Err(last_errno());
+            }
+        }
+        Ok(())
+    }
+
+    /// `rb_io_synchronized(fptr)`: MRI sets `FMODE_SYNC` in the struct; the
+    /// observable is `io.sync`, so that is what is set.
+    fn rb_io_synchronized(fptr: *mut mri::rb_io) -> () {
+        let target = unsafe { io_of(fptr)? };
+        send(&target, "sync=", &[RubyValue::Bool(true)])?;
+        Ok(())
+    }
+
+    /// `rb_io_fptr_finalize`: close the stream an extension is done with.
+    fn rb_io_fptr_finalize(fptr: *mut mri::rb_io) -> c_int {
+        let target = unsafe { io_of(fptr)? };
+        if !matches!(send(&target, "closed?", &[])?, RubyValue::Bool(true)) {
+            send(&target, "close", &[])?;
+        }
+        Ok(1)
+    }
+
+    /// `rb_io_bufwrite(io, buf, size)`: through `IO#write`, so the bytes
+    /// land in the same stream order as the Ruby side's own writes.
+    fn rb_io_bufwrite(io: Value, buf: *const std::ffi::c_void, size: usize) -> isize {
+        let target = unsafe { value_of(io) };
+        // SAFETY: the caller's own buffer of `size` bytes.
+        let bytes = unsafe { std::slice::from_raw_parts(buf as *const u8, size) }.to_vec();
+        let s = RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT));
+        match send(&target, "write", &[s])? {
+            RubyValue::Int(n) => Ok(n as isize),
+            _ => Ok(size as isize),
+        }
+    }
+
+    fn rb_io_maybe_wait(error: c_int, io: Value, events: Value, timeout: Value) -> Value {
+        maybe_wait(error, io, unsafe { value_of(events) }, timeout)
+    }
+
+    fn rb_io_maybe_wait_readable(error: c_int, io: Value, timeout: Value) -> c_int {
+        maybe_wait_int(error, io, 1, timeout)
+    }
+
+    fn rb_io_maybe_wait_writable(error: c_int, io: Value, timeout: Value) -> c_int {
+        maybe_wait_int(error, io, 4, timeout)
+    }
+
+    /// `rb_io_stdio_file(fptr)`: a C stdio stream over the IO's descriptor,
+    /// memoized in the shim block because the caller keeps the pointer.
+    fn rb_io_stdio_file(fptr: *mut mri::rb_io) -> *mut libc::FILE {
+        // SAFETY: a checked fptr from the shim; the block outlives the IO.
+        unsafe {
+            if !(*fptr).stdio_file.is_null() {
+                return Ok((*fptr).stdio_file.cast());
+            }
+        }
+        let target = unsafe { io_of(fptr)? };
+        let fmode = crate::builtins::io::fmode_bits(&target);
+        let c = std::ffi::CString::new(fmode_modestr(fmode)).expect("a static mode string");
+        // SAFETY: the IO's own descriptor and a NUL-terminated mode.
+        let file = unsafe { libc::fdopen((*fptr).fd, c.as_ptr()) };
+        if file.is_null() {
+            return Err(last_errno());
+        }
+        // SAFETY: as above; the write memoizes for the next reach.
+        unsafe {
+            (*fptr).stdio_file = file.cast();
+        }
+        Ok(file)
+    }
+
+    /// `rb_io_open_descriptor(klass, fd, fmode, path, timeout, enc)`: the
+    /// modern IO-from-fd constructor (io-console 0.9 uses it for the tty).
+    /// Built through `klass.new`, so a subclass's own initialize runs.
+    fn rb_io_open_descriptor(
+        klass: Value,
+        fd: c_int,
+        fmode: c_int,
+        path: Value,
+        timeout: Value,
+        _enc: *mut mri::rb_io_encoding,
+    ) -> Value {
+        let k = unsafe { value_of(klass) };
+        let mut args = vec![
+            RubyValue::Int(fd as i64),
+            a_string(fmode_modestr(fmode)),
+        ];
+        let path_v = unsafe { value_of(path) };
+        if !matches!(path_v, RubyValue::Nil) {
+            args.push(RubyValue::Hash(crate::value::collections::hash_new(vec![(
+                RubyValue::Symbol(Symbol::intern("path")),
+                path_v,
+            )])));
+        }
+        let io = send(&k, "new", &args)?;
+        if fmode & FMODE_SYNC != 0 {
+            send(&io, "sync=", &[RubyValue::Bool(true)])?;
+        }
+        let tm = unsafe { value_of(timeout) };
+        if !matches!(tm, RubyValue::Nil) {
+            send(&io, "timeout=", &[tm])?;
+        }
+        to_value(&io)
+    }
+}
+
 /// One zeroed block per IO, at a stable address. See [`IO_SHIMS`].
 fn shim_for(key: usize) -> *mut IoShim {
     let mut shims = IO_SHIMS.lock();

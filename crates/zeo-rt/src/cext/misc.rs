@@ -521,6 +521,31 @@ pub unsafe extern "C" fn st_strncasecmp(a: *const c_char, b: *const c_char, n: u
     0
 }
 
+/// The callbacks `ruby_vm_at_exit` registered, run once at shutdown.
+static VM_AT_EXIT: parking_lot::Mutex<Vec<unsafe extern "C" fn(*mut c_void)>> =
+    parking_lot::Mutex::new(Vec::new());
+
+/// The shutdown half: called by the lifecycle after `at_exit` handlers and
+/// finalizers, which is where MRI's `ruby_cleanup` runs these.
+pub(crate) fn run_vm_at_exit() {
+    let hooks: Vec<_> = VM_AT_EXIT.lock().drain(..).collect();
+    for hook in hooks {
+        // SAFETY: the extension's own registered function. The argument is
+        // MRI's `ruby_vm_t *`, which zeo does not have; callers registered
+        // through the public header treat it as opaque (rbs ignores it).
+        unsafe { hook(std::ptr::null_mut()) };
+    }
+}
+
+crate::cext_fn! {
+    /// `ruby_vm_at_exit(func)`: run `func` when the VM ends. Registration
+    /// only -- the lifecycle drains the list at shutdown.
+    fn ruby_vm_at_exit(func: unsafe extern "C" fn(*mut c_void)) -> () {
+        VM_AT_EXIT.lock().push(func);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

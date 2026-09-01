@@ -283,6 +283,24 @@ crate::cext_fn! {
         to_value(&RubyValue::Int(n as i64))
     }
 
+    /// `rb_int_pair_to_real`: two 32-bit words into a real in [0,1) (`excl`)
+    /// or [0,1], at 53-bit resolution -- MRI's own constants, so a custom
+    /// Random extension answers the same doubles it does under CRuby.
+    fn rb_int_pair_to_real(a: u32, b: u32, excl: c_int) -> c_double {
+        let (a, b) = ((a >> 5) as f64, (b >> 6) as f64);
+        let span = if excl != 0 { 9007199254740992.0 } else { 9007199254740991.0 };
+        Ok((a * 67108864.0 + b) * (1.0 / span))
+    }
+
+    /// `rb_int_positive_pow`: MRI's `x ** y` over C integers, `y` already
+    /// known non-negative. `date` declares the extern itself and calls it
+    /// with no probe, so the symbol must exist.
+    fn rb_int_positive_pow(x: c_long, y: usize) -> Value {
+        to_value(&crate::builtins::integer::int_value(
+            num_traits::Pow::pow(BigInt::from(x), y),
+        ))
+    }
+
     fn rb_dbl2big(d: c_double) -> Value {
         if !d.is_finite() {
             return Err(crate::builtins::float_domain_error!("{}", RubyValue::Float(d).to_display_string()));

@@ -123,6 +123,20 @@ crate::cext_fn! {
         Ok(crate::gvl::without_gvl(|| unsafe { f(arg) }))
     }
 
+    /// `rb_nogvl`: `rb_thread_call_without_gvl` with a flags word. The flags
+    /// tune MRI's interrupt handling around the release; zeo has no pending
+    /// interrupt to consult there, so every flag is a no-op and `f` runs.
+    fn rb_nogvl(
+        f: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        arg: *mut c_void,
+        _ubf: *mut c_void,
+        _ubf_arg: *mut c_void,
+        _flags: c_int,
+    ) -> *mut c_void {
+        // SAFETY: the caller's own function and argument, MRI's contract.
+        Ok(crate::gvl::without_gvl(|| unsafe { f(arg) }))
+    }
+
     /// `rb_thread_call_without_gvl2`: the same, and MRI answers null when the
     /// thread was interrupted before `f` ran. zeo has no interrupt to check
     /// at that point, so `f` always runs.
@@ -403,4 +417,42 @@ fn fiber_send(fiber: Value, meth: &str, argc: c_int, argv: *const Value) -> Resu
     }
     let args = unsafe { args_of(argc, argv) };
     to_value(&send(&f, meth, &args)?)
+}
+
+/// Per-thread words for profiling tools -- MRI hangs them off the thread
+/// object; here they key on the thread's own allocation, which is what two
+/// handles to one thread share.
+static THREAD_SPECIFIC: std::sync::LazyLock<
+    parking_lot::Mutex<std::collections::HashMap<(usize, c_int), usize>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+
+static NEXT_SPECIFIC_KEY: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
+
+fn thread_identity(v: Value) -> Result<usize, Signal> {
+    match unsafe { value_of(v) } {
+        RubyValue::Thread(t) => Ok(std::sync::Arc::as_ptr(&t) as *const () as usize),
+        other => Err(wrong_arg_type(&other, "Thread")),
+    }
+}
+
+crate::cext_fn! {
+    fn rb_internal_thread_specific_key_create() -> c_int {
+        Ok(NEXT_SPECIFIC_KEY.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+
+    fn rb_internal_thread_specific_get(thread: Value, key: c_int) -> *mut std::ffi::c_void {
+        let id = thread_identity(thread)?;
+        Ok(THREAD_SPECIFIC.lock().get(&(id, key)).copied().unwrap_or(0)
+            as *mut std::ffi::c_void)
+    }
+
+    fn rb_internal_thread_specific_set(
+        thread: Value,
+        key: c_int,
+        data: *mut std::ffi::c_void,
+    ) -> () {
+        let id = thread_identity(thread)?;
+        THREAD_SPECIFIC.lock().insert((id, key), data as usize);
+        Ok(())
+    }
 }

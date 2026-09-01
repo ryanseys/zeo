@@ -62,6 +62,7 @@ unsafe fn main_inner(argc: i32, argv: *const *const c_char, prog: *const Program
     });
     let at_exit_status = crate::run_at_exit();
     crate::run_finalizers();
+    crate::cext::misc::run_vm_at_exit();
     crate::gc::check_at_exit();
     super::leakcheck::check_at_exit();
     if let Err(signal) = result {

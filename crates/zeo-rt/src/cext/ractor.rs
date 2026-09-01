@@ -113,3 +113,74 @@ fn value_slot(key: Key) -> Option<*mut Value> {
         word => Some(word as *mut Value),
     }
 }
+
+/// A stdio global's current value: the assignment if one landed, else the
+/// seeded singleton -- `builtins::io::current_stdout`'s rule, for all three.
+fn stdio(name: &str, seeded: fn() -> crate::RubyValue) -> crate::RubyValue {
+    match crate::globals::global_get(0, name) {
+        crate::RubyValue::Nil => seeded(),
+        v => v,
+    }
+}
+
+crate::cext_fn! {
+    // ---- the main ractor's stdio -------------------------------------
+    //
+    // One ractor (module doc), so the ractor-scoped stdio IS the process's
+    // `$stdin`/`$stdout`/`$stderr`, reads and writes alike.
+
+    fn rb_ractor_stdin() -> Value {
+        super::convert::to_value(&stdio("$stdin", crate::builtins::io::stdin_value))
+    }
+
+    fn rb_ractor_stdout() -> Value {
+        super::convert::to_value(&crate::builtins::io::current_stdout())
+    }
+
+    fn rb_ractor_stderr() -> Value {
+        super::convert::to_value(&crate::builtins::io::current_stderr())
+    }
+
+    fn rb_ractor_stdin_set(io: Value) -> () {
+        crate::globals::global_set(0, "$stdin", unsafe { super::convert::value_of(io) });
+        Ok(())
+    }
+
+    fn rb_ractor_stdout_set(io: Value) -> () {
+        crate::globals::global_set(0, "$stdout", unsafe { super::convert::value_of(io) });
+        Ok(())
+    }
+
+    fn rb_ractor_stderr_set(io: Value) -> () {
+        crate::globals::global_set(0, "$stderr", unsafe { super::convert::value_of(io) });
+        Ok(())
+    }
+
+    // ---- shareability ------------------------------------------------
+
+    /// `Ractor.make_shareable`'s C entry: the deep-freeze walk the runtime
+    /// already owns.
+    fn rb_ractor_make_shareable(obj: Value) -> Value {
+        let v = unsafe { super::convert::value_of(obj) };
+        super::convert::to_value(&crate::make_shareable_value(&v)?)
+    }
+
+    /// The copying spelling: a deep copy through Marshal, then the walk.
+    /// (MRI's copier refuses the same unmarshalable payloads; the exception
+    /// class differs, which no census gem observes.)
+    fn rb_ractor_make_shareable_copy(obj: Value) -> Value {
+        let v = unsafe { super::convert::value_of(obj) };
+        let marshal = crate::constants::const_get(zeo_abi::OBJECT_CLASS.0, "Marshal")
+            .ok_or_else(|| crate::builtins::name_error!("uninitialized constant Marshal"))?;
+        let dumped = super::object::send(&marshal, "dump", &[v])?;
+        let copy = super::object::send(&marshal, "load", &[dumped])?;
+        super::convert::to_value(&crate::make_shareable_value(&copy)?)
+    }
+
+    /// `rb_obj_set_shareable`: MRI marks a promise bit and trusts the
+    /// caller. zeo computes shareability structurally, so there is no bit
+    /// to mark and the object is handed back as it is.
+    fn rb_obj_set_shareable(obj: Value) -> Value {
+        Ok(obj)
+    }
+}
