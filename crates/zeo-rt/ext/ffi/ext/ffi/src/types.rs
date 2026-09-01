@@ -219,6 +219,16 @@ pub fn kind_of_type_value(v: &RubyValue) -> Result<FfiKind, Signal> {
     ))
 }
 
+/// [`kind_of_type_value`] for a RETURN position, where `:void` is a type:
+/// the gem's `FFI::Function.new(:void, ...)` and `callback :n, [...], :void`
+/// both spell a callback that answers nothing.
+pub fn return_kind_of_type_value(v: &RubyValue) -> Result<FfiKind, Signal> {
+    match v {
+        RubyValue::Symbol(s) if s.name() == "void" => Ok(FfiKind::Void),
+        _ => kind_of_type_value(v),
+    }
+}
+
 /// Whether `v` is the `FFI::Type::Builtin::VARARGS` marker.
 pub fn is_varargs_type(v: &RubyValue) -> bool {
     matches!(rtype_of(v), Some(t) if t.builtin == Varargs)

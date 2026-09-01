@@ -11,7 +11,7 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 
-use crate::builtins::{arg_error, type_error};
+use crate::builtins::{arg_error, runtime_error, type_error};
 use crate::dispatch::class_name;
 use crate::signal::Signal;
 use crate::value::RubyValue;
@@ -1143,13 +1143,42 @@ unsafe extern "C" fn cb_trampoline_word(
     args: *const *const c_void,
     data: &CallbackData,
 ) {
-    *result = match unsafe { invoke_callback(data, args) } {
+    *result = match unsafe { invoke_callback_caught(data, args) } {
         Ok(v) => ruby_to_word(data.ret, &v),
         Err(sig) => {
             store_callback_error(sig);
             0
         }
     };
+}
+
+/// [`invoke_callback`] with a Rust panic turned into the exception the
+/// caller will re-raise: this trampoline is an `extern "C"` frame, so a panic
+/// unwinding into it aborts the whole process.
+///
+/// # Safety
+/// As [`invoke_callback`].
+#[cfg(feature = "ext-ffi")]
+unsafe fn invoke_callback_caught(
+    data: &CallbackData,
+    args: *const *const c_void,
+) -> Result<RubyValue, Signal> {
+    let call = std::panic::AssertUnwindSafe(|| unsafe { invoke_callback(data, args) });
+    match std::panic::catch_unwind(call) {
+        Ok(r) => r,
+        Err(payload) => Err(panic_signal("FFI callback", payload)),
+    }
+}
+
+/// The RuntimeError a caught panic becomes, carrying the panic's message.
+#[cfg(feature = "ext-ffi")]
+pub fn panic_signal(where_: &str, payload: Box<dyn std::any::Any + Send>) -> Signal {
+    let msg = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("non-string panic payload");
+    runtime_error!("internal error in an {where_}: {msg}")
 }
 
 /// Trampoline for a callback returning `float`/`double`.
@@ -1160,7 +1189,7 @@ unsafe extern "C" fn cb_trampoline_float(
     args: *const *const c_void,
     data: &CallbackData,
 ) {
-    *result = match unsafe { invoke_callback(data, args) } {
+    *result = match unsafe { invoke_callback_caught(data, args) } {
         Ok(v) => to_f64(&v).unwrap_or(0.0),
         Err(sig) => {
             store_callback_error(sig);

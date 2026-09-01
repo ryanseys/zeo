@@ -12,7 +12,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use super::types::{is_varargs_type, kind_of_type_value};
+use super::types::{is_varargs_type, kind_of_type_value, return_kind_of_type_value};
 use super::{RPointer, address_of, ptr_of};
 use crate::builtins::{arg_error, type_error};
 use crate::dispatch::{RObj, RubyObject};
@@ -67,12 +67,22 @@ fn target_address(v: &RubyValue) -> Result<usize, Signal> {
 ruby_class! {
     Function = zeo_abi::FFI_FUNCTION_CLASS < zeo_abi::FFI_POINTER_CLASS;
 
-    // `FFI::Function.new(return_type, arg_types, pointer_or_proc, options?)`.
-    // The options (`convention:`) name ABIs this platform doesn't distinguish.
-    def self."new" cfunc (_recv, arg1, arg2, arg3, _arg4?) {
-        let ret = kind_of_type_value(arg1)?;
+    // `FFI::Function.new(return_type, arg_types, pointer_or_proc, options?)`,
+    // or with the Proc as the BLOCK -- the gem takes either spelling. The
+    // options (`convention:`) name ABIs this platform doesn't distinguish.
+    // The return type may be `:void`, which is not a value's type anywhere
+    // else in the gem's surface.
+    def self."new" cfunc (_recv, arg1, arg2, arg3?, _arg4?, &block) {
+        let ret = return_kind_of_type_value(arg1)?;
         let arg_kinds = arg_kinds_of(arg2)?;
-        let (base, closure) = match arg3 {
+        let target = match (arg3, &block) {
+            (Some(v), _) => v,
+            (None, Some(b)) => b,
+            (None, None) => {
+                return Err(arg_error!("wrong number of arguments (given 2, expected 3..4)"));
+            }
+        };
+        let (base, closure) = match target {
             p @ RubyValue::Proc(_) => {
                 let handle = make_callback(p, &arg_kinds, ret)?;
                 (handle.code_ptr() as *mut u8, Some(handle))

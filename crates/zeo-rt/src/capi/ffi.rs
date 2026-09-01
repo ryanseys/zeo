@@ -169,7 +169,18 @@ pub unsafe extern "C" fn zeo_rt_ffi_invoke(
     } else {
         unsafe { std::slice::from_raw_parts(argv, argc) }
     };
-    match unsafe { invoke(&*desc, addr as *const std::os::raw::c_void, args) } {
+    // This frame is `extern "C"`: a Rust panic reaching it aborts the
+    // process ("panic in a function that cannot unwind"), which is how an
+    // FFI marshaling bug used to end a program instead of raising. Caught
+    // here, it is the RuntimeError the Ruby caller can rescue.
+    let call = std::panic::AssertUnwindSafe(|| unsafe {
+        invoke(&*desc, addr as *const std::os::raw::c_void, args)
+    });
+    let r = match std::panic::catch_unwind(call) {
+        Ok(r) => r,
+        Err(payload) => Err(crate::ffi::panic_signal("FFI call", payload)),
+    };
+    match r {
         Ok(v) => {
             super::leakcheck::created(&v);
             unsafe { out.write(v) };
@@ -227,7 +238,6 @@ unsafe fn invoke(
     // call -- the C side may invoke one from inside it -- so they are held
     // here and dropped only when this function returns.
     let mut callbacks: Vec<ffi::CallbackHandle> = Vec::new();
-    let mut has_callback = false;
     for (ty, v) in types.iter().zip(fixed) {
         match ty.tag {
             FFI_TY_ENUM => {
@@ -238,8 +248,10 @@ unsafe fn invoke(
                 let n = ffi::enum_to_int_slot(ty.slot, v)?;
                 vals.push(ffi::marshal_fixed(ffi::FfiKind::I32, &RubyValue::Int(n))?);
             }
-            FFI_TY_CALLBACK => {
-                has_callback = true;
+            // A Proc gets a closure built for this call; an `FFI::Function`
+            // (or any pointer, nil for NULL) already IS a C function pointer
+            // and passes its address, as the gem's callback converter does.
+            FFI_TY_CALLBACK if matches!(v, RubyValue::Proc(_)) => {
                 let kinds: Vec<ffi::FfiKind> = unsafe { sub_types(ty) }
                     .iter()
                     .map(|t| scalar_of(t.scalar))
@@ -248,6 +260,7 @@ unsafe fn invoke(
                 vals.push(ffi::va_raw_pointer(handle.code_ptr()));
                 callbacks.push(handle);
             }
+            FFI_TY_CALLBACK => vals.push(ffi::va_raw_pointer(ffi::to_pointer(v)?)),
             FFI_TY_STRUCT => vals.push(ffi::marshal_struct(unsafe { elements_of(ty) }, v)?),
             // `:strptr` is a RETURN type; the declaration rejects it in an
             // argument position, so the tag never reaches here.
@@ -286,10 +299,13 @@ unsafe fn invoke(
         call()?
     };
     // An exception raised inside a callback could not unwind through C; it
-    // was stashed and is re-raised now the C function has returned.
-    if has_callback {
-        ffi::take_callback_error()?;
-    }
+    // was stashed and is re-raised now the C function has returned. EVERY
+    // call asks, not only one that passed a callback: the C side keeps the
+    // function pointers it was handed (`class_addMethod` an IMP, `qsort` no
+    // -- an Objective-C `objc_msgSend` reaches a Ruby IMP through no
+    // callback argument of its own), and the gem raises from whichever
+    // attached call the callback ran under.
+    ffi::take_callback_error()?;
     Ok(match (desc.ret.tag, ret) {
         (FFI_TY_ENUM, RubyValue::Int(n)) => ffi::int_to_enum(n, &enum_members(&desc.ret)),
         (FFI_TY_ENUM_SLOT, RubyValue::Int(n)) => ffi::int_to_enum_slot(desc.ret.slot, n),

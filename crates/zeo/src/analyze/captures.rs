@@ -123,7 +123,10 @@ pub fn collect_escaping_captures(
     self_class: Option<crate::compiler::ClassId>,
 ) -> Captures {
     let mut raw = Captures::default();
-    for &n in body {
+    // The defaults too: a lambda written as one (`def home(dest: "d", build:
+    // -> { vendor(dest) })`) escapes from the callee's frame like any block in
+    // the body, and the parameter it reads has to be a cell there.
+    for n in scope_nodes(params, body) {
         walk(compiler, n, None, &FSet::default(), &mut raw, self_class);
     }
     let mut outer_names = super::local_storage::Locals::default();

@@ -1,0 +1,4 @@
+[:void, :block]
+[:rescued, RuntimeError, "boom inside imp"]
+Integer
+done
