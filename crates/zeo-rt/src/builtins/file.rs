@@ -843,7 +843,8 @@ fn ftype_is(path: &str, kind: SpecialKind) -> bool {
 /// set-gid, and sticky checks). Absent/unreadable -> false.
 fn mode_has(path: &str, mask: libc::mode_t) -> bool {
     use std::os::unix::fs::MetadataExt;
-    meta(path).is_some_and(|m| (m.mode() & mask as u32) == mask as u32)
+    let mask = crate::mode_u32(mask);
+    meta(path).is_some_and(|m| (m.mode() & mask) == mask)
 }
 
 /// The `(external, internal)` names a mode string's `:extenc[:intenc]` tail
@@ -952,7 +953,9 @@ fn time_secs(v: &RubyValue) -> Result<libc::time_t, Signal> {
 fn world_perm(path: &str, bit: libc::mode_t) -> RubyValue {
     use std::os::unix::fs::MetadataExt;
     match meta(path) {
-        Some(m) if m.mode() & bit as u32 != 0 => RubyValue::Int((m.mode() & 0o777) as i64),
+        Some(m) if m.mode() & crate::mode_u32(bit) != 0 => {
+            RubyValue::Int((m.mode() & 0o777) as i64)
+        }
         _ => RubyValue::Nil,
     }
 }

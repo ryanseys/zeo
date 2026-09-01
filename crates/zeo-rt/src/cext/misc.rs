@@ -506,8 +506,8 @@ pub unsafe extern "C" fn st_strncasecmp(a: *const c_char, b: *const c_char, n: u
         // NUL, and the loop stops at the first one.
         let (x, y) = unsafe {
             (
-                (a.add(i).read() as u8).to_ascii_lowercase(),
-                (b.add(i).read() as u8).to_ascii_lowercase(),
+                crate::c_char_u8(a.add(i).read()).to_ascii_lowercase(),
+                crate::c_char_u8(b.add(i).read()).to_ascii_lowercase(),
             )
         };
         if x != y {

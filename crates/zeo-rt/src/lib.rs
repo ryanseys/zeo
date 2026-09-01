@@ -260,6 +260,31 @@ pub fn blocking_checkpoint() -> Result<(), Signal> {
     Ok(())
 }
 
+// libc's `mode_t`, `dev_t`, `blksize_t` and `suseconds_t` are narrower on
+// macOS than on Linux, and `c_char` is signed on macOS and x86-64 but not on
+// aarch64 Linux, so a bare `as` is a conversion on one platform and an
+// "unnecessary cast" clippy error on the other. These convert on both.
+#[allow(clippy::unnecessary_cast)]
+pub(crate) fn c_char_u8(c: libc::c_char) -> u8 {
+    c as u8
+}
+#[allow(clippy::unnecessary_cast)]
+pub(crate) fn mode_u32(mode: libc::mode_t) -> u32 {
+    mode as u32
+}
+#[allow(clippy::unnecessary_cast)]
+pub(crate) fn dev_u64(dev: libc::dev_t) -> u64 {
+    dev as u64
+}
+#[allow(clippy::unnecessary_cast)]
+pub(crate) fn blksize_i64(blksize: libc::blksize_t) -> i64 {
+    blksize as i64
+}
+#[allow(clippy::unnecessary_cast)]
+pub(crate) fn usec_i64(usec: libc::suseconds_t) -> i64 {
+    usec as i64
+}
+
 /// The C `errno` slot for this thread (the accessor's name is per-libc).
 pub(crate) fn errno_ptr() -> *mut libc::c_int {
     #[cfg(target_vendor = "apple")]

@@ -388,7 +388,7 @@ pub(crate) fn parse_unix_sockaddr(storage: &libc::sockaddr_storage) -> String {
     unsafe {
         let su = &*(storage as *const _ as *const libc::sockaddr_un);
         let raw: &[u8] =
-            std::slice::from_raw_parts(su.sun_path.as_ptr() as *const u8, su.sun_path.len());
+            std::slice::from_raw_parts(su.sun_path.as_ptr().cast::<u8>(), su.sun_path.len());
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
         String::from_utf8_lossy(&raw[..end]).into_owned()
     }

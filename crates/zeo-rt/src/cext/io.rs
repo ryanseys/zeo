@@ -521,7 +521,7 @@ crate::cext_fn! {
         } else {
             // SAFETY: the caller promised a readable `struct timeval`.
             let t = unsafe { tv.read() };
-            let ms = t.tv_sec * 1000 + (t.tv_usec as i64) / 1000;
+            let ms = t.tv_sec * 1000 + crate::usec_i64(t.tv_usec) / 1000;
             c_int::try_from(ms.max(0)).unwrap_or(c_int::MAX)
         };
         let mut pfd = libc::pollfd { fd, events: events as i16, revents: 0 };

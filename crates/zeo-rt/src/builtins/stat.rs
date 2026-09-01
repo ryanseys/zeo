@@ -293,7 +293,7 @@ ruby_class! {
         Ok(RubyValue::Int(payload(recv)?.st.st_nlink as i64))
     }
     def "blksize"(recv) {
-        Ok(RubyValue::Int(payload(recv)?.st.st_blksize as i64))
+        Ok(RubyValue::Int(crate::blksize_i64(payload(recv)?.st.st_blksize)))
     }
     def "blocks"(recv) {
         Ok(RubyValue::Int(payload(recv)?.st.st_blocks))
@@ -455,7 +455,7 @@ fn access_bits_for(
     group: u32,
     other: u32,
 ) -> bool {
-    let mode = st.st_mode as u32;
+    let mode = crate::mode_u32(st.st_mode);
     if euid == 0 {
         // Root bypasses read/write checks; execute still needs some x bit.
         return owner == 0o100 || (mode & 0o111) != 0 || (mode & (owner | group | other)) != 0;
@@ -474,7 +474,7 @@ fn access_bits_for(
 /// Ruby's: macOS packs `major:minor` as 8+24 bits, Linux uses glibc's split
 /// (12 bits of major around a 20-bit minor).
 fn dev_major(dev: libc::dev_t) -> i64 {
-    let dev = dev as u64;
+    let dev = crate::dev_u64(dev);
     #[cfg(target_vendor = "apple")]
     {
         ((dev >> 24) & 0xff) as i64
@@ -486,7 +486,7 @@ fn dev_major(dev: libc::dev_t) -> i64 {
 }
 
 fn dev_minor(dev: libc::dev_t) -> i64 {
-    let dev = dev as u64;
+    let dev = crate::dev_u64(dev);
     #[cfg(target_vendor = "apple")]
     {
         (dev & 0x00ff_ffff) as i64
@@ -500,7 +500,7 @@ fn dev_minor(dev: libc::dev_t) -> i64 {
 /// `world_readable?`/`world_writable?`: the low permission bits (`mode & 0777`)
 /// when others hold the access, else nil -- CRuby returns the mask, not a bool.
 fn world_perm(st: &libc::stat, bit: u32) -> RubyValue {
-    let mode = st.st_mode as u32;
+    let mode = crate::mode_u32(st.st_mode);
     if mode & bit != 0 {
         RubyValue::Int((mode & 0o777) as i64)
     } else {

@@ -12,12 +12,15 @@
 
 // Generated code keeps C's spelling, and the tree carries names zeo's own
 // entries never mention -- `struct rb_econv_t` rides in because `struct rb_io`
-// points at one.
+// points at one. bindgen's bitfield helpers (Linux layouts have them) are not
+// written to clippy's taste either.
 #![allow(
     non_camel_case_types,
     non_snake_case,
     non_upper_case_globals,
-    dead_code
+    dead_code,
+    unnecessary_transmutes,
+    clippy::all
 )]
 
 include!(concat!(env!("OUT_DIR"), "/cext_layout.rs"));

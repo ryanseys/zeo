@@ -95,6 +95,7 @@ fn set(recv: &RubyValue, at: usize, v: &RubyValue) -> Result<RubyValue, crate::S
 /// Copy a libc `struct passwd` into an owned `Etc::Passwd` value.
 pub(crate) unsafe fn passwd_from(pw: *const libc::passwd) -> RubyValue {
     let pw = unsafe { &*pw };
+    #[allow(unused_mut)] // pushed to under cfg(target_vendor = "apple") only
     let mut slots = vec![
         str_val(unsafe { super::cstr(pw.pw_name) }),
         str_val(unsafe { super::cstr(pw.pw_passwd) }),
@@ -212,6 +213,7 @@ mod tests {
     }
 
     fn a_passwd() -> RPasswd {
+        #[allow(unused_mut)] // pushed to under cfg(target_vendor = "apple") only
         let mut slots = vec![
             str_val("alice".into()),
             str_val("*".into()),
