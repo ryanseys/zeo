@@ -487,6 +487,12 @@ pub struct Compiler {
     /// Every `refine Target do ... end` the program wrote, in registration
     /// order. See [`Refinement`].
     pub(crate) refinements: Vec<Refinement>,
+    /// Mixins a class DECLARES that stage positionally (a reopen's
+    /// `include`, a unit body's) -- kept OUT of `mixin_order`, because the
+    /// ancestry edit is a runtime event with a position. A resolution HINT
+    /// only: `resolve_in_ancestry` consults these for a superclass written
+    /// below the include, where ruby's own lookup already sees the mixin.
+    pub(crate) declared_positional_mixins: FMap<ClassId, Vec<ClassId>>,
     /// Operator names a user reopen redefines on `Integer`'s (fast-path) MRO
     /// (`class Integer; def +` -- or on `Numeric`/`Object`/... above it).
     /// Codegen's `Int` operator fast paths consult this and stand down so
@@ -727,6 +733,7 @@ impl Compiler {
             doc_order: FMap::default(),
             const_def_order: FMap::default(),
             refinements: Vec::new(),
+            declared_positional_mixins: FMap::default(),
             redefined_int_ops: FSet::default(),
             redefined_float_ops: FSet::default(),
             activations: Vec::new(),

@@ -12,7 +12,7 @@ use super::*;
 /// `class Sub` held only to nest a class already takes). Returns `None` for a
 /// genuinely-undefined container, so the caller keeps the "unknown
 /// class/module" error that catches typos.
-fn resolve_or_create_container(
+pub(super) fn resolve_or_create_container(
     compiler: &mut Compiler,
     path: &str,
     box_id: u32,
@@ -896,8 +896,17 @@ fn walk_class_body(
                         // itself whether the mixin happens at all -- so the
                         // ancestry edit stops being a compile-time fact and
                         // codegen sends `append_features` at this position instead.
+                        // The DECLARED edge still guides name resolution
+                        // below the include (every such override calls
+                        // `super` -- rss's ITunesChannelModel subclasses
+                        // its own bases three lines under the include).
                         if compiler.overrides_mixin_primitive(target, "append_features") {
                             defer_mixin_to_runtime(compiler, target);
+                            compiler
+                                .declared_positional_mixins
+                                .entry(class_id)
+                                .or_default()
+                                .push(target);
                         } else if is_positional_mixin_site(compiler, class_id, site_idx) {
                             // The edge belongs to the INCLUDE, not to how the
                             // mixin is staged, so it is recorded on this path
@@ -1702,6 +1711,16 @@ fn record_included_hook_extends(
 
 fn defer_positional_mixin(compiler: &mut Compiler, site_idx: usize, stmt: NodeId, target: ClassId) {
     defer_mixin_to_runtime(compiler, target);
+    // The DECLARED edge stays visible to name resolution: a superclass
+    // written below this include resolves through the module's constants
+    // at ruby's own document position. See
+    // `Compiler::declared_positional_mixins`.
+    let class = compiler.class_body_sites[site_idx].class;
+    compiler
+        .declared_positional_mixins
+        .entry(class)
+        .or_default()
+        .push(target);
     let send = crate::lower::defs::runtime_directive_spelling(&mut compiler.hir, stmt)
         .expect("a mixin directive is not `refine`")
         .expect("every mixin directive has a runtime spelling");

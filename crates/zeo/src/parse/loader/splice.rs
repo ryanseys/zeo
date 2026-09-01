@@ -189,6 +189,61 @@ impl Loader {
         result
     }
 
+    /// Reorders the feature units so a unit a require DEMANDS precedes
+    /// the unit that demands it -- CRuby runs the demanded file inside
+    /// the demanding one's `require`, and the analyze walk mirrors that.
+    /// rss's package build is the shape: maker/1.0.rb requires
+    /// maker/base.rb before its classes subclass base's, but discovery
+    /// put base's unit AFTER 1.0's and every cross-file superclass
+    /// resolved to nothing. Discovery order breaks ties, and a require
+    /// cycle keeps it.
+    pub(super) fn sort_units_by_demand(&mut self, hir: &mut Hir) {
+        let n = hir.loader.feature_units.len();
+        if n < 2 || self.unit_canonicals.len() != n {
+            return;
+        }
+        let index_of: std::collections::HashMap<&Path, usize> = self
+            .unit_canonicals
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.as_path(), i))
+            .collect();
+        let mut deps: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (from, to) in &self.unit_edges {
+            let f = from.canonicalize().unwrap_or_else(|_| from.clone());
+            let t = to.canonicalize().unwrap_or_else(|_| to.clone());
+            if let (Some(&fi), Some(&ti)) = (index_of.get(f.as_path()), index_of.get(t.as_path()))
+                && fi != ti
+            {
+                deps[fi].push(ti);
+            }
+        }
+        let mut emitted = vec![false; n];
+        let mut order: Vec<usize> = Vec::with_capacity(n);
+        while order.len() < n {
+            let next = (0..n)
+                .find(|&i| !emitted[i] && deps[i].iter().all(|&d| emitted[d]))
+                // A cycle: take the earliest remaining, which is exactly
+                // the order the demands were discovered in.
+                .or_else(|| (0..n).find(|&i| !emitted[i]))
+                .expect("a unit remains until the loop ends");
+            emitted[next] = true;
+            order.push(next);
+        }
+        if order.iter().enumerate().all(|(at, &was)| at == was) {
+            return;
+        }
+        let mut old: Vec<Option<crate::hir::FeatureUnit>> =
+            std::mem::take(&mut hir.loader.feature_units)
+                .into_iter()
+                .map(Some)
+                .collect();
+        hir.loader.feature_units = order
+            .iter()
+            .map(|&i| old[i].take().expect("each unit moves exactly once"))
+            .collect();
+    }
+
     fn materialize_units_inner(&mut self, hir: &mut Hir) -> PResult<()> {
         // Single-file demands first: a conditional require names exactly one
         // target, and registering it under the feature AS REQUIRED is what
@@ -270,7 +325,8 @@ impl Loader {
                         lf.is_unit = true;
                     }
                     self.single_units
-                        .insert(canonical, hir.loader.feature_units.len());
+                        .insert(canonical.clone(), hir.loader.feature_units.len());
+                    self.unit_canonicals.push(canonical);
                     let feature = features.remove(0);
                     hir.loader.feature_units.push(crate::hir::FeatureUnit {
                         feature,
@@ -348,6 +404,7 @@ impl Loader {
                             // dedup above and being dropped.
                             self.single_units
                                 .insert(canonical.clone(), hir.loader.feature_units.len());
+                            self.unit_canonicals.push(canonical.clone());
                             hir.loader.feature_units.push(crate::hir::FeatureUnit {
                                 feature,
                                 aliases: Vec::new(),

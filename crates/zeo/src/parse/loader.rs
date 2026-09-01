@@ -160,6 +160,14 @@ pub(super) struct Loader {
     /// cycle is the one shape with no natural termination (require's dedup
     /// terminates require cycles), so it's detected here and rejected.
     splicing: Vec<PathBuf>,
+    /// Each feature unit's canonical file, parallel to
+    /// `hir.loader.feature_units` -- what [`Loader::sort_units_by_demand`]
+    /// joins the demand edges against.
+    unit_canonicals: Vec<PathBuf>,
+    /// `(demanding file, demanded file)` for every require a UNIT body
+    /// leaves live. CRuby runs the demanded file inside the demanding
+    /// one's require, so the analyze walk puts it FIRST.
+    unit_edges: Vec<(PathBuf, PathBuf)>,
     /// Whether the loader is inside `materialize_units`. A static require in
     /// a UNIT body must not splice its target inline: the target becomes its
     /// own unit and the call stays live, so it loads when the unit body
@@ -439,6 +447,8 @@ pub(super) fn lower_main_file(
         packages: discover_packages(&opts.package_dirs, bundled_libraries())?,
         required: HashSet::new(),
         splicing: Vec::new(),
+        unit_canonicals: Vec::new(),
+        unit_edges: Vec::new(),
         in_unit_sweep: false,
         single_units: HashMap::new(),
         unit_only_targets: HashSet::new(),
@@ -687,6 +697,7 @@ pub(super) fn lower_main_file(
     while !hir.loader.unit_demand.is_empty() || !hir.loader.single_unit_demand.is_empty() {
         loader.materialize_units(hir)?;
     }
+    loader.sort_units_by_demand(hir);
     // Disclose the libraries no position outside a method body required, so
     // zeo left them out. `record_gem` is first-wins, and every real
     // satisfaction is already recorded, so only the truly absent ones land.
@@ -1061,6 +1072,7 @@ impl Loader {
                         {
                             lf.is_unit = true;
                         }
+                        self.unit_canonicals.push(canonical);
                         hir.loader.feature_units.push(crate::hir::FeatureUnit {
                             feature,
                             aliases: Vec::new(),
@@ -1779,6 +1791,9 @@ impl Loader {
                     hir.loader
                         .conditional_require_sites
                         .insert((file, call.location().start_offset() as u32));
+                }
+                if let Some(from) = self.splicing.last() {
+                    self.unit_edges.push((from.clone(), path.clone()));
                 }
                 hir.loader
                     .single_unit_demand

@@ -567,15 +567,21 @@ fn resolve_in_ancestry(
     box_id: u32,
     defining: &str,
 ) -> Option<ClassId> {
-    let mut at = cref.last().copied();
-    let mut seen = 0;
-    while let Some(owner) = at {
-        // A cycle in the declared edges is a compile error elsewhere; bound
-        // the walk so it is not a hang here.
-        seen += 1;
-        if seen > 64 {
-            return None;
+    // Walk the DECLARED parent AND mixin edges breadth-first: ruby's
+    // lookup consults the linearized ancestors of the innermost cref, and
+    // an included module's constants are part of them -- rss's
+    // `ITunesCategories < ITunesCategoriesBase` inside a `ChannelBase`
+    // that `include`s the module defining the base is the mixin shape.
+    // The bound covers a cycle in the declared edges, which is a compile
+    // error elsewhere.
+    let mut queue: std::collections::VecDeque<ClassId> =
+        cref.last().copied().into_iter().collect();
+    let mut visited: Vec<ClassId> = Vec::new();
+    while let Some(owner) = queue.pop_front() {
+        if visited.contains(&owner) || visited.len() > 64 {
+            continue;
         }
+        visited.push(owner);
         let path = format!("{}::{name}", compiler.fq_name(owner));
         if let Some(found) = compiler.resolve_class(&path, &[], box_id)
             && compiler.fq_name(found) != defining
@@ -591,7 +597,33 @@ fn resolve_in_ancestry(
         {
             return Some(found);
         }
-        at = compiler.class(owner).parent;
+        // The constant may live in a unit the walk has not reached yet: the
+        // pre-collected shell kinds know every class-shaped spelling, so
+        // mint the forward shell the lexical road would mint. A package
+        // build of rss is the shape -- maker/1.0's unit is walked before
+        // maker/base's, and `Categories < CategoriesBase` reads a class of
+        // the (shelled) superclass ChannelBase.
+        let key = crate::constpath::ConstPath::parse(&path)
+            .unanchored()
+            .to_string();
+        if compiler.shell_kinds.contains_key(&(box_id, key))
+            && let Some(found) = super::classes::resolve_or_create_container(compiler, &path, box_id)
+            && compiler.fq_name(found) != defining
+        {
+            return Some(found);
+        }
+        for &(m, _) in &compiler.class(owner).mixin_order {
+            queue.push_back(m);
+        }
+        // A positionally staged include is still a DECLARED edge the
+        // lookup below it sees -- rss reopens ChannelBase, includes
+        // ITunesChannelModel, and subclasses its bases three lines down.
+        if let Some(ms) = compiler.declared_positional_mixins.get(&owner) {
+            queue.extend(ms.iter().copied());
+        }
+        if let Some(p) = compiler.class(owner).parent {
+            queue.push_back(p);
+        }
     }
     None
 }
