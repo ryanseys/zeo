@@ -99,6 +99,12 @@ jobs:
       # silently run nothing -- which is exactly what happened once.
       - run: make test-memcheck
 
+      # The packaged-codegen differential (separate compilation, decision
+      # 11): every golden twice, plain vs the Packaged id mode over an
+      # identity table, byte-compared. Widens to true spliced-vs-packaged
+      # when M6 compiles gems as packages.
+      - run: make test-packaged
+
       # The one platform claim this runner can answer. The Makefile picks by
       # `uname`: on Linux the hand-written native-library table diffed against
       # rustc's live answer (where `-lcrypt` once went missing while macOS

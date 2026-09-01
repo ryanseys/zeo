@@ -26,7 +26,7 @@ BUNDLE ?= bundle
 # be half-declared: the old one omitted `ci-features` and `ci-size`, and a
 # file of either name would have turned that target into a silent no-op.
 .PHONY: all help deps test test-jit test-aot test-memcheck \
-        test-typed test-milestones test-config test-platform test-size \
+        test-typed test-packaged test-milestones test-config test-platform test-size \
         test-all lint check-batch gate bench pgo install linux clean
 
 .DEFAULT_GOAL := all
@@ -88,6 +88,16 @@ test-memcheck: all  ## one corpus pass under the ownership ledger and the cycle 
 # could not distinguish. Run it on any change to typed emission.
 test-typed: all  ## every golden twice, with typed emission on and off, diffed
 	ZEO_GOLDEN_DIFF_TYPED=1 $(NEXTEST) -p zeo --test goldens --no-fail-fast
+
+# The packaged-codegen differential (separate compilation, decision 11):
+# every golden compiles and runs TWICE -- once as-is, once with the Packaged
+# id mode forced program-wide over an identity table
+# (ZEO_DEBUG=packaged-ids) -- and the two zeo outputs must agree
+# byte-for-byte. At M2 scope this proves the packaged CODEGEN (the id-table
+# loads and the variable patched-bit guard) over the whole corpus; when M6
+# compiles gems as packages, the leg widens to true spliced-vs-packaged.
+test-packaged: all  ## every golden twice, with packaged id codegen on and off, diffed
+	ZEO_GOLDEN_DIFF_PKGIDS=1 $(NEXTEST) -p zeo --test goldens --no-fail-fast
 
 # The umbrella entry points, one named case each (tests/milestones/). Each
 # splices a whole library's require graph, so this is minutes rather than
@@ -177,17 +187,19 @@ gate: test-jit test-aot test-memcheck test-config test-milestones test-platform 
 	$(NEXTEST) -p zeo -P full -E 'test(every_bundled_gem_compiles)'
 
 # Everything, with no judgement about when it is worth running. `gate` is a
-# CURATED boundary -- it leaves out the two legs whose cost only pays back
+# CURATED boundary -- it leaves out the legs whose cost only pays back
 # against a particular change, and that curation is deliberate:
 #
-#   test-typed  every golden twice; it answers a question about TyKind
-#               emission, so it earns its minutes on a typed change
-#   test-size   builds the release compiler and links a program
+#   test-typed     every golden twice; it answers a question about TyKind
+#                  emission, so it earns its minutes on a typed change
+#   test-packaged  every golden twice; it answers a question about packaged
+#                  id codegen, and CI runs it on every push anyway
+#   test-size      builds the release compiler and links a program
 #
 # Use this before a release, or when you want the answer rather than the
 # fastest sufficient answer. `make linux` is NOT here: it needs podman and
 # runs a different platform, so it is its own thing.
-test-all: gate test-typed test-size  ## every test target, no exceptions (slowest)
+test-all: gate test-typed test-packaged test-size  ## every test target, no exceptions (slowest)
 
 # --- Measurement, packaging, platforms. ------------------------------------
 

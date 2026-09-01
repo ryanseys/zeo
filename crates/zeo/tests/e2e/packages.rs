@@ -494,3 +494,34 @@ fn a_shared_class_with_two_ancestries_is_refused() {
         "the refusal names the ancestry clash: {err}"
     );
 }
+
+#[test]
+fn a_package_defining_a_top_level_method_is_refused_today() {
+    // Object is the ONE class a package and a host share with no id
+    // boundary, so a package's top-level def could interleave with a
+    // host def of the same name -- and no manifest fact carries that
+    // today (the unit-blanket split deliberately keeps packaged names
+    // out of `patched_names`). The value-channel refusal is what keeps
+    // the shape unreachable; lifting it (M4) must revisit the Object
+    // channel's facts.
+    let dir = scratch("toplevel");
+    let entry = dir.join("topgem.rb");
+    std::fs::write(
+        &entry,
+        "def shade = :package\nclass Topgem\n  def call_shade = shade\nend\n",
+    )
+    .expect("write entry");
+    let out = run(zeo()
+        .arg("--experimental-pkg")
+        .arg("topgem")
+        .arg("-o")
+        .arg(dir.join("topgem.o"))
+        .arg(&entry)
+        .env("ZEO_CACHE", "0"));
+    assert!(!out.status.success(), "a top-level def must refuse");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("a package build cannot carry a builtin reopen"),
+        "the refusal names the channel: {err}"
+    );
+}

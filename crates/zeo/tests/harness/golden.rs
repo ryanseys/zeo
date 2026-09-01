@@ -468,7 +468,7 @@ fn run_via_cli(
     args: &[String],
     stdin: Option<&[u8]>,
     run_cwd: &Path,
-    typed_off: bool,
+    extra_debug: Option<&str>,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     // The AOT leg links the archive, which a test run does not build.
     if backend != "jit" {
@@ -476,15 +476,15 @@ fn run_via_cli(
     }
     let mut cmd = Command::new(zeo_cli()?);
     cmd.arg("--backend").arg(backend);
-    // The differential-oracle child: the same compile with every
-    // TyKind-driven emission off. APPENDS to an ambient ZEO_DEBUG so the
-    // leg composes with other debug flags.
-    if typed_off {
+    // A differential-oracle child: the same compile with one debug flag
+    // added (`no-typed-calls`, `packaged-ids`). APPENDS to an ambient
+    // ZEO_DEBUG so the leg composes with other debug flags.
+    if let Some(flag) = extra_debug {
         let ambient = std::env::var("ZEO_DEBUG").unwrap_or_default();
         let joined = if ambient.is_empty() {
-            "no-typed-calls".to_string()
+            flag.to_string()
         } else {
-            format!("{ambient},no-typed-calls")
+            format!("{ambient},{flag}")
         };
         cmd.env("ZEO_DEBUG", joined);
     }
@@ -533,19 +533,20 @@ fn compile_and_run(
     run_cwd: &Path,
     env: &SuiteEnv,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
-    compile_and_run_typed(rb, source, args, stdin, run_cwd, env, false)
+    compile_and_run_debug(rb, source, args, stdin, run_cwd, env, None)
 }
 
-/// [`compile_and_run`] with the typed-emission kill switch exposed -- the
-/// differential-oracle leg's second child.
-fn compile_and_run_typed(
+/// [`compile_and_run`] with one extra `ZEO_DEBUG` flag exposed -- the
+/// differential-oracle legs' second child (`no-typed-calls`,
+/// `packaged-ids`).
+fn compile_and_run_debug(
     rb: &Path,
     source: &str,
     args: &[String],
     stdin: Option<&[u8]>,
     run_cwd: &Path,
     env: &SuiteEnv,
-    typed_off: bool,
+    extra_debug: Option<&str>,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     let mut load_roots = env.load_roots.clone();
     if let Some(fixture) = &env.cext {
@@ -565,7 +566,7 @@ fn compile_and_run_typed(
         args,
         stdin,
         run_cwd,
-        typed_off,
+        extra_debug,
     )
 }
 
@@ -862,41 +863,61 @@ pub fn run_golden_env(
     // Pass / Xfail: build + run, then diff against the golden.
     let actual = compile_and_run(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env);
 
-    // `ZEO_GOLDEN_DIFF_TYPED=1`: the zeo-vs-zeo differential oracle. The
-    // same program compiles and runs a SECOND time with every
-    // TyKind-driven emission off (`ZEO_DEBUG=no-typed-calls`), and the
-    // two zeo outputs must agree byte-for-byte after normalization. Ruby
-    // is not consulted: this catches a typed fold changing ANY observable
-    // behavior, including behavior the CRuby oracle could not
+    // The zeo-vs-zeo differential oracles. The same program compiles and
+    // runs a SECOND time with one debug flag added, and the two zeo
+    // outputs must agree byte-for-byte after normalization. Ruby is not
+    // consulted: each leg catches its emission mode changing ANY
+    // observable behavior, including behavior the CRuby oracle could not
     // distinguish. Runs for Pass and Xfail alike -- a gap's divergence
-    // from ruby must still be the SAME divergence with the folds off. A
+    // from ruby must still be the SAME divergence in the other mode. A
     // program zeo cannot build at all is skipped here (that failure is
     // already the case's own divergence).
-    if std::env::var_os("ZEO_GOLDEN_DIFF_TYPED").is_some_and(|v| v == "1")
-        && let Ok((on_out, on_err)) = &actual
-    {
-        let (off_out, off_err) = compile_and_run_typed(
+    //
+    //   ZEO_GOLDEN_DIFF_TYPED=1   every TyKind-driven emission off
+    //                             (a wrong static type is a miscompile)
+    //   ZEO_GOLDEN_DIFF_PKGIDS=1  the Packaged id mode forced program-wide
+    //                             over an identity table -- decision 11's
+    //                             leg at M2 scope: it proves the packaged
+    //                             CODEGEN (id-table loads, the variable
+    //                             patched-bit guard) over the full corpus
+    //                             until M6 compiles gems as packages
+    for (gate, flag, label) in [
+        ("ZEO_GOLDEN_DIFF_TYPED", "no-typed-calls", "TYPED-EMISSION"),
+        ("ZEO_GOLDEN_DIFF_PKGIDS", "packaged-ids", "PACKAGED-ID"),
+    ] {
+        if !std::env::var_os(gate).is_some_and(|v| v == "1") {
+            continue;
+        }
+        let Ok((on_out, on_err)) = &actual else { continue };
+        let (off_out, off_err) = compile_and_run_debug(
             rb,
             &source,
             &sc.args,
             sc.stdin.as_deref(),
             run_cwd,
             env,
-            true,
+            Some(flag),
         )
-        .map_err(|e| format!("{}: typed-off compile/run failed where typed-on ran: {e}", rb.display()))?;
+        .map_err(|e| {
+            format!(
+                "{}: the {flag} compile/run failed where the plain one ran: {e}",
+                rb.display()
+            )
+        })?;
         if norm(on_out, rb, run_cwd) != norm(&off_out, rb, run_cwd)
             || norm(on_err, rb, run_cwd) != norm(&off_err, rb, run_cwd)
         {
             return Err(format!(
-                "{}: TYPED-EMISSION DIVERGENCE -- the same program answers                  differently with TyKind folds on vs off (a wrong static type                  is a miscompile).
---- typed-on stdout ---
+                "{}: {label} DIVERGENCE -- the same program answers \
+                 differently with `{flag}` on vs off (a miscompile in one \
+                 mode).
+--- plain stdout ---
 {}
---- typed-off                  stdout ---
+--- {flag} stdout ---
 {}
---- typed-on stderr ---
+--- plain stderr ---
 {}
---- typed-off                  stderr ---
+--- {flag} stderr ---
 {}",
                 rb.display(),
                 String::from_utf8_lossy(&norm(on_out, rb, run_cwd)),
