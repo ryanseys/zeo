@@ -34,9 +34,9 @@ struct State {
     /// (CRuby remembers exactly one).
     prev_pos: Option<usize>,
     /// `StringScanner.new(str, fixed_anchor: true)` -- reported by
-    /// `#fixed_anchor?`. Stored rather than acted on: this scanner always hands
-    /// the engine the tail slice, which is the `false` behaviour (see
-    /// `regexp::scanner_match`'s documented divergence).
+    /// `#fixed_anchor?` and acted on at the match door: the engine then sees
+    /// the whole subject with the position as only the search start, so `\A`
+    /// keeps meaning the string's own head.
     fixed_anchor: bool,
     /// False for the blank `StringScanner.allocate` answers. Ruby keeps an
     /// unseeded scanner distinct from one over `""`: every row raises
@@ -233,7 +233,7 @@ fn inspect_context(bytes: &[u8], truncated: bool, leading: bool) -> String {
 /// `(true, true)`, `skip` `(true, false)`, `check` `(false, true)`, `match?`
 /// `(false, false)` -- over the whole span consumed rather than the match alone.
 fn full_scan(st: &mut State, args: &[RubyValue], anchored: bool) -> Result<RubyValue, Signal> {
-    let Some(m) = crate::regexp::scanner_match(&args[0], &st.string, st.pos, anchored)? else {
+    let Some(m) = crate::regexp::scanner_match(&args[0], &st.string, st.pos, anchored, st.fixed_anchor)? else {
         st.miss();
         return Ok(RubyValue::Nil);
     };
@@ -275,7 +275,7 @@ ruby_class! {
     // Anchored scan: on a hit, consume and return the matched text; else nil.
     def "scan" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, true)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor)? {
             Some(m) => {
                 let (a, b) = m.groups[0].expect("group 0 of a hit always participates");
                 st.prev_pos = Some(st.pos);
@@ -289,7 +289,7 @@ ruby_class! {
     // Like `scan` but returns the matched LENGTH (or nil), still advancing.
     def "skip" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, true)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor)? {
             Some(m) => {
                 let (a, b) = m.groups[0].expect("group 0 of a hit always participates");
                 st.prev_pos = Some(st.pos);
@@ -303,7 +303,7 @@ ruby_class! {
     // Anchored length probe -- does NOT advance. Returns the length or nil.
     def "match?" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, true)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor)? {
             Some(m) => {
                 let (a, b) = m.groups[0].expect("group 0 of a hit always participates");
                 st.hit(m);
@@ -315,7 +315,7 @@ ruby_class! {
     // Like `scan` but does NOT advance (peek the matched text).
     def "check" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, true)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor)? {
             Some(m) => {
                 let (a, b) = m.groups[0].expect("group 0 of a hit always participates");
                 st.hit(m);
@@ -328,7 +328,7 @@ ruby_class! {
     // text from the old position through the match, or nil.
     def "scan_until" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, false)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor)? {
             Some(m) => {
                 let (_, to) = m.groups[0].expect("group 0 of a hit always participates");
                 // `matched` is just the matched text, but scan_until RETURNS
@@ -345,7 +345,7 @@ ruby_class! {
     // `skip_until` -- `scan_until`'s length-returning form.
     def "skip_until" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, false)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor)? {
             Some(m) => {
                 let (_, to) = m.groups[0].expect("group 0 of a hit always participates");
                 let from = st.pos;
@@ -380,10 +380,21 @@ ruby_class! {
         Ok(str_val(&st.string[from..to]))
     }
     def "peek" (recv, arg) {
-        let n = &crate::builtins::convert::to_index(arg)?;
+        let n = crate::builtins::convert::to_index(arg)?;
+        if n < 0 {
+            return Err(crate::builtins::arg_error!(
+                "negative string size (or size too big)"
+            ));
+        }
         let st = live_sc(recv)?.state.lock();
-        let end = (st.pos + (*n).max(0) as usize).min(st.string.len());
-        Ok(str_val(&st.string[st.pos..end]))
+        // BYTES, sliced without a char-boundary check: `peek(3)` mid-`ö`
+        // answers the lead byte alone, exactly as ruby does.
+        let from = st.pos.min(st.string.len());
+        let end = (st.pos + n as usize).min(st.string.len());
+        Ok(RubyValue::Str(crate::string_from_bytes(
+            st.string.as_bytes()[from..end].to_vec(),
+            crate::encoding::UTF_8,
+        )))
     }
     def "rest" (recv) {
         let st = live_sc(recv)?.state.lock();
@@ -586,7 +597,7 @@ ruby_class! {
     // returns the byte count from the current position to the match end, or nil.
     def "exist?" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, false)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor)? {
             Some(m) => {
                 let (_, to) = m.groups[0].expect("group 0 of a hit always participates");
                 let len = to - st.pos;
@@ -600,7 +611,7 @@ ruby_class! {
     // position through the next match, or nil.
     def "check_until" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, false)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor)? {
             Some(m) => {
                 let (_, to) = m.groups[0].expect("group 0 of a hit always participates");
                 let from = st.pos;

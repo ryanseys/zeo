@@ -589,15 +589,26 @@ pub struct ScannerMatch {
 /// `StringScanner` method that takes a pattern. `pattern` is a `Regexp` or a
 /// `String` matched literally, which CRuby's scanner allows in both positions.
 ///
-/// (Documented divergence, inherited from [`regexp_anchored_len`]: `^`/`\A`
-/// and look-behind see the scan position as the string start, since the engine
-/// is handed the tail slice.)
+/// `fixed` is `StringScanner.new(str, fixed_anchor: true)`: the engine sees
+/// the WHOLE subject and the scan position is only the search start, so `\A`
+/// keeps meaning the string's own head and look-behind reads real context.
+/// The default mode hands the engine the tail slice instead, which is CRuby's
+/// documented behaviour there: the position acts as the string start.
+///
+/// (Documented divergence in the default mode only, inherited from
+/// [`regexp_anchored_len`]: `\G` also sees the scan position as the string
+/// start, which happens to agree with CRuby, where `\G` anchors at the
+/// position.)
 pub fn scanner_match(
     pattern: &crate::RubyValue,
     subject: &str,
     at: usize,
     anchored: bool,
+    fixed: bool,
 ) -> Result<Option<ScannerMatch>, crate::Signal> {
+    if fixed {
+        return scanner_match_fixed(pattern, subject, at, anchored);
+    }
     let tail = &subject[at..];
     let husk = husk_payload(pattern);
     let pattern = husk.as_ref().unwrap_or(pattern);
@@ -633,6 +644,48 @@ pub fn scanner_match(
             .into_iter()
             .map(|span| span.map(|(s, e)| (s + at, e + at)))
             .collect(),
+        names,
+    }))
+}
+
+/// The `fixed_anchor: true` half of [`scanner_match`]. The engine searches the
+/// FULL subject from `at`, so every span is already absolute; `anchored` means
+/// the match must START at `at` -- exactly what `\G(?:pattern)` would demand,
+/// without recompiling the pattern.
+fn scanner_match_fixed(
+    pattern: &crate::RubyValue,
+    subject: &str,
+    at: usize,
+    anchored: bool,
+) -> Result<Option<ScannerMatch>, crate::Signal> {
+    let husk = husk_payload(pattern);
+    let pattern = husk.as_ref().unwrap_or(pattern);
+    let (spans, names) = match pattern {
+        crate::RubyValue::Regexp(re) => {
+            let caps = match re.engine.captures_at(subject, at) {
+                Some(caps) if !anchored || caps.spans[0].is_some_and(|(s, _)| s == at) => caps,
+                _ => return Ok(None),
+            };
+            (caps.spans, re.engine.capture_names())
+        }
+        crate::RubyValue::Str(s) => {
+            let literal = s.lock().to_utf8_lossy().into_owned();
+            let start = match anchored {
+                true if subject.as_bytes()[at..].starts_with(literal.as_bytes()) => at,
+                true => return Ok(None),
+                false => match subject[at..].find(&literal) {
+                    Some(i) => at + i,
+                    None => return Ok(None),
+                },
+            };
+            (vec![Some((start, start + literal.len()))], Vec::new())
+        }
+        other => {
+            return Err(crate::builtins::no_implicit(other, "String"));
+        }
+    };
+    Ok(Some(ScannerMatch {
+        groups: spans,
         names,
     }))
 }
