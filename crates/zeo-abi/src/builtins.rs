@@ -1595,4 +1595,20 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: Some("digest"),
     },
+    BuiltinClass {
+        id: ZEO_MODULE,
+        name: "Zeo",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: ZEO_EVAL_MODULE,
+        name: "Zeo::Eval",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: None,
+    },
 ];

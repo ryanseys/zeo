@@ -1323,13 +1323,33 @@ impl Hir {
         }
     }
 
+    /// The receiver names the runtime's own `Zeo::Eval` module -- the ONLY
+    /// spelling `prepare` links the compiler for. A bare name match would
+    /// carry the 14 MB compiler into every program calling `.prepare` on
+    /// anything.
+    fn zeo_eval_receiver(&self, id: NodeId) -> bool {
+        match &self[id] {
+            HirNode::ClassRef(n) => n == "Zeo::Eval",
+            HirNode::QualifiedConstRead(scope, name) => scope == "Zeo" && name == "Eval",
+            _ => false,
+        }
+    }
+
     pub fn uses_runtime_eval(&self) -> bool {
         self.nodes.iter().any(|node| match node {
-            HirNode::Call { name, args, .. } => match name.as_str() {
+            HirNode::Call {
+                name,
+                args,
+                receiver,
+                ..
+            } => match name.as_str() {
                 // Any `eval`, receiver or not: `Binding#eval` runs its source
                 // through the same entry, and a Binding is an ordinary value
                 // a call site can hold in anything.
                 "eval" => true,
+                // The async compile IS an eval-compiler use; gated on its
+                // one receiver spelling (see `zeo_eval_receiver`).
+                "prepare" => receiver.is_some_and(|r| self.zeo_eval_receiver(r)),
                 "instance_eval" | "class_eval" | "module_eval" => !args.is_empty(),
                 // A `require`/`load` that SURVIVED lowering is one the
                 // loader could not resolve -- a computed target, or a file

@@ -466,6 +466,13 @@ pub const DIGEST_SHA2_CLASS: ClassId = ClassId(108);
 pub const DIGEST_INSTANCE_MODULE: ClassId = ClassId(176);
 pub const DIGEST_CLASS_CLASS: ClassId = ClassId(177);
 pub const DIGEST_BASE_CLASS: ClassId = ClassId(178);
+
+/// `Zeo` -- the runtime's own namespace -- and `Zeo::Eval`, the async
+/// snippet-compile surface (`prepare`). Runtime-provided, no feature
+/// gate; the 14 MB compiler still links only when `uses_runtime_eval`
+/// sees a site.
+pub const ZEO_MODULE: ClassId = ClassId(179);
+pub const ZEO_EVAL_MODULE: ClassId = ClassId(180);
 /// `json`: the `JSON` module (parser/generator). Scaffolded (see docs/EXTENSIONS.md).
 pub const JSON_MODULE: ClassId = ClassId(55);
 /// `date`: `Date`/`DateTime`. Scaffolded.

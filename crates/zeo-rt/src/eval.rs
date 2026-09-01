@@ -507,8 +507,29 @@ pub fn class_body(
 
 /// The evaluator the `zeo` library installs. A shape it declines raises --
 /// there is nothing else to hand the snippet to.
+/// What `Zeo::Eval.prepare` answers: the snippet's compile is cached
+/// (`Ready`), running on the worker (`Compiling`), refused (`Failed` --
+/// the next real eval re-parses cheaply and raises the true error), or
+/// this build carries no async compiler (`Unsupported`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PrepareStatus {
+    Ready,
+    Compiling,
+    Failed,
+    Unsupported,
+}
+
 pub trait EvalCompiler: Send + Sync {
     fn eval(&self, req: &EvalRequest<'_>) -> Result<RubyValue, Signal>;
+
+    /// Begin -- or report on -- an OFF-THREAD compile of `req`'s snippet,
+    /// keyed exactly as `eval` will key it, with the caller declaring the
+    /// future eval site's `has_home` (a per-fiber thread-local a worker
+    /// cannot see). Idempotent: poll it. The default is a compiler with no
+    /// worker.
+    fn prepare(&self, _req: &EvalRequest<'_>, _home: bool) -> PrepareStatus {
+        PrepareStatus::Unsupported
+    }
 }
 
 static COMPILER: OnceLock<&'static dyn EvalCompiler> = OnceLock::new();
@@ -810,4 +831,41 @@ pub fn eval_with_binding(
         cref_chain: &[],
     };
     compiler()?.eval(&req)
+}
+
+/// `Zeo::Eval.prepare` -- the async twin of [`eval_with_binding`]: the
+/// SAME request the later eval will make, handed to the compiler's
+/// worker. `home` declares the future eval site's `has_home`. Answers a
+/// status rather than a value; a build with no compiler says
+/// `Unsupported` instead of raising, so a consumer can probe for the
+/// capability. The prepared key is invalidated by any local-introducing
+/// eval on `b` before the paired eval runs (an eval permanently grows a
+/// binding's locals): prepare and eval in lockstep per binding.
+pub fn prepare_with_binding(
+    src: &RubyValue,
+    b: &RBinding,
+    file: Option<String>,
+    line: Option<u32>,
+    home: bool,
+) -> Result<PrepareStatus, Signal> {
+    let code = crate::builtins::convert::to_rstr(src)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned();
+    let path = eval_path(file.as_deref());
+    let req = EvalRequest {
+        src: &code,
+        file: &path,
+        line: line.unwrap_or(1),
+        self_val: b.self_val.clone(),
+        box_id: b.box_id,
+        mode: EvalMode::Caller,
+        label: b.label,
+        binding: Some(b),
+        cref_chain: &[],
+    };
+    match COMPILER.get() {
+        Some(c) => Ok(c.prepare(&req, home)),
+        None => Ok(PrepareStatus::Unsupported),
+    }
 }

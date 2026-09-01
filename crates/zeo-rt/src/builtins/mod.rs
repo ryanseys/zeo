@@ -91,6 +91,7 @@ pub(crate) mod unbound_method;
 pub(crate) mod value_subclass;
 pub(crate) mod waiter;
 pub(crate) mod warning;
+pub(crate) mod zeo_eval;
 pub(crate) mod weak;
 pub(crate) mod yielder;
 

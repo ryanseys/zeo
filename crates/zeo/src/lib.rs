@@ -673,7 +673,7 @@ pub fn compile_to_clif_text(source: &str, opts: &CompileOptions) -> Result<Strin
 /// ~2 MiB a spawned thread gets by default -- the CLI survived only because a
 /// main thread gets 8 MiB. Compiling on an explicitly-sized thread makes that
 /// headroom the compiler's property rather than the caller's.
-const COMPILE_STACK_SIZE: usize = 64 * 1024 * 1024;
+pub(crate) const COMPILE_STACK_SIZE: usize = 64 * 1024 * 1024;
 
 /// Whether `ZEO_TIMINGS` is set: the phase-timing report `FrontEnd::report`
 /// writes as machine-parseable `zeo-timings:` stderr lines.

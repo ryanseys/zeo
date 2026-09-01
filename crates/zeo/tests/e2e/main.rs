@@ -35,6 +35,7 @@ mod default_gem_store;
 mod enumerable;
 mod etc;
 mod eval;
+mod eval_prepare;
 mod exceptions;
 mod ffi;
 mod gc_weak;

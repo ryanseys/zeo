@@ -41,6 +41,87 @@ pub unsafe extern "C" fn zeo_eval_install() {
 struct Jit;
 
 impl EvalCompiler for Jit {
+    fn prepare(&self, req: &EvalRequest<'_>, home: bool) -> zeo_rt::eval::PrepareStatus {
+        use zeo_rt::eval::PrepareStatus;
+        let inputs = inputs_for(req, Some(home));
+        let key = key_of(&inputs);
+        if CACHE
+            .lock()
+            .expect("the eval cache is never poisoned")
+            .get_or_insert_with(HashMap::default)
+            .contains_key(&key)
+        {
+            return PrepareStatus::Ready;
+        }
+        {
+            let mut guard = PREPARED
+                .lock()
+                .expect("the prepare state is never poisoned");
+            let st = guard.get_or_insert_with(Default::default);
+            if st.failed.contains(&key) {
+                return PrepareStatus::Failed;
+            }
+            if st.in_flight.contains(&key) {
+                return PrepareStatus::Compiling;
+            }
+            st.in_flight.insert(key.clone());
+        }
+        // The worker touches no Ruby object -- `BuildInputs` carries none by
+        // construction, and everything `build` shares (the interner, the
+        // reservation counters, this cache) is independently synchronized --
+        // so, like the GVL preemption timer and the Linux real-main thread,
+        // this spawn keeps the sole-thread claim intact: no
+        // `gvl::note_thread_spawn()`, deliberately. The scan test in this
+        // file holds every spawn here to that classification.
+        let spawned = std::thread::Builder::new()
+            .name("zeo-eval-compile".into())
+            .stack_size(crate::COMPILE_STACK_SIZE)
+            .spawn(move || {
+                let key = key_of(&inputs);
+                match build(&inputs) {
+                    Ok(c) => {
+                        let compiled: &'static Compiled = Box::leak(Box::new(c));
+                        // CACHE first, THEN the in-flight clear: a poller
+                        // must never observe "neither".
+                        CACHE
+                            .lock()
+                            .expect("the eval cache is never poisoned")
+                            .get_or_insert_with(HashMap::default)
+                            .insert(key.clone(), compiled);
+                        let mut guard = PREPARED
+                            .lock()
+                            .expect("the prepare state is never poisoned");
+                        guard
+                            .get_or_insert_with(Default::default)
+                            .in_flight
+                            .remove(&key);
+                    }
+                    Err(_) => {
+                        let mut guard = PREPARED
+                            .lock()
+                            .expect("the prepare state is never poisoned");
+                        let st = guard.get_or_insert_with(Default::default);
+                        st.failed.insert(key.clone());
+                        st.in_flight.remove(&key);
+                    }
+                }
+            });
+        match spawned {
+            Ok(_) => PrepareStatus::Compiling,
+            Err(_) => {
+                // The key goes back so a later call can retry the spawn.
+                let mut guard = PREPARED
+                    .lock()
+                    .expect("the prepare state is never poisoned");
+                guard
+                    .get_or_insert_with(Default::default)
+                    .in_flight
+                    .remove(&key);
+                PrepareStatus::Unsupported
+            }
+        }
+    }
+
     fn eval(&self, req: &EvalRequest<'_>) -> Result<RubyValue, Signal> {
         match compiled_for(req) {
             Ok(c) => run(req, c),
@@ -122,30 +203,99 @@ struct Compiled {
     cells: Vec<String>,
 }
 
-/// Keyed by everything the lowering depends on. The cell list is part of
-/// it because the entry loads its locals BY INDEX: the same source under a
-/// Binding with different names is a different function.
-type Key = (String, u32, Vec<String>, u8, Vec<u32>, bool);
+/// Everything `build` reads, owned and `Send`: captured ON THE CALLER, so
+/// the per-fiber thread-locals (`has_home`, the caller cref) and the
+/// binding-derived names are read where they are true, and a worker can
+/// compile without them. Carrying no `RubyValue` is the invariant that
+/// keeps the worker off every sole-thread fast path.
+struct BuildInputs {
+    src: String,
+    file: String,
+    line: u32,
+    label: &'static str,
+    box_id: u32,
+    mode: u8,
+    scope_names: Vec<String>,
+    cref_chain: Vec<u32>,
+    cref_name: Option<String>,
+    has_binding: bool,
+    has_home: bool,
+}
 
-static CACHE: Mutex<Option<HashMap<Key, &'static Compiled>>> = Mutex::new(None);
-
-fn compiled_for(req: &EvalRequest<'_>) -> Result<&'static Compiled, Refusal> {
-    // The names the caller's scope already carries: a snippet that only
-    // READS one of them arrives as a vcall (prism parsed it alone), so the
-    // cell has to exist whether or not the source assigns it.
-    let scope_names = req.binding.map(|b| b.local_names()).unwrap_or_default();
-    let key: Key = (
-        req.src.to_string(),
-        req.box_id,
-        scope_names.clone(),
-        mode_byte(req.mode),
-        zeo_rt::eval::cref_of(req).0.iter().map(|c| c.0).collect(),
+/// The compile inputs as the caller sees them. `home_override` is
+/// `Zeo::Eval.prepare` declaring the FUTURE eval site's `has_home`; the
+/// real eval reads this thread's own.
+fn inputs_for(req: &EvalRequest<'_>, home_override: Option<bool>) -> BuildInputs {
+    let (chain, name) = zeo_rt::eval::cref_of(req);
+    BuildInputs {
+        src: req.src.to_string(),
+        file: req.file.to_string(),
+        line: req.line,
+        label: req.label,
+        box_id: req.box_id,
+        mode: mode_byte(req.mode),
+        // The names the caller's scope already carries: a snippet that only
+        // READS one of them arrives as a vcall (prism parsed it alone), so
+        // the cell has to exist whether or not the source assigns it.
+        scope_names: req.binding.map(|b| b.local_names()).unwrap_or_default(),
+        cref_chain: chain.iter().map(|c| c.0).collect(),
+        cref_name: name,
+        has_binding: req.binding.is_some(),
         // Whether a `yield` written here is legal at all -- a compile-time
         // question in CRuby, and a property of the CALLER, so the same
         // source compiled from a method and from the top level are two
         // different compiles.
-        zeo_rt::eval::has_home(),
-    );
+        has_home: home_override.unwrap_or_else(zeo_rt::eval::has_home),
+    }
+}
+
+/// Keyed by everything the lowering depends on. The cell list is part of
+/// it because the entry loads its locals BY INDEX: the same source under a
+/// Binding with different names is a different function. `file`/`line`/
+/// `label` are baked into the artifact (`__FILE__`, backtrace rows, the
+/// frame label), so they key it too.
+type Key = (
+    String,
+    u32,
+    Vec<String>,
+    u8,
+    Vec<u32>,
+    bool,
+    String,
+    u32,
+    &'static str,
+);
+
+fn key_of(i: &BuildInputs) -> Key {
+    (
+        i.src.clone(),
+        i.box_id,
+        i.scope_names.clone(),
+        i.mode,
+        i.cref_chain.clone(),
+        i.has_home,
+        i.file.clone(),
+        i.line,
+        i.label,
+    )
+}
+
+static CACHE: Mutex<Option<HashMap<Key, &'static Compiled>>> = Mutex::new(None);
+
+/// What `Zeo::Eval.prepare` tracks beside the cache: the keys a worker is
+/// compiling, and the keys whose compile REFUSED (the paired eval then
+/// re-parses cheaply and raises the true error).
+#[derive(Default)]
+struct PrepareState {
+    in_flight: std::collections::HashSet<Key>,
+    failed: std::collections::HashSet<Key>,
+}
+
+static PREPARED: Mutex<Option<PrepareState>> = Mutex::new(None);
+
+fn compiled_for(req: &EvalRequest<'_>) -> Result<&'static Compiled, Refusal> {
+    let inputs = inputs_for(req, None);
+    let key = key_of(&inputs);
     if let Some(&c) = CACHE
         .lock()
         .expect("the eval cache is never poisoned")
@@ -154,7 +304,7 @@ fn compiled_for(req: &EvalRequest<'_>) -> Result<&'static Compiled, Refusal> {
     {
         return Ok(c);
     }
-    let compiled: &'static Compiled = Box::leak(Box::new(build(req, &scope_names)?));
+    let compiled: &'static Compiled = Box::leak(Box::new(build(&inputs)?));
     CACHE
         .lock()
         .expect("the eval cache is never poisoned")
@@ -172,16 +322,19 @@ fn mode_byte(mode: zeo_rt::eval::EvalMode) -> u8 {
     }
 }
 
-fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refusal> {
+fn build(inputs: &BuildInputs) -> Result<Compiled, Refusal> {
     // The cref is a RUN-TIME class, so it travels as its id: the fresh
     // compiler below has no entry for it, and every static fold stands
     // down for that reason (`Fx::eval_cref`). `Object` needs none of it --
     // its table IS the top level, which a snippet already searches.
-    let (chain, name) = zeo_rt::eval::cref_of(req);
+    // Captured into `inputs` on the CALLER -- a worker's thread-locals are
+    // empty, and reading them here silently changed the compile.
+    let name = inputs.cref_name.clone();
     // `Object`'s table IS the top level, which every search ends at anyway.
-    let chain: Vec<u32> = chain
+    let chain: Vec<u32> = inputs
+        .cref_chain
         .iter()
-        .map(|c| c.0)
+        .copied()
         .filter(|&c| c != zeo_abi::OBJECT_CLASS.0)
         .collect();
     let cref = match (chain.is_empty(), name) {
@@ -196,15 +349,15 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
     // CALLER gave (`(eval at f.rb:14)` when it gave none) and count from
     // the line it gave, so the snippet is lowered under both.
     let opts = crate::CompileOptions {
-        file_name: Some(std::path::PathBuf::from(req.file)),
-        line_offset: req.line as i32 - 1,
+        file_name: Some(std::path::PathBuf::from(&inputs.file)),
+        line_offset: inputs.line as i32 - 1,
         mode: crate::CompileMode::Eval {
             cref: cref.is_some(),
         },
         ..crate::CompileOptions::default()
     };
     let mut analyzed =
-        crate::analyze_snippet(req.src, &opts).map_err(|e| match e.syntax_message() {
+        crate::analyze_snippet(&inputs.src, &opts).map_err(|e| match e.syntax_message() {
             Some(msg) => Refusal::Syntax(msg.to_string()),
             None => Refusal::NotCompiled(e.to_string()),
         })?;
@@ -215,16 +368,18 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
     // fall back on `Object`, which is main's top level. The RUN TIME knows
     // the id, and a class id is the one thing both sides always agree on,
     // so the fresh compiler is told it here.
-    if req.box_id != 0 {
-        match zeo_rt::boxes::surrogate_of(req.box_id) {
-            0 => return Err(format!("a box (id {}) with no surrogate class", req.box_id).into()),
+    if inputs.box_id != 0 {
+        match zeo_rt::boxes::surrogate_of(inputs.box_id) {
+            0 => {
+                return Err(format!("a box (id {}) with no surrogate class", inputs.box_id).into());
+            }
             cid => analyzed
                 .compiler
-                .adopt_box_surrogate(req.box_id, crate::compiler::ClassId(cid)),
+                .adopt_box_surrogate(inputs.box_id, crate::compiler::ClassId(cid)),
         }
     }
     refusals(&analyzed)?;
-    if !zeo_rt::eval::has_home() {
+    if !inputs.has_home {
         invalid_yield(&analyzed)?;
     }
 
@@ -233,8 +388,8 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
     // Binding (CRuby declares an eval's locals when it parses it) and a
     // name it assigns reaches the frame the Binding captured.
     let mut cells: Vec<String> = Vec::new();
-    if req.binding.is_some() {
-        cells.extend(scope_names.iter().cloned());
+    if inputs.has_binding {
+        cells.extend(inputs.scope_names.iter().cloned());
         let mut locals = crate::analyze::local_storage::Locals::default();
         for &stmt in &analyzed.main_statements {
             crate::analyze::local_storage::collect_locals(&analyzed.compiler, stmt, &mut locals);
@@ -247,10 +402,10 @@ fn build(req: &EvalRequest<'_>, scope_names: &[String]) -> Result<Compiled, Refu
     }
     let spec = crate::clif::eval::EvalSpec {
         cells: &cells,
-        box_id: req.box_id,
-        label: req.label,
+        box_id: inputs.box_id,
+        label: inputs.label,
         cref,
-        mode: mode_byte(req.mode),
+        mode: inputs.mode,
         flip_flop_base: match analyzed.compiler.hir.flip_flops {
             0 => 0,
             n => zeo_rt::eval::reserve_flip_flops(n),
@@ -417,4 +572,49 @@ fn run(req: &EvalRequest<'_>, c: &Compiled) -> Result<RubyValue, Signal> {
         unsafe { zeo_rt::capi::procs::zeo_rt_cell_release(cell) };
     }
     answer
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every worker spawn in this file must carry the sole-thread
+    /// classification argument -- the mirror of zeo-rt's
+    /// `every_ruby_thread_spawn_is_marked`, which does not scan this crate.
+    #[test]
+    fn the_compile_worker_spawn_is_classified() {
+        let src = include_str!("eval.rs");
+        let lines: Vec<&str> = src.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("thread::Builder::new()") && !line.contains("line.contains") {
+                let classified = lines[i.saturating_sub(12)..i]
+                    .iter()
+                    .any(|l| l.contains("sole-thread claim"));
+                assert!(
+                    classified,
+                    "an eval worker spawn without its sole-thread classification (line {})",
+                    i + 1
+                );
+            }
+        }
+    }
+
+    /// `prepare` and the real eval key through ONE road (`inputs_for` +
+    /// `key_of`); the sole declared difference is `has_home`, which the
+    /// caller passes for the future site.
+    #[test]
+    fn prepare_and_eval_share_one_key_road() {
+        let req = zeo_rt::eval::EvalRequest {
+            src: "1 + 1",
+            file: "f.rb",
+            line: 1,
+            self_val: zeo_rt::RubyValue::Nil,
+            box_id: 0,
+            mode: zeo_rt::eval::EvalMode::Caller,
+            label: "<main>",
+            binding: None,
+            cref_chain: &[],
+        };
+        let prepared = super::key_of(&super::inputs_for(&req, Some(false)));
+        let evaled = super::key_of(&super::inputs_for(&req, None));
+        assert_eq!(prepared, evaled);
+    }
 }
