@@ -127,10 +127,12 @@ crate::cext_fn! {
         Ok(())
     }
 
-    /// The write barriers. zeo's references are `Arc`s written under a lock,
-    /// so there is no generational invariant an extension could break by
-    /// storing without telling anyone.
-    fn rb_gc_writebarrier(_a: Value, _b: Value) -> () {
+    /// The write barrier. MRI's generational invariant does not exist here,
+    /// but the barrier carries a fact zeo's scope-pinned handles need: the
+    /// extension stored `b` inside `a`'s C struct, past every scope. The
+    /// retention half keeps `b`'s handle alive for `a`'s life.
+    fn rb_gc_writebarrier(a: Value, b: Value) -> () {
+        super::data::retain_write(a, b);
         Ok(())
     }
 

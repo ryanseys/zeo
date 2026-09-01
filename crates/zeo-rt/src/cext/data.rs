@@ -130,6 +130,11 @@ pub struct CData {
     /// silently does nothing is worse than one that works.
     untyped: (DataFunc, DataFunc),
     frozen: AtomicBool,
+    /// Handles the write barrier pinned on this object's behalf -- a
+    /// `RB_OBJ_WRITE(self, &p->field, v)` stored `v` in the C struct, where
+    /// no scope can see it. Released when the object drops. See
+    /// [`retain_write`].
+    retained: parking_lot::Mutex<Vec<usize>>,
 }
 
 // SAFETY: `dtype` points at a `static const rb_data_type_t` in the
@@ -147,6 +152,7 @@ impl CData {
             dtype,
             untyped: (None, None),
             frozen: AtomicBool::new(false),
+            retained: parking_lot::Mutex::new(Vec::new()),
         })
     }
 
@@ -158,6 +164,7 @@ impl CData {
             dtype: std::ptr::null(),
             untyped: (mark, free),
             frozen: AtomicBool::new(false),
+            retained: parking_lot::Mutex::new(Vec::new()),
         })
     }
 
@@ -237,6 +244,10 @@ impl Drop for CData {
     /// zeo gives it to every TypedData object: a refcount drop IS immediate,
     /// and there is no sweep phase to defer to.
     fn drop(&mut self) {
+        // The write barrier's pins go with the object -- see [`retain_write`].
+        for addr in self.retained.get_mut().drain(..) {
+            super::handles::unpin(addr);
+        }
         let p = self.cell.data.swap(0, Ordering::Relaxed) as *mut c_void;
         if p.is_null() {
             return;
@@ -249,6 +260,32 @@ impl Drop for CData {
             } else {
                 unsafe { free(p) };
             }
+        }
+    }
+}
+
+/// The write barrier's retention half. `RB_OBJ_WRITE(old, &p->field, young)`
+/// stored `young` inside `old`'s C struct, where no scope can see it -- MRI's
+/// GC roots that edge through `old`'s mark function, and zeo's scope-pinned
+/// handles would free `young`'s handle at the call's pop, leaving the struct
+/// a dangling `VALUE` (strscan's `p->str` was the case). So the barrier pins
+/// `young` for `old`'s life, and the drop above releases it.
+///
+/// Only a `CData` `old` retains: that is where a C struct holding `VALUE`s
+/// lives. A write into any other receiver keeps today's no-op.
+pub(super) fn retain_write(old: super::value::Value, young: super::value::Value) {
+    if super::value::is_special_const(young) {
+        return;
+    }
+    let RubyValue::Object(o) = (unsafe { super::convert::value_of(old) }) else {
+        return;
+    };
+    if let Some(d) = o.as_any().downcast_ref::<CData>() {
+        let mut r = d.retained.lock();
+        // The same value re-stored (`#string=` in a loop) pins once.
+        if !r.contains(&(young as usize)) {
+            super::handles::pin_raw(young as usize);
+            r.push(young as usize);
         }
     }
 }
@@ -388,6 +425,7 @@ impl RubyObject for CData {
             dtype: self.dtype,
             untyped: (self.untyped.0, None),
             frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
+            retained: parking_lot::Mutex::new(Vec::new()),
         })
     }
 
