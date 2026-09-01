@@ -240,6 +240,18 @@ fn resolve_definition_target(
         && resolved_superclass.is_none()
         && !compiler.assigns_const_path(s)
     {
+        // A PACKAGE build must refuse instead: its world deliberately
+        // excludes the foreign gems the HOST provides, so "resolves to
+        // nothing here" says nothing about the program the artifact will
+        // run in -- net-http's `class HTTP < Protocol` is real when
+        // net-protocol loads. A dropped definition would ship a package
+        // silently missing the class; the refusal drops the gem to its
+        // source splice, where the whole-program answer is right.
+        if compiler.hir.pkg_build.is_some() {
+            return Err(format!(
+                "unknown superclass `{s}` (defined outside this package)"
+            ));
+        }
         // Loud at `--log-level debug`, because this DISCARDS a whole
         // definition -- body, nested classes and all -- and the program
         // then behaves as if the `class` keyword were a bare constant read.
@@ -275,6 +287,15 @@ fn resolve_definition_target(
                 && resolve_or_create_lexical(compiler, prefix, cref, box_id, None).is_none()
                 && !compiler.assigns_const_path(prefix)
             {
+                // Same rule as the superclass arm above: the container may
+                // be a foreign gem's class the host provides, so a package
+                // build refuses rather than discard the definition.
+                if compiler.hir.pkg_build.is_some() {
+                    return Err(format!(
+                        "unknown class/module `{prefix}` in `{name}` (defined outside this \
+                         package)"
+                    ));
+                }
                 defer_unresolved_directive(compiler, def_node, prefix);
                 return Ok(None);
             }
