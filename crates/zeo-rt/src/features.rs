@@ -200,13 +200,16 @@ pub fn resolve_on_disk(feature: &str, box_id: u32, append_rb: bool) -> Option<st
             _ => None,
         })
         .collect();
+    // MAIN searches bundled-gem roots too: a feature the compile carried
+    // never reaches this walk -- the unit table and `$LOADED_FEATURES`
+    // answer first, and `load_from_disk` rechecks the canonical path --
+    // while a file the compile never saw (a C extension's own
+    // `rb_require` of a gem lib file is the shape) has only the disk.
+    // A `Ruby::Box`'s require still skips them: the box would compile a
+    // second, half-native copy of a gem the program carries.
     roots
         .into_iter()
-        // A bundled gem's root is on `$LOAD_PATH` for code that READS it, but
-        // a require must not reach it: that gem is already linked in, and
-        // compiling its Ruby half again would build a second, half-native
-        // copy. See `globals::seed_load_path`.
-        .filter(|root| crate::globals::load_path_is_searchable(root))
+        .filter(|root| box_id == 0 || !crate::globals::bundled_root(root))
         .find_map(|root| first_readable(spellings(std::path::Path::new(&root).join(feature))))
 }
 

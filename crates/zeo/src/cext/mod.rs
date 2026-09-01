@@ -214,48 +214,62 @@ fn cache_root() -> PathBuf {
     }
 }
 
-/// Configure and build `gem`'s extension out of tree, and answer the shared
-/// object.
+/// Configure and build `gem`'s extensions out of tree, and answer the
+/// shared objects in `extconfs` order.
 ///
-/// `ext_dir` is the directory holding `extconf.rb` inside the gem. It is
-/// copied into the cache and built there, so the gem store is never written
-/// to.
+/// `gem_dir` is the gem's whole unpacked tree and `extconfs` are the
+/// `extconf.rb` paths relative to it. The WHOLE tree is copied into the
+/// cache and built there: an extconf freely reads its siblings (json's
+/// loads `../simd/conf.rb`, prism's reads the gem's `include/` and
+/// `src/`), so staging one extension directory starved those reads --
+/// and the gem store is never written to.
 pub fn build_out_of_tree(
     zeo: &Path,
     gem: &str,
-    ext_dir: &Path,
-    extconf: &str,
-) -> Result<PathBuf, String> {
-    let key = content_key(ext_dir);
+    gem_dir: &Path,
+    extconfs: &[String],
+) -> Result<Vec<PathBuf>, String> {
+    let key = content_key(gem_dir);
     let dir = build_dir(gem, &key);
-    // An already-built product with the same content key is the same
-    // product, which is the whole reason the key hashes bytes.
-    if let Some(found) = product_of(&dir) {
+    let products_in = |root: &Path| -> Option<Vec<PathBuf>> {
+        extconfs
+            .iter()
+            .map(|e| product_of(&root.join(Path::new(e).parent()?)))
+            .collect()
+    };
+    // An already-built product set with the same content key is the same
+    // set, which is the whole reason the key hashes bytes.
+    if let Some(found) = products_in(&dir) {
         return Ok(found);
     }
     // Two compiles may want the same extension at once -- parallel tests,
     // or two zeo processes sharing one cache. Each builds in a private
     // sibling and renames the finished directory into place, so `dir`
-    // either holds a COMPLETE product or nothing; a loser's rename fails
-    // and it uses the winner's product. (Building in `dir` directly let
-    // one process delete it out from under another mid-configure.)
+    // either holds a COMPLETE product set or nothing; a loser's rename
+    // fails and it uses the winner's products. (Building in `dir` directly
+    // let one process delete it out from under another mid-configure.)
     let scratch = dir.with_file_name(format!(
         "{}.build.{}",
         dir.file_name().unwrap_or_default().to_string_lossy(),
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&scratch);
-    stage(ext_dir, &scratch)
-        .map_err(|e| format!("staging {gem}'s ext into {}: {e}", scratch.display()))?;
-    configure(zeo, &scratch, Path::new(extconf), &[])?;
-    build_extension(&scratch, jobs())?;
+    stage(gem_dir, &scratch)
+        .map_err(|e| format!("staging {gem} into {}: {e}", scratch.display()))?;
+    for extconf in extconfs {
+        let rel = Path::new(extconf);
+        let ext_dir = scratch.join(rel.parent().unwrap_or_else(|| Path::new("")));
+        let name = rel.file_name().unwrap_or_default();
+        configure(zeo, &ext_dir, Path::new(name), &[])?;
+        build_extension(&ext_dir, jobs())?;
+    }
     if std::fs::rename(&scratch, &dir).is_err() {
         // The winner's directory is already there; ours is redundant.
         let _ = std::fs::remove_dir_all(&scratch);
     }
-    product_of(&dir).ok_or_else(|| {
+    products_in(&dir).ok_or_else(|| {
         format!(
-            "built {gem}'s extension but no shared object appeared in {}",
+            "built {gem}'s extensions but no shared object appeared in {}",
             dir.display()
         )
     })

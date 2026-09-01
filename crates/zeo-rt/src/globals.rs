@@ -448,31 +448,38 @@ pub fn seed_loaded_features(paths: &[&str]) {
 /// compiled in, which CRuby's `$LOAD_PATH` also names once RubyGems activates
 /// them. Code that READS the array needs real directories in it -- rspec's
 /// `RubyProject` inspects it, and `IRB::Locale#find` scans it for a file it
-/// then loads.
-///
-/// The tail is recorded as NOT SEARCHABLE by a run-time require (see
-/// [`load_path_is_searchable`]): a bundled gem's Ruby half is already linked,
-/// so compiling it again from disk would build a second, half-native copy.
-/// Stays a real mutable Array, and a path a program pushes IS searchable.
+/// then loads. Every entry is searchable by MAIN's run-time require: a
+/// feature the compile carried answers out of the unit table before any
+/// disk walk, and a file the compile never saw (a C extension's own
+/// `rb_require` of a gem lib file) has only the disk. A `Ruby::Box`'s
+/// require still skips the bundled tail (see [`bundled_root`]): a box
+/// compiling a bundled gem's Ruby half from disk builds a second,
+/// half-native copy inside the box.
 pub fn seed_load_path(paths: &[&str], n_search: usize) {
     let values = paths
         .iter()
         .map(|p| RubyValue::Str(crate::string_new((*p).to_string())))
         .collect();
     global_set(0, "$LOAD_PATH", RubyValue::Array(crate::array_new(values)));
-    let _ = BUNDLED_ROOTS.set(paths[n_search.min(paths.len())..].iter().map(|p| (*p).to_string()).collect());
+    let _ = BUNDLED_ROOTS.set(
+        paths[n_search.min(paths.len())..]
+            .iter()
+            .map(|p| (*p).to_string())
+            .collect(),
+    );
 }
 
-/// The `$LOAD_PATH` entries a run-time `require` must skip -- see
-/// [`seed_load_path`]. Empty for a program with no bundled gems, and empty in
-/// this crate's own tests, where nothing seeds it.
+/// The `$LOAD_PATH` tail of bundled-gem roots -- see [`seed_load_path`].
+/// Empty for a program with no bundled gems, and empty in this crate's own
+/// tests, where nothing seeds it.
 static BUNDLED_ROOTS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
 
-/// Whether a run-time require may search `root`.
-pub fn load_path_is_searchable(root: &str) -> bool {
+/// Whether `root` is a bundled gem's root, which a `Ruby::Box`'s require
+/// must not compile from.
+pub fn bundled_root(root: &str) -> bool {
     BUNDLED_ROOTS
         .get()
-        .is_none_or(|skip| !skip.iter().any(|r| r == root))
+        .is_some_and(|roots| roots.iter().any(|r| r == root))
 }
 
 /// Appends one feature to `$LOADED_FEATURES` -- what a unit loaded at RUNTIME

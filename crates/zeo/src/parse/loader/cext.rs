@@ -120,31 +120,23 @@ impl Loader {
         let ext = &self.native_exts[gem];
         let zeo =
             crate::cext::zeo_binary().map_err(|e| format!("building {gem}'s C extension: {e}"))?;
-        // A gem may ship more than one extension. Every one is built, and the
-        // FIRST is what the feature names -- mkmf's own convention, since a
-        // second extension has its own `create_makefile` and its own require.
-        let mut first: Option<(String, String)> = None;
-        for extconf in &ext.extconfs {
-            let path = ext.gem_dir.join(extconf);
-            let Some(dir) = path.parent() else { continue };
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            // Out of tree: the gem store is shared and often read only, and a
-            // build that wrote into it would leave one project's artifacts
-            // where another reads them.
-            let library = crate::cext::build_out_of_tree(&zeo, gem, dir, &name)
-                .map_err(|e| format!("building {gem}'s C extension: {e}"))?;
-            if first.is_none() {
-                let init = library
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or(gem)
-                    .to_string();
-                first = Some((library.display().to_string(), init));
-            }
-        }
-        let Some((library, init)) = first else {
+        // A gem may ship more than one extension. Every one is built in one
+        // staged copy of the gem tree, and the FIRST is what the feature
+        // names -- mkmf's own convention, since a second extension has its
+        // own `create_makefile` and its own require. Out of tree: the gem
+        // store is shared and often read only, and a build that wrote into
+        // it would leave one project's artifacts where another reads them.
+        let libraries = crate::cext::build_out_of_tree(&zeo, gem, &ext.gem_dir, &ext.extconfs)
+            .map_err(|e| format!("building {gem}'s C extension: {e}"))?;
+        let Some(library) = libraries.first() else {
             return Ok(None);
         };
+        let init = library
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(gem)
+            .to_string();
+        let library = library.display().to_string();
         self.built_cexts
             .insert(gem.to_string(), (library.clone(), init.clone()));
         self.record_gem(crate::gem_report::GemRecord {

@@ -103,10 +103,13 @@ fn parse_stub_header(text: &str) -> Option<GemSpec> {
         name,
         version: Some(version),
         require_paths,
+        // RubyGems joins multiple extensions with NUL, like require_paths
+        // (`Gem::Specification#to_ruby` writes `extensions.join "\0"`).
+        // json ships two extconf.rb paths in one field.
         extensions: stubs
             .next()
             .map(|l| {
-                l.split(' ')
+                l.split('\0')
                     .filter(|e| !e.is_empty())
                     .map(String::from)
                     .collect()
@@ -279,6 +282,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(spec.extensions, ["ext/psych/extconf.rb"]);
+    }
+
+    /// RubyGems joins multiple extensions with NUL in the one stub field --
+    /// json ships generator and parser extconf.rb paths this way.
+    #[test]
+    fn stub_extensions_are_nul_joined() {
+        let spec = parse_stub_header(
+            "# stub: json 2.21.2 ruby lib\n# stub: ext/json/ext/generator/extconf.rb\u{0}ext/json/ext/parser/extconf.rb\nGem::Specification.new do |s|\n",
+        )
+        .unwrap();
+        assert_eq!(
+            spec.extensions,
+            [
+                "ext/json/ext/generator/extconf.rb",
+                "ext/json/ext/parser/extconf.rb"
+            ]
+        );
     }
 
     #[test]
