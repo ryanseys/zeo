@@ -789,7 +789,20 @@ fn materialize_methods(
         if compiler.class(class_id).is_builtin && anc_id == crate::compiler::OBJECT_CLASS {
             continue;
         }
-        for name in &own_ivars[anc_id.0 as usize] {
+        // An IMPORTED ancestor has no bodies here -- its layout came from
+        // its package's manifest, recorded on the class itself. The list's
+        // ORDER is that package's compiled slot assignment, which its
+        // bodies bake as constants, so the child's prefix must carry it
+        // verbatim.
+        let anc_imported = compiler.class(anc_id).imported_pkg.is_some();
+        let manifest_ivars;
+        let contributed: &[String] = if anc_imported {
+            manifest_ivars = compiler.class(anc_id).ivars.clone();
+            &manifest_ivars
+        } else {
+            &own_ivars[anc_id.0 as usize]
+        };
+        for name in contributed {
             if !ivars.iter().any(|n| n == name) {
                 ivars.push(name.clone());
             }

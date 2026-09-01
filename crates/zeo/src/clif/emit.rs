@@ -258,7 +258,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
             super::body::define_method_body(em, analyzed, &spec)?;
         }
     }
-    for m in &cm_methods {
+    for m in cm_methods.iter().filter(|m| !m.shared) {
         let spec = super::body::BodyFnSpec {
             func: m.body_fn,
             owner: m.owner,
@@ -483,7 +483,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         };
         super::params::define_trampoline(em, &spec, idx)?;
     }
-    for m in &cm_methods {
+    for m in cm_methods.iter().filter(|m| !m.shared) {
         let idx = em.next_fn_index();
         let (file, label, line, end_line) =
             super::body::method_frame(analyzed, &m.owner_name, &m.name, m.node, true);

@@ -193,7 +193,14 @@ pub(super) fn register_body_def_method(
         body,
         visibility,
     )?;
-    if conditional == Conditional::Yes {
+    // A def on a class a MERGED PACKAGE provides installs at run time, at
+    // its document position: the package's rows travel in its compiled
+    // object, so a static row here could not hold the reopen timeline
+    // (the package body answers before this line runs, this body after).
+    // The install patches the class, which is what deoptimizes the
+    // package's own guarded call sites on it.
+    let reopens_import = compiler.class(class_id).imported_pkg.is_some();
+    if conditional == Conditional::Yes || reopens_import {
         compiler.scopes[sid.0 as usize].runtime_conditional = true;
         // Whether this `def` ran is a runtime fact, so every call site for the
         // name has to ask at run time rather than bind to the body emitted

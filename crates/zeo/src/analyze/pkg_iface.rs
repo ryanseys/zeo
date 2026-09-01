@@ -260,11 +260,12 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
     Ok(())
 }
 
-/// The boundary: a HOST definition that would change a packaged class has
-/// no sound mechanism yet, so it refuses -- naming the PACKAGE, which is
-/// what lets the drop-to-splice tier retry that gem from source. Runs
-/// after the whole registration walk, when every reopen and superclass is
-/// known.
+/// The boundary: the HOST edits of a packaged class that still have no
+/// sound mechanism refuse -- naming the PACKAGE, which is what lets the
+/// drop-to-splice tier retry that gem from source. A host REOPEN (adding
+/// or redefining methods) installs at run time and needs no refusal; a
+/// host SUBCLASS changes nothing about the parent. Runs after the whole
+/// registration walk, when every reopen and superclass is known.
 pub(super) fn refuse_host_edits_of_imports(compiler: &Compiler) -> Result<(), String> {
     let feature_of = |id: ClassId| -> &str {
         compiler
@@ -273,25 +274,8 @@ pub(super) fn refuse_host_edits_of_imports(compiler: &Compiler) -> Result<(), St
             .map(|pi| compiler.hir.pkg_merge[pi as usize].feature.as_str())
             .unwrap_or("?")
     };
-    for (idx, class) in compiler.classes.iter().enumerate() {
+    for class in compiler.classes.iter() {
         if class.imported_pkg.is_some() {
-            // A host `def` on the class lands as an arena-backed (non-extern)
-            // scope in the own-method tables; a body statement of any other
-            // kind lands in `class_body_stmts`. Either one is a reopen.
-            let host_def = class
-                .own_methods
-                .iter()
-                .chain(&class.own_class_methods)
-                .any(|sid| compiler.scope(*sid).extern_symbol.is_none());
-            if host_def || !class.class_body_stmts.is_empty() {
-                return Err(format!(
-                    "this program reopens `{}`, which package '{}' provides; \
-                     a host reopen of a packaged class is not supported yet \
-                     (compile the gem from source instead)",
-                    class.name,
-                    feature_of(ClassId(idx as u32))
-                ));
-            }
             continue;
         }
         let touches = |id: &ClassId| {
@@ -300,16 +284,6 @@ pub(super) fn refuse_host_edits_of_imports(compiler: &Compiler) -> Result<(), St
                 .imported_pkg
                 .is_some()
         };
-        if class.parent.as_ref().is_some_and(touches) {
-            return Err(format!(
-                "`{}` subclasses `{}`, which package '{}' provides; \
-                 subclassing a packaged class is not supported yet \
-                 (compile the gem from source instead)",
-                class.name,
-                compiler.class(class.parent.unwrap()).name,
-                feature_of(class.parent.unwrap())
-            ));
-        }
         if let Some((mid, _)) = class.mixin_order.iter().find(|(mid, _)| touches(mid)) {
             return Err(format!(
                 "`{}` mixes in `{}`, which package '{}' provides; mixing \

@@ -776,7 +776,14 @@ fn walk_class_body(
                 // runtime define at its document position -- the same
                 // treatment a def inside a class-body `if` gets -- and no
                 // `SiteDef` report row (the runtime define drives the hooks).
-                if conditional == Conditional::Yes {
+                // A def on a class a MERGED PACKAGE provides takes the same
+                // road: its static rows live in the package's object, so
+                // the reopen's body must install at run time, where the
+                // install also patches the class and deoptimizes the
+                // package's own guarded sites.
+                if conditional == Conditional::Yes
+                    || compiler.class(class_id).imported_pkg.is_some()
+                {
                     register_body_def_method(compiler, class_id, stmt, conditional)?;
                     compiler.class_body_sites[site_idx].stmts.push(stmt);
                     continue;

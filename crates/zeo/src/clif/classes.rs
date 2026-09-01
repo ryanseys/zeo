@@ -108,6 +108,10 @@ pub(crate) struct CmMethodSpec {
     pub alias_of: Option<String>,
     pub has_blk: bool,
     pub ruby2_keywords: bool,
+    /// `true` = `tramp` names an already-compiled body (a merged package's
+    /// exported class-method trampoline); nothing is compiled here, the
+    /// row simply points at it.
+    pub shared: bool,
 }
 
 /// One SUPERSEDED (or re-installed) body of a method with an observable
@@ -325,6 +329,72 @@ fn boot_extends(compiler: &crate::compiler::Compiler, class: crate::compiler::Cl
         .filter(|m| !compiler.extend_sites.contains_key(&(class, **m)))
         .map(|m| m.0)
         .collect()
+}
+
+/// The package-exported trampoline for `name` on an imported class, if a
+/// merged manifest carries one -- declared as an import on first use.
+/// Every (package, local id) pair aliased onto the class is searched: a
+/// shared namespace maps two packages' locals to one host id, and the
+/// method's trampoline lives in whichever manifest defined it.
+fn imported_tramp(
+    compiler: &crate::compiler::Compiler,
+    em: &mut Emitter,
+    class: crate::compiler::ClassId,
+    name: &str,
+) -> CResult<Option<cranelift_module::FuncId>> {
+    if compiler.class(class).imported_pkg.is_none() {
+        return Ok(None);
+    }
+    let sym = compiler
+        .pkg_class_map
+        .iter()
+        .filter(|(_, v)| **v == class)
+        .find_map(|((mp, l), _)| {
+            compiler.hir.pkg_merge[*mp as usize]
+                .obj
+                .iter()
+                .find(|r| r.class == *l && r.name == name)
+                .map(|r| r.f.clone())
+        });
+    let Some(sym) = sym else {
+        return Ok(None);
+    };
+    let f = em
+        .module
+        .declare_function(&sym, Linkage::Import, &params::value_fn_sig(em))
+        .map_err(|e| CodegenError::internal(format!("importing {sym}: {e}")))?;
+    Ok(Some(f))
+}
+
+/// [`imported_tramp`]'s class-method twin, over the manifests' `cm` rows.
+fn imported_cm_tramp(
+    compiler: &crate::compiler::Compiler,
+    em: &mut Emitter,
+    class: crate::compiler::ClassId,
+    name: &str,
+) -> CResult<Option<cranelift_module::FuncId>> {
+    if compiler.class(class).imported_pkg.is_none() {
+        return Ok(None);
+    }
+    let sym = compiler
+        .pkg_class_map
+        .iter()
+        .filter(|(_, v)| **v == class)
+        .find_map(|((mp, l), _)| {
+            compiler.hir.pkg_merge[*mp as usize]
+                .cm
+                .iter()
+                .find(|r| r.class == *l && r.name == name)
+                .map(|r| r.f.clone())
+        });
+    let Some(sym) = sym else {
+        return Ok(None);
+    };
+    let f = em
+        .module
+        .declare_function(&sym, Linkage::Import, &params::value_fn_sig(em))
+        .map_err(|e| CodegenError::internal(format!("importing {sym}: {e}")))?;
+    Ok(Some(f))
 }
 
 pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<CollectedClasses> {
@@ -817,6 +887,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 hir_params: p.clone(),
                 has_blk,
                 ruby2_keywords: scope.ruby2_keywords,
+                shared: false,
             });
             cm_def_tramps.push((entry.def, tramp));
         }
@@ -1239,6 +1310,54 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 }
             };
             let has_blk = scope.needs_block_param();
+            // A PACKAGE-DEFINED body materialized onto this class (a host
+            // subclass of a packaged class inherits it): the row names the
+            // package's exported trampoline -- the compiled body travels in
+            // the package object, and an arena compile of the body-less
+            // scope would emit an empty shell that answers nil.
+            if scope.extern_symbol.is_some() {
+                let Some(tramp) =
+                    imported_tramp(compiler, em, scope.defining_class, &mname)?
+                else {
+                    // No exported trampoline (the package never emitted this
+                    // shape); dispatch walks to the merged parent row.
+                    continue;
+                };
+                match scope.visibility {
+                    crate::hir::Visibility::Private => vis.push(statics::VisRowSpec {
+                        class: idx as u32,
+                        name: mname.clone(),
+                        verb: 0,
+                    }),
+                    crate::hir::Visibility::Protected => vis.push(statics::VisRowSpec {
+                        class: idx as u32,
+                        name: mname.clone(),
+                        verb: 1,
+                    }),
+                    crate::hir::Visibility::Public => {}
+                }
+                methods.push(ObjMethodSpec {
+                    is_own: false,
+                    super_target_only: false,
+                    dyn_ivars: false,
+                    alias_of: scope.alias_of.clone(),
+                    defining_class: scope.defining_class,
+                    lexical_home: scope.lexical_home,
+                    owner: ClassId(idx as u32),
+                    owner_name: name.clone(),
+                    name: mname,
+                    body: Vec::new(),
+                    node: scope.def_node,
+                    tramp,
+                    accessor: None,
+                    body_fn: None,
+                    hir_params: p.clone(),
+                    has_blk,
+                    ruby2_keywords: scope.ruby2_keywords,
+                    shared: true,
+                });
+                continue;
+            }
             // A definition on the UNIVERSAL spine is already emitted once by
             // `collect::collect_methods`, under its `Object#name` symbol, and
             // every class in the program inherits it. Emitting a copy per
@@ -1569,6 +1688,44 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             if scope.runtime_conditional {
                 continue;
             }
+            // A PACKAGE-DEFINED class method materialized onto this class
+            // (a host subclass inherits it): the row names the package's
+            // exported class-method trampoline -- the class-method channel
+            // reads flattened rows, and an arena compile of the body-less
+            // scope would answer nil.
+            if scope.extern_symbol.is_some() {
+                let Some(tramp) =
+                    imported_cm_tramp(compiler, em, scope.defining_class, &mname)?
+                else {
+                    continue;
+                };
+                if entry.visibility == crate::hir::Visibility::Private {
+                    vis.push(statics::VisRowSpec {
+                        class: idx as u32,
+                        name: mname.clone(),
+                        verb: 3,
+                    });
+                }
+                class_methods.push(CmMethodSpec {
+                    cm_row: true,
+                    box_id: class.box_id,
+                    alias_of: scope.alias_of.clone(),
+                    defining_class: scope.defining_class,
+                    lexical_home: scope.lexical_home,
+                    owner: ClassId(idx as u32),
+                    owner_name: name.clone(),
+                    name: mname,
+                    body: Vec::new(),
+                    node: scope.def_node,
+                    tramp,
+                    body_fn: tramp,
+                    hir_params: scope.params.clone(),
+                    has_blk: scope.needs_block_param(),
+                    ruby2_keywords: scope.ruby2_keywords,
+                    shared: true,
+                });
+                continue;
+            }
 
             let p = &scope.params;
             if let Err(what) = super::emit::check_params(p) {
@@ -1622,6 +1779,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                 hir_params: p.clone(),
                 has_blk,
                 ruby2_keywords: scope.ruby2_keywords,
+                shared: false,
             });
         }
         emit_singleton_super_targets(
@@ -1887,6 +2045,7 @@ fn emit_singleton_super_targets(
             hir_params: p.clone(),
             has_blk,
             ruby2_keywords: scope.ruby2_keywords,
+            shared: false,
         });
     }
     Ok(())

@@ -287,52 +287,74 @@ fn a_host_call_site_compiles_direct_into_the_package_body() {
 }
 
 #[test]
-fn a_host_reopen_of_a_package_class_is_refused_by_name() {
+fn a_host_reopen_of_a_package_class_installs_at_its_position() {
+    // The package's rows travel in its compiled object, so the host's
+    // reopen installs at RUN time, at its document position: before the
+    // reopen the package body answers, after it the host's -- ruby's
+    // install-where-it-stands, across the package boundary. The install
+    // patches the class, which deoptimizes the package's own guarded
+    // sites. Verified against ruby 4.0.6.
     let dir = scratch("reopen");
-    let object = build_package(&dir);
+    let object = build_inline_package(
+        &dir,
+        "leafgem",
+        "class Leafgem\n  def tag = :original\n  def stable = :stable\nend\n",
+    );
     let host = dir.join("host.rb");
     std::fs::write(
         &host,
-        "require \"pureleaf\"\nclass Pureleaf\n  def extra = 1\nend\n",
+        "require \"leafgem\"\none = Leafgem.new\np one.tag\np defined?(one.extra)\n\
+         class Leafgem\n  def tag = :patched\n  def extra = :extra\nend\n\
+         p one.tag\np one.extra\np one.stable\n",
     )
     .expect("write host");
-    let out = run(zeo()
+    let bin = dir.join("host-bin");
+    ok(zeo()
         .arg("--experimental-use-pkg")
         .arg(&object)
         .arg("-o")
-        .arg(dir.join("host-bin"))
+        .arg(&bin)
         .arg(&host)
         .env("ZEO_CACHE", "0"));
-    assert!(!out.status.success(), "a host reopen must refuse");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("reopens `Pureleaf`"),
-        "the refusal names the reopen: {err}"
+    assert_eq!(
+        ok(&mut Command::new(&bin)),
+        ":original\nnil\n:patched\n:extra\n:stable\n"
     );
 }
 
 #[test]
-fn a_host_subclass_of_a_package_class_is_refused_by_name() {
+fn a_host_subclass_of_a_package_class_inherits_its_surface() {
+    // The child's rows name the package's exported trampolines; its ivar
+    // layout starts with the parent's manifest list verbatim (the package
+    // bodies bake those slots); `super` reaches the package body; and the
+    // inherited class method rides the flattened class-method channel.
+    // Verified against ruby 4.0.6.
     let dir = scratch("subclass");
-    let object = build_package(&dir);
+    let object = build_inline_package(
+        &dir,
+        "leafgem2",
+        "class Leafgem2\n  def initialize(n = 5)\n    @n = n\n  end\n  def n = @n\n  def tag = :original\n  def self.kind = :leaf_kind\nend\n",
+    );
     let host = dir.join("host.rb");
     std::fs::write(
         &host,
-        "require \"pureleaf\"\nclass Sprout < Pureleaf\nend\np Sprout.new.leaf\n",
+        "require \"leafgem2\"\n\
+         class Sprout < Leafgem2\n  def initialize\n    super(7)\n    @extra2 = 1\n  end\n  def tag = [:sprouted, super]\n  def both = [@n, @extra2]\nend\n\
+         p Leafgem2.new.n\ns = Sprout.new\np s.n\np s.both\np s.tag\np Sprout.kind\n\
+         p Sprout.instance_methods(false).sort\n",
     )
     .expect("write host");
-    let out = run(zeo()
+    let bin = dir.join("host-bin");
+    ok(zeo()
         .arg("--experimental-use-pkg")
         .arg(&object)
         .arg("-o")
-        .arg(dir.join("host-bin"))
+        .arg(&bin)
         .arg(&host)
         .env("ZEO_CACHE", "0"));
-    assert!(!out.status.success(), "a host subclass must refuse");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("subclasses `Pureleaf`"),
-        "the refusal names the subclass: {err}"
+    assert_eq!(
+        ok(&mut Command::new(&bin)),
+        "5\n7\n[7, 1]\n[:sprouted, :original]\n:leaf_kind\n[:both, :tag]\n"
     );
 }
 
@@ -773,11 +795,27 @@ fn the_package_cache_serves_hits_and_invalidates_on_edit() {
 
 #[test]
 fn a_refused_artifact_drops_to_the_source_splice() {
-    // The fallback tier: the same host reopen that REFUSES when only the
-    // artifact exists compiles from source when the gem is resolvable --
-    // with a warning naming the package, never silently.
+    // The fallback tier: the same foreign-target artifact that REFUSES
+    // when it is the only copy compiles from source when the gem is
+    // resolvable -- with a warning naming the package, never silently.
+    // (A host reopen no longer triggers a drop: it installs at run time
+    // and composes with the artifact.)
     let dir = scratch("drop");
-    let object = build_package(&dir);
+    let artifact = dir.join("pureleaf.zeopkg");
+    ok(zeo()
+        .arg("--experimental-pkg")
+        .arg("pureleaf")
+        .arg("-o")
+        .arg(&artifact)
+        .arg(fixture_gem().join("lib/pureleaf.rb"))
+        .env("ZEO_CACHE", "0"));
+    let (manifest, object) = zeo::package::read_zeopkg(&artifact).expect("read");
+    let foreign = manifest.replace(
+        &format!("\"target\": \"{}\"", target_of(&manifest)),
+        "\"target\": \"wasm32-unknown-unknown\"",
+    );
+    assert_ne!(foreign, manifest, "the target was rewritten");
+    zeo::package::write_zeopkg(&artifact, &foreign, &object).expect("rewrite");
     let host = dir.join("host.rb");
     std::fs::write(
         &host,
@@ -788,7 +826,7 @@ fn a_refused_artifact_drops_to_the_source_splice() {
     let bin = dir.join("host-bin");
     let out = run(zeo()
         .arg("--experimental-use-pkg")
-        .arg(&object)
+        .arg(&artifact)
         .arg("--gems")
         .arg(fixture_gem().parent().expect("fixtures dir"))
         .arg("-o")
