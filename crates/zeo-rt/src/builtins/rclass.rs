@@ -95,6 +95,15 @@ fn user_initialize_construct(
     if crate::builtins::registered_table(cid).is_none() {
         return Ok(None);
     }
+    // A C extension's registered allocator REPLACES whatever the class had
+    // -- CRuby's rule. The official strscan over a retired builtin is the
+    // case: its C `initialize` reads the TypedData only its own allocator
+    // makes, so the unfused blank-native road here handed it the wrong
+    // receiver. `constructor_of` takes the C road on the fall-through.
+    #[cfg(feature = "cext")]
+    if crate::cext::method::has_alloc_func(cid) {
+        return Ok(None);
+    }
     let init = crate::symbol::wk::initialize();
     if !crate::dispatch::reopened_initialize_in_chain(cid, init) {
         return Ok(None);
@@ -247,6 +256,19 @@ ruby_class! {
                 &[],
                 crate::dispatch::MissingReason::NoEntry,
             ));
+        }
+        // A C extension's registered allocator replaces the builtin's own
+        // blank -- same rule as `Class#new`'s unfused road above.
+        #[cfg(feature = "cext")]
+        if crate::cext::method::has_alloc_func(cid) {
+            return match crate::dispatch::allocate_of(cid) {
+                Some(v) => Ok(v),
+                None => Err(crate::signal::take_pending().unwrap_or_else(|| {
+                    let n = crate::dispatch::class_name(cid)
+                        .unwrap_or_else(|| format!("#<Class:{}>", cid.0));
+                    type_error!("allocator undefined for {n}")
+                })),
+            };
         }
         if let Some(v) = builtin_allocate(cid) {
             return Ok(v);
