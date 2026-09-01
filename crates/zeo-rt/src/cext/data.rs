@@ -135,6 +135,10 @@ pub struct CData {
     /// no scope can see it. Released when the object drops. See
     /// [`retain_write`].
     retained: parking_lot::Mutex<Vec<usize>>,
+    /// Handles the object's own MARK function reports -- the old-style
+    /// no-write-barrier road, refreshed at every C scope pop. See
+    /// [`CData::refresh_mark_pins`].
+    mark_pinned: parking_lot::Mutex<Vec<usize>>,
 }
 
 // SAFETY: `dtype` points at a `static const rb_data_type_t` in the
@@ -153,6 +157,7 @@ impl CData {
             untyped: (None, None),
             frozen: AtomicBool::new(false),
             retained: parking_lot::Mutex::new(Vec::new()),
+            mark_pinned: parking_lot::Mutex::new(Vec::new()),
         })
     }
 
@@ -165,6 +170,7 @@ impl CData {
             untyped: (mark, free),
             frozen: AtomicBool::new(false),
             retained: parking_lot::Mutex::new(Vec::new()),
+            mark_pinned: parking_lot::Mutex::new(Vec::new()),
         })
     }
 
@@ -238,6 +244,43 @@ impl CData {
             unsafe { (*self.dtype).function.dfree }
         }
     }
+
+    /// The mark-driven retention half of [`retain_write`]: an OLD-STYLE
+    /// extension stores a `VALUE` in its C struct with a plain assignment
+    /// and relies on its mark function to root it -- zlib's zstream keeps
+    /// its buffer that way, and the scope-lifetime handle left it dangling
+    /// between calls. Run at every C scope pop for the scope's `CData`
+    /// handles: whatever the mark function reports NOW stays pinned while
+    /// the object lives, and an edge it stops reporting is released.
+    fn refresh_mark_pins(&self) {
+        let Some(mark) = self.mark_fn() else {
+            return;
+        };
+        let data = self.cell.data.load(Ordering::Relaxed) as *mut c_void;
+        if data.is_null() || mark as usize == usize::MAX || retaining() || marking() {
+            return;
+        }
+        RETAIN_SINK.with_borrow_mut(|s| *s = Some(Vec::new()));
+        // SAFETY: `mark` came from the descriptor the extension registered
+        // and `data` from the same object's slot.
+        unsafe { mark(data) };
+        let edges = RETAIN_SINK.with_borrow_mut(Option::take).unwrap_or_default();
+        let mut pins = self.mark_pinned.lock();
+        for &e in &edges {
+            if !super::value::is_special_const(e) && !pins.contains(&e) {
+                super::handles::pin_raw(e);
+                pins.push(e);
+            }
+        }
+        pins.retain(|&old| {
+            if edges.contains(&old) {
+                true
+            } else {
+                super::handles::unpin(old);
+                false
+            }
+        });
+    }
 }
 
 impl Drop for CData {
@@ -249,6 +292,9 @@ impl Drop for CData {
     fn drop(&mut self) {
         // The write barrier's pins go with the object -- see [`retain_write`].
         for addr in self.retained.get_mut().drain(..) {
+            super::handles::unpin(addr);
+        }
+        for addr in self.mark_pinned.get_mut().drain(..) {
             super::handles::unpin(addr);
         }
         let p = self.cell.data.swap(0, Ordering::Relaxed) as *mut c_void;
@@ -300,6 +346,38 @@ thread_local! {
     /// -- which is what it is in MRI outside a GC too. An extension is free
     /// to call it whenever it likes.
     static MARK_SINK: RefCell<Option<Vec<RubyValue>>> = const { RefCell::new(None) };
+    /// Where `rb_gc_mark` puts the RAW `VALUE` while a RETENTION sweep is
+    /// running -- see [`CData::refresh_mark_pins`]. Raw, because retention
+    /// pins the handle word itself.
+    static RETAIN_SINK: RefCell<Option<Vec<usize>>> = const { RefCell::new(None) };
+}
+
+/// Whether a retention sweep is collecting -- `rb_gc_mark`'s second listener.
+pub fn retaining() -> bool {
+    RETAIN_SINK.with_borrow(Option::is_some)
+}
+
+/// Record one raw edge for the running retention sweep.
+pub fn retain_edge(v: super::value::Value) {
+    RETAIN_SINK.with_borrow_mut(|s| {
+        if let Some(sink) = s.as_mut() {
+            sink.push(v);
+        }
+    });
+}
+
+/// The scope-pop hook behind [`CData::refresh_mark_pins`]: if the popped
+/// handle is a `CData`, refresh its mark-driven pins.
+pub(super) fn refresh_marks_for(addr: usize) {
+    if super::value::is_special_const(addr) {
+        return;
+    }
+    let RubyValue::Object(o) = (unsafe { super::convert::value_of(addr) }) else {
+        return;
+    };
+    if let Some(d) = o.as_any().downcast_ref::<CData>() {
+        d.refresh_mark_pins();
+    }
 }
 
 /// `rb_gc_mark`'s Rust half: record one edge, if anything is listening.
@@ -429,6 +507,7 @@ impl RubyObject for CData {
             untyped: (self.untyped.0, None),
             frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
             retained: parking_lot::Mutex::new(Vec::new()),
+            mark_pinned: parking_lot::Mutex::new(Vec::new()),
         })
     }
 

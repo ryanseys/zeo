@@ -266,12 +266,18 @@ crate::cext_fn! {
         if super::data::marking() {
             super::data::mark_edge(unsafe { value_of(v) });
         }
+        if super::data::retaining() {
+            super::data::retain_edge(v);
+        }
         Ok(())
     }
 
     fn rb_gc_mark_movable(v: Value) -> () {
         if super::data::marking() {
             super::data::mark_edge(unsafe { value_of(v) });
+        }
+        if super::data::retaining() {
+            super::data::retain_edge(v);
         }
         Ok(())
     }

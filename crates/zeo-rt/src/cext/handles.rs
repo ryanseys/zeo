@@ -354,21 +354,27 @@ pub(super) fn pin_raw(addr: usize) {
 }
 
 /// Release one pin. The handle goes when the last one does.
+///
+/// The removed entry drops AFTER the table lock is released: dropping it
+/// can drop the last reference to a `CData`, whose own `Drop` releases the
+/// handles ITS mark function pinned -- an `unpin` inside an `unpin`, which
+/// deadlocked on the non-reentrant table mutex while the entry dropped
+/// under the lock.
 pub(super) fn unpin(addr: usize) {
-    with_table(|t| {
+    let dropped = with_table(|t| {
         let addr = Addr(addr);
-        let Some(entry) = t.entries.get_mut(&addr) else {
-            return;
-        };
+        let entry = t.entries.get_mut(&addr)?;
         entry.pins -= 1;
         if entry.pins > 0 {
-            return;
+            return None;
         }
         let entry = t.entries.remove(&addr).expect("just looked it up");
         if entry.handle.identity != 0 {
             t.by_identity.remove(&entry.handle.identity);
         }
+        Some(entry)
     });
+    drop(dropped);
 }
 
 /// The handle a `VALUE` points at.

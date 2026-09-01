@@ -102,6 +102,12 @@ impl Drop for Scope {
                 .flatten()
                 .unwrap_or_default()
         });
+        // A `VALUE` an extension stored in its C struct with a plain
+        // assignment survives on its owner's MARK function -- refreshed
+        // here, while the scope's pins still hold everything alive.
+        for &addr in &pinned {
+            super::data::refresh_marks_for(addr);
+        }
         for addr in pinned {
             super::handles::unpin(addr);
         }
@@ -151,6 +157,10 @@ pub(super) fn unwind_to(depth: usize) {
         else {
             return;
         };
+        // Same rule as `Scope::drop`: mark-rooted stores survive the raise.
+        for &addr in &pinned {
+            super::data::refresh_marks_for(addr);
+        }
         for addr in pinned {
             super::handles::unpin(addr);
         }
