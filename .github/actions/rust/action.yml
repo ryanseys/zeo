@@ -17,9 +17,19 @@ runs:
     # that has never been green therefore never had a cache -- every run was a
     # cold build of the vendored OpenSSL, onig, libffi and prism on top of the
     # workspace. A red run's dependencies are as good as a green run's.
+    #
+    # `cache-workspace-crates`: by default the action DELETES the workspace's
+    # own artifacts before saving and keeps only dependencies, so zeo-rt
+    # (114k lines) and zeo were rebuilt from scratch on every run even with a
+    # warm cache. With this on, cargo's fingerprints decide what rebuilds: an
+    # edit to zeo-rt rebuilds zeo-rt and what depends on it, nothing else.
+    # Incremental compilation stays off (the action sets CARGO_INCREMENTAL=0):
+    # its artifacts are gigabytes per crate here, and the 10 GB cache would
+    # thrash.
     - uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
+        cache-workspace-crates: true
 
     # .cargo/config.toml pins `jobs = 10` for the 12-core dev box; a 4-vCPU
     # runner oversubscribed by that fights itself. The env var outranks the
