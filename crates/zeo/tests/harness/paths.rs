@@ -12,8 +12,11 @@ pub fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// The ruby oracle: `mise which ruby` (the `mise.toml` pin), else bare `ruby`
-/// off PATH. CI has no mise and puts the same pinned ruby on PATH.
+/// The ruby oracle: `mise which ruby` (the `mise.toml` pin), else the `ruby`
+/// on PATH. CI has no mise and puts the same pinned ruby on PATH.
+///
+/// Always an ABSOLUTE path: a caller that clears the child's environment
+/// (the parity test) has no PATH left to resolve a bare name with.
 #[allow(dead_code)] // the `checks` binary includes this file and asks no oracle
 pub fn resolve_ruby(cwd: &Path) -> PathBuf {
     let out = std::process::Command::new("mise")
@@ -29,7 +32,12 @@ pub fn resolve_ruby(cwd: &Path) -> PathBuf {
             return PathBuf::from(path);
         }
     }
-    PathBuf::from("ruby")
+    std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).map(|d| d.join("ruby")).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from("ruby"))
 }
 
 /// `target/<profile>/`, where cargo puts this package's binaries.

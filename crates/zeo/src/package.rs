@@ -582,6 +582,13 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         perms.set_mode(0o555);
         std::fs::set_permissions(&frozen, perms.clone()).expect("chmod");
+        // root ignores mode bits (the podman loop runs as root), so the
+        // read-only half has no premise there.
+        if std::fs::write(frozen.join("probe"), b"").is_ok() {
+            eprintln!("skipping the read-only half: this user can write a 0o555 directory");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
         let home = store_artifact_home(&frozen, "t", "gem", "1.0.0");
         assert!(!store_install(&home, &artifact).expect("degrade"));
         perms.set_mode(0o755);
