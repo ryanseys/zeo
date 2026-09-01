@@ -36,6 +36,7 @@ use zeo_dsl::ClassSpec;
 
 fn main() {
     export_cext_surface();
+    size_the_main_thread_stack();
 
     let manifest_dir =
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
@@ -646,6 +647,19 @@ fn surface_from_spec(spec: &ClassSpec, out: &mut Vec<Surface>) {
 /// argument. It warns, picks an arbitrary entry point, and links a binary
 /// that starts in the wrong place -- which surfaced as a `capacity overflow`
 /// panic from a thread with no name, nowhere near any zeo code.
+/// `zeo file.rb --backend jit` runs the compiled program on THIS binary's
+/// main thread (`zeo_rt::exec::run_main`: on macOS the top level runs on
+/// the process main thread, the one AppKit demands), so the driver's main
+/// thread needs the stack an AOT binary's link line gives it -- 64 MiB,
+/// `zeo_rt::MAIN_STACK_SIZE`, which `backend::link::main_stack_link_arg`
+/// spells the same way (a test there pins this literal to it). Linux sizes
+/// a spawned thread instead; an ELF has no such load command.
+fn size_the_main_thread_stack() {
+    if cfg!(target_vendor = "apple") {
+        println!("cargo:rustc-link-arg-bins=-Wl,-stack_size,0x4000000");
+    }
+}
+
 fn export_cext_surface() {
     if cfg!(target_vendor = "apple") {
         println!("cargo:rustc-link-arg-bins=-Wl,-export_dynamic");

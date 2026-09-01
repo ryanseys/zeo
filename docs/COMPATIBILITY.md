@@ -649,6 +649,22 @@ cannot read another's execution state:
   the rule `TracePoint.new` already follows for the events Zeo cannot raise:
   refuse loudly rather than accept a handler that never runs.
 
+Which OS thread `Thread.main` is differs by platform. On macOS the top level
+runs on the PROCESS main thread, as in CRuby -- `pthread_main_np` answers 1,
+and AppKit, WebKit and Metal, which refuse any other thread, work from a
+compiled program (`tests/macos/the_toplevel_runs_on_the_process_main_thread.rb`
+opens an `NSWindow`). The linked binary carries a 64 MiB main-thread stack
+(`-stack_size`), and the `zeo` driver does too, so `--backend jit` runs the
+program on the same thread with the same depth. On Linux the top level runs on
+a dedicated 64 MiB OS thread named `ruby-main` while the process main thread
+waits in a join: an ELF cannot size the main stack at link time, and the
+depth guarantee outranks thread identity where no framework demands it. So
+there `Thread.main.native_thread_id` is not `Process.pid`, and `at_exit`
+handlers run on the joining thread. Everything Ruby can observe about
+`Thread.main` -- one object, `Thread.current` at the top level, `#status`,
+interrupt delivery, `trap` -- is the same on both
+(`tests/the_toplevel_thread_is_the_main_thread.rb`).
+
 ### `#source_location` on a row ruby writes in Ruby
 
 CRuby implements 329 method rows across 21 `<internal:>` files -- Ruby it

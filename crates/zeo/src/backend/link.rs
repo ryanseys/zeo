@@ -310,6 +310,13 @@ pub fn natlibs_for(triple: &str) -> Result<&'static [&'static str], String> {
     }
 }
 
+/// ld64's `-stack_size` takes a page-multiple hex byte count. The `zeo`
+/// driver's own build spells the same number for its JIT runs
+/// (`build.rs`); a test below keeps the two in step.
+pub fn main_stack_link_arg() -> String {
+    format!("-Wl,-stack_size,{:#x}", zeo_rt::MAIN_STACK_SIZE)
+}
+
 /// The host's target triple, for the natlibs table and the link shape.
 pub fn host_triple() -> &'static str {
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
@@ -388,6 +395,10 @@ pub fn link_binary(
         cmd.arg(format!("-Wl,-force_load,{}", archive.display()));
         cmd.args(natlibs);
         cmd.arg("-Wl,-dead_strip");
+        // The top level runs on the process main thread here (`zeo_rt::
+        // exec::run_main`), whose stack only the executable's `LC_MAIN` can
+        // size; this is the depth guarantee the spawned thread gives Linux.
+        cmd.arg(main_stack_link_arg());
         if loads_cext {
             cmd.arg("-Wl,-export_dynamic");
         }
@@ -515,6 +526,22 @@ mod tests {
             natlibs_for(t).unwrap();
         }
         natlibs_for("wasm32-unknown-unknown").unwrap_err();
+    }
+
+    /// `build.rs` cannot import the runtime, so it spells the driver's main
+    /// stack as a literal; this is what keeps that literal equal to the one
+    /// every AOT binary is linked with.
+    #[test]
+    fn the_driver_build_spells_the_same_main_stack() {
+        let build_rs = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("build.rs"),
+        )
+        .expect("crates/zeo/build.rs");
+        assert!(
+            build_rs.contains(&main_stack_link_arg()),
+            "build.rs must pass {} to the driver link",
+            main_stack_link_arg()
+        );
     }
 
     /// Where the probe build writes. Beside the ambient target dir when

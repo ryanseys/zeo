@@ -545,27 +545,31 @@ pub fn analyze_snippet(
 /// The JIT run mode (`--backend jit`): compile in-process and run without
 /// an object file, linker, or on-disk binary. Never returns on success --
 /// the process exits with the program's status.
+///
+/// The compile happens on the compiler thread; the program then runs on the
+/// CALLER's thread, which from the CLI is the process main thread -- the one
+/// an AOT binary's top level runs on too (`zeo_rt::exec::run_main`), so the
+/// two modes agree about `Thread.main`, and a macOS program may open a
+/// window under either. The driver's `build.rs` sizes that thread's stack.
 pub fn run_jit_with(
     source: &str,
     opts: &CompileOptions,
     program_name: &str,
     program_args: &[String],
 ) -> Result<std::convert::Infallible, CompileError> {
-    std::thread::scope(|scope| {
+    let ready = std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("zeo-compile".into())
             .stack_size(COMPILE_STACK_SIZE)
             .spawn_scoped(scope, || {
                 let (analyzed, _front) = analyze_on_this_thread(source, opts)?;
-                match backend::jit::run(analyzed, program_name, program_args) {
-                    Err(err) => Err(err),
-                    Ok(never) => match never {},
-                }
+                backend::jit::compile(analyzed)
             })
             .expect("spawning the compiler thread")
             .join()
             .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
-    })
+    })?;
+    backend::jit::run(ready, program_name, program_args)
 }
 
 /// The per-function CLIF text (`--emit-clif`, the snapshot tests): the

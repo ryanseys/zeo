@@ -101,11 +101,13 @@ pub fn sole_thread() -> bool {
     SOLE.with(|s| s.get())
 }
 
-/// The exit handoff: the REAL main thread resumes after `ruby-main` joined
-/// (`exec::run_main`) and runs `at_exit`/finalizers -- touching objects that
+/// The exit handoff on the platforms where the top level runs on a spawned
+/// `ruby-main` thread (`exec::run_program`): the REAL main thread resumes
+/// after the join and runs `at_exit`/finalizers -- touching objects that
 /// thread stamped. Sequentially safe, but a DIFFERENT thread, so it must not
 /// keep a sole-thread claim of its own: clearing it routes the remaining
-/// exit-path work through the locks.
+/// exit-path work through the locks. Where the top level runs on the main
+/// thread itself (macOS) there is no handoff and the claim stays valid.
 pub fn clear_sole_thread() {
     SOLE.with(|s| s.set(false));
 }

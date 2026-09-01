@@ -138,7 +138,7 @@ pub use dispatch::{
 };
 pub use encoding::{EncodingId, StrBuf};
 pub use eval::{eval_string, eval_value, eval_value_in_scope};
-pub use exec::{at_exit_register, run_at_exit, run_main};
+pub use exec::{MAIN_STACK_SIZE, at_exit_register, run_at_exit, run_main};
 /// The compiled-prologue `TracePoint#self` note (`ext::tracepoint`) -- boxes
 /// the receiver only while a trace hook is armed; free (and a no-op) in
 /// builds without the tracepoint ext.

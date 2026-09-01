@@ -289,6 +289,8 @@ fn every_leg_skip_sidecar_is_acknowledged_here() {
         "io_file_stat_rows.rb",
         // Installs a Ruby IMP on an Objective-C class through the runtime.
         "a_callback_exception_surfaces_from_the_c_call.rb",
+        // Opens an AppKit NSWindow, which only the process main thread may.
+        "the_toplevel_runs_on_the_process_main_thread.rb",
     ];
     const JIT_ONLY: &[&str] = &[
         "an_ffi_type_crosses_between_snippets.rb",

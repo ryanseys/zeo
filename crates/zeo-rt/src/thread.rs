@@ -280,8 +280,8 @@ std::thread_local!(static CURRENT: PlMutex<Option<RThread>> = const { PlMutex::n
 /// [`is_ruby_thread`]. `execution_id` counts from 1, so zero is unambiguous.
 static MAIN_EXECUTION: AtomicU64 = AtomicU64::new(0);
 
-/// Marks this OS thread as the one the toplevel runs on. Called once, from the
-/// `ruby-main` spawn that both backends enter through.
+/// Marks this OS thread as the one the toplevel runs on. Called once, from
+/// `exec::run_main`'s program closure, which both backends enter through.
 pub fn claim_main_os_thread() {
     MAIN_EXECUTION.store(execution_id(), Ordering::Relaxed);
 }

@@ -8,21 +8,46 @@ use crate::diagnostics::CompileError;
 use std::ffi::CString;
 use std::os::raw::c_char;
 
-/// Compile `analyzed` into executable memory, run it, and exit this
-/// process with the program's status. Takes the analysis BY VALUE so the
-/// HIR arena is dropped before the program's `main` runs -- the compiler's
-/// memory is handed back first, exactly like the AOT child process
-/// starting fresh. A codegen error's span is resolved against the file
-/// table HERE, the last point the table is alive.
-pub fn run(
-    analyzed: crate::analyze::Analyzed,
-    program_name: &str,
-    program_args: &[String],
-) -> Result<std::convert::Infallible, CompileError> {
+/// A program finalized into this process's memory, waiting to be entered.
+///
+/// Built on the compiler thread (`Emitter` and the HIR arena need its 64
+/// MiB), run on the process main thread -- the thread AppKit and friends
+/// demand, and the one `zeo_rt::exec::run_main` runs the top level on for a
+/// macOS program. The handoff is the only reason this type exists.
+pub struct Ready {
+    jitted: crate::clif::emit::Jitted,
+}
+
+// SAFETY: `Jitted` holds a `JITModule` (boxed lookup closures without a
+// `Send` bound, so the auto trait is withheld) and a raw code pointer. Neither
+// is bound to the thread that built it: the module's memory is a process-wide
+// mapping, the closures are plain functions over `'static` data, and the
+// pointer names a finalized function in that mapping. The value crosses
+// exactly once, from a compiler thread that has already been joined to the
+// thread that runs it, and no reference stays behind.
+unsafe impl Send for Ready {}
+
+/// Compile `analyzed` into executable memory. Takes the analysis BY VALUE so
+/// the HIR arena is dropped before the program's `main` runs -- the
+/// compiler's memory is handed back first, exactly like the AOT child process
+/// starting fresh. A codegen error's span is resolved against the file table
+/// HERE, the last point the table is alive.
+pub fn compile(analyzed: crate::analyze::Analyzed) -> Result<Ready, CompileError> {
     let jitted = crate::clif::emit::compile_jit(&analyzed)
         .map_err(|e| CompileError::from_codegen(e, &analyzed.compiler.hir.files))?;
     drop(analyzed);
     crate::memguard::set_phase(crate::memguard::Phase::Build);
+    Ok(Ready { jitted })
+}
+
+/// Run a compiled program on the calling thread and exit this process with
+/// its status.
+pub fn run(
+    ready: Ready,
+    program_name: &str,
+    program_args: &[String],
+) -> Result<std::convert::Infallible, CompileError> {
+    let Ready { jitted } = ready;
 
     // argv as the program sees it: `$0` = the script (ruby's shape -- the
     // AOT binary's argv[0] is its own path only because a binary exists).

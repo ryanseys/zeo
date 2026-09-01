@@ -211,7 +211,7 @@ pub(crate) fn terminate_coro(mut coro: FiberCoro) {
 }
 
 /// The Terminate-protocol drain for this thread's `Fiber` table -- called at
-/// the thread tails (`exec::run_main`'s ruby-main closure, `Thread.new`
+/// the thread tails (`exec::run_main`'s program closure, `Thread.new`
 /// bodies) while every thread-local is still alive.
 pub fn terminate_thread_fibers() {
     let drained: Vec<FiberCoro> = FIBERS.with(|f| {
