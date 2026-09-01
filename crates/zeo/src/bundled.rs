@@ -46,11 +46,12 @@ pub struct Library {
 
 /// zeo's own libraries, relative to the repo root.
 pub const EXT_TIER: &str = "crates/zeo-rt/ext";
-/// The pure-Ruby gem tier: one STANDARD gem directory per name
+/// The zeo-AUTHORED pure-Ruby gem tier: one STANDARD gem directory per name
 /// (`<name>.gemspec` + `lib/`), served when the matching Rust ext is absent
-/// from the build -- the dual-build switch's other half. A build that
-/// carries the Rust half answers the require natively and never reaches
-/// this copy, the same way a builtin outranks a store gem.
+/// from the build -- the dual-build switch's other half. Only for ports
+/// whose content matches NO published release (a StringScanner port over
+/// zeo's regex engine); a verbatim official pure gem (`base64`) rides the
+/// lock instead and resolves from `vendor/bundle` like any bundled gem.
 pub const PURE_TIER: &str = "crates/zeo-rt/gems";
 /// The committed bootstrap tier, relative to the repo root.
 pub const BOOTSTRAP_TIER: &str = "lib/ruby";
