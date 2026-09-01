@@ -27,7 +27,7 @@ BUNDLE ?= bundle
 # file of either name would have turned that target into a silent no-op.
 .PHONY: all help deps test test-jit test-aot test-memcheck \
         test-typed test-packaged test-milestones test-config test-platform test-size \
-        test-all lint ratchet no-big-files hygiene check-generated tool-versions ci-local \
+        test-smoke test-all lint ratchet no-big-files hygiene check-generated tool-versions ci-local \
         check-batch gate bench pgo install linux clean
 
 .DEFAULT_GOAL := all
@@ -121,6 +121,22 @@ ci-local: tool-versions lint hygiene check-generated  ## the non-test CI jobs, v
 # differ: a dev wants the first failure, a batch wants the whole list.
 test-jit: all  ## every suite through the in-process JIT, to the end
 	$(NEXTEST) --workspace --no-fail-fast
+
+# The push tier. Every unit test (in-process, ~40 test-seconds for 1,270),
+# plus ONE deterministic quarter of the suites that spawn a compile per case
+# -- e2e, the goldens, checks: ~1,600 test-seconds for 5,900, and the whole
+# of a runner's time. `SMOKE_SLICE` (1-4) picks the quarter by nextest's
+# name hash; CI rotates it with the run number, so every case runs at least
+# every fourth push, and a red slice reproduces here with the same number.
+# Nightly runs the whole set. The first run's junit is renamed so the second
+# does not overwrite it.
+SMOKE_SLICE ?= 1
+test-smoke: all  ## every unit test + a rotating quarter of the spawning suites (SMOKE_SLICE=1..4)
+	$(NEXTEST) --workspace --no-fail-fast -E 'not (binary(e2e) | binary(goldens) | binary(checks))'
+	@mv $(or $(CARGO_TARGET_DIR),target)/nextest/default/junit.xml \
+	    $(or $(CARGO_TARGET_DIR),target)/nextest/default/junit-units.xml 2>/dev/null || true
+	$(NEXTEST) -p zeo --no-fail-fast -E 'binary(e2e) | binary(goldens) | binary(checks)' \
+	    --partition hash:$(SMOKE_SLICE)/4
 
 # The same CLIF through an object file and a real link -- what ships. A
 # SMOKE tier, not the whole corpus: JIT and AOT share the emitter, and

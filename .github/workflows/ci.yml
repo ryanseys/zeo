@@ -63,19 +63,22 @@ jobs:
       # oracle and the vendored-gem suites both read.
       - run: make
 
-      # The dev loop, run to the end: unit + e2e + the golden suites (examples,
-      # the spinel corpus, the gaps XFAIL tracker) through the in-process JIT.
-      # A fixed gap fails as an XPASS (promote it). The goldens compare against
-      # committed `.expected` files; under `CI` the harness refuses to consult
-      # a live ruby for a golden nobody blessed.
-      - run: make test-jit
+      # The smoke tier: every unit test, plus a quarter of the suites that
+      # spawn a compile per case (e2e, goldens, checks), the quarter rotating
+      # with the run number so the corpus is covered every four pushes. The
+      # full `make test-jit` (7,284 cases) took the 4-vCPU runner over 20
+      # minutes; the spawn is the cost, not the assertion. Nightly runs it
+      # all. The goldens compare against committed `.expected` files; under
+      # `CI` the harness refuses to consult a live ruby for a golden nobody
+      # blessed. A fixed gap fails as an XPASS (promote it).
+      - run: make test-smoke SMOKE_SLICE=$(( GITHUB_RUN_NUMBER % 4 + 1 ))
 
-      # One file to triage a red run from, instead of an 8,000-line log.
+      # Two files to triage a red run from, instead of an 8,000-line log.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: junit-test-ubuntu
-          path: target/nextest/default/junit.xml
+          path: target/nextest/default/junit*.xml
           if-no-files-found: ignore
 
   msrv:
