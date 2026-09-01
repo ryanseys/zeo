@@ -212,6 +212,15 @@ impl Compiler {
         hit
     }
 
+    /// Drops the lazy name index so the next query rebuilds it whole --
+    /// for the ONE pass that renames already-registered classes (the
+    /// package interface wiring nested imported classes into their
+    /// lexical scopes). Everything else only appends.
+    pub(crate) fn reindex_classes(&self) {
+        self.class_index.borrow_mut().clear();
+        self.indexed_upto.set(0);
+    }
+
     /// Whether ANY `class`/`module` in `box_id` is spelled `name` or ends in
     /// `::name` -- i.e. whether the name is class-shaped SOMEWHERE, whatever
     /// scope it was written under.

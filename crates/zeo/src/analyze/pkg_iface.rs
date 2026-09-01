@@ -92,12 +92,20 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                     m.feature, ic.id
                 ));
             };
-            if let Some((taken_idx, taken)) = compiler
-                .classes
-                .iter()
-                .enumerate()
-                .find(|(_, c)| c.name == mc.name)
-            {
+            // By QUALIFIED name: an earlier package's nested class carries a
+            // leaf name plus a lexical parent (pass 1b), so the raw `name`
+            // field no longer spells the manifest's qualified string.
+            let taken_at = (0..compiler.classes.len()).find(|&i| {
+                let c = &compiler.classes[i];
+                if mc.name.contains("::") {
+                    (c.name.contains("::") || c.lexical_parent.is_some())
+                        && compiler.fq_name(ClassId(i as u32)) == mc.name
+                } else {
+                    c.name == mc.name && c.lexical_parent.is_none()
+                }
+            });
+            if let Some(taken_idx) = taken_at {
+                let taken = &compiler.classes[taken_idx];
                 if taken.imported_pkg.is_none() {
                     return Err(format!(
                         "package '{}' defines `{}`, which this program already \
@@ -153,6 +161,48 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
             ci.hidden_ivars = ic.hidden_ivars.clone();
             ci.explicit_superclass = ic.parent.is_some() && !ic.is_module;
             compiler.pkg_class_map.insert((pi as u32, ic.id), cid);
+        }
+        // Pass 1b: wire this package's freshly minted NESTED classes into
+        // their lexical scopes (leaf name + `lexical_parent`), so a scoped
+        // path in host code resolves (`class ReadTimeout < Timeout::Error`
+        // against a merged timeout). Registered under the qualified string
+        // alone, `Timeout::Error` was a top-level class named with two
+        // colons, and `resolve_class`'s descent could never reach it.
+        let by_fq: std::collections::HashMap<&str, ClassId> = m
+            .classes
+            .iter()
+            .filter_map(|c| {
+                compiler
+                    .pkg_class_map
+                    .get(&(pi as u32, c.id))
+                    .map(|cid| (c.name.as_str(), *cid))
+            })
+            .collect();
+        for mc in &m.classes {
+            let Some(&cid) = compiler.pkg_class_map.get(&(pi as u32, mc.id)) else {
+                continue;
+            };
+            // An ALIASED class belongs to the package that minted it, which
+            // already wired it; and the mint's name must still be qualified
+            // for this rewrite to apply.
+            if compiler.class(cid).imported_pkg != Some(pi as u32)
+                || !compiler.class(cid).name.contains("::")
+            {
+                continue;
+            }
+            let Some((prefix, leaf)) = mc.name.rsplit_once("::") else {
+                continue;
+            };
+            let Some(parent) = by_fq
+                .get(prefix)
+                .copied()
+                .or_else(|| compiler.resolve_class(prefix, &[], 0))
+            else {
+                continue;
+            };
+            let ci = &mut compiler.classes[cid.0 as usize];
+            ci.name = leaf.to_string();
+            ci.lexical_parent = Some(parent);
         }
         // Pass 2: wire parents, mixins and extends through the id map.
         let map = |compiler: &Compiler, id: u32| -> Result<ClassId, String> {
@@ -345,6 +395,8 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
             }
         }
     }
+    // Pass 1b RENAMED classes the lazy name index may already hold.
+    compiler.reindex_classes();
     Ok(())
 }
 
