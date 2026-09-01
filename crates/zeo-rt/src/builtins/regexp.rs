@@ -239,9 +239,14 @@ ruby_class! {
             at,
         )))
     }
-    def "match" cfunc (recv, arg1, _arg2?, &block) {
+    def "match" cfunc (recv, arg1, arg2?, &block) {
         let Some((h, enc)) = subject_arg(live_re(recv)?, arg1)? else { return Ok(RubyValue::Nil) };
-        let m = crate::regexp_match(re_of(recv), &h, enc);
+        // The optional start position, same rules as `match?` above; outside
+        // the string is nil without running the engine.
+        let m = match crate::builtins::string::match_haystack(&h, arg2)? {
+            Some(at) => crate::regexp::regexp_match_at(re_of(recv), &h, at, enc),
+            None => RubyValue::Nil,
+        };
         // With a block, ruby YIELDS the MatchData on a hit and the call
         // evaluates to the BLOCK's value; a miss answers nil without running
         // it. Only the String-receiver form had this arm, so with a Regexp
