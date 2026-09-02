@@ -40,6 +40,11 @@ struct Pin {
     /// a NUL slot, then one guard byte the copy-back checks.
     buf: Vec<u8>,
     len: usize,
+    /// The bytes last exchanged with the String -- copied in at a pin, or
+    /// written back at a flush. What decides who changed what: a buffer that
+    /// differs from this is C's unpublished write; a String that differs
+    /// from this was rewritten by Ruby.
+    synced: Vec<u8>,
     /// MRI's `capa`: how far past `len` the extension may write before
     /// publishing with `rb_str_set_len`. At least `len`; more when
     /// `rb_str_buf_new`/`rb_str_resize`/`rb_str_modify_expand` promised
@@ -109,21 +114,22 @@ fn lay_out(pin: &mut Pin, bytes: Vec<u8>, cap: usize) {
 /// a pin whose string is gone is evicted at the next scope pop -- so the
 /// pointer is valid for exactly the window MRI's is, and no longer.
 ///
-/// A re-pin REFRESHES: Ruby may have rewritten the string since, and the
-/// buffer is a copy. A length change reallocates, which moves the address --
-/// MRI's `RSTRING_PTR` moves on a resize too, and an extension holding one
-/// across a Ruby-side mutation is wrong on both.
+/// A re-pin REFRESHES only when Ruby rewrote the string since the last
+/// exchange: the buffer is a copy, and one C has written to and not yet
+/// published is kept -- `RSTRING_PTR(s)[0] = c; RSTRING_LEN(s)` is one
+/// reach after another, and the second must not undo the first. A length
+/// change reallocates, which moves the address -- MRI's `RSTRING_PTR` moves
+/// on a resize too, and an extension holding one across a Ruby-side mutation
+/// is wrong on both.
 fn pin_bytes(s: &RStr) -> *mut c_char {
     let key = std::sync::Arc::as_ptr(s) as *const () as usize;
-    let (bytes, len) = {
-        let g = s.lock();
-        (g.bytes().to_vec(), g.bytesize())
-    };
+    let bytes = s.lock().bytes().to_vec();
     let hint = take_capa_hint(key);
     PINS.with_borrow_mut(|pins| {
         if let Some((_, pin)) = pins.iter_mut().find(|(k, _)| *k == key) {
-            if pin.len != len || pin.buf[..pin.len] != bytes[..] {
+            if pin.synced != bytes {
                 let cap = pin.cap.max(hint.unwrap_or(0));
+                pin.synced = bytes.clone();
                 lay_out(pin, bytes, cap);
             }
             return pin.buf.as_mut_ptr().cast();
@@ -133,6 +139,7 @@ fn pin_bytes(s: &RStr) -> *mut c_char {
             buf: Vec::new(),
             len: 0,
             cap: 0,
+            synced: bytes.clone(),
         });
         lay_out(&mut pin, bytes, hint.unwrap_or(0));
         let ptr = pin.buf.as_mut_ptr().cast();
@@ -191,7 +198,8 @@ fn publish_pin(key: usize, new_len: usize) -> Result<bool, zeo_rt::Signal> {
         let bytes = pin.buf[..new_len].to_vec();
         let mut guard = owner.lock();
         let enc = guard.encoding();
-        guard.replace_bytes(bytes, enc);
+        guard.replace_bytes(bytes.clone(), enc);
+        pin.synced = bytes;
         Ok(true)
     })
 }
@@ -217,10 +225,13 @@ pub(super) fn flush_pins() {
                 "a C extension wrote past the end of a string it got from RSTRING_PTR"
             );
             let bytes = &pin.buf[..pin.len];
-            let mut guard = owner.lock();
-            if guard.bytes() != bytes {
+            // C's write, and only C's: a String Ruby rewrote since the pin
+            // is not overwritten with a stale copy.
+            if bytes != pin.synced.as_slice() {
+                let mut guard = owner.lock();
                 let enc = guard.encoding();
                 guard.replace_bytes(bytes.to_vec(), enc);
+                pin.synced = bytes.to_vec();
             }
             true
         });
@@ -1035,6 +1046,44 @@ mod tests {
             flush_pins();
         }
         assert_eq!(bytes_of(&s), b"Xbc", "the write never landed");
+    }
+
+    /// A second reach for the same string keeps what C wrote through the
+    /// first pointer -- `RSTRING_PTR(s)[0] = c; RSTRING_LEN(s)` is that
+    /// shape -- and a String Ruby rewrote meanwhile is refreshed, not
+    /// clobbered with the stale buffer at the pop.
+    #[test]
+    fn a_second_reach_keeps_the_unpublished_write() {
+        let s = a_string("abc");
+        {
+            let _scope = Scope::enter();
+            let raw = to_value(&s).expect("a String converts");
+            let p = unsafe { rbimpl_zeo_str_ptr(raw) };
+            unsafe { p.write(b'X' as c_char) };
+            let again = unsafe { rbimpl_zeo_str_ptr(raw) };
+            assert_eq!(again, p);
+            assert_eq!(
+                unsafe { *again },
+                b'X' as c_char,
+                "the re-pin undid the write"
+            );
+            flush_pins();
+        }
+        assert_eq!(bytes_of(&s), b"Xbc");
+
+        let t = a_string("abc");
+        {
+            let _scope = Scope::enter();
+            let raw = to_value(&t).expect("a String converts");
+            let _p = unsafe { rbimpl_zeo_str_ptr(raw) };
+            if let RubyValue::Str(rs) = &t {
+                let mut g = rs.lock();
+                let enc = g.encoding();
+                g.replace_bytes(b"ruby".to_vec(), enc);
+            }
+            flush_pins();
+        }
+        assert_eq!(bytes_of(&t), b"ruby", "the pop clobbered Ruby's own write");
     }
 
     #[test]

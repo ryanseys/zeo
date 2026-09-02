@@ -1,0 +1,19 @@
+# MRI's public C API headers -- the one pin in this repo that is not a gem.
+#
+# zeo compiles a gem's `ext/**/*.c` from source against these, so a prebuilt
+# MRI `.so` never loads. Nothing is vendored: the compiler fetches upstream's
+# `include/` tree at this rev the first time an extension is built, applies
+# the edits `src/headers/hunks.rs` holds (the layout-reading macros become
+# calls), and writes the two files zeo adds. `cargo xtask cext hunks --check`
+# proves every edit still applies at this rev, and `crates/zeo/tools-lib/
+# mkmf.rb` rides the same pin.
+#
+# `rev` is what the tag resolved to when it was recorded. A fetch that lands
+# on a different commit is refused, so a moved tag cannot slip in. `sha256`
+# is the GitHub archive of that commit, which is what the compiler fetches.
+
+repo = https://github.com/ruby/ruby
+tag = v4.0.6
+rev = 03b6d3f8898a28604fe6cb00eae3226b821168f4
+subdir = include
+sha256 = 3a16015e70f3c97c062f674e55fc655ae1e244213632adee09412a1b3f0131e2
