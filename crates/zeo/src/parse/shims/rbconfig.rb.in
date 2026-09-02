@@ -29,7 +29,7 @@ module RbConfig
   # names no GEM_HOME. See `zeo::home::ruby_prefix`.
   prefix = ENV["ZEO_PREFIX"] || "@ZEO_PREFIX@"
 
-  # Where `crates/zeo-rt/cext/` landed. `zeo` exports these before it runs an
+  # Where `crates/zeo-capi/cext/` landed. `zeo` exports these before it runs an
   # `extconf.rb`; the fallbacks are the dev tree.
   hdrdir = ENV["ZEO_CEXT_HDRDIR"] || "@CEXT_HDRDIR@"
   archhdrdir = ENV["ZEO_CEXT_ARCHHDRDIR"] || "@CEXT_ARCHHDRDIR@"
@@ -117,7 +117,7 @@ module RbConfig
     # --- The keys `mkmf` reads. -------------------------------------------
     #
     # zeo has no build tree, so the header directories are where the INSTALL
-    # put `crates/zeo-rt/cext/`. That is a run-time fact, not a compile-time
+    # put `crates/zeo-capi/cext/`. That is a run-time fact, not a compile-time
     # one, so `zeo` exports it before it runs an `extconf.rb`; the fallback is
     # the dev tree, which is where it is during development.
     "topdir" => hdrdir,

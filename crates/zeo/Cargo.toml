@@ -28,6 +28,9 @@ zeo-abi.workspace = true
 # staticlib output below is `libzeo.a` -- the one archive AOT programs
 # link.
 zeo-rt.workspace = true
+# The C extension API, behind `capi`: the crate is linked (and so exported
+# from `libzeo.a`) only when the feature is on.
+zeo-capi = { workspace = true, optional = true }
 # The Cranelift backend: HIR -> CLIF -> object files (see `clif/`), linked
 # against `libzeo.a` by `backend/link.rs`.
 cranelift-codegen.workspace = true
@@ -110,7 +113,7 @@ harness = false
 # of the absent Rust half -- the dual-build switch. `pure-stdlib` is the
 # named subtraction set for the pure-Ruby lane gems.
 default = [
-    "cext",
+    "capi",
     "ext-base64",
     "ext-monitor",
     "ext-stringio",
@@ -135,7 +138,9 @@ default = [
     "ext-tracepoint",
     "ext-prism",
 ]
-cext = ["zeo-rt/cext"]
+capi = ["dep:zeo-capi"]
+# The old spelling of `capi`.
+cext = ["capi"]
 ext-base64 = ["zeo-rt/ext-base64"]
 ext-monitor = ["zeo-rt/ext-monitor"]
 ext-stringio = ["zeo-rt/ext-stringio"]

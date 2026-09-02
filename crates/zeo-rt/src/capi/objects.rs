@@ -50,8 +50,7 @@ pub unsafe extern "C" fn zeo_rt_class_new_instance(
     // object has to be a TypedData. The emitter's gate is a compile-time
     // decision and cannot see a run-time `Init_`, so the interception is
     // here, at the one entry every static `Foo.new` reaches.
-    #[cfg(feature = "cext")]
-    if let Some(alloc) = crate::cext::method::c_allocate(id) {
+    if let Some(alloc) = crate::capi_hooks::c_allocate(id) {
         let args = if argc == 0 {
             &[]
         } else {
@@ -70,7 +69,6 @@ pub unsafe extern "C" fn zeo_rt_class_new_instance(
     }
     // A `None` with a parked signal is a REFUSAL (an undef'd allocator, or a
     // raise inside one), not an invitation to allocate the compiled shape.
-    #[cfg(feature = "cext")]
     if let Some(sig) = crate::signal::take_pending() {
         return status_out(Err(sig), out);
     }
@@ -113,8 +111,7 @@ pub unsafe extern "C" fn zeo_rt_class_new_instance_cached(
     out: *mut RubyValue,
 ) -> i32 {
     let id = ClassId(cid);
-    #[cfg(feature = "cext")]
-    if let Some(alloc) = crate::cext::method::c_allocate(id) {
+    if let Some(alloc) = crate::capi_hooks::c_allocate(id) {
         let (args, block) = unsafe { super::dispatch::call_views(argv, argc, blk) };
         let init =
             crate::dispatch::send_value(&alloc, crate::Symbol::intern("initialize"), args, block)
@@ -122,7 +119,10 @@ pub unsafe extern "C" fn zeo_rt_class_new_instance_cached(
         return status_out(init, out);
     }
     let (args, block) = unsafe { super::dispatch::call_views(argv, argc, blk) };
-    status_out(crate::dispatch::class_new_cached(site, id, args, block), out)
+    status_out(
+        crate::dispatch::class_new_cached(site, id, args, block),
+        out,
+    )
 }
 
 /// Read one ivar by its compile-time slot index. The receiver is always a
@@ -626,7 +626,17 @@ pub unsafe extern "C" fn zeo_rt_const_get_cref_cached(
         return STATUS_OK;
     }
     unsafe {
-        zeo_rt_const_get_cref(ids, n_ids, name, name_len, qualified, qualified_len, flags, box_id, out)
+        zeo_rt_const_get_cref(
+            ids,
+            n_ids,
+            name,
+            name_len,
+            qualified,
+            qualified_len,
+            flags,
+            box_id,
+            out,
+        )
     }
 }
 

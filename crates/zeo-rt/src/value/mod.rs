@@ -20,7 +20,7 @@
 //! Everything outside `value/` reaches these through the crate-root
 //! aliases (`crate::collections`, ...), so the grouping changed no paths.
 
-pub(crate) mod collections;
+pub mod collections;
 pub(crate) mod ivars;
 pub(crate) mod recursion;
 pub(crate) mod value_ivars;
@@ -53,7 +53,7 @@ pub(crate) type WeakOwner = std::sync::Weak<dyn std::any::Any + Send + Sync>;
 /// pointer -- so the handle names the same allocation the key was taken from.
 /// An immediate answers `None`: it has no allocation, and no side table
 /// keyed by address can be asked about one.
-pub(crate) fn weak_owner(v: &RubyValue) -> Option<WeakOwner> {
+pub fn weak_owner(v: &RubyValue) -> Option<WeakOwner> {
     use std::sync::Arc;
     fn erase<T: std::any::Any + Send + Sync>(a: &std::sync::Arc<T>) -> WeakOwner {
         let erased: std::sync::Arc<dyn std::any::Any + Send + Sync> = a.clone();
@@ -1379,11 +1379,7 @@ impl RubyValue {
     /// returns `Qundef` and `rb_ary_cmp` falls through to the LENGTH
     /// comparison, so the two agree for equal-length arrays and differ for
     /// `[1, a]` against `[1, b, 3]` -- which the golden pins.
-    fn rb_cmp_guarded(
-        &self,
-        other: &RubyValue,
-        seen: &mut recursion::VisitedPair,
-    ) -> Option<i64> {
+    fn rb_cmp_guarded(&self, other: &RubyValue, seen: &mut recursion::VisitedPair) -> Option<i64> {
         // Every numeric pair orders through the ONE tower matrix:
         // exact Int/Bignum/Rational lanes, Float promotion,
         // NaN -> nil, Complex -> nil.
@@ -1761,7 +1757,12 @@ impl RubyValue {
         // rule (`(1..5) === "x"` is false, not an error; oracle-verified,
         // incl. `(1..6) === 5.5` true and `(1...5) === 5` false).
         if let RubyValue::Range(r) = self {
-            return Ok(range_covers(r.start.as_ref(), r.end.as_ref(), r.exclusive, subject));
+            return Ok(range_covers(
+                r.start.as_ref(),
+                r.end.as_ref(),
+                r.exclusive,
+                subject,
+            ));
         }
         // `Module#===`: `case x when Integer` / `when Widget`
         // is an instance-of-ancestry check, NOT equality (`Widget ===
@@ -2416,7 +2417,10 @@ mod abi_layout {
             abi::CLASSMETHOD_SITE_SIZE
         );
         assert_eq!(size_of::<crate::ConstSite>(), abi::CONST_SITE_SIZE);
-        assert_eq!(size_of::<crate::dispatch::ClassNewSite>(), abi::NEW_SITE_SIZE);
+        assert_eq!(
+            size_of::<crate::dispatch::ClassNewSite>(),
+            abi::NEW_SITE_SIZE
+        );
         assert_eq!(size_of::<crate::CivarSite>(), abi::CIVAR_SITE_SIZE);
         assert_eq!(size_of::<crate::RegexpSite>(), abi::REGEXP_SITE_SIZE);
         assert_eq!(size_of::<crate::ffi::FfiSymSite>(), abi::FFISYM_SITE_SIZE);

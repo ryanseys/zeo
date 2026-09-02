@@ -32,7 +32,7 @@ stages:
   jit       the default golden legs
   aot       the AOT smoke tier (examples+gaps+e2e), linked binaries
   aot-full  the full corpus incl. spinel, linked (release boundaries)
-  units     zeo + zeo-rt unit suites
+  units     zeo + zeo-rt + zeo-capi unit suites
   natlibs   diff link.rs's glibc table against rustc
   valgrind  leak-check a linked program
   cross     x86_64 compile check
@@ -96,13 +96,21 @@ fn profile() -> String {
 }
 
 fn cargo_profile() -> &'static str {
-    if profile() == "release" { "--release" } else { "" }
+    if profile() == "release" {
+        "--release"
+    } else {
+        ""
+    }
 }
 
 /// cargo's dev profile writes to `debug/`, which is why the two names cannot
 /// be one value.
 fn target_dir() -> &'static str {
-    if profile() == "release" { "release" } else { "debug" }
+    if profile() == "release" {
+        "release"
+    } else {
+        "debug"
+    }
 }
 
 /// The VM's own width. The e2e tier LINKS a whole binary per test, so this run
@@ -141,9 +149,9 @@ fn script_for(name: &str) -> Result<String, Error> {
         "build" => format!("bundle install --quiet && cargo build --workspace {profile}"),
         // No env var = the default (jit) leg. The goldens spawn a child zeo
         // each and the watchdog caps them at 512 MiB.
-        "jit" => format!(
-            "cargo nextest run {profile} -p zeo --test-threads {threads} --no-fail-fast"
-        ),
+        "jit" => {
+            format!("cargo nextest run {profile} -p zeo --test-threads {threads} --no-fail-fast")
+        }
         // The SMOKE tier, matching macOS test-aot: the feature-diverse examples
         // plus gaps and e2e under a real link. The full spinel corpus takes
         // the linked path only in `aot-full` (release boundaries) -- it is the
@@ -158,8 +166,11 @@ fn script_for(name: &str) -> Result<String, Error> {
             "ZEO_GOLDEN_BACKEND=aot cargo nextest run {profile} -p zeo \
              --test-threads {threads} --no-fail-fast --test goldens"
         ),
+        // `zeo-capi` last and alone: its dev-dependency feature must not unify
+        // into the `zeo` binary (see the Makefile's `test`).
         "units" => format!(
-            "cargo nextest run {profile} -p zeo -p zeo-rt --test-threads {threads}"
+            "cargo nextest run {profile} -p zeo -p zeo-rt --test-threads {threads} && \
+             cargo nextest run {profile} -p zeo-capi --test-threads {threads}"
         ),
         // The one test that asks rustc for the live answer instead of trusting
         // the table; ignored by default because it compiles the lib in a probe
@@ -203,7 +214,13 @@ cargo check --workspace --target x86_64-unknown-linux-gnu
 fn stage(name: &str, script: &str) -> Result<(), Error> {
     let tag: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || "_.-".contains(c) { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "_.-".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     std::fs::create_dir_all(logs_dir())
         .map_err(|e| Error::new(format!("creating {}: {e}", logs_dir().display())))?;
@@ -258,7 +275,10 @@ fn run_in_container(script: &str, tag: &str) -> Result<i32, Error> {
             // one of them with "ignoring ... because it is missing extensions"
             // on stderr, which would land in a live-oracle golden.
             "-v",
-            &format!("{}:/bundle", env_or("ZEO_LINUX_BUNDLE_VOLUME", "zeo-linux-bundle")),
+            &format!(
+                "{}:/bundle",
+                env_or("ZEO_LINUX_BUNDLE_VOLUME", "zeo-linux-bundle")
+            ),
             "-v",
             &format!("{}:/logs", logs.display()),
             "-w",
@@ -282,8 +302,8 @@ fn tee(argv: &[String], log: &std::path::Path) -> Result<i32, Error> {
         .map_err(|e| Error::new(format!("creating {}: {e}", log.display())))?;
     // One pipe for both streams, so the log keeps the interleaving the
     // terminal shows rather than two separately-buffered halves.
-    let (reader, writer) = std::io::pipe()
-        .map_err(|e| Error::new(format!("creating a pipe: {e}")))?;
+    let (reader, writer) =
+        std::io::pipe().map_err(|e| Error::new(format!("creating a pipe: {e}")))?;
     let err = writer
         .try_clone()
         .map_err(|e| Error::new(format!("cloning the pipe: {e}")))?;

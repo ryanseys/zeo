@@ -363,7 +363,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
     // release build the slice has no entries at all, which is the point: an
     // entry is a root whether or not anything reads it.
     let register = quote! {
-        #[cfg_attr(test, linkme::distributed_slice(crate::builtins::BUILTIN_TABLES))]
+        #[cfg_attr(any(test, feature = "unit-tables"), linkme::distributed_slice(crate::builtins::BUILTIN_TABLES))]
         #[unsafe(export_name = #export_name)]
         pub static #register_ident: crate::builtins::BuiltinClassTable =
             crate::builtins::BuiltinClassTable {

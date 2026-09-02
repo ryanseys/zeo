@@ -2215,6 +2215,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-ident",
  "zeo-abi",
+ "zeo-capi",
  "zeo-dsl",
  "zeo-rt",
 ]
@@ -2222,6 +2223,22 @@ dependencies = [
 [[package]]
 name = "zeo-abi"
 version = "0.1.0"
+
+[[package]]
+name = "zeo-capi"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
+ "cc",
+ "libc",
+ "linkme",
+ "num-bigint",
+ "num-traits",
+ "parking_lot",
+ "tracing",
+ "zeo-abi",
+ "zeo-rt",
+]
 
 [[package]]
 name = "zeo-dsl"
@@ -2247,8 +2264,6 @@ dependencies = [
 name = "zeo-rt"
 version = "0.1.0"
 dependencies = [
- "bindgen",
- "cc",
  "corosensei",
  "digest",
  "encoding_rs",

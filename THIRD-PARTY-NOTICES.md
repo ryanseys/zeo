@@ -38,17 +38,17 @@ MIT.
 These gems are redistributed in the release tarballs and platform gems (under
 `share/zeo/gems/`), and embedded in the `zeo` crate published to crates.io.
 
-## MRI's C API headers (`crates/zeo-rt/cext/include/`)
+## MRI's C API headers (`crates/zeo-capi/cext/include/`)
 
-`crates/zeo-rt/cext/include/` is `ruby/ruby@v4.0.6`'s `include/` tree, vendored
-verbatim plus the patch series in `crates/zeo-rt/cext/patches/`. A gem's C
+`crates/zeo-capi/cext/include/` is `ruby/ruby@v4.0.6`'s `include/` tree, vendored
+verbatim plus the patch series in `crates/zeo-capi/cext/patches/`. A gem's C
 extension compiles against it, so these headers reach any program that loads
 one. Ruby is dual-licensed under the Ruby License and 2-clause BSD; upstream's
 texts sit beside the tree as
-[`crates/zeo-rt/cext/COPYING`](crates/zeo-rt/cext/COPYING) and
-[`crates/zeo-rt/cext/BSDL`](crates/zeo-rt/cext/BSDL) -- the same pair that
+[`crates/zeo-capi/cext/COPYING`](crates/zeo-capi/cext/COPYING) and
+[`crates/zeo-capi/cext/BSDL`](crates/zeo-capi/cext/BSDL) -- the same pair that
 ships beside every Ruby-licensed gem in `gems/`.
-`crates/zeo-rt/cext/README.md` records what the patches change and why.
+`crates/zeo-capi/cext/README.md` records what the patches change and why.
 
 ## The conformance corpus (`tests/spinel/`)
 

@@ -660,7 +660,10 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
             if r.is_undefined(anc, name) {
                 return false;
             }
-            if r.lookup(anc, name).is_some() || r.lookup_value_method(anc, crate::boxes::current_box(), name).is_some() {
+            if r.lookup(anc, name).is_some()
+                || r.lookup_value_method(anc, crate::boxes::current_box(), name)
+                    .is_some()
+            {
                 // ...unless the row was FLATTENED in from an ancestor a runtime
                 // `undef_method` has since retired. Same question `lookup_mro`
                 // asks before trusting its own flattened hit.
@@ -832,7 +835,7 @@ pub(crate) fn reachable_chain(id: ClassId) -> bool {
             .all(|&a| !crate::builtins::table_was_dropped(a))
 }
 
-pub(crate) fn ancestors_of_value(id: ClassId) -> &'static [ClassId] {
+pub fn ancestors_of_value(id: ClassId) -> &'static [ClassId] {
     // The OVERLAY wins when it has a chain: a class born at runtime
     // (`Class.new`) has no frozen entry at all, and a runtime `include`/
     // `prepend` into a COMPILE-TIME class splices a new chain there while
@@ -909,10 +912,11 @@ impl VisFilter {
 fn builtin_row_visibility(from: ClassId, old: Symbol) -> MethodVisibility {
     let n = old.name_str();
     let chain = crate::dispatch::ancestors_of_value(from);
-    let owners = chain
-        .iter()
-        .copied()
-        .chain(crate::dispatch::ancestors_of_value(zeo_abi::OBJECT_CLASS).iter().copied());
+    let owners = chain.iter().copied().chain(
+        crate::dispatch::ancestors_of_value(zeo_abi::OBJECT_CLASS)
+            .iter()
+            .copied(),
+    );
     for anc in owners {
         let has = crate::builtins::class_table(anc).is_some_and(|t| t(n).is_some())
             || crate::runtime_meta::overlay_own_method(anc, old).is_some();

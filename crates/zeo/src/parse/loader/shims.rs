@@ -43,7 +43,7 @@ pub(super) fn synthetic_shim_source(feature: &str) -> Option<std::borrow::Cow<'s
 fn synthetic_shim_static(feature: &str) -> Option<&'static str> {
     match feature {
         // `lib/mkmf.rb`, vendored VERBATIM from the same `ruby/ruby` pin the
-        // C API headers ride (`crates/zeo-rt/cext/`). An `extconf.rb` runs
+        // C API headers ride (`crates/zeo-capi/cext/`). An `extconf.rb` runs
         // under zeo and writes a real Makefile, so mkmf is Ruby zeo RUNS
         // rather than a thing it reimplements -- 3,061 lines of probing and
         // Makefile generation that no summary of would stay true.

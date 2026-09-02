@@ -1,0 +1,43 @@
+[package]
+name = "zeo-capi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "MRI's C extension API, implemented in Rust over the zeo-rt runtime"
+readme = "README.md"
+
+[dependencies]
+zeo-abi.workspace = true
+zeo-rt.workspace = true
+libc.workspace = true
+# The crate announces itself to the runtime through one distributed-slice
+# element (`zeo_rt::capi_hooks::CAPI_HOOKS`); nothing has to call an
+# installer, which is what lets an AOT binary linking `libzeo.a` find it.
+linkme.workspace = true
+parking_lot.workspace = true
+num-bigint.workspace = true
+num-traits.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# The unit tests dispatch into builtins; a test binary has no program
+# descriptor to install the tables from. Cargo unifies features per
+# invocation, so these tests run ALONE (`make test`): shared with the `zeo`
+# tests, the binary the goldens run would carry every table too.
+zeo-rt = { workspace = true, features = ["unit-tables"] }
+
+[build-dependencies]
+# `csrc/*.c`: the entries Rust cannot yet write (setjmp/longjmp, va_list).
+cc = "1"
+# `$OUT_DIR/cext_layout.rs` -- the Rust mirror of the MRI structs the C
+# extension views fill, read from the vendored headers. Already in the graph
+# through `ruby-prism-sys`, so libclang is not a new build requirement.
+bindgen = "0.72"
+
+[lints]
+workspace = true

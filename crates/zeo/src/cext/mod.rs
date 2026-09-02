@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 /// point every extension build at the build machine's source tree.
 pub fn header_dirs() -> Result<(PathBuf, PathBuf), String> {
     let root = match crate::home::zeo_home() {
-        ZeoHome::DevTree { root } => root.join("crates/zeo-rt/cext"),
+        ZeoHome::DevTree { root } => root.join("crates/zeo-capi/cext"),
         ZeoHome::Installed { payload, .. } => payload.join("cext"),
         // A `cargo install`ed zeo has no payload directory at all, so the
         // headers ride nowhere it can reach. Saying so beats handing an

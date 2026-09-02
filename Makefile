@@ -50,8 +50,14 @@ deps:  ## resolve Gemfile.lock into vendor/bundle (needs network once)
 
 # --- The dev loop. ---------------------------------------------------------
 
+# `zeo-capi`'s unit tests run in their own cargo invocation, here and in
+# every workspace-wide target below. Their dev-dependency turns on zeo-rt's
+# `unit-tables` feature, and cargo unifies features per invocation: shared
+# with the `zeo` tests, the binary the goldens run would carry every builtin
+# table and stop noticing a dropped one.
 test: all  ## the dev loop: unit + e2e + golden suites, stops at the first failure
-	$(NEXTEST) --workspace
+	$(NEXTEST) --workspace --exclude zeo-capi
+	$(NEXTEST) -p zeo-capi
 
 lint:  ## clippy at CI's severity
 	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
@@ -120,7 +126,8 @@ ci-local: tool-versions lint hygiene check-generated  ## the non-test CI jobs, v
 # The same command as `test`, run to the end. Two names because the questions
 # differ: a dev wants the first failure, a batch wants the whole list.
 test-jit: all  ## every suite through the in-process JIT, to the end
-	$(NEXTEST) --workspace --no-fail-fast
+	$(NEXTEST) --workspace --exclude zeo-capi --no-fail-fast
+	$(NEXTEST) -p zeo-capi --no-fail-fast
 
 # The push tier. Every unit test (in-process, ~40 test-seconds for 1,270),
 # plus ONE deterministic quarter of the suites that spawn a compile per case
@@ -132,7 +139,9 @@ test-jit: all  ## every suite through the in-process JIT, to the end
 # does not overwrite it.
 SMOKE_SLICE ?= 1
 test-smoke: all  ## every unit test + a rotating quarter of the spawning suites (SMOKE_SLICE=1..4)
-	$(NEXTEST) --workspace --no-fail-fast -E 'not (binary(e2e) | binary(goldens) | binary(checks))'
+	$(NEXTEST) --workspace --exclude zeo-capi --no-fail-fast -E 'not (binary(e2e) | binary(goldens) | binary(checks))'
+	$(NEXTEST) -p zeo-capi --no-fail-fast
+| binary(goldens) | binary(checks))'
 	@mv $(or $(CARGO_TARGET_DIR),target)/nextest/default/junit.xml \
 	    $(or $(CARGO_TARGET_DIR),target)/nextest/default/junit-units.xml 2>/dev/null || true
 	$(NEXTEST) -p zeo --no-fail-fast -E 'binary(e2e) | binary(goldens) | binary(checks)' \
@@ -211,9 +220,11 @@ test-milestones: all  ## the umbrella entry points, one whole require graph each
 # `build`: this asks whether the cfgs are right, not for an artifact.
 DOCS_RS_FEATURES := $(shell sed -n '/\[package.metadata.docs.rs\]/,/^\[dependencies\]/p' \
 	crates/zeo-rt/Cargo.toml | sed -n 's/^ *"\(ext-[a-z0-9]*\)",*/\1/p' | paste -sd, -)
-test-config: all  ## doctests, and that every ext-* feature is really optional
+test-config: all  ## doctests, and that every ext-* feature (and the C API) is really optional
 	$(CARGO) test --workspace --doc
 	$(CARGO) check -p zeo-rt --no-default-features
+	$(CARGO) check -p zeo-capi
+	$(CARGO) check -p zeo --no-default-features
 	$(CARGO) check -p zeo-rt --no-default-features --features '$(DOCS_RS_FEATURES)'
 
 # One target, whichever of the two ignored unit tests this OS can answer.

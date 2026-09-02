@@ -3,6 +3,10 @@
 //! symbols the macro references (`crate::RubyValue`, `crate::builtins::*`,
 //! `crate::constants::const_set`) so the emitted lookup tables, constant
 //! installer, and `linkme` registration are exercised end to end.
+//!
+//! The registration attribute names zeo-rt's `unit-tables` feature, which
+//! this crate does not declare; the cfg is checked where the macro lands.
+#![allow(unexpected_cfgs)]
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum RubyValue {

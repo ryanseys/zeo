@@ -88,8 +88,7 @@ pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {
     // asks `allocate_of`) worked while `Foo.new` handed the C `initialize` an
     // object carrying no struct. `zeo_rt_class_new_instance` intercepts the
     // COMPILED half for the same reason and says so in the same words.
-    #[cfg(feature = "cext")]
-    if crate::cext::method::has_alloc_func(id) {
+    if crate::capi_hooks::has_alloc_func(id) {
         return Some(construct_by_c_allocator);
     }
     if let Some(c) = REGISTRY
@@ -117,8 +116,7 @@ pub(crate) fn allocate_of(id: ClassId) -> Option<RubyValue> {
     // every later `RTYPEDDATA_DATA` on the result depends on it. Checking it
     // FIRST is also what CRuby does -- the C allocator replaces whatever the
     // class had.
-    #[cfg(feature = "cext")]
-    if let Some(v) = crate::cext::method::c_allocate(id) {
+    if let Some(v) = crate::capi_hooks::c_allocate(id) {
         return Some(v);
     }
     if let Some(v) = REGISTRY.get().and_then(|r| r.allocate_instance(id)) {
@@ -136,7 +134,6 @@ pub(crate) fn allocate_of(id: ClassId) -> Option<RubyValue> {
 /// CRuby's `rb_class_new_instance` in two lines. The allocator is what puts
 /// the struct behind `DATA_PTR`, so the order is not negotiable -- a C
 /// `initialize` writes through that pointer immediately.
-#[cfg(feature = "cext")]
 fn construct_by_c_allocator(
     id: ClassId,
     args: &[RubyValue],
@@ -145,7 +142,7 @@ fn construct_by_c_allocator(
     // `c_allocate` answers `None` for a RAISE from inside the allocator, and
     // parks the signal -- `allocate_of` returns an Option, so that is the
     // only way one travels. Here there is a `Result` to put it in.
-    let Some(obj) = crate::cext::method::c_allocate(id) else {
+    let Some(obj) = crate::capi_hooks::c_allocate(id) else {
         return Err(crate::signal::take_pending().unwrap_or_else(|| {
             crate::builtins::type_error!(
                 "allocator undefined for {}",

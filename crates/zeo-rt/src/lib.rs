@@ -3,7 +3,8 @@
 /// Internal maps (interner, dispatch registry, globals/constants): foldhash
 /// instead of SipHash -- process-internal keys need speed, not DoS
 /// resistance. Ruby-visible `Object#hash` keeps `DefaultHasher`.
-pub(crate) type FMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState>;
+#[doc(hidden)]
+pub type FMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState>;
 pub(crate) type FSet<T> = std::collections::HashSet<T, foldhash::fast::RandomState>;
 /// A two-level `box -> name -> value` map: the OUTER key is a box id
 /// (`0` = main). `Box<str>` inner keys so every read probes with its
@@ -19,17 +20,14 @@ pub(crate) type ClassScopedMap<V> = FMap<u32, FMap<Box<str>, V>>;
 mod arith;
 mod bootstrap;
 pub mod boxes;
-mod builtins;
 pub mod capi;
+pub mod capi_hooks;
 mod catch;
-#[cfg(feature = "cext")]
-pub mod cext;
+pub mod cframes;
 mod civars;
 pub mod compiled_object;
 
-mod constants;
 mod cvars;
-mod dispatch;
 mod ec;
 mod enc;
 pub mod encoding;
@@ -46,9 +44,7 @@ pub mod ffi;
 pub use libc;
 mod fiber;
 mod flipflop;
-mod frames;
 pub mod gc;
-mod globals;
 pub mod gvl;
 mod handling;
 
@@ -60,17 +56,37 @@ pub mod pools;
 mod ractor;
 mod regexp;
 mod release_pool;
-mod rproc;
-mod runtime_meta;
-mod signal;
 mod stack_guard;
 mod symbol;
 mod thread;
 #[macro_use]
 mod trace;
 mod tramp;
-mod value;
-pub(crate) use value::{collections, ivars, value_ivars};
+
+// The runtime's inside, as the C-API crate (`zeo-capi`) sees it. These are
+// public for that crate alone -- nothing here is a stable surface, and
+// nothing outside this workspace should name them.
+#[doc(hidden)]
+pub mod builtins;
+#[doc(hidden)]
+pub mod constants;
+#[doc(hidden)]
+pub mod dispatch;
+#[doc(hidden)]
+pub mod frames;
+#[doc(hidden)]
+pub mod globals;
+#[doc(hidden)]
+pub mod rproc;
+#[doc(hidden)]
+pub mod runtime_meta;
+#[doc(hidden)]
+pub mod signal;
+#[doc(hidden)]
+pub mod value;
+#[doc(hidden)]
+pub use value::collections;
+pub(crate) use value::{ivars, value_ivars};
 
 pub use arith::*;
 pub use bootstrap::{install_core_constants, install_data_section, register_builtins};
@@ -265,7 +281,7 @@ pub fn blocking_checkpoint() -> Result<(), Signal> {
 // aarch64 Linux, so a bare `as` is a conversion on one platform and an
 // "unnecessary cast" clippy error on the other. These convert on both.
 #[allow(clippy::unnecessary_cast)]
-pub(crate) fn c_char_u8(c: libc::c_char) -> u8 {
+pub fn c_char_u8(c: libc::c_char) -> u8 {
     c as u8
 }
 #[allow(clippy::unnecessary_cast)]
@@ -281,7 +297,7 @@ pub(crate) fn blksize_i64(blksize: libc::blksize_t) -> i64 {
     blksize as i64
 }
 #[allow(clippy::unnecessary_cast)]
-pub(crate) fn usec_i64(usec: libc::suseconds_t) -> i64 {
+pub fn usec_i64(usec: libc::suseconds_t) -> i64 {
     usec as i64
 }
 
@@ -1107,7 +1123,9 @@ mod tests {
 
         assert!(point_class.rb_case_eq(&instance).unwrap());
         assert!(
-            RubyValue::Class(Object::CLASS_ID).rb_case_eq(&instance).unwrap(),
+            RubyValue::Class(Object::CLASS_ID)
+                .rb_case_eq(&instance)
+                .unwrap(),
             "ancestry, not identity"
         );
         assert!(

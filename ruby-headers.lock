@@ -1,8 +1,8 @@
 # MRI's public C API headers -- the one pin in this repo that is not a gem.
 #
 # zeo compiles a gem's `ext/**/*.c` from source against these, so a prebuilt
-# MRI `.so` never loads. The vendored tree under `crates/zeo-rt/cext/include`
-# is upstream verbatim plus `crates/zeo-rt/cext/patches/`, which turns the
+# MRI `.so` never loads. The vendored tree under `crates/zeo-capi/cext/include`
+# is upstream verbatim plus `crates/zeo-capi/cext/patches/`, which turns the
 # layout-reading macros into calls. `cargo xtask cext sync --check` proves the
 # tree is exactly that sum, and `crates/zeo/tools-lib/mkmf.rb` rides the same
 # pin.

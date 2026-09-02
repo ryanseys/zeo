@@ -1247,7 +1247,7 @@ fn syscall_error_args(class: ClassId, args: &[RubyValue]) -> (Option<RubyValue>,
 
 /// The platform's own text for `errno` -- CRuby calls `strerror` too, so an
 /// unnamed value reads exactly as it does there ("Unknown error: 9999").
-pub(crate) fn strerror(errno: i32) -> String {
+pub fn strerror(errno: i32) -> String {
     // SAFETY: `strerror` returns a pointer to a static (or thread-local)
     // NUL-terminated string that stays valid until the next call on this
     // thread; the copy happens before returning, so nothing outlives it.

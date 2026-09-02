@@ -36,8 +36,7 @@ fn category_flag(v: &RubyValue) -> Result<&'static AtomicBool, Signal> {
 
 /// Is a category on? The C API's `rb_category_warn` asks by name, because
 /// `rb_warning_category_t` is an enum over the same four categories.
-#[cfg(feature = "cext")]
-pub(crate) fn category_enabled(name: &str) -> bool {
+pub fn category_enabled(name: &str) -> bool {
     match name {
         "deprecated" => DEPRECATED.load(Ordering::Relaxed),
         "experimental" => EXPERIMENTAL.load(Ordering::Relaxed),
@@ -109,7 +108,7 @@ fn warn_impl(arg1: &RubyValue, arg2: Option<&RubyValue>) -> Result<RubyValue, Si
 /// a nondeterministic `file:line` out of a fixture's stderr. A raising
 /// redirected writer must not turn a warning into an exception, so the write
 /// result is dropped.
-pub(crate) fn rb_warn(msg: &str) {
+pub fn rb_warn(msg: &str) {
     if matches!(crate::globals::global_get(0, "$VERBOSE"), RubyValue::Nil) {
         return;
     }

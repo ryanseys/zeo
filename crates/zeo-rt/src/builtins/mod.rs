@@ -22,7 +22,7 @@ use crate::{ClassId, RubyValue, Signal};
 use std::sync::LazyLock;
 
 pub(crate) mod argf;
-pub(crate) mod array;
+pub mod array;
 pub(crate) mod backtrace_location;
 pub(crate) mod basic_object;
 pub(crate) mod binding;
@@ -33,22 +33,22 @@ pub(crate) mod convert;
 pub(crate) mod converter;
 pub(crate) mod data;
 pub(crate) mod dir;
-pub(crate) mod encoding;
+pub mod encoding;
 pub(crate) mod enumerable;
 pub(crate) mod enumerator;
 pub(crate) mod env;
-pub(crate) mod exception;
+pub mod exception;
 pub(crate) mod false_class;
 pub(crate) mod fiber;
-pub(crate) mod file;
+pub mod file;
 pub(crate) mod file_test;
 pub(crate) mod float;
 pub(crate) mod format;
 pub(crate) mod formatter;
 pub(crate) mod gc;
 pub(crate) mod hash;
-pub(crate) mod integer;
-pub(crate) mod io;
+pub mod integer;
+pub mod io;
 pub(crate) mod io_buffer;
 pub(crate) mod kernel;
 pub(crate) mod lazy;
@@ -80,8 +80,8 @@ pub(crate) mod set;
 pub(crate) mod signal;
 pub(crate) mod sized_queue;
 pub(crate) mod sort;
-pub(crate) mod stat;
-pub(crate) mod string;
+pub mod stat;
+pub mod string;
 pub(crate) mod symbol;
 pub(crate) mod thread;
 pub(crate) mod thread_group;
@@ -90,10 +90,10 @@ pub(crate) mod true_class;
 pub(crate) mod unbound_method;
 pub(crate) mod value_subclass;
 pub(crate) mod waiter;
-pub(crate) mod warning;
-pub(crate) mod zeo_eval;
+pub mod warning;
 pub(crate) mod weak;
 pub(crate) mod yielder;
+pub(crate) mod zeo_eval;
 
 /// One builtin method: receiver (guaranteed by the table's ClassId keying
 /// to be the right variant), positional args, optional block. Deliberately
@@ -174,12 +174,14 @@ pub struct BuiltinClassTable {
     pub allocate: Option<fn() -> crate::RubyValue>,
 }
 
-/// The link-time table slice, populated ONLY in a `cfg(test)` build.
+/// The link-time table slice, populated ONLY in a `cfg(test)` build or
+/// under the `unit-tables` feature.
 ///
 /// A shipped program does not use it: `ruby_class!` registers a table through
 /// an exported `zeo_ctable_<ID>` symbol the program names, and this slice is
-/// empty. It stays for the runtime's own unit tests, which have no program
-/// desc to install one from -- see `all_tables`.
+/// empty. It stays for unit tests, which have no program desc to install one
+/// from -- the runtime's own under `cfg(test)`, the C-API crate's through
+/// the feature -- see `all_tables`.
 #[linkme::distributed_slice]
 pub static BUILTIN_TABLES: [BuiltinClassTable] = [..];
 
@@ -199,7 +201,7 @@ pub static BUILTIN_TABLES: [BuiltinClassTable] = [..];
 macro_rules! alias_class_tables {
     ($($name:ident = zeo_abi::$id:ident),* $(,)?) => {
         $(
-            #[cfg_attr(test, linkme::distributed_slice($crate::builtins::BUILTIN_TABLES))]
+            #[cfg_attr(any(test, feature = "unit-tables"), linkme::distributed_slice($crate::builtins::BUILTIN_TABLES))]
             #[unsafe(export_name = concat!("zeo_ctable_", stringify!($id)))]
             pub static $name: $crate::builtins::BuiltinClassTable = alias_table(zeo_abi::$id);
         )*
@@ -679,7 +681,7 @@ pub(crate) fn no_implicit(v: &RubyValue, want: &str) -> Signal {
 /// Y)`, with X the value's CLASS name ([`class_name_of`] -- nil reads as
 /// `NilClass` here). The sites rendering nil as the literal go through
 /// [`check_type_name`] and keep their own strings.
-pub(crate) fn wrong_arg_type(v: &RubyValue, want: &str) -> Signal {
+pub fn wrong_arg_type(v: &RubyValue, want: &str) -> Signal {
     crate::builtins::type_error!("wrong argument type {} (expected {want})", class_name_of(v))
 }
 
@@ -693,76 +695,97 @@ pub(crate) fn wrong_arg_type(v: &RubyValue, want: &str) -> Signal {
 /// ext-specific classes) stay on `raise_error` directly.
 /// (Written flat rather than macro-generated: `$$` meta-variable escaping is
 /// still unstable.)
+#[macro_export]
 macro_rules! type_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::TYPE_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::TYPE_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! arg_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::ARGUMENT_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::ARGUMENT_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! name_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::NAME_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::NAME_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! index_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::INDEX_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::INDEX_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! range_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::RANGE_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::RANGE_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! runtime_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::RUNTIME_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::RUNTIME_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! frozen_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::FROZEN_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::FROZEN_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! io_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::IO_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::IO_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! eof_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::EOF_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::EOF_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! thread_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::THREAD_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::THREAD_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! regexp_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::REGEXP_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::REGEXP_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! local_jump_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::LOCAL_JUMP_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::LOCAL_JUMP_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! float_domain_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::FLOAT_DOMAIN_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::FLOAT_DOMAIN_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! not_impl_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::NOT_IMPLEMENTED_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::NOT_IMPLEMENTED_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! zero_division_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::ZERO_DIVISION_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::ZERO_DIVISION_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! load_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::LOAD_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::LOAD_ERROR_CLASS, format!($($fmt)*)) };
 }
 // `SystemCallError` composes its printed line at the raise site, so the
 // registry stamps the message VERBATIM onto the object -- the id channel
 // keys that off the entry's registered name, exactly as by-name does.
+#[macro_export]
 macro_rules! system_call_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::SYSTEM_CALL_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::SYSTEM_CALL_ERROR_CLASS, format!($($fmt)*)) };
 }
 // The plain-message channel. A site that populates `NoMethodError`'s
 // `#name`/`#args`/`#receiver` goes through `raise_method_missing` or
 // `raise_error_details` instead.
+#[macro_export]
 macro_rules! no_method_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::NO_METHOD_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::NO_METHOD_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! no_memory_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::NO_MEMORY_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::NO_MEMORY_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! fiber_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::FIBER_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::FIBER_ERROR_CLASS, format!($($fmt)*)) };
 }
+#[macro_export]
 macro_rules! syntax_error {
-    ($($fmt:tt)*) => { crate::dispatch::raise_error_id(zeo_abi::SYNTAX_ERROR_CLASS, format!($($fmt)*)) };
+    ($($fmt:tt)*) => { $crate::dispatch::raise_error_id(zeo_abi::SYNTAX_ERROR_CLASS, format!($($fmt)*)) };
 }
-pub(crate) use {
+pub use {
     arg_error, eof_error, fiber_error, float_domain_error, frozen_error, index_error, io_error,
     load_error, local_jump_error, name_error, no_memory_error, no_method_error, not_impl_error,
     range_error, regexp_error, runtime_error, syntax_error, system_call_error, thread_error,

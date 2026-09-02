@@ -100,8 +100,7 @@ fn user_initialize_construct(
     // case: its C `initialize` reads the TypedData only its own allocator
     // makes, so the unfused blank-native road here handed it the wrong
     // receiver. `constructor_of` takes the C road on the fall-through.
-    #[cfg(feature = "cext")]
-    if crate::cext::method::has_alloc_func(cid) {
+    if crate::capi_hooks::has_alloc_func(cid) {
         return Ok(None);
     }
     let init = crate::symbol::wk::initialize();
@@ -259,8 +258,7 @@ ruby_class! {
         }
         // A C extension's registered allocator replaces the builtin's own
         // blank -- same rule as `Class#new`'s unfused road above.
-        #[cfg(feature = "cext")]
-        if crate::cext::method::has_alloc_func(cid) {
+        if crate::capi_hooks::has_alloc_func(cid) {
             return match crate::dispatch::allocate_of(cid) {
                 Some(v) => Ok(v),
                 None => Err(crate::signal::take_pending().unwrap_or_else(|| {

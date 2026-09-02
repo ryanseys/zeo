@@ -1,4 +1,4 @@
-//! Manage the vendored MRI C API headers under `crates/zeo-rt/cext/`.
+//! Manage the vendored MRI C API headers under `crates/zeo-capi/cext/`.
 //!
 //! ```text
 //! cext sync [--check]
@@ -38,11 +38,11 @@ subcommands:
                       the rb_* -> Class#method forwarding table
 ";
 
-const CEXT: &str = "crates/zeo-rt/cext";
-const CEXT_SRC: &str = "crates/zeo-rt/src/cext";
-const API_RS: &str = "crates/zeo-rt/src/cext/api.rs";
-const STUBS_RS: &str = "crates/zeo-rt/src/cext/stubs.rs";
-const FORWARD_RS: &str = "crates/zeo-rt/src/cext/forward.rs";
+const CEXT: &str = "crates/zeo-capi/cext";
+const CEXT_SRC: &str = "crates/zeo-capi/src";
+const API_RS: &str = "crates/zeo-capi/src/api.rs";
+const STUBS_RS: &str = "crates/zeo-capi/src/stubs.rs";
+const FORWARD_RS: &str = "crates/zeo-capi/src/forward.rs";
 const MKMF_RB: &str = "crates/zeo/tools-lib/mkmf.rb";
 
 fn include_dir() -> PathBuf {
@@ -178,7 +178,8 @@ fn cmd_sync(check: bool) -> Result<(), Error> {
 fn upstream_mkmf(pin: &vendor::Pin) -> Result<String, Error> {
     let checkout = vendor::fetch_checkout(pin)?;
     let path = checkout.join("lib/mkmf.rb");
-    std::fs::read_to_string(&path).map_err(|e| Error::new(format!("reading {}: {e}", path.display())))
+    std::fs::read_to_string(&path)
+        .map_err(|e| Error::new(format!("reading {}: {e}", path.display())))
 }
 
 /// Name every file that differs, not just the count: a header tree is too big
@@ -276,8 +277,8 @@ const SKIP_HEADERS: &[&str] = &["win32.h", "onigmo.h", "oniguruma.h", "regex.h"]
 
 fn public_headers() -> Result<Vec<String>, Error> {
     let dir = include_dir().join("ruby");
-    let entries =
-        std::fs::read_dir(&dir).map_err(|e| Error::new(format!("reading {}: {e}", dir.display())))?;
+    let entries = std::fs::read_dir(&dir)
+        .map_err(|e| Error::new(format!("reading {}: {e}", dir.display())))?;
     let mut out = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| Error::new(format!("reading {}: {e}", dir.display())))?;
@@ -346,7 +347,8 @@ fn scan_api() -> Result<Vec<Decl>, Error> {
 fn parse_ast(text: &str) -> Result<Vec<Decl>, Error> {
     let name = r"((?:rb|ruby|rbimpl_zeo)_\w+)";
     let head = r"0x[0-9a-f]+ (?:prev 0x[0-9a-f]+ )?<[^>]*> (?:line|col):\S+ (?:used |referenced )?";
-    let fn_re = Regex::new(&format!(r"FunctionDecl {head}{name} '([^']*)'\s*$")).expect("a valid pattern");
+    let fn_re =
+        Regex::new(&format!(r"FunctionDecl {head}{name} '([^']*)'\s*$")).expect("a valid pattern");
     let var_re = Regex::new(&format!(
         r"VarDecl {head}{name} '([^']*)'(?::'[^']*')? extern\s*$"
     ))
@@ -394,10 +396,9 @@ fn parse_ast(text: &str) -> Result<Vec<Decl>, Error> {
 fn implemented() -> Result<Vec<String>, Error> {
     // Two spellings reach the same place: a hand-written export, and the
     // `cext_fn!` macro that wraps a `Result` body into one.
-    let exported = Regex::new(
-        r#"#\[unsafe\(no_mangle\)\]\s*(?:pub\s+)?(?:unsafe\s+)?extern "C" fn (\w+)"#,
-    )
-    .expect("a valid pattern");
+    let exported =
+        Regex::new(r#"#\[unsafe\(no_mangle\)\]\s*(?:pub\s+)?(?:unsafe\s+)?extern "C" fn (\w+)"#)
+            .expect("a valid pattern");
     let wrapped =
         Regex::new(r"(?m)^\s*fn (rb_\w+|ruby_\w+|rbimpl_zeo_\w+)\s*\(").expect("a valid pattern");
     // The variadic entries live in `csrc/*.c`, because Rust cannot read a
@@ -418,7 +419,7 @@ fn implemented() -> Result<Vec<String>, Error> {
         out.extend(exported.captures_iter(&src).map(|c| c[1].to_string()));
         out.extend(wrapped.captures_iter(&src).map(|c| c[1].to_string()));
     }
-    for path in files_with_extension(&root_join("crates/zeo-rt/csrc"), "c")? {
+    for path in files_with_extension(&root_join("crates/zeo-capi/csrc"), "c")? {
         let src = read(&path)?;
         out.extend(in_c.captures_iter(&src).map(|c| c[1].to_string()));
     }
@@ -468,7 +469,12 @@ fn rustfmt_would_write(text: &str) -> Result<String, Error> {
     std::fs::write(&path, text)
         .map_err(|e| Error::new(format!("writing {}: {e}", path.display())))?;
     let out = exec::run(
-        &[Path::new("rustfmt"), Path::new("--edition"), Path::new("2024"), &path],
+        &[
+            Path::new("rustfmt"),
+            Path::new("--edition"),
+            Path::new("2024"),
+            &path,
+        ],
         root(),
         &[],
         Capture::Both,
@@ -503,13 +509,27 @@ fn refused(name: &str) -> Option<&'static str> {
     const PARSE_TREE: &str = "this answers a NODE*, MRI's parse tree; zeo compiles through prism \
                               and builds no such thing";
     Some(match name {
-        "ruby_init" | "ruby_setup" | "ruby_cleanup" | "ruby_finalize" | "ruby_sig_finalize"
-        | "ruby_stop" | "ruby_options" | "ruby_process_options" | "ruby_prog_init"
-        | "ruby_sysinit" | "ruby_init_loadpath" | "ruby_init_stack" | "ruby_incpush"
-        | "ruby_script" | "ruby_set_argv" | "ruby_set_script_name" | "ruby_show_copyright"
-        | "ruby_show_version" | "ruby_run_node" | "ruby_exec_node" | "ruby_executable_node" => {
-            EMBEDDING
-        }
+        "ruby_init"
+        | "ruby_setup"
+        | "ruby_cleanup"
+        | "ruby_finalize"
+        | "ruby_sig_finalize"
+        | "ruby_stop"
+        | "ruby_options"
+        | "ruby_process_options"
+        | "ruby_prog_init"
+        | "ruby_sysinit"
+        | "ruby_init_loadpath"
+        | "ruby_init_stack"
+        | "ruby_incpush"
+        | "ruby_script"
+        | "ruby_set_argv"
+        | "ruby_set_script_name"
+        | "ruby_show_copyright"
+        | "ruby_show_version"
+        | "ruby_run_node"
+        | "ruby_exec_node"
+        | "ruby_executable_node" => EMBEDDING,
         "rb_big_new" | "rb_big_resize" | "rb_big_pack" | "rb_big_unpack" | "rb_big_2comp" => {
             BIGNUM_LAYOUT
         }
@@ -587,7 +607,12 @@ fn render_stubs(decls: &[Decl]) -> String {
         .collect();
     let globals: String = vars
         .iter()
-        .map(|d| format!("#[unsafe(no_mangle)]\npub static {}: Global = unfilled();\n", d.name))
+        .map(|d| {
+            format!(
+                "#[unsafe(no_mangle)]\npub static {}: Global = unfilled();\n",
+                d.name
+            )
+        })
         .collect();
     let stub_fns: String = stubs
         .iter()
@@ -617,11 +642,11 @@ fn render_stubs(decls: &[Decl]) -> String {
     } else {
         "/// Raise, naming the symbol the extension asked for.\n\
          fn unimplemented(what: &'static str) -> ! {\n    \
-             crate::cext::jmp::raise(crate::builtins::not_impl_error!(\n        \
+             crate::jmp::raise(zeo_rt::builtins::not_impl_error!(\n        \
                  \"{what} is not implemented by zeo\"\n    \
              ))\n\
          }\n"
-            .to_string()
+        .to_string()
     };
 
     format!(
@@ -674,7 +699,7 @@ pub type Global = AtomicUsize;
 
 /// Every global starts here, and the loader is what moves it.
 const fn unfilled() -> Global {{
-    AtomicUsize::new(crate::cext::value::Q_UNDEF)
+    AtomicUsize::new(crate::value::Q_UNDEF)
 }}
 
 /// Every `VALUE` global, by the name C spells.
@@ -694,7 +719,7 @@ pub fn global(name: &str) -> Option<usize> {{
 /// travels with the raise, so a gem author reading the message learns what to
 /// reach for instead.
 fn refused(what: &'static str, why: &'static str) -> ! {{
-    crate::cext::jmp::raise(crate::builtins::not_impl_error!(
+    crate::jmp::raise(zeo_rt::builtins::not_impl_error!(
         "{{what}} is not supported by zeo: {{why}}"
     ))
 }}
@@ -721,25 +746,66 @@ struct Fwd {
 /// convention, and the reason so much of the C API can be forwarded rather
 /// than reimplemented.
 const PREFIX: &[(&str, &str)] = &[
-    ("str", "String"), ("ary", "Array"), ("hash", "Hash"), ("obj", "Object"),
-    ("mod", "Module"), ("class", "Class"), ("int", "Integer"), ("big", "Integer"),
-    ("num", "Numeric"), ("flo", "Float"), ("float", "Float"), ("sym", "Symbol"),
-    ("range", "Range"), ("time", "Time"), ("proc", "Proc"), ("struct", "Struct"),
-    ("reg", "Regexp"), ("io", "IO"), ("file", "File"), ("complex", "Complex"),
-    ("rational", "Rational"), ("exc", "Exception"), ("dir", "Dir"),
-    ("thread", "Thread"), ("mutex", "Thread::Mutex"), ("fiber", "Fiber"),
-    ("enum", "Enumerable"), ("set", "Set"), ("method", "Method"),
+    ("str", "String"),
+    ("ary", "Array"),
+    ("hash", "Hash"),
+    ("obj", "Object"),
+    ("mod", "Module"),
+    ("class", "Class"),
+    ("int", "Integer"),
+    ("big", "Integer"),
+    ("num", "Numeric"),
+    ("flo", "Float"),
+    ("float", "Float"),
+    ("sym", "Symbol"),
+    ("range", "Range"),
+    ("time", "Time"),
+    ("proc", "Proc"),
+    ("struct", "Struct"),
+    ("reg", "Regexp"),
+    ("io", "IO"),
+    ("file", "File"),
+    ("complex", "Complex"),
+    ("rational", "Rational"),
+    ("exc", "Exception"),
+    ("dir", "Dir"),
+    ("thread", "Thread"),
+    ("mutex", "Thread::Mutex"),
+    ("fiber", "Fiber"),
+    ("enum", "Enumerable"),
+    ("set", "Set"),
+    ("method", "Method"),
 ];
 
 /// MRI spells an operator out in a C name. `_p` is `?` and `_bang` is `!`,
 /// both upstream conventions too.
 const OPS: &[(&str, &str)] = &[
-    ("plus", "+"), ("minus", "-"), ("times", "*"), ("div", "/"), ("modulo", "%"),
-    ("pow", "**"), ("cmp", "<=>"), ("aref", "[]"), ("aset", "[]="),
-    ("equal", "=="), ("eq", "=="), ("eql", "eql?"), ("lshift", "<<"), ("rshift", ">>"),
-    ("and", "&"), ("or", "|"), ("xor", "^"), ("mul", "*"), ("sub", "-"),
-    ("idiv", "div"), ("uminus", "-@"), ("uplus", "+@"), ("neg", "-@"),
-    ("includes", "include?"), ("size", "size"), ("length", "length"),
+    ("plus", "+"),
+    ("minus", "-"),
+    ("times", "*"),
+    ("div", "/"),
+    ("modulo", "%"),
+    ("pow", "**"),
+    ("cmp", "<=>"),
+    ("aref", "[]"),
+    ("aset", "[]="),
+    ("equal", "=="),
+    ("eq", "=="),
+    ("eql", "eql?"),
+    ("lshift", "<<"),
+    ("rshift", ">>"),
+    ("and", "&"),
+    ("or", "|"),
+    ("xor", "^"),
+    ("mul", "*"),
+    ("sub", "-"),
+    ("idiv", "div"),
+    ("uminus", "-@"),
+    ("uplus", "+@"),
+    ("neg", "-@"),
+    ("includes", "include?"),
+    ("size", "size"),
+    ("length", "length"),
 ];
 
 /// Names whose C meaning is NOT the Ruby method they map onto. Each one was
@@ -822,7 +888,9 @@ fn read_forward_rs() -> Result<Vec<Fwd>, Error> {
         })
         .collect();
     if rows.is_empty() {
-        return Err(Error::new(format!("{FORWARD_RS} carries no FORWARDED rows")));
+        return Err(Error::new(format!(
+            "{FORWARD_RS} carries no FORWARDED rows"
+        )));
     }
     Ok(rows)
 }
@@ -935,7 +1003,12 @@ fn candidates() -> Result<Vec<Fwd>, Error> {
 fn render_forward_rs(rows: &[Fwd]) -> String {
     let table: String = rows
         .iter()
-        .map(|r| format!("    ({:?}, {:?}, {:?}, {}),\n", r.name, r.klass, r.meth, r.nargs))
+        .map(|r| {
+            format!(
+                "    ({:?}, {:?}, {:?}, {}),\n",
+                r.name, r.klass, r.meth, r.nargs
+            )
+        })
         .collect();
     let entries: String = rows
         .iter()
@@ -985,7 +1058,7 @@ fn render_forward_rs(rows: &[Fwd]) -> String {
 
 use super::convert::{{to_value, value_of}};
 use super::value::Value;
-use crate::{{RubyValue, Signal, Symbol}};
+use zeo_rt::{{RubyValue, Signal, Symbol}};
 
 /// `(symbol, class, method, arity)`, sorted by symbol.
 ///
@@ -1000,7 +1073,7 @@ fn forward(recv: Value, meth: &str, args: &[Value]) -> Result<Value, Signal> {{
     // SAFETY: every argument is an extension's own live `VALUE`.
     let recv = unsafe {{ value_of(recv) }};
     let args: Vec<RubyValue> = args.iter().map(|a| unsafe {{ value_of(*a) }}).collect();
-    let out = crate::dispatch::send_value(&recv, Symbol::intern(meth), &args, None)?;
+    let out = zeo_rt::dispatch::send_value(&recv, Symbol::intern(meth), &args, None)?;
     to_value(&out)
 }}
 
@@ -1033,5 +1106,6 @@ fn files_with_extension(dir: &Path, ext: &str) -> Result<Vec<PathBuf>, Error> {
 }
 
 fn read(path: &Path) -> Result<String, Error> {
-    std::fs::read_to_string(path).map_err(|e| Error::new(format!("reading {}: {e}", path.display())))
+    std::fs::read_to_string(path)
+        .map_err(|e| Error::new(format!("reading {}: {e}", path.display())))
 }

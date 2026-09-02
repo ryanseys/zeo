@@ -132,7 +132,7 @@ jobs:
       - name: packages list cleanly and carry their pregen artifacts
         run: |
           cargo xtask stage-publish
-          for c in zeo-abi zeo-dsl zeo-macros zeo-rt zeo; do
+          for c in zeo-abi zeo-dsl zeo-macros zeo-rt zeo-capi zeo; do
             n=$(cargo package -p "$c" --list --allow-dirty | wc -l)
             echo "$c: $n files"
           done

@@ -1012,7 +1012,7 @@ pub(crate) fn io_is_closed(recv: &RubyValue) -> bool {
     })
 }
 
-pub(crate) fn as_rio(recv: &RubyValue) -> Option<&RIo> {
+pub fn as_rio(recv: &RubyValue) -> Option<&RIo> {
     match recv {
         RubyValue::Object(o) => o.as_any().downcast_ref::<RIo>(),
         _ => None,
@@ -1029,7 +1029,7 @@ pub(crate) fn as_rio(recv: &RubyValue) -> Option<&RIo> {
 /// (zeo has no tied write half -- see `rb_io_set_write_io`), `TEXTMODE`
 /// (nothing on a Unix stream distinguishes it from binary), and
 /// `SETENC_BY_BOM` (a transient of the open, not kept).
-pub(crate) fn fmode_bits(recv: &RubyValue) -> i32 {
+pub fn fmode_bits(recv: &RubyValue) -> i32 {
     const READABLE: i32 = 0x0000_0001;
     const WRITABLE: i32 = 0x0000_0002;
     const BINMODE: i32 = 0x0000_0004;
@@ -1476,7 +1476,7 @@ fn buffered_byte(io: &RIo, f: &mut std::fs::File) -> std::io::Result<Option<u8>>
 /// Whether this IO holds bytes the descriptor no longer has -- an `eof?`
 /// peek, or read-ahead. A row that bypasses the buffer (`BasicSocket#recv`)
 /// has to refuse rather than skip them.
-pub(crate) fn has_buffered_bytes(recv: &RubyValue) -> bool {
+pub fn has_buffered_bytes(recv: &RubyValue) -> bool {
     as_rio(recv).is_some_and(|io| io.rbuf.lock().pending() > 0)
 }
 

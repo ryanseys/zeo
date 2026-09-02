@@ -34,10 +34,14 @@ pub use zeo_rt;
 #[global_allocator]
 static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+// Linking the C-API crate is its whole installation (it contributes one
+// `zeo_rt::capi_hooks` element), so it only has to be named once.
+#[cfg(feature = "capi")]
+use zeo_capi as _;
+
 pub mod analyze;
 pub mod analyze_error;
 pub mod autopkg;
-pub mod package;
 pub mod backend;
 pub mod builtin_surface;
 pub mod bundled;
@@ -53,6 +57,7 @@ pub mod eval;
 pub mod gem_report;
 pub mod home;
 pub mod memguard;
+pub mod package;
 
 pub use diagnostics::CompileError;
 

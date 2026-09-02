@@ -157,16 +157,6 @@ libc.workspace = true
 [package.metadata.cargo-machete]
 ignored = ["md-5", "sha1", "sha2", "digest", "flate2", "yaml-rust2", "openssl"]
 
-[build-dependencies]
-# `csrc/cext_jmp.c`, built only under the `cext` feature. `cc` is already in
-# the tree through onig and libffi, which vendor and build their own C
-# libraries.
-cc = "1"
-# `$OUT_DIR/cext_layout.rs` -- the Rust mirror of the MRI structs the C
-# extension views fill, read from the vendored headers. Already in the graph
-# through `ruby-prism-sys`, so libclang is not a new build requirement.
-bindgen = "0.72"
-
 [features]
 default = ["ext-all"]
 # Install a `tracing` subscriber inside a COMPILED program, so
@@ -174,6 +164,10 @@ default = ["ext-all"]
 # default: the subscriber is much larger than the binary-size gate allows,
 # and a `zeo prog.rb` run already gets one from the compiler's `main`.
 runtime-logging = ["dep:tracing-subscriber"]
+# Link every builtin method table into the binary (the `BUILTIN_TABLES`
+# slice). A shipped program installs its tables from its own descriptor; a
+# unit-test binary of a DEPENDENT crate has no program and needs this.
+unit-tables = []
 ext-all = [
     "ext-base64",
     "ext-monitor",
@@ -198,16 +192,7 @@ ext-all = [
     "ext-coverage",
     "ext-tracepoint",
     "ext-prism",
-    "cext",
 ]
-# The C extension surface (`crates/zeo-rt/cext/`).
-#
-# ON by default as of C0. It was off while the surface was built, on the
-# argument that an ext-free binary should stay byte-identical -- but a zeo
-# that can COMPILE a gem's extension and then cannot load it is not a
-# configuration anyone wants, and `zeo_rt_cext_load` sits in the capi symbol
-# table either way, so nothing dead-strips regardless.
-cext = []
 ext-base64 = []
 ext-prism = []
 ext-coverage = []

@@ -76,7 +76,7 @@ limitation is a synthesized FHS install prefix, not a real install layout.
 
 A gem that ships its C as SOURCE is compiled from it. zeo is
 **source-compatible with CRuby and ABI-incompatible**: a gem's `ext/**/*.c`
-builds against MRI's own headers (`crates/zeo-rt/cext/include/`, vendored
+builds against MRI's own headers (`crates/zeo-capi/cext/include/`, vendored
 verbatim from `ruby/ruby` at the pinned tag plus one patch), and a prebuilt
 MRI `.so` never loads.
 
@@ -122,7 +122,16 @@ the build.
 
 ### The C API surface
 
-`crates/zeo-rt/src/cext/api.rs` is the census: every symbol an extension can link
+The API lives in its own crate, `zeo-capi`, behind the `capi` cargo feature
+of `zeo` (on by default; `cext` is the older spelling of the same feature).
+The runtime never names the crate: it asks its four questions -- load an
+extension, does this class allocate through `rb_define_alloc_func`, run
+that allocator, run the `ruby_vm_at_exit` callbacks -- through
+`zeo_rt::capi_hooks`, and linking the crate fills those slots. A `zeo` built
+`--no-default-features` compiles every program; a `require` of a compiled
+extension then answers `LoadError` naming the missing support.
+
+`crates/zeo-capi/src/api.rs` is the census: every symbol an extension can link
 against, read off clang's AST of every public header. 33 of them are
 REFUSALS, not gaps, and each raises with its reason:
 

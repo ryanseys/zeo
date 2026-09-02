@@ -1,15 +1,14 @@
 //! The emitted call that loads a gem's compiled C extension.
 //!
-//! This lives here rather than beside the loader itself
-//! (`crate::cext::load`) because the capi symbol table is not
-//! feature-gated: every emitted program resolves its imports against one
-//! fixed list, and a row that appeared and vanished with a build feature
-//! would make "the emitter can call it" depend on how the runtime was
-//! configured.
+//! This lives here rather than in the C-API crate because the capi symbol
+//! table is not optional: every emitted program resolves its imports
+//! against one fixed list, and a row that appeared and vanished with the
+//! build would make "the emitter can call it" depend on how the runtime
+//! was configured.
 //!
-//! So the symbol always exists. What varies is the answer: a runtime built
-//! without the `cext` feature says so, naming the library it was asked for,
-//! rather than failing to link.
+//! So the symbol always exists. What varies is the answer: a binary built
+//! without the C-API crate says so, naming the library it was asked for,
+//! rather than failing to link (`capi_hooks::load`).
 
 use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
 
@@ -36,14 +35,6 @@ pub unsafe extern "C" fn zeo_rt_cext_load(
     }
 }
 
-#[cfg(feature = "cext")]
 fn load(path: &str, init: &str) -> Result<(), crate::Signal> {
-    crate::cext::load::load(path, init).map(|_| ())
-}
-
-#[cfg(not(feature = "cext"))]
-fn load(path: &str, _init: &str) -> Result<(), crate::Signal> {
-    Err(crate::builtins::load_error!(
-        "cannot load such file -- {path}: this zeo was built without C extension support"
-    ))
+    crate::capi_hooks::load(path, init).map(|_| ())
 }
