@@ -159,7 +159,7 @@ jobs:
           tool: cargo-nextest@0.9.143
       - uses: ./.github/actions/ruby-bundle
       - run: make
-      - run: make test-jit test-platform
+      - run: make test-jit test-platform test-capi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -27,7 +27,7 @@ BUNDLE ?= bundle
 # file of either name would have turned that target into a silent no-op.
 .PHONY: all help deps test test-jit test-aot test-memcheck test-capi \
         test-typed test-packaged test-milestones test-config test-platform test-size build-pure \
-        test-smoke test-all lint ratchet no-big-files hygiene check-generated tool-versions ci-local \
+        test-smoke test-all lint ratchet no-big-files no-c-files hygiene check-generated tool-versions ci-local \
         check-batch gate bench pgo install linux clean
 
 .DEFAULT_GOAL := all
@@ -93,20 +93,33 @@ no-big-files:  ## no tracked file over 1MB
 	if [ -n "$$big" ]; then echo "tracked files over 1MB:" >&2; echo "$$big" >&2; exit 1; fi; \
 	echo "no tracked file over 1MB"
 
+# zeo is Rust. C reaches a build only through a `-sys` crate (deny.toml names
+# them), and an extension a test builds is text the test writes. The one
+# directory still carrying C is dated in `crates/zeo/tests/checks/no_c.rs`,
+# which holds the file set exact; this is the half that builds nothing.
+no-c-files:  ## no tracked C source outside the dated exception
+	@stray=$$(git ls-files -z | tr '\0' '\n' \
+	    | grep -E '\.(c|h|cc|cpp|cxx|hpp|hh|m|mm|S|s|patch)$$' \
+	    | grep -v '^crates/zeo-capi/csrc/'); \
+	if [ -n "$$stray" ]; then echo "tracked C source:" >&2; echo "$$stray" >&2; exit 1; fi; \
+	echo "no tracked C source"
+
 # Permissive licenses only and no yanked or advisory-flagged crate (deny.toml:
 # zeo-rt ships inside every compiled program, so its tree is the user's tree),
-# and no unused dependency (one still ships in the .crate and still has to be
-# audited; the exceptions are listed in zeo-rt's manifest with their reasons).
-hygiene: ratchet no-big-files  ## deny, machete, the ratchet and the size guard
+# no crate compiling C outside the named set, and no unused dependency (one
+# still ships in the .crate and still has to be audited; the exceptions are
+# listed in zeo-rt's manifest with their reasons).
+hygiene: ratchet no-big-files no-c-files  ## deny, machete, the ratchet, the size guard and the C guard
 	$(CARGO) deny check
 	$(CARGO) machete
 
-# The MRI headers are upstream verbatim plus a patch series, and `cext/api.rs`
-# and `cext/stubs.rs` are generated from clang's AST of them; the forwarding
-# table is a set of claims verified against the oracle by `forward --reverify`
-# (needs ruby 4.0.6, so not here). Stale either way means a gem fails to LINK
-# with a symbol name and no file or line, so the committed and generated halves
-# are checked against each other.
+# zeo's edits to MRI's headers (`zeo-capi/src/headers/hunks.rs`) must still
+# apply to the pinned upstream tree; `api.rs` and `forward.rs` are generated
+# from clang's AST of those headers, and `layout_facts.rs` is measured from
+# them by a C probe. Stale means a gem fails to LINK with a symbol name and no
+# file or line, or reads a field at the wrong offset, so the committed and
+# generated halves are checked against each other. (`forward --reverify`
+# needs ruby 4.0.6, so not here.)
 check-generated:  ## the C API header edits, the generated tables and the object layout agree
 	$(CARGO) xtask cext hunks --check
 	$(CARGO) xtask cext api --check
