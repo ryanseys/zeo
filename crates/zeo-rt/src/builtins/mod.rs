@@ -332,6 +332,8 @@ const NO_TABLE: &[&str] = &[
     "Set::CoreSet",
     "UnicodeNormalize",
     "WeakRef",
+    // A namespace only: its methods live on `Zeo::Eval`.
+    "Zeo",
 ];
 
 /// Abort if `id` is a class this program was supposed to carry a table for.
