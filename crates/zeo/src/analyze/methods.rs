@@ -615,7 +615,13 @@ fn resolve_in_ancestry(
         let key = crate::constpath::ConstPath::parse(&path)
             .unanchored()
             .to_string();
-        if compiler.shell_kinds.contains_key(&(box_id, key))
+        // `defining` is checked BEFORE the mint, not after like the arms
+        // above: minting first leaves the excluded shell REGISTERED, so the
+        // caller's deferral no longer matters -- `class Logger < Logger`
+        // with logger unrequired resolved every later read to the phantom
+        // instead of raising ruby's NameError.
+        if path != defining
+            && compiler.shell_kinds.contains_key(&(box_id, key))
             && let Some(found) = super::classes::resolve_or_create_container(compiler, &path, box_id)
             && compiler.fq_name(found) != defining
         {
