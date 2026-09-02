@@ -35,6 +35,15 @@ use crate::encoding::EncodingId;
 use crate::{RubyValue, Signal};
 use std::ffi::{c_char, c_int, c_long, c_uint};
 
+/// `coderange.h`'s enum values. The coderange rides in the flags word as
+/// `FL_USER8`/`FL_USER9` (`FL_USHIFT` is 12), so 7BIT is `1<<20` -- NOT a
+/// small ordinal. An extension compares against the enum, so anything else
+/// reads as UNKNOWN-adjacent garbage: json's generator refused every valid
+/// String as "illegal/malformed utf-8" when this answered 0x10.
+const ENC_CODERANGE_7BIT: c_int = 1 << 20;
+const ENC_CODERANGE_VALID: c_int = 1 << 21;
+const ENC_CODERANGE_BROKEN: c_int = (1 << 20) | (1 << 21);
+
 /// `rb_encoding *` for an id. Never null, and never dereferenceable.
 fn token(id: EncodingId) -> Encoding {
     (id.0 as usize + 1) as Encoding
@@ -232,9 +241,10 @@ crate::cext_fn! {
         Ok(c_int::from(only))
     }
 
-    /// `rb_enc_str_coderange(str)`: `ENC_CODERANGE_7BIT` (16), `VALID` (32)
-    /// or `BROKEN` (48). The values are `ruby/encoding.h`'s own, and an
-    /// extension switches on them.
+    /// `rb_enc_str_coderange(str)`: `ENC_CODERANGE_7BIT`, `VALID` or
+    /// `BROKEN`. An extension compares the answer against the enum, and the
+    /// patched `RB_ENC_CODERANGE` forwards here, so the values must be
+    /// `coderange.h`'s own flag masks.
     fn rb_enc_str_coderange(v: Value) -> c_int {
         let s = unsafe { value_of(v) };
         let RubyValue::Str(s) = &s else {
@@ -242,11 +252,11 @@ crate::cext_fn! {
         };
         let g = s.lock();
         Ok(if g.ascii_only() {
-            0x10
+            ENC_CODERANGE_7BIT
         } else if g.valid_encoding() {
-            0x20
+            ENC_CODERANGE_VALID
         } else {
-            0x30
+            ENC_CODERANGE_BROKEN
         })
     }
 
@@ -605,11 +615,11 @@ crate::cext_fn! {
         if !cr.is_null() {
             let head = crate::encoding::StrBuf::from_bytes(bytes[..end].to_vec(), id);
             let code = if head.ascii_only() {
-                0x10
+                ENC_CODERANGE_7BIT
             } else if head.valid_encoding() {
-                0x20
+                ENC_CODERANGE_VALID
             } else {
-                0x30
+                ENC_CODERANGE_BROKEN
             };
             // SAFETY: the caller's own `int`.
             unsafe { cr.write(code) };
@@ -755,6 +765,20 @@ mod tests {
             n.is_some_and(|n| n <= bytes.len()),
             "{n:?} runs past the end"
         );
+    }
+
+    /// The values an extension compares against come from `coderange.h`'s
+    /// enum, which is built from the flags-word bits -- checked against the
+    /// bindgen mirror so a header bump that moves them fails by name. json's
+    /// generator switches on these; small ordinals read as garbage there.
+    #[test]
+    fn coderange_answers_are_the_headers_enum_values() {
+        use super::super::layout;
+        let bit8 = layout::ruby_fl_type_RUBY_FL_USER8 as c_int;
+        let bit9 = layout::ruby_fl_type_RUBY_FL_USER9 as c_int;
+        assert_eq!(ENC_CODERANGE_7BIT, bit8);
+        assert_eq!(ENC_CODERANGE_VALID, bit9);
+        assert_eq!(ENC_CODERANGE_BROKEN, bit8 | bit9);
     }
 
     #[test]
