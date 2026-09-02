@@ -103,6 +103,13 @@ const SUITES: &[Suite] = &[
         zeo_reads_store: false,
     },
     Suite {
+        prefix: "ze0",
+        root: "tests/ze0",
+        layout: Layout::Flat,
+        records_zeo: false,
+        zeo_reads_store: false,
+    },
+    Suite {
         prefix: "milestone",
         root: "tests/milestones",
         layout: Layout::FlatAndPending,

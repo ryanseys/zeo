@@ -468,7 +468,10 @@ crates/
   the Prism tree into a typed HIR arena; `analyze/` computes ancestors,
   method tables, local types, and fusion decisions; `clif/` lowers HIR to
   Cranelift IR; `backend/` finalizes it in process (JIT) or emits an object
-  and links it (AOT). It is a **library** as well as a binary — see
+  and links it (AOT). `zeo backend` links the same IR written as text by
+  another front end, with a `.zeodata` sidecar for what code cannot say;
+  [`ze0/`](ze0/README.md) is one such front end, in Ruby, that zeo builds
+  into a native binary. It is a **library** as well as a binary — see
   [Public API](#public-api).
 - **`zeo-rt`** — the runtime. One `enum RubyValue`; collections are
   `Arc<Freezable<…>>` so `freeze` and sharing are cheap; user objects are

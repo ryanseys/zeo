@@ -13,6 +13,7 @@ mod gem_versions;
 mod goldens_hygiene;
 mod mkmf_probes;
 mod no_c;
+mod ze0_clif;
 
 // The golden comparison's scrubbing. Its suites run under datatest, which
 // replaces the libtest harness, so its unit tests only run from here.
@@ -23,3 +24,6 @@ mod normalize_tests;
 // `clif` reads `libzeo.a`, which a test run does not build.
 #[path = "../harness/paths.rs"]
 mod paths;
+// `ze0_clif` runs the Ruby front end under the built `zeo`.
+#[path = "../harness/zeo_bin.rs"]
+mod zeo_bin;

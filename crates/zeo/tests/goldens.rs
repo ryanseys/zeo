@@ -15,6 +15,8 @@
 //!   file is the diverging PROGRAM and nothing else -- no comments; see
 //!   `goldens_hygiene::a_gap_file_carries_no_commentary` for why.
 //! - `tests/spinel/` -- the corpus vendored from spinel; must match ruby.
+//! - `tests/ze0/` -- the Ruby front end's subset; must match ruby, and the
+//!   binaries ze0 builds must match `zeo build`'s.
 //!
 //! Each pattern matches ONE level: a subdirectory holds FIXTURES, not tests.
 //! `tests/bench/` is compile-side input with no goldens and stays out.
@@ -40,6 +42,8 @@ mod golden;
 mod normalize;
 #[path = "harness/paths.rs"]
 mod paths;
+#[path = "harness/ze0.rs"]
+mod ze0_roads;
 #[path = "harness/zeo_bin.rs"]
 mod zeo_bin;
 
@@ -79,6 +83,13 @@ fn gap(rb: &Path) -> datatest_stable::Result<()> {
 
 fn spinel(rb: &Path) -> datatest_stable::Result<()> {
     run(rb, golden::Mode::Pass)
+}
+
+/// `tests/ze0/` -- the subset the Ruby front end lowers; must match ruby
+/// through `zeo build`, and then match that through ze0 under the JIT and
+/// through stage 1 (`harness/ze0.rs`).
+fn ze0(rb: &Path) -> datatest_stable::Result<()> {
+    ze0_roads::run(rb)
 }
 
 /// Every milestone case is a whole-graph compile by definition,
@@ -121,5 +132,6 @@ datatest_stable::harness! {
     { test = jit_only, root = "../../tests/jit", pattern = r"^[^/]+\.rb$" },
     { test = gap, root = "../../tests/gaps", pattern = r"^[^/]+\.rb$" },
     { test = spinel, root = "../../tests/spinel", pattern = r"^[^/]+\.rb$" },
+    { test = ze0, root = "../../tests/ze0", pattern = r"^[^/]+\.rb$" },
     { test = milestone, root = "../../tests/milestones", pattern = r"^(pending/)?[^/]+\.rb$" },
 }

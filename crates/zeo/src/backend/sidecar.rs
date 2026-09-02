@@ -39,7 +39,10 @@ pub struct Sidecar {
     #[serde(default)]
     pub defs: Vec<Def>,
     /// The builtin class tables the program keeps, by `zeo_ctable_*`
-    /// symbol; the one entry `"@seed"` is the set every program keeps.
+    /// symbol. Two words stand for sets: `"@seed"` is what every program
+    /// keeps (the empty program's tables), and `"@all"` is every table this
+    /// build carries -- the honest choice for a front end with no
+    /// reachability analysis, since a dynamic send can reach any class.
     #[serde(default = "default_class_tables")]
     pub class_tables: Vec<String>,
     /// The registration rows `zeo_rt_main` applies before the first
@@ -118,6 +121,9 @@ pub const PARAM_KINDS: &[&str] = &["req", "opt", "rest", "keyreq", "key", "keyre
 
 /// The `@seed` spelling for [`Sidecar::class_tables`].
 pub const SEED_TABLES: &str = "@seed";
+
+/// The `@all` spelling for [`Sidecar::class_tables`].
+pub const ALL_TABLES: &str = "@all";
 
 /// The `@boot` spelling for [`Sidecar::reg`].
 pub const BOOT_ROWS: &str = "@boot";

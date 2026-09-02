@@ -15,7 +15,12 @@ fn repo_root() -> &'static Path {
 
 fn suite_dirs() -> Vec<PathBuf> {
     let root = repo_root().join("tests");
-    vec![root.clone(), root.join("spinel"), root.join("gaps")]
+    vec![
+        root.clone(),
+        root.join("spinel"),
+        root.join("gaps"),
+        root.join("ze0"),
+    ]
 }
 
 fn goldens() -> impl Iterator<Item = PathBuf> {

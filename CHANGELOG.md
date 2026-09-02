@@ -48,6 +48,13 @@ The first public release, not yet cut.
 - **The disclosure record.** Where Zeo substitutes its own implementation for
   a library, the compile warns, and `--report` writes a `zeo-gems.json` record
   naming every substitution.
+- **`zeo backend` and ze0.** `zeo backend f.clif -o bin` links a program
+  from Cranelift IR written as text, with a `.zeodata` sidecar carrying
+  what code cannot say; `--emit-clif` now names every function and symbol
+  so its text reads back, and `--emit-zeodata` writes the sidecar. `ze0/`
+  is a Ruby front end for that road, about a thousand lines, that zeo
+  compiles into a native binary; `tests/ze0/` holds the programs it must
+  answer exactly as `zeo build` does.
 - **Located codegen diagnostics.** A backend refusal carries the offending
   node's source span, and the CLI renders the same annotated excerpt the
   parse and lower stages show. The location left the message text; a

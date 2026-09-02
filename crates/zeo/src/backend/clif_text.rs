@@ -23,7 +23,7 @@ use std::path::Path;
 use cranelift_codegen::ir::{self, ExternalName, GlobalValueData, UserExternalName, UserFuncName};
 use cranelift_module::{DataId, FuncId, Linkage, Module};
 
-use super::sidecar::{BOOT_ROWS, PARAM_KINDS, RegEntry, RegRow, SEED_TABLES, Sidecar};
+use super::sidecar::{ALL_TABLES, BOOT_ROWS, PARAM_KINDS, RegEntry, RegRow, SEED_TABLES, Sidecar};
 use crate::clif::module::Emitter;
 use crate::clif::{capi_names, emit, names, statics};
 use crate::codegen_error::{CResult, CodegenError};
@@ -410,13 +410,22 @@ fn boot_rows() -> CResult<Vec<RegRow>> {
         .collect()
 }
 
-/// The builtin class tables the sidecar names, `@seed` expanded, each one
-/// a table this build carries.
+/// The builtin class tables the sidecar names, `@seed` and `@all`
+/// expanded, each one a table this build carries.
 fn class_tables(named: &[String]) -> CResult<Vec<&'static str>> {
     let mut out = Vec::new();
     for name in named {
         if name == SEED_TABLES {
             out.extend(class_tables(&boot()?.class_tables)?);
+            continue;
+        }
+        if name == ALL_TABLES {
+            out.extend(
+                crate::builtin_surface::CLASS_TABLE_SYMBOLS
+                    .iter()
+                    .filter(|(id, _)| crate::lower::features::build_carries_class(*id))
+                    .map(|(_, sym)| *sym),
+            );
             continue;
         }
         let known = crate::builtin_surface::CLASS_TABLE_SYMBOLS
@@ -501,6 +510,9 @@ block0(v0: i64):
         assert!(seed.contains(&"zeo_ctable_STRING_CLASS"), "{seed:?}");
         assert!(seed.contains(&"zeo_ctable_MONITOR_CLASS"), "{seed:?}");
         assert!(class_tables(&["zeo_ctable_Nowhere".to_string()]).is_err());
+        let all = class_tables(&[ALL_TABLES.to_string()]).unwrap();
+        assert!(all.len() > seed.len(), "{} vs {}", all.len(), seed.len());
+        assert!(seed.iter().all(|t| all.contains(t)));
     }
 
     #[test]
