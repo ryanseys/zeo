@@ -142,7 +142,6 @@ SMOKE_SLICE ?= 1
 test-smoke: all  ## every unit test + a rotating quarter of the spawning suites (SMOKE_SLICE=1..4)
 	$(NEXTEST) --workspace --exclude zeo-capi --no-fail-fast -E 'not (binary(e2e) | binary(goldens) | binary(checks))'
 	$(NEXTEST) -p zeo-capi --no-fail-fast
-| binary(goldens) | binary(checks))'
 	@mv $(or $(CARGO_TARGET_DIR),target)/nextest/default/junit.xml \
 	    $(or $(CARGO_TARGET_DIR),target)/nextest/default/junit-units.xml 2>/dev/null || true
 	$(NEXTEST) -p zeo --no-fail-fast -E 'binary(e2e) | binary(goldens) | binary(checks)' \
