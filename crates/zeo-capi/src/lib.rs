@@ -36,6 +36,7 @@ pub mod globals;
 pub mod handles;
 pub mod io;
 pub mod layout;
+pub mod layout_facts;
 pub mod load;
 pub mod method;
 pub mod misc;

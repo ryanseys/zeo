@@ -8,8 +8,8 @@
 //!
 //! The constants here are the ones that header spells under `USE_FLONUM`,
 //! which is what `SIZEOF_VALUE >= SIZEOF_DOUBLE` selects on every target zeo
-//! builds extensions for. `the_constants_match_the_vendored_header` reads
-//! them back out of the header rather than trusting this comment.
+//! builds extensions for. `the_constants_match_the_measured_headers` holds
+//! them to what a C compiler measured rather than trusting this comment.
 //!
 //! What is NOT here is the heap half. A heap `VALUE` is a `*const Handle`
 //! ([`super::handles`]); this module only decides which values never need
@@ -151,23 +151,12 @@ pub fn from_immediate(v: Value) -> Option<RubyValue> {
 mod tests {
     use super::*;
 
-    /// The constants are MRI's or they are nothing. Read them back out of the
-    /// vendored header rather than trusting the transcription above -- a
-    /// re-vendor at a later Ruby is exactly when one of them could move.
+    /// The constants are MRI's or they are nothing: each is held to what a C
+    /// compiler measured from the pinned headers, so a header bump that
+    /// moves one fails here by name.
     #[test]
-    fn the_constants_match_the_vendored_header() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/cext/include/ruby/internal/special_consts.h"
-        );
-        let text = std::fs::read_to_string(path).expect("the vendored header is present");
-        // The USE_FLONUM arm, which is the one every zeo target selects.
-        let arm = text
-            .split("#elif USE_FLONUM")
-            .nth(1)
-            .and_then(|s| s.split("#else").next())
-            .expect("special_consts.h still has a USE_FLONUM arm");
-        for (name, want) in [
+    fn the_constants_match_the_measured_headers() {
+        for (name, have) in [
             ("RUBY_Qfalse", Q_FALSE),
             ("RUBY_Qnil", Q_NIL),
             ("RUBY_Qtrue", Q_TRUE),
@@ -178,20 +167,11 @@ mod tests {
             ("RUBY_FLONUM_FLAG", FLONUM_FLAG),
             ("RUBY_SYMBOL_FLAG", SYMBOL_FLAG),
         ] {
-            let line = arm
-                .lines()
-                .find(|l| l.trim_start().starts_with(&format!("{name} ")))
-                .unwrap_or_else(|| panic!("{name} is gone from special_consts.h"));
-            // `RUBY_Qnil = 0x04, /* ...0000 0100 */`
-            let hex = line
-                .split('=')
-                .nth(1)
-                .and_then(|s| s.split("/*").next())
-                .map(|s| s.trim().trim_end_matches(','))
-                .and_then(|s| s.strip_prefix("0x"))
-                .unwrap_or_else(|| panic!("{name} is no longer a hex literal: {line}"));
-            let got = Value::from_str_radix(hex, 16).expect("a hex literal");
-            assert_eq!(got, want, "{name}");
+            assert_eq!(
+                have as u64,
+                super::super::layout_facts::measured(name),
+                "{name}"
+            );
         }
     }
 

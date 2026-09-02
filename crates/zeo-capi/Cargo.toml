@@ -34,10 +34,6 @@ zeo-rt = { workspace = true, features = ["unit-tables"] }
 [build-dependencies]
 # `csrc/*.c`: the variadic entries Rust cannot write before 1.99 (`va_list`).
 cc = "1"
-# `$OUT_DIR/cext_layout.rs` -- the Rust mirror of the MRI structs the C
-# extension views fill, read from the vendored headers. Already in the graph
-# through `ruby-prism-sys`, so libclang is not a new build requirement.
-bindgen = "0.72"
 
 [lints]
 workspace = true

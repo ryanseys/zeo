@@ -10,8 +10,7 @@
 //! `struct st_table` is defined in the vendored `ruby/st.h`, not forward
 //! declared, so an extension can read `tbl->num_entries` and `sizeof` it.
 //! [`StTable`] therefore has exactly those fields in exactly that order, and
-//! `the_header_matches_the_vendored_struct` reads the header back to prove
-//! it.
+//! `layout.rs`'s test holds it to what a C compiler measured.
 //!
 //! What the header CANNOT promise is `entries` and `bins`: `struct
 //! st_table_entry` is declared and never defined ("defined in st.c"), so no
@@ -809,40 +808,6 @@ fn casecmp(a: &[u8], b: &[u8]) -> c_int {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The struct is public in `st.h`, so a field in the wrong order or of
-    /// the wrong width is a silently wrong `tbl->num_entries` read. Reading
-    /// the header back is the only check that survives a re-vendor.
-    #[test]
-    fn the_header_matches_the_vendored_struct() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/cext/include/ruby/st.h");
-        let text = std::fs::read_to_string(path).expect("the vendored header is present");
-        let body = text
-            .split("struct st_table {")
-            .nth(1)
-            .and_then(|s| s.split("};").next())
-            .expect("st.h still defines struct st_table");
-        // The fields, in the order this module lays them out.
-        let want = [
-            "entry_power",
-            "bin_power",
-            "size_ind",
-            "rebuilds_num",
-            "type",
-            "num_entries",
-            "bins",
-            "entries_start",
-            "entries_bound",
-            "entries",
-        ];
-        let mut at = 0;
-        for field in want {
-            let found = body[at..]
-                .find(field)
-                .unwrap_or_else(|| panic!("st_table has no `{field}` after the previous field"));
-            at += found + field.len();
-        }
-    }
 
     fn drop_table(t: *mut StTable) {
         unsafe { rb_st_free_table(t) };

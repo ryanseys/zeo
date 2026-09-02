@@ -111,6 +111,7 @@ check-generated:  ## the vendored cext headers and their generated tables agree
 	$(CARGO) xtask cext sync --check
 	$(CARGO) xtask cext api --check
 	$(CARGO) xtask cext forward --check
+	$(CARGO) xtask cext layout --check
 
 # What is on PATH against what CI pins (rust-toolchain.toml, mise.toml, and
 # the tool versions in .github/workflows). A drift here is the usual reason

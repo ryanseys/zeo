@@ -774,8 +774,8 @@ mod tests {
     #[test]
     fn coderange_answers_are_the_headers_enum_values() {
         use super::super::layout;
-        let bit8 = layout::ruby_fl_type_RUBY_FL_USER8 as c_int;
-        let bit9 = layout::ruby_fl_type_RUBY_FL_USER9 as c_int;
+        let bit8 = layout::FL_USER8 as c_int;
+        let bit9 = layout::FL_USER9 as c_int;
         assert_eq!(ENC_CODERANGE_7BIT, bit8);
         assert_eq!(ENC_CODERANGE_VALID, bit9);
         assert_eq!(ENC_CODERANGE_BROKEN, bit8 | bit9);

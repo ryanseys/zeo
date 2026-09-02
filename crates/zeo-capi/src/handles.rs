@@ -78,11 +78,9 @@ mod t {
     pub const SYMBOL: usize = 0x14;
 }
 
-/// `RUBY_FL_FREEZE`, from `ruby/internal/fl_type.h`.
-const FL_FREEZE: usize = 1 << 11;
-/// `RUBY_TYPED_FL_IS_TYPED_DATA` (`RUBY_FL_USERPRIV0`). Setting it here is
-/// what lets `rbimpl_rtypeddata_p` stay unpatched.
-const FL_IS_TYPED_DATA: usize = 1 << 6;
+// Setting `FL_IS_TYPED_DATA` here is what lets `rbimpl_rtypeddata_p` stay
+// upstream code.
+use super::layout::{FL_FREEZE, FL_IS_TYPED_DATA};
 
 /// MRI's `struct RBasic`, and the first two words of every handle.
 ///
@@ -484,6 +482,35 @@ const _: () = {
 mod tests {
     use super::*;
     use std::sync::atomic::Ordering;
+
+    /// The type tags are `ruby_value_type`'s, held to what a C compiler
+    /// measured from the pinned headers.
+    #[test]
+    fn the_type_tags_match_the_measured_headers() {
+        for (name, have) in [
+            ("RUBY_T_OBJECT", t::OBJECT),
+            ("RUBY_T_CLASS", t::CLASS),
+            ("RUBY_T_MODULE", t::MODULE),
+            ("RUBY_T_FLOAT", t::FLOAT),
+            ("RUBY_T_STRING", t::STRING),
+            ("RUBY_T_REGEXP", t::REGEXP),
+            ("RUBY_T_ARRAY", t::ARRAY),
+            ("RUBY_T_HASH", t::HASH),
+            ("RUBY_T_STRUCT", t::STRUCT),
+            ("RUBY_T_BIGNUM", t::BIGNUM),
+            ("RUBY_T_DATA", t::DATA),
+            ("RUBY_T_MATCH", t::MATCH),
+            ("RUBY_T_COMPLEX", t::COMPLEX),
+            ("RUBY_T_RATIONAL", t::RATIONAL),
+            ("RUBY_T_SYMBOL", t::SYMBOL),
+        ] {
+            assert_eq!(
+                have as u64,
+                super::super::layout_facts::measured(name),
+                "{name}"
+            );
+        }
+    }
 
     fn a_string(s: &str) -> RubyValue {
         zeo_rt::builtins::string::str_value_in_enc(zeo_rt::encoding::UTF_8, s)

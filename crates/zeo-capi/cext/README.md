@@ -94,16 +94,19 @@ comment inside a vendored file. Keeping the struct bodies is what keeps the
 delta small: it is eight macro definitions and eight include lines, so an
 upstream bump has almost no context to conflict with.
 
-**The Rust mirrors are generated, not retyped.** `build.rs` runs bindgen over
-`cext/probe/mirror.h` into `$OUT_DIR/cext_layout.rs`, with `offset_of`
-assertions, so a header bump that moves a field fails the build by field
-name. A hand-written `#[repr(C)]` copy would be a second owner of one fact.
+**The Rust mirrors are hand-written and measured.** `src/layout.rs` holds
+the structs; `cargo xtask cext layout` compiles a C probe against these
+headers and records every size, offset and constant in
+`src/layout_facts.rs`, and the crate's tests hold each Rust field to that
+record. A header bump that moves a field fails `cext layout --check` and
+the tests, both by field name.
 
 ## What the tree is measured against
 
-`crates/zeo-rt/tests/cext_headers.rs` compiles `probe/layout.c`, which calls
-every macro the series rewrote, both `DATA_PTR(o) = p` lvalue idioms included.
-It also asserts the eight payload structs stayed incomplete.
+`cargo xtask cext layout` also compiles an extension probe with
+`-fsyntax-only`: it calls every macro the series rewrote, both
+`DATA_PTR(o) = p` lvalue idioms included, and reads a field off each view the
+way a real gem does.
 
 Beyond the probe, the 23 C-extension gems in the oracle's gemdir -- 165k lines
 of C -- were compiled with `-fsyntax-only` against this tree and against

@@ -36,6 +36,9 @@ subcommands:
   api [--check]       re-record the rb_* census and regenerate stubs
   forward [--check|--reverify]
                       the rb_* -> Class#method forwarding table
+  layout [--check]    measure the object layout and record layout_facts.rs
+|--reverify]
+                      the rb_* -> Class#method forwarding table
 ";
 
 const CEXT: &str = "crates/zeo-capi/cext";
@@ -47,6 +50,10 @@ const MKMF_RB: &str = "crates/zeo/tools-lib/mkmf.rb";
 
 fn include_dir() -> PathBuf {
     root_join(CEXT).join("include")
+}
+
+fn config_dir() -> PathBuf {
+    root_join(CEXT).join("config")
 }
 
 fn patch_dir() -> PathBuf {
@@ -95,6 +102,7 @@ pub fn run(args: &[String]) -> Result<(), Error> {
         Some("patch") => cmd_patch(name),
         Some("api") => cmd_api(check),
         Some("forward") => cmd_forward(check, reverify),
+        Some("layout") => super::cext_layout::run(check, &include_dir(), &config_dir()),
         _ => Err(Error::new(USAGE.to_string())),
     }
 }
