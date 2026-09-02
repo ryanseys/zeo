@@ -386,7 +386,11 @@ fn dual_homed_features(loader: &Loader) -> crate::compiler::FSet<String> {
         std::sync::Mutex<HashMap<String, crate::compiler::FSet<String>>>,
     > = std::sync::OnceLock::new();
     let mut key = String::new();
-    for root in loader.roots.iter().chain(loader.packages.iter().flat_map(|p| p.roots.iter())) {
+    for root in loader
+        .roots
+        .iter()
+        .chain(loader.packages.iter().flat_map(|p| p.roots.iter()))
+    {
         key.push_str(&root.to_string_lossy());
         key.push('\u{0}');
     }
@@ -492,9 +496,20 @@ pub(super) fn lower_main_file(
     // Leaving its package on the search path would answer the require with
     // exactly the code the dial turned off. Dropped here, before
     // `dual_homed_features` probes and memoizes anything.
-    loader
-        .packages
-        .retain(|g| !crate::debug_flags::builtin_disabled(&g.name));
+    //
+    // A library zeo provides in Ruby ALONE (`fiddle`) has no gated feature
+    // for the dial to key on, so its spelling arrives verbatim and is
+    // matched here, against the package names; a spelling that names no
+    // package retired nothing, and says so.
+    for name in crate::debug_flags::disabled_unmatched() {
+        if !loader.packages.iter().any(|g| &g.name == name) {
+            crate::debug_flags::warn_unmatched_disable(name);
+        }
+    }
+    loader.packages.retain(|g| {
+        !crate::debug_flags::builtin_disabled(&g.name)
+            && !crate::debug_flags::ruby_half_disabled(&g.name)
+    });
     // Which gated builtins ALSO have a vendored Ruby half. Probed once here
     // rather than asked per call site, because the answer is a property of
     // the tree and the question is asked from three places -- the deferred
@@ -693,12 +708,10 @@ pub(super) fn lower_main_file(
     // dynamically required file rides -- inside an empty main the emitter
     // then discards. Seeded here so the loop below materializes it.
     if let Some(pkg) = &opts.package_build {
-        let target = pkg.entry.canonicalize().map_err(|e| {
-            format!(
-                "cannot read the package entry {}: {e}",
-                pkg.entry.display()
-            )
-        })?;
+        let target = pkg
+            .entry
+            .canonicalize()
+            .map_err(|e| format!("cannot read the package entry {}: {e}", pkg.entry.display()))?;
         hir.loader.single_unit_demand.insert((
             Some(pkg.feature.clone()),
             target,
@@ -767,7 +780,11 @@ pub(crate) fn bundled_gem_roots() -> Vec<(String, Vec<PathBuf>)> {
 /// One `Begin` rather than two, so the handlers, the `else` and the `ensure`
 /// all keep their single meaning. Answers false when the lowered statement is
 /// not a `Begin` after all, and the caller falls back to the sibling splice.
-fn prepend_to_begin_body(hir: &mut Hir, id: crate::hir::NodeId, spliced: &[crate::hir::NodeId]) -> bool {
+fn prepend_to_begin_body(
+    hir: &mut Hir,
+    id: crate::hir::NodeId,
+    spliced: &[crate::hir::NodeId],
+) -> bool {
     let crate::hir::HirNode::Begin { body, .. } = &mut hir[id] else {
         return false;
     };
@@ -1618,7 +1635,9 @@ impl Loader {
         // entry require (`lowering_package` is None at the main file) to the
         // unguarded `-I`-roots sweep.
         let resolved = match name {
-            "require_relative" => resolve_require_relative(feature, dir).ok().map(|p| (p, None)),
+            "require_relative" => resolve_require_relative(feature, dir)
+                .ok()
+                .map(|p| (p, None)),
             _ => self.resolve_require(feature).ok().flatten(),
         };
         let Some((target, package)) = resolved

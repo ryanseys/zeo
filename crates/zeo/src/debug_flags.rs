@@ -182,51 +182,93 @@ pub(crate) fn loads_at_runtime(feature: &str) -> bool {
 /// This is the measuring instrument for that deletion, not a shipping
 /// feature: it changes which implementation a program runs.
 pub(crate) fn builtin_disabled(feature: &str) -> bool {
-    static NAMES: OnceLock<Vec<String>> = OnceLock::new();
-    let names = NAMES.get_or_init(parse_disabled_builtins);
-    names.iter().any(|n| n == "all" || n == feature)
+    let d = disabled();
+    d.all || d.features.iter().any(|n| n == feature)
 }
 
-/// `ZEO_DISABLE_BUILTIN`'s value, as canonical FEATURE names.
+/// Whether `ZEO_DISABLE_BUILTIN` retires a library zeo provides in Ruby
+/// alone -- an ext-tier package with no gated native half (`fiddle`).
+///
+/// It has no builtin FEATURE to name, so the dial keeps the spelling as
+/// given and the loader matches it against its package names. A name the
+/// loader can match against nothing is what [`disabled_unmatched`] reports.
+pub(crate) fn ruby_half_disabled(name: &str) -> bool {
+    let d = disabled();
+    d.all || d.others.iter().any(|n| n == name)
+}
+
+/// The dial's spellings that named no builtin feature, for the loader to
+/// hold against its package names and warn about the rest -- the loader
+/// knows the packages, this module does not.
+pub(crate) fn disabled_unmatched() -> &'static [String] {
+    &disabled().others
+}
+
+/// `ZEO_DISABLE_BUILTIN`, parsed once.
+struct Disabled {
+    all: bool,
+    /// Canonical feature names of gated builtins.
+    features: Vec<String>,
+    /// Every other spelling, verbatim, for the loader to match.
+    others: Vec<String>,
+}
+
+fn disabled() -> &'static Disabled {
+    static DIAL: OnceLock<Disabled> = OnceLock::new();
+    DIAL.get_or_init(|| {
+        disabled_builtins_from(&std::env::var("ZEO_DISABLE_BUILTIN").unwrap_or_default())
+    })
+}
+
+/// `ZEO_DISABLE_BUILTIN`'s value, split into canonical FEATURE names and
+/// the rest.
 ///
 /// The dial keys on the feature, but a user reaches for the GEM: rubygems
 /// spells `io/console`'s gem `io-console`, and that is what `Gemfile.lock`
 /// and `gem list` show. `ZEO_DISABLE_BUILTIN=io-console` therefore named
 /// nothing and did nothing, and the run looked exactly like a working one --
-/// zeo's own copy still answered the require. Both spellings are accepted
-/// now, and a name matching neither warns instead of passing silently.
-///
-/// A warning, not an error: this module's rule for every dial (see the module
-/// doc), and a debug dial must not make a compile fail.
-fn parse_disabled_builtins() -> Vec<String> {
-    disabled_builtins_from(&std::env::var("ZEO_DISABLE_BUILTIN").unwrap_or_default())
-}
-
-/// [`parse_disabled_builtins`] over a value rather than the environment, so
-/// the spelling rules can be tested without a process-wide variable.
-fn disabled_builtins_from(raw: &str) -> Vec<String> {
-    let mut out = Vec::new();
+/// zeo's own copy still answered the require. Both spellings are accepted.
+/// A name matching neither is kept for the loader, which warns when it
+/// matches no package either -- never silently, because a typo that
+/// retires nothing looks exactly like a working run.
+fn disabled_builtins_from(raw: &str) -> Disabled {
+    let mut d = Disabled {
+        all: false,
+        features: Vec::new(),
+        others: Vec::new(),
+    };
     for name in raw.split(',').map(str::trim).filter(|v| !v.is_empty()) {
-        if name == "all" || zeo_abi::is_builtin_feature(name) {
-            out.push(name.to_string());
+        if name == "all" {
+            d.all = true;
+            continue;
+        }
+        if zeo_abi::is_builtin_feature(name) {
+            d.features.push(name.to_string());
             continue;
         }
         let as_feature = name.replace('-', "/");
         if zeo_abi::is_builtin_feature(&as_feature) {
-            out.push(as_feature);
+            d.features.push(as_feature);
             continue;
         }
-        let near: Vec<&str> = crate::lower::features::builtin_feature_names()
-            .filter(|f| f.contains(name) || name.contains(f))
-            .collect();
-        let hint = if near.is_empty() {
-            "`all` retires every one".to_string()
-        } else {
-            format!("did you mean {}?", near.join(", "))
-        };
-        tracing::warn!("ZEO_DISABLE_BUILTIN=`{name}` names no builtin zeo provides; {hint}");
+        d.others.push(name.to_string());
     }
-    out
+    d
+}
+
+/// The warning for a dial spelling that retired nothing, with the nearest
+/// builtin names as the hint. Emitted by the loader once it has held the
+/// spelling against its packages.
+pub(crate) fn warn_unmatched_disable(name: &str) {
+    let near: Vec<&str> = crate::lower::features::builtin_feature_names()
+        .filter(|f| f.contains(name) || name.contains(f))
+        .collect();
+    let hint = if near.is_empty() {
+        "`all` retires every one".to_string()
+    } else {
+        format!("did you mean {}?", near.join(", "))
+    };
+    tracing::warn!("ZEO_DISABLE_BUILTIN=`{name}` names no builtin zeo provides; {hint}");
 }
 
 #[cfg(test)]
@@ -238,19 +280,31 @@ mod tests {
     /// said so nowhere.
     #[test]
     fn the_gem_spelling_and_the_feature_spelling_both_name_one_builtin() {
-        assert_eq!(disabled_builtins_from("io/console"), ["io/console"]);
-        assert_eq!(disabled_builtins_from("io-console"), ["io/console"]);
-        assert_eq!(disabled_builtins_from("json"), ["json"]);
+        assert_eq!(
+            disabled_builtins_from("io/console").features,
+            ["io/console"]
+        );
+        assert_eq!(
+            disabled_builtins_from("io-console").features,
+            ["io/console"]
+        );
+        assert_eq!(disabled_builtins_from("json").features, ["json"]);
     }
 
-    /// A name matching nothing is dropped rather than stored, so it can never
-    /// silently equal a feature later. `all` is the one non-feature accepted.
+    /// A name matching no builtin feature is never mistaken for one: it
+    /// goes to the loader verbatim, which matches it against its packages
+    /// (`fiddle`) and warns about the rest. `all` is a flag.
     #[test]
-    fn a_name_that_matches_no_builtin_is_refused() {
-        assert!(disabled_builtins_from("jsonn").is_empty());
-        assert!(disabled_builtins_from("").is_empty());
-        assert_eq!(disabled_builtins_from("all"), ["all"]);
+    fn a_name_that_matches_no_builtin_goes_to_the_loader_verbatim() {
+        let d = disabled_builtins_from("jsonn");
+        assert!(d.features.is_empty());
+        assert_eq!(d.others, ["jsonn"]);
+        let d = disabled_builtins_from("");
+        assert!(d.features.is_empty() && d.others.is_empty() && !d.all);
+        assert!(disabled_builtins_from("all").all);
         // The good names in a mixed list still take effect.
-        assert_eq!(disabled_builtins_from("zzz, json ,yyy"), ["json"]);
+        let d = disabled_builtins_from("fiddle, json ,yyy");
+        assert_eq!(d.features, ["json"]);
+        assert_eq!(d.others, ["fiddle", "yyy"]);
     }
 }
