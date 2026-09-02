@@ -56,6 +56,15 @@ impl Names {
 /// answer is then shadow-compared against the original linear scan -- the
 /// drift detector for the index's settle-before-lookup registration
 /// invariant.
+/// Whether `cid` is a require-gated builtin slot whose implementation this
+/// build does not provide (its cargo feature is off, or `ZEO_DISABLE_BUILTIN`
+/// retired it). Such a slot never resolves by name: without a native half
+/// behind it, CRuby's world has no such constant until a file defines one,
+/// and that file's class owns the name.
+fn unprovided_gated_slot(cid: ClassId) -> bool {
+    zeo_abi::feature_of_gated_class(cid).is_some_and(|f| !crate::lower::features::zeo_provides(f))
+}
+
 fn verify_class_index() -> bool {
     crate::debug_flags::debug(crate::debug_flags::DebugFlag::VerifyClassIndex)
 }
@@ -182,13 +191,20 @@ impl Compiler {
         let upto = self.indexed_upto.get();
         if upto < self.classes.len() {
             // First-registered wins within one scope (`or_insert`), exactly
-            // the old scan's `position` semantics.
+            // the old scan's `position` semantics. A require-gated builtin
+            // slot this build cannot provide (its cargo feature is off, or
+            // `ZEO_DISABLE_BUILTIN` retired it) is invisible to name
+            // resolution: it can never attach and never activate, and a user
+            // class of the same name must be findable in its place -- or
+            // every later definition site mints ANOTHER fresh class.
             for (i, c) in self.classes.iter().enumerate().skip(upto) {
-                index
-                    .entry((c.box_id, c.lexical_parent))
-                    .or_default()
-                    .entry(c.name.clone())
-                    .or_insert(ClassId(i as u32));
+                if !unprovided_gated_slot(ClassId(i as u32)) {
+                    index
+                        .entry((c.box_id, c.lexical_parent))
+                        .or_default()
+                        .entry(c.name.clone())
+                        .or_insert(ClassId(i as u32));
+                }
             }
             self.indexed_upto.set(self.classes.len());
         }
@@ -200,8 +216,12 @@ impl Compiler {
             let scan = self
                 .classes
                 .iter()
-                .position(|c| {
-                    c.name == name && c.box_id == box_id && c.lexical_parent == lexical_parent
+                .enumerate()
+                .position(|(i, c)| {
+                    c.name == name
+                        && c.box_id == box_id
+                        && c.lexical_parent == lexical_parent
+                        && !unprovided_gated_slot(ClassId(i as u32))
                 })
                 .map(|i| ClassId(i as u32));
             assert_eq!(

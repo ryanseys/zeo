@@ -335,3 +335,44 @@ p NestedProbe::Engine.respond_to?(:__np_salt)
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// With `ZEO_DISABLE_BUILTIN`, a gem's own `module JSON` files reopen ONE
+/// user class instead of each minting a fresh one.
+///
+/// The builtin's dormant slot registers first and the name index is
+/// first-registered-wins, so the slot shadowed the name forever: every
+/// definition site failed the not-provided filter and minted ANOTHER class,
+/// scattering the gem's constants across them -- `JSON::NaN` was on a class
+/// no read could reach, and on the store road the surviving binding sat in
+/// an autoload unit that never ran, so `JSON` itself was invisible at run
+/// time. A slot the build cannot provide is invisible to name resolution
+/// now, which is also CRuby's world: no constant exists until a file
+/// defines one.
+#[test]
+fn a_disabled_builtin_name_reopens_one_user_class_across_files() {
+    let dir = std::env::temp_dir().join(format!("zeo-disable-reopen-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(dir.join("dv.rb"), "module JSON\n  X = 1\nend\n").expect("dv.rb");
+    std::fs::write(
+        dir.join("dc.rb"),
+        "require \"dv\"\nmodule JSON\n  Y = 2\nend\n",
+    )
+    .expect("dc.rb");
+    let out = Command::new(zeo_bin())
+        .arg("-I")
+        .arg(&dir)
+        .arg("-e")
+        .arg("require \"dc\"\np JSON::X\np JSON::Y\np defined?(JSON)\np JSON.constants.sort")
+        .env("ZEO_CACHE", "0")
+        .env("ZEO_DISABLE_BUILTIN", "json")
+        .output()
+        .expect("zeo runs");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "1\n2\n\"constant\"\n[:X, :Y]\n",
+        "stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
