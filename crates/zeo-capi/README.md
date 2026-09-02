@@ -15,5 +15,6 @@ compiles every program; a `require` of a compiled extension then answers
 
 `src/headers/` is what MRI's header tree IS to zeo: the pin
 (`ruby-headers.lock`), the edits applied to upstream's `include/` when the
-compiler fetches it, and the two files zeo adds. `csrc/` holds the few
-entries that still need C until Rust 1.99 (see `docs/LIMITATIONS.md`).
+compiler fetches it, and the two files zeo adds. The variadic entries
+(`rb_raise`, `rb_sprintf`, `rb_scan_args`, ...) read their `VaList` in Rust,
+which is why the crate needs Rust 1.99.

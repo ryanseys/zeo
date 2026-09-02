@@ -90,7 +90,6 @@ impl Drop for Scope {
         super::string::flush_pins();
         super::collection::flush_projections();
         super::view::flush_views();
-        super::format::flush_texts();
         super::gc::flush_tmp_buffers();
         let pinned = SCOPES.with_borrow_mut(|s| {
             // Not an equality assert: `unwind::protect` may already have unwound

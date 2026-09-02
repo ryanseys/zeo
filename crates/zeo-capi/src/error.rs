@@ -4,24 +4,28 @@
 //! `__attribute__((noreturn))` -- which an extension relies on. A C compiler
 //! that believes a function returns emits the code after the call; one that
 //! knows it does not, does not. So each of these leaves through
-//! [`super::jmp`], which longjmps and never comes back.
+//! [`super::unwind::raise`], which unwinds and never comes back.
 //!
-//! # `errno` is the second thing Rust cannot express
+//! The variadic spellings (`rb_raise(exc, fmt, ...)`, the `rb_warn` family)
+//! format their message through [`super::fmt`], MRI's format with
+//! `PRIsVALUE`, and then take the same road as the fixed-arity entries.
 //!
-//! `errno` is a macro over a per-thread location, and `rb_errno_ptr` hands
-//! out that location's address. There is no way to write that in Rust, so the
-//! three entries live in `csrc/cext_va.c` beside the variadic ones, for the
-//! same reason: C is where the language feature is.
+//! # `errno`
 //!
-//! What is here is the mapping from a code to a class. That has to agree with
-//! the one every other raise site in the runtime uses, so it calls the same
-//! `zeo_abi::errno_class`, and an unmapped code falls back to
-//! `SystemCallError` -- which is what CRuby answers too.
+//! `errno` is a macro over a per-thread location libc names differently on
+//! each platform; `errno_location` is that name. What is here is the mapping
+//! from a code to a class. That has to agree with the one every other raise
+//! site in the runtime uses, so it calls the same `zeo_abi::errno_class`, and
+//! an unmapped code falls back to `SystemCallError` -- which is what CRuby
+//! answers too.
 
 use super::convert::{to_value, value_of};
+use super::fmt::vformat;
+use super::misc::{Encoding, encoding_of};
 use super::object::{cstr, send};
+use super::symbol::Id;
 use super::value::Value;
-use std::ffi::{c_char, c_int, c_long};
+use std::ffi::{VaList, c_char, c_int, c_long};
 use zeo_rt::builtins::wrong_arg_type;
 use zeo_rt::{RubyValue, Signal};
 
@@ -245,61 +249,189 @@ crate::cext_fn! {
         Err(tagged_value(&m, syserr(code, Some(&what)))?)
     }
 
-    // ---- warnings ------------------------------------------------------
+}
 
-    /// `rb_warn`'s worker, and `rb_warning`'s and `rb_category_warn`'s: the
-    /// message was formatted in `csrc/cext_va.c` and the three differ only in
-    /// what gates them.
-    ///
-    /// `verbose_only` is `rb_warning`, which needs `$VERBOSE` TRUE where
-    /// `rb_warn` needs only that it is not nil. `category` is
-    /// `rb_warning_category_t` as an integer, and `0` is
-    /// `RB_WARN_CATEGORY_NONE`.
-    fn zeo_cext_warn(msg: *const c_char, verbose_only: c_int, category: c_int) -> () {
-        if verbose_only != 0
-            && !matches!(zeo_rt::globals::global_get(0, "$VERBOSE"), RubyValue::Bool(true))
-        {
-            return Ok(());
-        }
-        if let Some(cat) = category_name(category)
-            && !zeo_rt::builtins::warning::category_enabled(cat)
-        {
-            return Ok(());
-        }
-        zeo_rt::builtins::warning::rb_warn(&unsafe { cstr(msg) });
+/// A formatted message, as the variadic entries read theirs.
+///
+/// # Safety
+///
+/// `fmt` must be NUL-terminated and `ap` must hold what it names.
+unsafe fn message(fmt: *const c_char, ap: &mut VaList<'_>) -> Result<String, Signal> {
+    Ok(String::from_utf8_lossy(&unsafe { vformat(fmt, ap)? }).into_owned())
+}
+
+/// `rb_warn`, `rb_warning` and `rb_category_warn` differ only in what gates
+/// them. `verbose_only` is `rb_warning`, which needs `$VERBOSE` TRUE where
+/// `rb_warn` needs only that it is not nil. `category` is
+/// `rb_warning_category_t` as an integer, and `0` is
+/// `RB_WARN_CATEGORY_NONE`.
+fn warn(msg: &str, verbose_only: bool, category: c_int) {
+    if verbose_only
+        && !matches!(
+            zeo_rt::globals::global_get(0, "$VERBOSE"),
+            RubyValue::Bool(true)
+        )
+    {
+        return;
+    }
+    if let Some(cat) = category_name(category)
+        && !zeo_rt::builtins::warning::category_enabled(cat)
+    {
+        return;
+    }
+    zeo_rt::builtins::warning::rb_warn(msg);
+}
+
+/// The compile-time warnings. MRI reports the file and line the PARSER was
+/// at; an extension calling one is not parsing anything, so the pair it
+/// passes is the only honest location and is written into the message.
+///
+/// # Safety
+///
+/// `file` must be NUL-terminated or null.
+unsafe fn located(file: *const c_char, line: c_int, msg: &str) -> String {
+    let file = if file.is_null() {
+        "-".to_string()
+    } else {
+        unsafe { cstr(file) }
+    };
+    format!("{file}:{line}: {msg}")
+}
+
+crate::cext_va_fn! {
+    fn rb_warn(fmt: *const c_char; ap) -> () {
+        warn(&unsafe { message(fmt, ap)? }, false, 0);
         Ok(())
     }
 
-    /// `rb_sys_warning(fmt, ...)`: a warning with the current `errno`'s text
-    /// appended, and `$VERBOSE`-gated as `rb_warning` is.
-    fn zeo_cext_sys_warning(msg: *const c_char, code: c_int) -> () {
-        if !matches!(zeo_rt::globals::global_get(0, "$VERBOSE"), RubyValue::Bool(true)) {
-            return Ok(());
-        }
-        let (_, desc) = errno_row(code);
-        zeo_rt::builtins::warning::rb_warn(&format!("{}: {desc}", unsafe { cstr(msg) }));
+    fn rb_warning(fmt: *const c_char; ap) -> () {
+        warn(&unsafe { message(fmt, ap)? }, true, 0);
         Ok(())
+    }
+
+    fn rb_category_warn(cat: c_int, fmt: *const c_char; ap) -> () {
+        warn(&unsafe { message(fmt, ap)? }, false, cat);
+        Ok(())
+    }
+
+    fn rb_category_warning(cat: c_int, fmt: *const c_char; ap) -> () {
+        warn(&unsafe { message(fmt, ap)? }, true, cat);
+        Ok(())
+    }
+
+    /// A warning with the current `errno`'s text appended, and
+    /// `$VERBOSE`-gated as `rb_warning` is. `errno` is read before the
+    /// format runs, which may itself set it.
+    fn rb_sys_warning(fmt: *const c_char; ap) -> () {
+        let code = errno();
+        let msg = unsafe { message(fmt, ap)? };
+        if matches!(zeo_rt::globals::global_get(0, "$VERBOSE"), RubyValue::Bool(true)) {
+            let (_, desc) = errno_row(code);
+            zeo_rt::builtins::warning::rb_warn(&format!("{msg}: {desc}"));
+        }
+        Ok(())
+    }
+
+    fn rb_compile_warn(file: *const c_char, line: c_int, fmt: *const c_char; ap) -> () {
+        let msg = unsafe { message(fmt, ap)? };
+        warn(&unsafe { located(file, line, &msg) }, false, 0);
+        Ok(())
+    }
+
+    fn rb_compile_warning(file: *const c_char, line: c_int, fmt: *const c_char; ap) -> () {
+        let msg = unsafe { message(fmt, ap)? };
+        warn(&unsafe { located(file, line, &msg) }, true, 0);
+        Ok(())
+    }
+
+    fn rb_category_compile_warn(
+        cat: c_int,
+        file: *const c_char,
+        line: c_int,
+        fmt: *const c_char;
+        ap
+    ) -> () {
+        let msg = unsafe { message(fmt, ap)? };
+        warn(&unsafe { located(file, line, &msg) }, false, cat);
+        Ok(())
+    }
+
+    // ---- the named raises ----------------------------------------------
+
+    fn rb_raise(exc: Value, fmt: *const c_char; ap) -> () {
+        let msg = unsafe { message(fmt, ap)? };
+        Err(unsafe { super::call::raise_str(exc, &msg) })
+    }
+
+    /// `rb_raise` with the message string tagged in `enc` rather than in
+    /// the default, which is MRI's own route through `rb_enc_vsprintf` and
+    /// `rb_exc_new_str`.
+    fn rb_enc_raise(enc: Encoding, exc: Value, fmt: *const c_char; ap) -> () {
+        let bytes = unsafe { vformat(fmt, ap)? };
+        let mesg = unsafe { value_of(super::fmt::new_str(bytes, encoding_of(enc))?) };
+        let k = unsafe { value_of(exc) };
+        Err(Signal::Raise(send(&k, "new", &[mesg])?))
+    }
+
+    fn rb_fatal(fmt: *const c_char; ap) -> () {
+        let msg = unsafe { message(fmt, ap)? };
+        Err(unsafe { super::call::raise_str(0, &msg) })
     }
 
     /// `rb_name_error(id, fmt, ...)`: a `NameError` that carries the NAME,
     /// which is what `NameError#name` and `did_you_mean` read.
-    fn zeo_cext_name_error(name: Value, msg: *const c_char) -> () {
-        let text = unsafe { cstr(msg) };
-        Err(name_error("NameError", &text, unsafe { value_of(name) })?)
+    fn rb_name_error(id: Id, fmt: *const c_char; ap) -> () {
+        let msg = unsafe { message(fmt, ap)? };
+        let name = RubyValue::Symbol(super::symbol::symbol_of(id));
+        Err(name_error("NameError", &msg, name)?)
     }
 
-    fn zeo_cext_loaderror(msg: *const c_char, path: Value) -> () {
-        let text = unsafe { cstr(msg) };
-        Err(name_error("LoadError", &text, unsafe { value_of(path) })?)
+    fn rb_name_error_str(name: Value, fmt: *const c_char; ap) -> () {
+        let msg = unsafe { message(fmt, ap)? };
+        Err(name_error("NameError", &msg, unsafe { value_of(name) })?)
     }
 
-    fn zeo_cext_frozen_error(obj: Value, msg: *const c_char) -> () {
-        let text = unsafe { cstr(msg) };
+    fn rb_loaderror(fmt: *const c_char; ap) -> () {
+        let msg = unsafe { message(fmt, ap)? };
+        Err(name_error("LoadError", &msg, RubyValue::Nil)?)
+    }
+
+    fn rb_loaderror_with_path(path: Value, fmt: *const c_char; ap) -> () {
+        let msg = unsafe { message(fmt, ap)? };
+        Err(name_error("LoadError", &msg, unsafe { value_of(path) })?)
+    }
+
+    fn rb_frozen_error_raise(obj: Value, fmt: *const c_char; ap) -> () {
+        let msg = unsafe { message(fmt, ap)? };
         let v = unsafe { value_of(obj) };
         let shown = send(&v, "inspect", &[])
             .ok()
             .map_or_else(String::new, |s| s.to_display_string());
-        Err(zeo_rt::builtins::frozen_error!("{text}: {shown}"))
+        Err(zeo_rt::builtins::frozen_error!("{msg}: {shown}"))
+    }
+
+    /// What a failed `RUBY_ASSERT` calls. It is a bug in the extension by
+    /// construction, so it aborts rather than raising -- the same answer
+    /// `rb_bug` gives.
+    fn rb_assert_failure_detail(
+        file: *const c_char,
+        line: c_int,
+        name: *const c_char,
+        expr: *const c_char,
+        fmt: *const c_char;
+        ap
+    ) -> () {
+        let msg = unsafe { message(fmt, ap)? };
+        let dash = |p: *const c_char| if p.is_null() { "-".to_string() } else { unsafe { cstr(p) } };
+        let out = format!(
+            "{}:{line}:{}: assertion failed: {}: {msg}",
+            dash(file),
+            dash(name),
+            dash(expr)
+        );
+        let out = std::ffi::CString::new(out).unwrap_or_default();
+        unsafe { super::call::rb_bug(out.as_ptr()) };
+        Ok(())
     }
 }
 

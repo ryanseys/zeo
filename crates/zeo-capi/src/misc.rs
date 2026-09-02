@@ -386,64 +386,6 @@ crate::cext_fn! {
         )?)
     }
 
-    /// `rb_struct_define`'s worker. `outer == 0` is the top-level form.
-    fn zeo_cext_struct_define(
-        outer: Value,
-        name: *const c_char,
-        members: *const *const c_char,
-        n: c_int,
-    ) -> Value {
-        let mut args: Vec<RubyValue> = Vec::with_capacity(n.max(0) as usize + 1);
-        for i in 0..n.max(0) {
-            // SAFETY: `n` NUL-terminated names, collected by cext_va.c.
-            let m = unsafe { super::string::borrow_bytes(*members.offset(i as isize), -1) };
-            args.push(RubyValue::Symbol(zeo_rt::Symbol::intern(
-                &String::from_utf8_lossy(&m),
-            )));
-        }
-        let cls = zeo_rt::dispatch::send_value(
-            &RubyValue::Class(zeo_abi::STRUCT_CLASS),
-            zeo_rt::Symbol::intern("new"),
-            &args,
-            None,
-        )?;
-        // A named Struct is a constant under its namespace, exactly as
-        // `Struct.new` assigned to a constant would be.
-        let name = unsafe { super::string::borrow_bytes(name, -1) };
-        if !name.is_empty()
-            && let RubyValue::Class(cid) = &cls
-        {
-            let owner = if outer == 0 {
-                zeo_abi::OBJECT_CLASS
-            } else {
-                unsafe { as_class(outer)? }
-            };
-            let leaf = String::from_utf8_lossy(&name).into_owned();
-            zeo_rt::runtime_meta::name_runtime_class_if_anonymous(*cid, &leaf);
-            zeo_rt::constants::const_set(owner.0, &leaf, cls.clone());
-        }
-        to_value(&cls)
-    }
-
-    /// How many members a Struct class has, so `csrc/cext_va.c` knows how
-    /// many varargs to read.
-    fn zeo_cext_struct_size(klass: Value) -> c_long {
-        let cls = unsafe { value_of(klass) };
-        let members = zeo_rt::dispatch::send_value(&cls, zeo_rt::Symbol::intern("members"), &[], None)?;
-        Ok(match members {
-            RubyValue::Array(a) => a.lock().len() as c_long,
-            _ => 0,
-        })
-    }
-
-    fn zeo_cext_struct_new(klass: Value, values: *const Value, n: c_int) -> Value {
-        let cls = unsafe { value_of(klass) };
-        let args: Vec<RubyValue> = (0..n.max(0))
-            .map(|i| unsafe { value_of(values.offset(i as isize).read()) })
-            .collect();
-        to_value(&zeo_rt::dispatch::send_value(&cls, zeo_rt::Symbol::intern("new"), &args, None)?)
-    }
-
     /// `rb_hash_lookup(hash, key)`. Unlike `rb_hash_aref` it does NOT consult
     /// the hash's default, which is the whole reason both exist.
     fn rb_hash_lookup(h: Value, key: Value) -> Value {
@@ -552,6 +494,76 @@ crate::cext_fn! {
         VM_AT_EXIT.lock().push(func);
         Ok(())
     }
+}
+
+/// `rb_struct_define`'s worker. `outer == 0` is the top-level form.
+///
+/// # Safety
+///
+/// `name` must be NUL-terminated or null, and `members` NUL-terminated.
+pub(super) unsafe fn struct_define(
+    outer: Value,
+    name: *const c_char,
+    members: &[*const c_char],
+) -> Result<Value, Signal> {
+    let args: Vec<RubyValue> = members
+        .iter()
+        .map(|m| {
+            let m = unsafe { super::string::borrow_bytes(*m, -1) };
+            RubyValue::Symbol(zeo_rt::Symbol::intern(&String::from_utf8_lossy(&m)))
+        })
+        .collect();
+    let cls = zeo_rt::dispatch::send_value(
+        &RubyValue::Class(zeo_abi::STRUCT_CLASS),
+        zeo_rt::Symbol::intern("new"),
+        &args,
+        None,
+    )?;
+    // A named Struct is a constant under its namespace, exactly as
+    // `Struct.new` assigned to a constant would be.
+    let name = unsafe { super::string::borrow_bytes(name, -1) };
+    if !name.is_empty()
+        && let RubyValue::Class(cid) = &cls
+    {
+        let owner = if outer == 0 {
+            zeo_abi::OBJECT_CLASS
+        } else {
+            unsafe { as_class(outer)? }
+        };
+        let leaf = String::from_utf8_lossy(&name).into_owned();
+        zeo_rt::runtime_meta::name_runtime_class_if_anonymous(*cid, &leaf);
+        zeo_rt::constants::const_set(owner.0, &leaf, cls.clone());
+    }
+    to_value(&cls)
+}
+
+/// How many members a Struct class has: how many varargs `rb_struct_new`
+/// reads.
+///
+/// # Safety
+///
+/// `klass` must be a live `VALUE`.
+pub(super) unsafe fn struct_size(klass: Value) -> Result<c_long, Signal> {
+    let cls = unsafe { value_of(klass) };
+    let members = zeo_rt::dispatch::send_value(&cls, zeo_rt::Symbol::intern("members"), &[], None)?;
+    Ok(match members {
+        RubyValue::Array(a) => a.lock().len() as c_long,
+        _ => 0,
+    })
+}
+
+/// # Safety
+///
+/// `klass` and `values` must be live `VALUE`s.
+pub(super) unsafe fn struct_new(klass: Value, values: &[Value]) -> Result<Value, Signal> {
+    let cls = unsafe { value_of(klass) };
+    let args: Vec<RubyValue> = values.iter().map(|v| unsafe { value_of(*v) }).collect();
+    to_value(&zeo_rt::dispatch::send_value(
+        &cls,
+        zeo_rt::Symbol::intern("new"),
+        &args,
+        None,
+    )?)
 }
 
 #[cfg(test)]

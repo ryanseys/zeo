@@ -39,11 +39,10 @@ multiple-versions = "warn"
 # The tree carries no C (crates/zeo/tests/checks/no_c.rs). C reaches a build
 # only through the `-sys` crates named here, each compiling the library it
 # wraps. `wrappers` is "may depend on"; the checks test holds the set exact.
-# `zeo-capi` leaves the list with its three `csrc/*.c` files (Rust 1.99's
-# `c_variadic`); `alloca` is dev-only, through criterion. onig and openssl
-# ship pregenerated bindings, so only prism runs bindgen.
+# `alloca` is dev-only, through criterion. onig and openssl ship pregenerated
+# bindings, so only prism runs bindgen.
 deny = [
-  { crate = "cc", wrappers = ["onig_sys", "libffi-sys", "libmimalloc-sys", "openssl-src", "openssl-sys", "ruby-prism-sys", "alloca", "zeo-capi"] },
+  { crate = "cc", wrappers = ["onig_sys", "libffi-sys", "libmimalloc-sys", "openssl-src", "openssl-sys", "ruby-prism-sys", "alloca"] },
   { crate = "bindgen", wrappers = ["ruby-prism-sys"] },
   { crate = "cmake" },
   { crate = "cxx-build" },

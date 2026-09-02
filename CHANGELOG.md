@@ -34,7 +34,8 @@ The first public release, not yet cut.
   cannot.
 - **C extensions from source.** A gem's `ext/**/*.c` compiles against MRI's
   own headers, fetched from `ruby/ruby@v4.0.6` at first use with zeo's edits
-  applied.
+  applied. The API it links against is Rust throughout (`zeo-capi`); the
+  tree carries no C.
   Prebuilt MRI binaries never load: zeo is source-compatible and
   ABI-incompatible by design.
 - **RubyGems and Bundler support.** `--gem-path` and `--bundle-gemfile` read

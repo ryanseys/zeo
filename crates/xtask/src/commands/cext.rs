@@ -281,11 +281,6 @@ fn implemented() -> Result<Vec<String>, Error> {
     .expect("a valid pattern");
     let wrapped =
         Regex::new(r"(?m)^\s*fn (rb_\w+|ruby_\w+|rbimpl_zeo_\w+)\s*\(").expect("a valid pattern");
-    // The variadic entries live in `csrc/*.c`, because Rust cannot read a
-    // `va_list`. A definition there is as real as one in Rust, and missing it
-    // would leave a duplicate symbol at link time.
-    let in_c = Regex::new(r"(?m)^(?:\w[\w *]*?)\b((?:rb|ruby|st|rbimpl_zeo)_\w+)\s*\([^;]*$")
-        .expect("a valid pattern");
 
     let mut out = Vec::new();
     for path in files_with_extension(&root_join(CEXT_SRC), "rs")? {
@@ -298,10 +293,6 @@ fn implemented() -> Result<Vec<String>, Error> {
         let src = read(&path)?;
         out.extend(exported.captures_iter(&src).map(|c| c[1].to_string()));
         out.extend(wrapped.captures_iter(&src).map(|c| c[1].to_string()));
-    }
-    for path in files_with_extension(&root_join("crates/zeo-capi/csrc"), "c")? {
-        let src = read(&path)?;
-        out.extend(in_c.captures_iter(&src).map(|c| c[1].to_string()));
     }
     Ok(out)
 }

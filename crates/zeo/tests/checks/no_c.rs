@@ -3,10 +3,9 @@
 //! zeo's compiler, runtime and C API are Rust. C reaches a build only
 //! through a `-sys` crate that compiles the library it wraps, and the
 //! extension a test builds is text the test writes. A tracked `.c` is the
-//! start of a second implementation language, so the rule is a file list
-//! and a crate list rather than a review note. `make no-c-files` is the
-//! push-tier half of the first test, which builds nothing; this holds the
-//! exceptions exact.
+//! start of a second implementation language, so the rule is a crate list
+//! rather than a review note. `make no-c-files` is the push-tier half of
+//! the first test, which builds nothing.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -24,18 +23,6 @@ const C_EXTENSIONS: &[&str] = &[
     "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "S", "s", "patch",
 ];
 
-/// The tracked C that remains, each row with the day it goes.
-///
-/// `zeo-capi/csrc/*.c` are the variadic entry points (`rb_raise`,
-/// `rb_sprintf`, `rb_scan_args`, ...) that Rust cannot write without
-/// `c_variadic`, which stabilizes in Rust 1.99. They go when the toolchain
-/// pin reaches it, expected 2026-10.
-const ALLOWED: &[&str] = &[
-    "crates/zeo-capi/csrc/cext_err.c",
-    "crates/zeo-capi/csrc/cext_fmt.c",
-    "crates/zeo-capi/csrc/cext_va.c",
-];
-
 /// The crates that compile C, closed. A package that depends on `cc`,
 /// `bindgen`, `cmake` or `cxx-build` in any way is one that builds C, and
 /// the set has to be this one -- `deny.toml`'s `wrappers` say "may", this
@@ -49,8 +36,6 @@ const C_COMPILING_CRATES: &[&str] = &[
     "openssl-src",
     "openssl-sys",
     "ruby-prism-sys",
-    // The `csrc/*.c` rows above; leaves with them.
-    "zeo-capi",
 ];
 
 const C_BUILD_TOOLS: &[&str] = &["cc", "bindgen", "cmake", "cxx-build"];
@@ -73,17 +58,10 @@ fn no_tracked_c_source() {
                 .is_some_and(|e| C_EXTENSIONS.contains(&e))
         })
         .collect();
-    let stray: Vec<&str> = c.iter().copied().filter(|f| !ALLOWED.contains(f)).collect();
     assert!(
-        stray.is_empty(),
+        c.is_empty(),
         "tracked C source (the tree carries none):\n{}",
-        stray.join("\n")
-    );
-    let gone: Vec<&str> = ALLOWED.iter().copied().filter(|f| !c.contains(f)).collect();
-    assert!(
-        gone.is_empty(),
-        "no longer tracked -- drop from ALLOWED:\n{}",
-        gone.join("\n")
+        c.join("\n")
     );
 }
 

@@ -83,19 +83,6 @@ crate::cext_fn! {
         to_value(&zeo_rt::dispatch::send_value(&recv, symbol_of(mid), &args, block)?)
     }
 
-    /// `rb_raise`'s worker. The format string was already run through
-    /// `vsnprintf` by `csrc/cext_va.c`, which is where the `va_list` can be
-    /// read safely -- see that file.
-    ///
-    /// `exc == 0` is `rb_fatal`, which has no class of its own.
-    fn zeo_cext_raise_str(exc: Value, msg: *const c_char) -> Value {
-        let msg = unsafe { cstr(msg) };
-        if exc == 0 {
-            return Err(zeo_rt::builtins::runtime_error!("{}", msg));
-        }
-        Err(raise_with(&unsafe { value_of(exc) }, msg))
-    }
-
     fn rb_exc_raise(exc: Value) -> Value {
         Err(Signal::Raise(unsafe { value_of(exc) }))
     }
@@ -142,60 +129,6 @@ crate::cext_fn! {
         let cleanup = super::unwind::protect(|| unsafe { ens(earg) });
         cleanup?;
         out
-    }
-
-    /// `rb_rescue2`'s worker. `csrc/cext_va.c` walked the `0`-terminated
-    /// class list into `classes`; an EMPTY list is `rb_rescue`, which means
-    /// `StandardError`.
-    fn zeo_cext_rescue2(
-        body: unsafe extern "C-unwind" fn(Value) -> Value,
-        barg: Value,
-        resc: unsafe extern "C-unwind" fn(Value, Value) -> Value,
-        rarg: Value,
-        classes: *const Value,
-        nclasses: c_int,
-    ) -> Value {
-        let wanted = unsafe { args_of(nclasses, classes) };
-        match super::unwind::protect(|| unsafe { body(barg) }) {
-            Ok(v) => Ok(v),
-            Err(Signal::Raise(exc)) if rescued_by(&exc, &wanted) => {
-                set_errinfo(&Signal::Raise(exc.clone()));
-                let e = to_value(&exc)?;
-                super::unwind::protect(|| unsafe { resc(rarg, e) })
-            }
-            Err(other) => Err(other),
-        }
-    }
-
-    /// `rb_scan_args`'s format parser. The slots themselves are walked in
-    /// `csrc/cext_va.c`, which is the only part that needs a `va_list`.
-    fn zeo_cext_scan_plan(
-        fmt: *const c_char,
-        required: *mut c_int,
-        optional: *mut c_int,
-        splat: *mut c_int,
-        block: *mut c_int,
-    ) -> c_int {
-        let Some((r, o, s, b)) = scan_args_plan(&unsafe { cstr(fmt) }) else {
-            return Ok(0);
-        };
-        // SAFETY: four `int` slots the caller owns.
-        unsafe {
-            required.write(r as c_int);
-            optional.write(o as c_int);
-            splat.write(c_int::from(s));
-            block.write(c_int::from(b));
-        }
-        Ok(1)
-    }
-
-    /// `rb_scan_args`'s splat slot: `argv[from..to]` as an Array.
-    fn zeo_cext_scan_slice(argc: c_int, argv: *const Value, from: c_int, to: c_int) -> Value {
-        let all = unsafe { args_of(argc, argv) };
-        let lo = from.max(0) as usize;
-        let hi = (to.max(0) as usize).min(all.len());
-        let rest = all.get(lo..hi).unwrap_or(&[]).to_vec();
-        to_value(&RubyValue::Array(zeo_rt::value::collections::array_new(rest)))
     }
 
     /// `rb_jump_tag(state)`: leave with the pending exception `rb_protect`
@@ -322,6 +255,63 @@ thread_local! {
     /// it is cleared or re-raised. Thread-local, as `$!` is.
     static ERRINFO: std::cell::RefCell<Option<RubyValue>> =
         const { std::cell::RefCell::new(None) };
+}
+
+/// `rb_raise`'s worker, once the message is formatted. `exc == 0` is
+/// `rb_fatal`, which has no class of its own.
+///
+/// # Safety
+///
+/// `exc` must be a live `VALUE` or `0`.
+pub(super) unsafe fn raise_str(exc: Value, msg: &str) -> Signal {
+    if exc == 0 {
+        return zeo_rt::builtins::runtime_error!("{}", msg);
+    }
+    raise_with(&unsafe { value_of(exc) }, msg.to_string())
+}
+
+/// `rb_rescue2`'s worker. An EMPTY class list is `rb_rescue`, which means
+/// `StandardError`.
+///
+/// # Safety
+///
+/// `classes` must be live `VALUE`s, and `body`/`resc` callable.
+pub(super) unsafe fn rescue2(
+    body: unsafe extern "C-unwind" fn(Value) -> Value,
+    barg: Value,
+    resc: unsafe extern "C-unwind" fn(Value, Value) -> Value,
+    rarg: Value,
+    classes: &[Value],
+) -> Result<Value, Signal> {
+    let wanted: Vec<RubyValue> = classes.iter().map(|c| unsafe { value_of(*c) }).collect();
+    match super::unwind::protect(|| unsafe { body(barg) }) {
+        Ok(v) => Ok(v),
+        Err(Signal::Raise(exc)) if rescued_by(&exc, &wanted) => {
+            set_errinfo(&Signal::Raise(exc.clone()));
+            let e = to_value(&exc)?;
+            super::unwind::protect(|| unsafe { resc(rarg, e) })
+        }
+        Err(other) => Err(other),
+    }
+}
+
+/// `rb_scan_args`' splat slot: `argv[from..to]` as an Array.
+///
+/// # Safety
+///
+/// `argv` must name `argc` `VALUE`s.
+pub(super) unsafe fn scan_slice(
+    argc: usize,
+    argv: *const Value,
+    from: usize,
+    to: usize,
+) -> Result<Value, Signal> {
+    let all = unsafe { args_of(argc as c_int, argv) };
+    let hi = to.min(all.len());
+    let rest = all.get(from..hi).unwrap_or(&[]).to_vec();
+    to_value(&RubyValue::Array(zeo_rt::value::collections::array_new(
+        rest,
+    )))
 }
 
 pub(super) fn set_errinfo(sig: &Signal) {

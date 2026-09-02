@@ -29,7 +29,7 @@ pub mod encoding;
 pub mod error;
 pub mod eval;
 pub mod r#final;
-pub mod format;
+pub mod fmt;
 pub mod forward;
 pub mod gc;
 pub mod globals;
@@ -53,6 +53,7 @@ pub mod symbol;
 pub mod thread;
 pub mod unwind;
 pub mod util;
+pub mod va;
 pub mod value;
 pub mod view;
 

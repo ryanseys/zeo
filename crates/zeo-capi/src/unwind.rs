@@ -95,6 +95,31 @@ macro_rules! cext_fn {
     )*};
 }
 
+/// [`cext_fn!`] for a C-variadic entry: the last named parameter is the
+/// `VaList`, and the body reads it with `next_arg` at the type the C
+/// caller pushed. `rb_raise(exc, fmt, ...)` is written
+/// `fn rb_raise(exc: Value, fmt: *const c_char; ap) -> ()`.
+#[macro_export]
+macro_rules! cext_va_fn {
+    ($(
+        $(#[$meta:meta])*
+        fn $name:ident($($arg:ident : $ty:ty),+ $(,)? ; $va:ident) -> $ret:ty $body:block
+    )*) => {$(
+        $(#[$meta])*
+        #[unsafe(no_mangle)]
+        #[allow(clippy::redundant_closure_call)]
+        #[allow(clippy::missing_safety_doc)]
+        pub unsafe extern "C-unwind" fn $name($($arg : $ty),+, mut $va: ...) -> $ret {
+            let $va: &mut ::std::ffi::VaList<'_> = &mut $va;
+            let outcome: ::std::result::Result<$ret, ::zeo_rt::Signal> = (|| $body)();
+            match outcome {
+                ::std::result::Result::Ok(v) => v,
+                ::std::result::Result::Err(sig) => $crate::unwind::raise(sig),
+            }
+        }
+    )*};
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

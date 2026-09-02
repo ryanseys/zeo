@@ -626,14 +626,6 @@ crate::cext_fn! {
         }
         Ok(end as c_long)
     }
-
-    /// `rb_enc_raise(enc, exc, fmt, ...)`'s worker: the message was
-    /// formatted in `csrc/cext_err.c`. The encoding tags the message string,
-    /// which zeo's exceptions carry as UTF-8 either way.
-    fn zeo_cext_enc_raise(_enc: Encoding, exc: Value, msg: *const c_char) -> () {
-        unsafe { super::call::zeo_cext_raise_str(exc, msg) };
-        Ok(())
-    }
 }
 
 /// Re-encode a String, or `None` when it cannot be done. The best-effort

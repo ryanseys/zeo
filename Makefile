@@ -94,13 +94,12 @@ no-big-files:  ## no tracked file over 1MB
 	echo "no tracked file over 1MB"
 
 # zeo is Rust. C reaches a build only through a `-sys` crate (deny.toml names
-# them), and an extension a test builds is text the test writes. The one
-# directory still carrying C is dated in `crates/zeo/tests/checks/no_c.rs`,
-# which holds the file set exact; this is the half that builds nothing.
-no-c-files:  ## no tracked C source outside the dated exception
+# them), and an extension a test builds is text the test writes.
+# `crates/zeo/tests/checks/no_c.rs` holds the crate set exact; this is the
+# half that builds nothing.
+no-c-files:  ## no tracked C source
 	@stray=$$(git ls-files -z | tr '\0' '\n' \
-	    | grep -E '\.(c|h|cc|cpp|cxx|hpp|hh|m|mm|S|s|patch)$$' \
-	    | grep -v '^crates/zeo-capi/csrc/'); \
+	    | grep -E '\.(c|h|cc|cpp|cxx|hpp|hh|m|mm|S|s|patch)$$'); \
 	if [ -n "$$stray" ]; then echo "tracked C source:" >&2; echo "$$stray" >&2; exit 1; fi; \
 	echo "no tracked C source"
 

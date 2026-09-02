@@ -2242,7 +2242,6 @@ version = "0.1.0"
 name = "zeo-capi"
 version = "0.1.0"
 dependencies = [
- "cc",
  "libc",
  "linkme",
  "num-bigint",

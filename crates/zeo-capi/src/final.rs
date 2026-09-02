@@ -1025,29 +1025,21 @@ crate::cext_fn! {
     }
 }
 
-/// `rb_data_define`'s worker, from `csrc/cext_va.c`.
+/// `rb_data_define`'s worker.
 ///
 /// # Safety
 ///
-/// `members` must name `n` NUL-terminated strings.
-#[unsafe(no_mangle)]
-pub unsafe extern "C-unwind" fn zeo_cext_data_define(
+/// `members` must be NUL-terminated strings.
+pub(super) unsafe fn data_define(
     super_class: Value,
-    members: *const *const c_char,
-    n: c_int,
-) -> Value {
-    let out = (|| -> Result<Value, Signal> {
-        let base = match unsafe { value_of(super_class) } {
-            RubyValue::Class(_) => unsafe { value_of(super_class) },
-            _ => class_named("Data")?,
-        };
-        let args = unsafe { member_symbols(members, n) };
-        to_value(&send(&base, "define", &args)?)
-    })();
-    match out {
-        Ok(v) => v,
-        Err(sig) => super::unwind::raise(sig),
-    }
+    members: &[*const c_char],
+) -> Result<Value, Signal> {
+    let base = match unsafe { value_of(super_class) } {
+        RubyValue::Class(_) => unsafe { value_of(super_class) },
+        _ => class_named("Data")?,
+    };
+    let args = unsafe { member_symbols(members) };
+    to_value(&send(&base, "define", &args)?)
 }
 
 /// `rb_struct_define_without_accessor`'s worker.
@@ -1059,60 +1051,49 @@ pub unsafe extern "C-unwind" fn zeo_cext_data_define(
 ///
 /// # Safety
 ///
-/// `members` must name `n` NUL-terminated strings, and `name` must be
+/// `members` must be NUL-terminated strings, and `name` must be
 /// NUL-terminated or null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C-unwind" fn zeo_cext_struct_define_noaccessor(
+pub(super) unsafe fn struct_define_noaccessor(
     outer: Value,
     name: *const c_char,
     _super_class: Value,
-    members: *const *const c_char,
-    n: c_int,
-) -> Value {
-    let out = (|| -> Result<Value, Signal> {
-        let args = unsafe { member_symbols(members, n) };
-        let cls = send(&class_named("Struct")?, "new", &args)?;
-        for m in &args {
-            let RubyValue::Symbol(s) = m else { continue };
-            let setter = RubyValue::Symbol(Symbol::intern(&format!("{}=", s.name_str())));
-            let _ = send(&cls, "undef_method", &[m.clone(), setter]);
-        }
-        let leaf = unsafe { cstr(name) };
-        if !leaf.is_empty()
-            && let RubyValue::Class(cid) = &cls
-        {
-            let home = if outer == 0 || outer == value::Q_NIL {
-                zeo_abi::OBJECT_CLASS
-            } else {
-                unsafe { super::object::as_class(outer)? }
-            };
-            let full = match zeo_rt::dispatch::class_name(home) {
-                Some(o) if home != zeo_abi::OBJECT_CLASS => format!("{o}::{leaf}"),
-                _ => leaf.clone(),
-            };
-            zeo_rt::runtime_meta::name_runtime_class_if_anonymous(*cid, &full);
-            zeo_rt::constants::const_set(home.0, &leaf, cls.clone());
-        }
-        to_value(&cls)
-    })();
-    match out {
-        Ok(v) => v,
-        Err(sig) => super::unwind::raise(sig),
+    members: &[*const c_char],
+) -> Result<Value, Signal> {
+    let args = unsafe { member_symbols(members) };
+    let cls = send(&class_named("Struct")?, "new", &args)?;
+    for m in &args {
+        let RubyValue::Symbol(s) = m else { continue };
+        let setter = RubyValue::Symbol(Symbol::intern(&format!("{}=", s.name_str())));
+        let _ = send(&cls, "undef_method", &[m.clone(), setter]);
     }
+    let leaf = unsafe { cstr(name) };
+    if !leaf.is_empty()
+        && let RubyValue::Class(cid) = &cls
+    {
+        let home = if outer == 0 || outer == value::Q_NIL {
+            zeo_abi::OBJECT_CLASS
+        } else {
+            unsafe { super::object::as_class(outer)? }
+        };
+        let full = match zeo_rt::dispatch::class_name(home) {
+            Some(o) if home != zeo_abi::OBJECT_CLASS => format!("{o}::{leaf}"),
+            _ => leaf.clone(),
+        };
+        zeo_rt::runtime_meta::name_runtime_class_if_anonymous(*cid, &full);
+        zeo_rt::constants::const_set(home.0, &leaf, cls.clone());
+    }
+    to_value(&cls)
 }
 
-/// A NUL-terminated member list as Symbols.
+/// A member list as Symbols.
 ///
 /// # Safety
 ///
-/// `members` must name `n` NUL-terminated strings.
-unsafe fn member_symbols(members: *const *const c_char, n: c_int) -> Vec<RubyValue> {
-    (0..n.max(0))
-        .map(|i| {
-            // SAFETY: the caller's contract.
-            let name = unsafe { cstr(members.offset(i as isize).read()) };
-            RubyValue::Symbol(Symbol::intern(&name))
-        })
+/// `members` must be NUL-terminated strings.
+unsafe fn member_symbols(members: &[*const c_char]) -> Vec<RubyValue> {
+    members
+        .iter()
+        .map(|m| RubyValue::Symbol(Symbol::intern(&unsafe { cstr(*m) })))
         .collect()
 }
 

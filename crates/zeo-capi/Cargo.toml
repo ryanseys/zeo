@@ -31,9 +31,5 @@ tracing.workspace = true
 # tests, the binary the goldens run would carry every table too.
 zeo-rt = { workspace = true, features = ["unit-tables"] }
 
-[build-dependencies]
-# `csrc/*.c`: the variadic entries Rust cannot write before 1.99 (`va_list`).
-cc = "1"
-
 [lints]
 workspace = true
