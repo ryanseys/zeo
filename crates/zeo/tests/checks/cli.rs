@@ -6,8 +6,7 @@
 //! Each test writes its sources into its own temp dir; programs are tiny,
 //! so each compile is cheap. Nothing here requires a whole gem: the exit
 //! status an `at_exit` handler sets is pinned by the
-//! `at_exit_status_override` golden, and irb over a real pty by the
-//! `irb_runs_over_a_pty` golden.
+//! `at_exit_status_override` golden.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
