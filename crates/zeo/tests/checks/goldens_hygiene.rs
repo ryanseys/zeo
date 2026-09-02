@@ -148,55 +148,6 @@ fn bench_inputs_carry_no_goldens() {
     );
 }
 
-/// A `.cext` sidecar names the extension directory both engines build, so it
-/// has to name a real one -- and the golden has to carry a committed
-/// `.expected`.
-///
-/// The second half is the one that matters. zeo's side of the extension is
-/// built by the test harness and the oracle's by `cargo xtask bless`, so a
-/// `.cext` golden with no recorded answer would take the live-oracle path and
-/// compare zeo against a ruby that cannot load the extension at all. Its
-/// `LoadError` differs from anything zeo prints, so a GAP would pass and
-/// prove nothing. The harness refuses that case; this says so before the
-/// suite gets there.
-#[test]
-fn every_cext_sidecar_names_a_fixture_and_a_recorded_answer() {
-    let mut wrong: Vec<String> = Vec::new();
-    for dir in suite_dirs() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for path in entries
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| p.to_string_lossy().ends_with(".cext"))
-        {
-            let name = path.to_string_lossy().to_string();
-            if !name.ends_with(".rb.cext") {
-                wrong.push(format!("{name}: not a `.rb.cext` sidecar"));
-                continue;
-            }
-            let named = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("{name} is readable: {e}"));
-            // Against the tests root, so the name survives a promotion.
-            let fixture = repo_root().join("tests").join(named.trim());
-            if !fixture.join("extconf.rb").is_file() {
-                wrong.push(format!(
-                    "{name}: names {}, which has no extconf.rb",
-                    fixture.display()
-                ));
-            }
-            if !Path::new(&name.replace(".cext", ".expected")).exists() {
-                wrong.push(format!(
-                    "{name}: no `.expected` beside it -- run `cargo xtask bless`, \
-                     or the live oracle records a LoadError"
-                ));
-            }
-        }
-    }
-    assert!(wrong.is_empty(), "cext sidecars: {wrong:#?}");
-}
-
 /// A `.divergence` sidecar says `.expected` records ZEO's own output rather
 /// than the oracle's, so it must have an `.expected` to describe, and it must
 /// not sit in `tests/gaps/`: a gap is work, and a decided divergence is not.
@@ -307,7 +258,10 @@ fn every_leg_skip_sidecar_is_acknowledged_here() {
         };
         for path in entries.filter_map(Result::ok).map(|e| e.path()) {
             if path.extension().is_some_and(|e| e == "rb") {
-                found.push((path.file_name().unwrap().to_string_lossy().to_string(), kind));
+                found.push((
+                    path.file_name().unwrap().to_string_lossy().to_string(),
+                    kind,
+                ));
             }
         }
     }

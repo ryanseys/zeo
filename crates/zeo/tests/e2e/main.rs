@@ -26,6 +26,7 @@ mod boxes;
 mod bundler_parity;
 mod capi_sweep;
 mod cext_build;
+mod cext_data_object;
 mod classes;
 mod codegen;
 mod collections;

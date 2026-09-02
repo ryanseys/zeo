@@ -300,3 +300,86 @@ fn write_project(
 pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) -> RunResult {
     compile_link_run(source, &Default::default(), env, args)
 }
+
+// ---- C extensions ----
+//
+// The tree tracks no C (`checks/no_c.rs`), so every extension a test builds
+// is written from text into a scratch directory first.
+
+/// `tool --version` runs. A test that builds an extension skips, saying so,
+/// on a machine without a C compiler.
+pub fn have(tool: &str) -> bool {
+    std::process::Command::new(tool)
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// A fresh extension directory: `extconf.rb` beside `<name>.c`, flat, which
+/// is the shape mkmf runs in.
+pub fn extension_dir(tag: &str, name: &str, source: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("zeo-cext-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(
+        dir.join("extconf.rb"),
+        format!("require \"mkmf\"\ncreate_makefile({name:?})\n"),
+    )
+    .expect("write extconf.rb");
+    std::fs::write(dir.join(format!("{name}.c")), source).expect("write the C");
+    dir
+}
+
+/// The fixture store's buildable extension: one module, one method, one
+/// String. Anything more would test the C API rather than the
+/// build-and-load path the fixture exists for.
+const NATIVELIB_C: &str = r#"#include <ruby.h>
+
+static VALUE
+nativelib_greet(VALUE self)
+{
+    (void)self;
+    return rb_utf8_str_new_cstr("hello from C");
+}
+
+void
+Init_nativelib(void)
+{
+    VALUE mod = rb_define_module("Nativelib");
+
+    rb_define_singleton_method(mod, "greet", nativelib_greet, 0);
+    rb_define_const(mod, "BUILT", Qtrue);
+}
+"#;
+
+/// The fixture gem store (`tests/fixtures/gem_store/store`), copied whole
+/// into a scratch directory with `nativelib`'s C written beside its
+/// `extconf.rb`. A copy per test: a store is shared and often read only,
+/// and a build that wrote into it would be a bug `ffi.rs` asserts against.
+pub fn gem_store(tag: &str) -> std::path::PathBuf {
+    let fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
+    let store = std::env::temp_dir().join(format!("zeo-gem-store-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&store);
+    copy_tree(&fixture, &store);
+    std::fs::write(
+        store.join("gems/nativelib-1.0.0/ext/nativelib/nativelib.c"),
+        NATIVELIB_C,
+    )
+    .expect("write nativelib.c");
+    store
+}
+
+fn copy_tree(src: &std::path::Path, dest: &std::path::Path) {
+    std::fs::create_dir_all(dest).unwrap_or_else(|e| panic!("creating {}: {e}", dest.display()));
+    for entry in std::fs::read_dir(src).unwrap_or_else(|e| panic!("reading {}: {e}", src.display()))
+    {
+        let entry = entry.expect("a directory entry");
+        let (from, to) = (entry.path(), dest.join(entry.file_name()));
+        if from.is_dir() {
+            copy_tree(&from, &to);
+        } else {
+            std::fs::copy(&from, &to).unwrap_or_else(|e| panic!("copying {}: {e}", from.display()));
+        }
+    }
+}

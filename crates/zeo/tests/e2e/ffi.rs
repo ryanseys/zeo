@@ -7,8 +7,7 @@ fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
     // paths: a pure-Ruby gem resolves and compiles; a gem shipping its C as
     // SOURCE is compiled from it; a precompiled-platform-only gem is
     // excluded, with a reason recorded in the disclosure report.
-    let store =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
+    let store = crate::support::gem_store("ffi");
     let report = std::env::temp_dir().join(format!("zeo-store-{}.json", std::process::id()));
     let _ = std::fs::remove_file(&report);
     let opts = zeo::CompileOptions {
@@ -48,8 +47,7 @@ fn a_store_gem_shipping_c_source_is_compiled_and_loaded() {
         eprintln!("skipping: this machine has no C compiler");
         return;
     }
-    let store =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
+    let store = crate::support::gem_store("ffi");
     let opts = zeo::CompileOptions {
         gem_paths: vec![store.clone()],
         lockfile: Some(store.join("Gemfile.lock")),
@@ -77,8 +75,7 @@ fn building_an_extension_leaves_the_gem_store_untouched() {
         eprintln!("skipping: this machine has no C compiler");
         return;
     }
-    let store =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
+    let store = crate::support::gem_store("ffi");
     let ext = store.join("gems/nativelib-1.0.0/ext/nativelib");
     let before: Vec<String> = listing(&ext);
     let opts = zeo::CompileOptions {
@@ -116,8 +113,7 @@ fn listing(dir: &std::path::Path) -> Vec<String> {
 /// which one ended up in the binary.
 #[test]
 fn the_lockfile_selects_the_version_when_the_store_holds_several() {
-    let store =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
+    let store = crate::support::gem_store("ffi");
     let opts = zeo::CompileOptions {
         gem_paths: vec![store.clone()],
         lockfile: Some(store.join("Gemfile.lock")),

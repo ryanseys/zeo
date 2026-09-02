@@ -52,8 +52,7 @@ fn gem_compat_classifies_each_locked_gem() {
     // as SOURCE is native-source, and a precompiled-only gem is the one that
     // stays unsupported.
     use zeo::GemCompatOutcome;
-    let store =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
+    let store = crate::support::gem_store("compat");
     let entries = zeo::gem_compat(&store, &store.join("Gemfile.lock")).unwrap();
     let outcome = |n: &str| {
         entries
@@ -1824,8 +1823,7 @@ fn a_swept_units_definitions_wait_for_the_unit_to_run() {
     );
 
     // ...and the other half: requiring the file makes every one of them real.
-    let after_src =
-        format!("{preamble}{probes}\nLeaky.load_one(\"leaky/script\")\nprobe_all\n");
+    let after_src = format!("{preamble}{probes}\nLeaky.load_one(\"leaky/script\")\nprobe_all\n");
     let mut after = files.to_vec();
     after.push(("main.rb", &after_src));
     let result = run_ruby_packages(&after, "main.rb", &[], &["packages"]);

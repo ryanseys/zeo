@@ -31,10 +31,6 @@ const SIDECARS: &[&str] = &[
     "rb.gc",
     "rb.leakcheck",
     "rb.gccheck",
-    // Names the extension directory both engines build. It reads against the
-    // TESTS ROOT rather than the `.rb`'s own, so a promotion moves the file
-    // and the name still points at the same fixture.
-    "rb.cext",
 ];
 
 const USAGE: &str = "usage: cargo xtask promote-gap <gap-stem>";

@@ -2,7 +2,7 @@
 //!
 //! This is the only test that exercises the whole build pipeline at once:
 //! `extconf.rb` runs under zeo, which means `mkmf` loads and probes; mkmf
-//! writes a Makefile; `make` compiles the C against the vendored MRI headers;
+//! writes a Makefile; `make` compiles the C against MRI's fetched headers;
 //! and the link produces a loadable bundle whose only undefined symbols are
 //! the runtime's own.
 //!
@@ -26,11 +26,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn repo_root() -> PathBuf {
-    crate::paths::workspace_root()
-        .canonicalize()
-        .expect("the repo root is reachable from the manifest dir")
-}
+use crate::support::{extension_dir, have};
 
 /// The `zeo` binary beside this test binary's profile dir -- unlike the
 /// old `target/{debug,release}` guess, this survives CARGO_TARGET_DIR and
@@ -39,12 +35,30 @@ fn zeo_bin() -> PathBuf {
     crate::zeo_bin::zeo_cli().unwrap_or_else(|e| panic!("{e}"))
 }
 
-fn have(tool: &str) -> bool {
-    Command::new(tool)
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success())
+/// One global function, from C. The smallest extension the build path can
+/// prove itself on.
+const PROBE_C: &str = r#"#include <ruby.h>
+static VALUE probe_hi(VALUE self) { (void)self; return rb_utf8_str_new("hi", 2); }
+void Init_probe(void) { rb_define_global_function("probe_hi", probe_hi, 0); }
+"#;
+
+/// A module with a nested class whose only class method comes from C -- the
+/// shape bcrypt has (`BCrypt::Engine.__bc_salt`), and the one that used to
+/// mint a second `Engine` because zeo registered a compiled nested class by
+/// qualified NAME rather than through the constant table.
+const NESTED_PROBE_C: &str = r#"#include <ruby.h>
+
+static VALUE np_salt(int argc, VALUE *argv, VALUE self) {
+  (void)argc; (void)argv; (void)self;
+  return rb_utf8_str_new("SALT", 4);
 }
+
+void Init_nested_probe(void) {
+  VALUE mod = rb_define_module("NestedProbe");
+  VALUE engine = rb_define_class_under(mod, "Engine", rb_cObject);
+  rb_define_singleton_method(engine, "__np_salt", np_salt, -1);
+}
+"#;
 
 /// `RbConfig.ruby` names the zeo that is running, and that file exists.
 ///
@@ -120,14 +134,7 @@ fn an_extension_configures_compiles_and_links() {
         return;
     }
 
-    let root = repo_root();
-    let dir = std::env::temp_dir().join(format!("zeo-cext-build-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    for f in ["extconf.rb", "probe.c"] {
-        std::fs::copy(root.join("tests/cext_probe").join(f), dir.join(f))
-            .unwrap_or_else(|e| panic!("copying {f}: {e}"));
-    }
+    let dir = extension_dir("build", "probe", PROBE_C);
 
     // `zeo::cext::configure` re-enters zeo as a subprocess and exports the
     // header directories, which is the whole path an installed zeo takes --
@@ -204,14 +211,7 @@ fn a_computed_require_loads_a_compiled_extension() {
         eprintln!("skipping: this machine has no `make` or no `cc`");
         return;
     }
-    let root = repo_root();
-    let dir = std::env::temp_dir().join(format!("zeo-cext-require-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    for f in ["extconf.rb", "probe.c"] {
-        std::fs::copy(root.join("tests/cext_probe").join(f), dir.join(f))
-            .unwrap_or_else(|e| panic!("copying {f}: {e}"));
-    }
+    let dir = extension_dir("require", "probe", PROBE_C);
     zeo::cext::configure(&zeo_bin(), &dir, Path::new("extconf.rb"), &[])
         .unwrap_or_else(|e| panic!("{e}"));
     let bundle = zeo::cext::build_extension(&dir, 4).unwrap_or_else(|e| panic!("{e}"));
@@ -291,14 +291,7 @@ fn a_c_extension_reopens_a_compiled_namespace() {
         eprintln!("skipping: this machine has no `make` or no `cc`");
         return;
     }
-    let root = repo_root();
-    let dir = std::env::temp_dir().join(format!("zeo-cext-nested-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    for f in ["extconf.rb", "nested_probe.c"] {
-        std::fs::copy(root.join("tests/cext_probe_nested").join(f), dir.join(f))
-            .unwrap_or_else(|e| panic!("copying {f}: {e}"));
-    }
+    let dir = extension_dir("nested", "nested_probe", NESTED_PROBE_C);
     zeo::cext::configure(&zeo_bin(), &dir, Path::new("extconf.rb"), &[])
         .unwrap_or_else(|e| panic!("{e}"));
     zeo::cext::build_extension(&dir, 4).unwrap_or_else(|e| panic!("{e}"));
