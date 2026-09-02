@@ -179,6 +179,16 @@ $ zeo flags                       # the same handoff, spelled out for a Makefile
 --gem-path '…' --bundle-gemfile '…' --with-package '…/rack-3.1.0/pkg.zeopkg'
 ```
 
+The bundled standard library needs no verb at all. The first program that
+requires a bundled gem packages it into the machine cache as a side effect,
+and every later compile — of any program — links the artifact instead of
+splicing the gem's source. A warm `require "csv"` hello-world compiles ~35%
+faster than the source splice, `require "net/http"` ~25% (debug build,
+informational). A require closure that packages only partially (rdoc pulls
+rubygems and irb, which decline on cross-gem superclasses) still re-splices
+the declined remainder, and can cost more than the plain splice — the win
+arrives when the closure packages fully.
+
 `zeo install` reads `Gemfile.lock` and the installed store; it never runs
 Bundler and never touches the network (`zeo bundle install` is Bundler's own
 install, first). A gem author can ship the artifact inside a platform gem:
