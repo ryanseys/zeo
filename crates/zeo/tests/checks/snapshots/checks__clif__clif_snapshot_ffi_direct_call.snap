@@ -1,6 +1,6 @@
 ---
 source: crates/zeo/tests/checks/clif.rs
-expression: "format!(\";; {block}\")"
+expression: "format!(\";; {}\", scrub_rodata_offsets(block))"
 ---
 ;; LibC.abs
 function u0:58(i64, i64, i64) -> i32 ccall {
@@ -74,11 +74,11 @@ block6:
     store notrap aligned v12, v7+8
     v13 = load.i64 notrap aligned v1+16
     store notrap aligned v13, v7+16
-    v14 = iconst.i64 2446
-    v15 = iadd.i64 v3, v14  ; v14 = 2446
+    v14 = iconst.i64 N
+    v15 = iadd.i64 v3, v14  ; v14 = N
     v16 = iconst.i64 2
-    v17 = iconst.i64 2448
-    v18 = iadd.i64 v3, v17  ; v17 = 2448
+    v17 = iconst.i64 N
+    v18 = iadd.i64 v3, v17  ; v17 = N
     v19 = iconst.i64 8
     v20 = iconst.i32 5
     v21 = iconst.i32 5
@@ -166,12 +166,12 @@ block18:
 
 block20 cold:
     v53 = iconst.i32 0
-    v54 = iconst.i64 2456
-    v55 = iadd.i64 v3, v54  ; v54 = 2456
+    v54 = iconst.i64 N
+    v55 = iadd.i64 v3, v54  ; v54 = N
     v56 = iconst.i64 3
     v57 = stack_addr.i64 ss1
-    v58 = iconst.i64 2297
-    v59 = iadd.i64 v3, v58  ; v58 = 2297
+    v58 = iconst.i64 N
+    v59 = iadd.i64 v3, v58  ; v58 = N
     v60 = iconst.i64 1
     v61 = stack_addr.i64 ss2
     store notrap aligned v59, v61

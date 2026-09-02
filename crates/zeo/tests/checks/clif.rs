@@ -20,7 +20,9 @@ fn clif_snapshot_hello() {
 /// The direct FFI tier: the site word's load-or-resolve, one `to_int` row
 /// per argument, the `call_indirect` on the C signature, the
 /// `after_call` check and the inline `sextend` wrap. Only the wrapper's
-/// own block is kept -- `require "ffi"` brings the gem's Ruby half along.
+/// own block is kept -- `require "ffi"` brings the gem's Ruby half along,
+/// and its rodata offsets move with the platform strings that half
+/// interns, so every offset-sized immediate is scrubbed.
 #[test]
 fn clif_snapshot_ffi_direct_call() {
     let text = clif_of(
@@ -30,7 +32,29 @@ fn clif_snapshot_ffi_direct_call() {
         .split(";; ")
         .find(|b| b.starts_with("LibC.abs\n"))
         .expect("the attach_function wrapper is emitted under its Ruby name");
-    insta::assert_snapshot!(format!(";; {block}"));
+    insta::assert_snapshot!(format!(";; {}", scrub_rodata_offsets(block)));
+}
+
+/// Every run of four or more digits becomes `N`: in a wrapper this small
+/// the only immediates that wide are rodata offsets.
+fn scrub_rodata_offsets(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut digits = String::new();
+    for c in text.chars().chain(std::iter::once('\n')) {
+        if c.is_ascii_digit() {
+            digits.push(c);
+            continue;
+        }
+        if digits.len() >= 4 {
+            out.push('N');
+        } else {
+            out.push_str(&digits);
+        }
+        digits.clear();
+        out.push(c);
+    }
+    out.pop();
+    out
 }
 
 #[test]

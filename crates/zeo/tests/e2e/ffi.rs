@@ -718,7 +718,9 @@ fn ffi_struct_by_value_argument() {
 /// The direct tier: every C scalar kind in and out, through the emitted
 /// `call_indirect` rather than the libffi engine. Widths and signedness
 /// are what the test is about -- a `long` past 32 bits, an `unsigned long`
-/// past `i64::MAX` (a Bignum), a `float` demoted and promoted, a `_Bool`,
+/// past `i64::MAX` (a Bignum), a `float` demoted and promoted, a `:bool`
+/// read from an `int` result's low byte (`access` answers 0 or -1, so both
+/// libcs agree; glibc's `isalpha` answers 1024, whose low byte is 0),
 /// a NULL `:string` result (`nil`), a `:pointer` result read back.
 #[test]
 fn ffi_direct_tier_marshals_every_scalar_kind() {
@@ -735,7 +737,7 @@ fn ffi_direct_tier_marshals_every_scalar_kind() {
           attach_function :strdup, [:string], :pointer
           attach_function :free, [:pointer], :void
           attach_function :strtoul, [:string, :pointer, :int], :ulong
-          attach_function :isalpha, [:int], :bool
+          attach_function :access, [:string, :int], :bool
           attach_function :toupper, [:int], :int
         end
         module LibM
@@ -750,7 +752,7 @@ fn ffi_direct_tier_marshals_every_scalar_kind() {
         p d.read_string
         p LibC.free(d)
         p LibC.strtoul("18446744073709551615", nil, 10)
-        p LibC.isalpha("a".ord), LibC.isalpha("1".ord), LibC.toupper("a".ord).chr
+        p LibC.access("/no/such/path", 0), LibC.access("/", 0), LibC.toupper("a".ord).chr
         p LibM.fabs(-2.5), LibM.fabsf(-1.5)
         "#,
     );
