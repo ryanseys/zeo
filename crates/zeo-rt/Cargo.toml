@@ -62,15 +62,12 @@ ruby-prism-sys.workspace = true
 parking_lot.workspace = true
 indexmap.workspace = true
 foldhash.workspace = true
-regex.workspace = true
-# Backtracking regex engine for the constructs the linear-time `regex` crate
-# structurally can't do -- in-pattern backreferences and look-around. Selected
-# per-pattern (a pre-scan) so the common case keeps `regex`'s fast path.
-fancy-regex.workspace = true
-# Oniguruma bindings -- the backtracking engine that will replace fancy-regex
-# (the engine CRuby's Onigmo forked from). default-features = false skips the
-# bindgen `generate` feature (pre-generated bindings) and builds the VENDORED C
-# library, never linking a system libonig.
+# THE regex engine: Oniguruma, which CRuby's Onigmo forked from, speaking
+# Ruby's own syntax (`Syntax::ruby()`). Every `Regexp` compiles and matches
+# here -- one engine, so what it refuses ruby refuses and what it accepts
+# ruby accepts, with no second dialect to translate into. default-features
+# = false skips the bindgen `generate` feature (pre-generated bindings) and
+# builds the VENDORED C library, never linking a system libonig.
 onig.workspace = true
 # Structured runtime logging. The FACADE only, and non-optional: with no
 # subscriber installed an event is one relaxed load of a global, so a shipped

@@ -1105,13 +1105,13 @@ mod tests {
             __class: std::sync::atomic::AtomicU32::new(Point::CLASS_ID.0),
         })));
 
-        assert!(point_class.rb_case_eq(&instance));
+        assert!(point_class.rb_case_eq(&instance).unwrap());
         assert!(
-            RubyValue::Class(Object::CLASS_ID).rb_case_eq(&instance),
+            RubyValue::Class(Object::CLASS_ID).rb_case_eq(&instance).unwrap(),
             "ancestry, not identity"
         );
         assert!(
-            !point_class.rb_case_eq(&point_class),
+            !point_class.rb_case_eq(&point_class).unwrap(),
             "Widget === Widget is false"
         );
     }

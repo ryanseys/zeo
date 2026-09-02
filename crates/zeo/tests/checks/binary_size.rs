@@ -12,13 +12,13 @@ use std::process::Command;
 use crate::paths::workspace_root;
 
 /// The committed size of `puts 1`, in bytes of the whole binary. Re-recorded
-/// 2026-08-27 on aarch64-apple-darwin, release profile.
+/// 2026-09-01 on aarch64-apple-darwin, release profile.
 ///
-/// It moved +465,072 from the 7,509,720 recorded on 2026-08-24, and that
-/// drift is UNATTRIBUTED: the gate was never run between those dates, so the
-/// growth belongs to some commit in the window rather than to any one change.
-/// Anyone narrowing it should bisect the window with this test.
-const SIZE_BASELINE: u64 = 7_974_792;
+/// It moved -1,462,320 from the 7,974,792 recorded on 2026-08-27, the day
+/// Oniguruma became the only regex engine and the `regex` and `fancy-regex`
+/// crates left the runtime. The 2026-08-27 figure itself carried +465,072 of
+/// UNATTRIBUTED drift from 2026-08-24 (the gate was not run in between).
+const SIZE_BASELINE: u64 = 6_512_472;
 
 /// Allowed drift. Wide enough that a toolchain bump does not fail the gate,
 /// narrow enough that a table joining the always-on set does.

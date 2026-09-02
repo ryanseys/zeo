@@ -1,21 +1,22 @@
-//! `Regexp`/`MatchData` -- backed by the `regex` crate, not
-//! Ruby's own Onigmo engine. A real, documented semantic gap versus real
-//! Ruby, not silent wrongness: no backreferences INSIDE a pattern (`\1` as
-//! part of what's being matched -- as opposed to a `gsub`/`sub` REPLACEMENT
-//! string, where numbered/whole-match/pre-match/post-match backreferences
-//! ARE supported, see `expand_replacement` below) and no lookaround
-//! (`(?=...)`/`(?!...)`/`(?<=...)`/`(?<!...)`), since `regex` is a
-//! guaranteed-linear-time engine that deliberately doesn't support either.
-//! Unicode property syntax also differs from Onigmo's. Same "approximation,
-//! not silent wrongness, documented" posture this codebase already applies
-//! to `defined?`/`Hash#inspect`.
+//! `Regexp`/`MatchData` over Oniguruma -- the engine CRuby's own Onigmo
+//! forked from, speaking Ruby's regex dialect through `Syntax::ruby()`.
+//!
+//! ONE engine. Every pattern compiles and matches here, so what it refuses
+//! ruby refuses and what it accepts ruby accepts, and there is no second
+//! dialect to translate into (a translation is a second implementation of
+//! the syntax, with its own drift). What stays on this side of the engine is
+//! ruby's own `re.c` preprocessing -- `\u` escapes and the `\M-`/`\C-`/`\c`
+//! byte escapes -- and the CRuby-shaped compile-error text; see
+//! `translate.rs`. The handful of rows where Oniguruma and Onigmo answer
+//! differently are ledgered in `docs/COMPATIBILITY.md`.
 //!
 //! `RegexpData`/`MatchDataInner` need no `Mutex` at all (unlike
 //! `RArray`/`RHash`/`RStr`): both are immutable after construction, and
-//! `regex::Regex` is already `Send + Sync` on its own -- an `Arc` alone gives
-//! the same cheap-clone-shared-identity value semantics every other
-//! `RubyValue` payload uses, with no interior mutability to guard.
+//! `onig::Regex` is `Send + Sync` and read-only during a search (it fills a
+//! per-call `Region`) -- an `Arc` alone gives the same cheap-clone
+//! shared-identity value semantics every other `RubyValue` payload uses.
 
+mod charrange;
 mod translate;
 
 use crate::builtins::index_error;
@@ -107,6 +108,18 @@ impl RegexpData {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// The same pattern with a `timeout:` of its own.
+    pub fn with_timeout(self: &Arc<Self>, timeout: Option<f64>) -> RRegexp {
+        if timeout.is_none() {
+            return self.clone();
+        }
+        let copy = self.dup_data(false);
+        Arc::new(RegexpData {
+            engine: self.engine.clone().with_timeout(timeout),
+            ..Arc::try_unwrap(copy).unwrap_or_else(|_| unreachable!("the copy has one owner"))
+        })
+    }
+
     /// `Regexp#dup`/`#clone`'s payload copy: a fresh allocation (fresh
     /// object identity, `frozen` per the caller's dup-vs-clone rule) over
     /// clones of the compiled engine and flags.
@@ -125,10 +138,8 @@ impl RegexpData {
 }
 
 /// Link-path proof for the vendored Oniguruma C archive: compiles and runs an
-/// onig pattern so generated programs (linked by bare `rustc` against the
-/// prebuilt rlib, `zeo::backend`) demonstrably resolve the bundled C archive.
-/// Onig now backs the `Engine::Onig` matching path (see `Engine`); this stays
-/// as a cheap, dependency-free link smoke test exercised by an e2e.
+/// onig pattern so a generated program demonstrably resolves the bundled C
+/// archive. A cheap, dependency-free link smoke test exercised by an e2e.
 pub fn onig_linkcheck() -> bool {
     let re = onig::Regex::with_options(
         r"(a+)\1",
@@ -141,41 +152,61 @@ pub fn onig_linkcheck() -> bool {
     }
 }
 
-/// The backing engines, in preference order. `Fast` is the linear-time
-/// `regex` crate (the overwhelmingly common case); `Fancy` is the backtracking
-/// `fancy-regex`, selected when a pattern uses a construct `regex` structurally
-/// can't do (in-pattern backreferences, look-around, atomic/possessive groups,
-/// `(?#comment)`); `Onig` is real Oniguruma (CRuby's own engine, via the
-/// vendored C library) reserved for patterns whose SEMANTICS the Rust engines
-/// get wrong or can't express -- Ruby's line anchors `^`/`$` (which, unlike
-/// `regex`'s `multi_line`, do not match at the phantom position after a
-/// trailing newline), inline flag groups where Ruby's `/m` means DOTALL rather
-/// than multi-line (`(?m:a.c)` spanning `\n`), the absence operator `(?~...)`,
-/// and anything both Rust engines reject but Onig accepts (e.g. the redundant
-/// `a***`). Onig receives the RAW Ruby source (`Syntax::ruby()` parses it
-/// directly -- no escape translation). All variants are `Send + Sync` and
-/// immutable after construction (`onig::Regex` is `Send + Sync` and read-only
-/// during a search that fills a per-call `Region`, so an `Arc` gives it the
-/// same cheap-clone value semantics the other engines have natively).
+/// The compiled pattern: Oniguruma over the source as written. `Send + Sync`
+/// and immutable after construction -- a search fills a per-call `Region`,
+/// never the regex -- so an `Arc` gives it the cheap-clone value semantics
+/// every other `RubyValue` payload has.
 #[derive(Clone)]
-pub enum Engine {
-    Fast(regex::Regex),
-    Fancy(fancy_regex::Regex),
-    Onig(Arc<onig::Regex>),
-    /// A pattern Onigmo (CRuby) accepts but neither Rust engine can compile --
-    /// specifically a FORWARD numbered backreference (`/[\]]\1(a)/`, where `\1`
-    /// precedes the group it names). It constructs so introspection
-    /// (`#source`/`#encoding`/`Regexp.linear_time?`) works, but never matches:
-    /// a narrow, documented divergence from Onigmo's match semantics for these
-    /// rare patterns. Only reached when the referenced group actually exists
-    /// (`regexp_new`); a genuine invalid backref number still raises RegexpError.
-    Unmatchable,
+pub struct Engine {
+    re: Arc<onig::Regex>,
+    /// `Regexp.new(src, timeout:)`'s per-pattern limit, in seconds; `None`
+    /// defers to [`global_timeout`].
+    timeout: Option<f64>,
+}
+
+/// `Regexp.timeout`, the process-wide default match limit in seconds.
+static TIMEOUT: parking_lot::Mutex<Option<f64>> = parking_lot::Mutex::new(None);
+
+pub fn global_timeout() -> Option<f64> {
+    *TIMEOUT.lock()
+}
+
+pub fn set_global_timeout(seconds: Option<f64>) {
+    *TIMEOUT.lock() = seconds;
+}
+
+/// A `timeout:` value as ruby reads it (`rb_reg_match_time_limit`): nil is
+/// "no limit", anything else converts to a Float and must be positive.
+pub fn timeout_seconds(v: &RubyValue) -> Result<Option<f64>, Signal> {
+    let seconds = match v {
+        RubyValue::Nil => return Ok(None),
+        RubyValue::Int(_) | RubyValue::Float(_) | RubyValue::BigInt(_) | RubyValue::Rational(_) => {
+            crate::builtins::numeric::num_to_f64_unchecked(v)
+        }
+        RubyValue::Str(_) => {
+            return Err(crate::builtins::type_error!(
+                "no implicit conversion to float from string"
+            ));
+        }
+        other => {
+            return Err(crate::builtins::type_error!(
+                "can't convert {} into Float",
+                crate::builtins::convert_name_of(other)
+            ));
+        }
+    };
+    if !(seconds > 0.0) {
+        return Err(crate::builtins::arg_error!(
+            "invalid timeout: {}",
+            v.inspect_string()
+        ));
+    }
+    Ok(Some(seconds))
 }
 
 /// One match normalized to byte-offset group spans (index 0 = whole match;
-/// `None` = a non-participating optional group). This is the single shape both
-/// engines' `Captures` collapse to, so every downstream consumer
-/// (`build_match_data`, `scan`, `split`, `gsub`/`sub`) is engine-agnostic.
+/// `None` = a non-participating optional group). Every downstream consumer
+/// (`build_match_data`, `scan`, `split`, `gsub`/`sub`) reads this shape.
 pub struct Caps {
     spans: Vec<Option<(usize, usize)>>,
     /// Where the search that produced this match BEGAN, which `\K` divorces
@@ -204,99 +235,128 @@ impl Caps {
     }
 }
 
-/// One Oniguruma search, with its runtime failures read as "no match".
+/// Onig's retry budget for a search with no timeout: its own default. A
+/// pattern that backtracks past it answers "no match", ruby's answer for
+/// `/(a*)*b/` against a long run of `a` before its memoization made that
+/// linear.
+const UNTIMED_RETRY_LIMIT: u32 = 10_000_000;
+
+/// The first retry budget under a timeout; each exhausted budget doubles
+/// until the wall clock passes the deadline.
+const TIMED_RETRY_STEP: u32 = 1 << 20;
+
+/// One Oniguruma search.
 ///
-/// The crate's own `search_with_options` PANICS when onig reports a search
-/// error, and onig reports one for a pattern that backtracks past its retry
-/// limit (`/(a*)*b/` against a long run of `a`). Ruby answers `nil` there, so
-/// aborting the process would be the wrong answer twice over.
+/// Onig counts retries, not seconds, and cannot be interrupted. With no
+/// timeout an exhausted budget reads as "no match" (the crate's own
+/// `search_with_options` would PANIC there). With one, the budget is handed
+/// out in doubling slices and the clock read between them: the raise is
+/// `Regexp::TimeoutError`, as ruby's is, once the deadline has passed.
 fn onig_search(
-    r: &onig::Regex,
+    e: &Engine,
     haystack: &str,
     start: usize,
-    region: Option<&mut onig::Region>,
-) -> Option<usize> {
-    r.search_with_param(
-        haystack,
-        start,
-        haystack.len(),
-        onig::SearchOptions::SEARCH_OPTION_NONE,
-        region,
-        onig::MatchParam::default(),
-    )
-    .ok()
-    .flatten()
+    mut region: Option<&mut onig::Region>,
+) -> Result<Option<usize>, Signal> {
+    let timeout = e.timeout.or_else(global_timeout);
+    let deadline =
+        timeout.map(|t| std::time::Instant::now() + std::time::Duration::from_secs_f64(t));
+    let mut budget = if deadline.is_some() {
+        TIMED_RETRY_STEP
+    } else {
+        UNTIMED_RETRY_LIMIT
+    };
+    loop {
+        let mut param = onig::MatchParam::default();
+        param.set_retry_limit_in_match(budget);
+        let found = e.re.search_with_param(
+            haystack,
+            start,
+            haystack.len(),
+            onig::SearchOptions::SEARCH_OPTION_NONE,
+            region.as_deref_mut(),
+            param,
+        );
+        let Some(deadline) = deadline else {
+            return Ok(found.ok().flatten());
+        };
+        if std::time::Instant::now() >= deadline {
+            return Err(crate::dispatch::raise_error_id(
+                REGEXP_TIMEOUT_ERROR_CLASS,
+                "regexp match timeout".to_string(),
+            ));
+        }
+        match found {
+            Ok(at) => return Ok(at),
+            Err(err) if BUDGET_ERRORS.contains(&err.code()) => {
+                budget = budget.saturating_mul(2);
+            }
+            Err(_) => return Ok(None),
+        }
+    }
 }
 
+/// `Regexp::TimeoutError`'s class id -- `exc_id(43)` in the exception table.
+const REGEXP_TIMEOUT_ERROR_CLASS: zeo_abi::ClassId = zeo_abi::exc_id(43);
+
+/// Onig's "budget exhausted" codes: `ONIGERR_MATCH_STACK_LIMIT_OVER`,
+/// `ONIGERR_RETRY_LIMIT_IN_MATCH_OVER`, `ONIGERR_RETRY_LIMIT_IN_SEARCH_OVER`.
+const BUDGET_ERRORS: [i32; 3] = [-15, -17, -18];
+
 impl Engine {
-    pub fn is_match(&self, haystack: &str) -> bool {
-        match self {
-            Engine::Fast(r) => r.is_match(haystack),
-            // A runtime error (e.g. backtrack-limit) counts as "no match" --
-            // rare, documented; CRuby would raise on catastrophic backtracking.
-            Engine::Fancy(r) => r.is_match(haystack).unwrap_or(false),
-            Engine::Onig(r) => onig_search(r, haystack, 0, None).is_some(),
-            Engine::Unmatchable => false,
+    pub fn new(re: onig::Regex) -> Engine {
+        Engine {
+            re: Arc::new(re),
+            timeout: None,
         }
+    }
+
+    pub fn with_timeout(mut self, timeout: Option<f64>) -> Engine {
+        self.timeout = timeout;
+        self
+    }
+
+    /// `Regexp#timeout`: the per-pattern limit, never the global default.
+    pub fn timeout(&self) -> Option<f64> {
+        self.timeout
+    }
+
+    pub fn is_match(&self, haystack: &str) -> Result<bool, Signal> {
+        Ok(onig_search(self, haystack, 0, None)?.is_some())
     }
 
     /// The first match's group spans, or `None` when the pattern doesn't match.
-    fn captures_first(&self, haystack: &str) -> Option<Caps> {
+    fn captures_first(&self, haystack: &str) -> Result<Option<Caps>, Signal> {
         self.captures_at(haystack, 0)
     }
 
-    /// The leftmost match whose start is at or after `start`, with group spans.
-    fn captures_at(&self, haystack: &str, start: usize) -> Option<Caps> {
-        match self {
-            // Neither Rust engine has `\K`, so the search start and the whole
-            // match's start are the same position there.
-            Engine::Fast(r) => r.captures_at(haystack, start).map(|c| Caps {
-                spans: (0..c.len())
-                    .map(|i| c.get(i).map(|m| (m.start(), m.end())))
-                    .collect(),
-                start: c.get(0).map_or(start, |m| m.start()),
-            }),
-            Engine::Fancy(r) => r
-                .captures_from_pos(haystack, start)
-                .ok()
-                .flatten()
-                .map(|c| Caps {
-                    spans: (0..c.len())
-                        .map(|i| c.get(i).map(|m| (m.start(), m.end())))
-                        .collect(),
-                    start: c.get(0).map_or(start, |m| m.start()),
-                }),
-            // Search the WHOLE `haystack` starting at byte `start` (not a
-            // `haystack[start..]` slice): Onig reads the real character before
-            // `start` from the full buffer, so `^`/`$`/`\A`/`\Z`/`\G` anchor
-            // against the true string, and a fresh `Region` holds the byte
-            // spans of every group (`None` for a non-participating group).
-            Engine::Onig(r) => {
-                let mut region = onig::Region::new();
-                let at = onig_search(r, haystack, start, Some(&mut region))?;
-                Some(Caps {
-                    spans: (0..region.len()).map(|i| region.pos(i)).collect(),
-                    start: at,
-                })
-            }
-            Engine::Unmatchable => None,
-        }
+    /// The leftmost match whose start is at or after `start`, with group
+    /// spans. Searches the WHOLE `haystack` from byte `start` (not a
+    /// `haystack[start..]` slice): onig reads the real character before
+    /// `start` from the full buffer, so `^`/`$`/`\A`/`\Z`/`\G` anchor against
+    /// the true string, and a fresh `Region` holds the byte spans of every
+    /// group (`None` for a non-participating group).
+    fn captures_at(&self, haystack: &str, start: usize) -> Result<Option<Caps>, Signal> {
+        let mut region = onig::Region::new();
+        let Some(at) = onig_search(self, haystack, start, Some(&mut region))? else {
+            return Ok(None);
+        };
+        Ok(Some(Caps {
+            spans: (0..region.len()).map(|i| region.pos(i)).collect(),
+            start: at,
+        }))
     }
 
-    /// Every non-overlapping match's group spans, left to right, reproducing
+    /// Every non-overlapping match's group spans, left to right, with
     /// CRuby/Onig's zero-width iteration: after an EMPTY match the search
-    /// advances one character, but an empty match abutting the PREVIOUS match's
-    /// end is still yielded (`"abc".gsub(/b*/, "X") == "XaXXcX"`,
-    /// `"aaaa".scan(/a{0,2}/) == ["aa", "aa", ""]`) -- the rust/fancy-regex
-    /// `captures_iter` drops that abutting empty, so it can't be used here.
-    fn captures_all(&self, haystack: &str) -> Vec<Caps> {
-        if matches!(self, Engine::Unmatchable) {
-            return Vec::new();
-        }
+    /// advances one character, but an empty match abutting the PREVIOUS
+    /// match's end is still yielded (`"abc".gsub(/b*/, "X") == "XaXXcX"`,
+    /// `"aaaa".scan(/a{0,2}/) == ["aa", "aa", ""]`).
+    fn captures_all(&self, haystack: &str) -> Result<Vec<Caps>, Signal> {
         let mut out = Vec::new();
         let mut from = 0usize;
         while from <= haystack.len() {
-            let Some(caps) = self.captures_at(haystack, from) else {
+            let Some(caps) = self.captures_at(haystack, from)? else {
                 break;
             };
             let (s, e) = caps.spans[0].expect("group 0 is always the whole match");
@@ -312,48 +372,29 @@ impl Engine {
                 from = e;
             }
         }
-        out
+        Ok(out)
     }
 
+    /// Group count INCLUDING the whole-match slot. Onig's `captures_len`
+    /// counts capturing groups alone, so `+1` puts group 0 back.
     fn captures_len(&self) -> usize {
-        match self {
-            Engine::Fast(r) => r.captures_len(),
-            Engine::Fancy(r) => r.captures_len(),
-            // Onig's `captures_len` counts capturing groups WITHOUT the
-            // whole-match slot; `+1` matches the Rust engines' convention
-            // (group 0 included).
-            Engine::Onig(r) => r.captures_len() + 1,
-            // Only the whole-match slot: an unmatchable regex never produces
-            // captures, so this is consulted only for shape decisions.
-            Engine::Unmatchable => 1,
-        }
+        self.re.captures_len() + 1
     }
 
+    /// Every named group as `(name, index)`, in group order. Onig reports each
+    /// name with the group indices that carry it; a duplicated name resolves
+    /// to its LAST group (Ruby's rule for a named backreference /
+    /// `MatchData[name]`).
     pub fn capture_names(&self) -> Vec<(String, usize)> {
-        if let Engine::Onig(r) = self {
-            // Onig reports each name with the group indices that carry it; a
-            // duplicated name resolves to its LAST group (Ruby's rule for a
-            // named backreference / `MatchData[name]`).
-            let mut out = Vec::new();
-            r.foreach_name(|name, groups| {
-                if let Some(&last) = groups.iter().max() {
-                    out.push((name.to_string(), last as usize));
-                }
-                true
-            });
-            out.sort_by_key(|(_, i)| *i);
-            return out;
-        }
-        let names: Vec<Option<String>> = match self {
-            Engine::Fast(r) => r.capture_names().map(|n| n.map(str::to_string)).collect(),
-            Engine::Fancy(r) => r.capture_names().map(|n| n.map(str::to_string)).collect(),
-            _ => Vec::new(),
-        };
-        names
-            .into_iter()
-            .enumerate()
-            .filter_map(|(i, n)| n.map(|n| (n, i)))
-            .collect()
+        let mut out = Vec::new();
+        self.re.foreach_name(|name, groups| {
+            if let Some(&last) = groups.iter().max() {
+                out.push((name.to_string(), last as usize));
+            }
+            true
+        });
+        out.sort_by_key(|(_, i)| *i);
+        out
     }
 }
 
@@ -410,8 +451,8 @@ impl MatchDataInner {
 
 /// Whether `re` matches at or after `byte_start` -- `match?`'s question,
 /// which sets no `$~` and so builds no MatchData.
-pub fn regexp_is_match_at(re: &RRegexp, haystack: &str, byte_start: usize) -> bool {
-    re.engine.captures_at(haystack, byte_start).is_some()
+pub fn regexp_is_match_at(re: &RRegexp, haystack: &str, byte_start: usize) -> Result<bool, Signal> {
+    Ok(re.engine.captures_at(haystack, byte_start)?.is_some())
 }
 
 /// [`regexp_match`] starting at a BYTE offset, over the whole haystack.
@@ -426,8 +467,8 @@ pub fn regexp_match_at(
     haystack: &str,
     byte_start: usize,
     enc: crate::encoding::EncodingId,
-) -> RubyValue {
-    match re.engine.captures_at(haystack, byte_start) {
+) -> Result<RubyValue, Signal> {
+    Ok(match re.engine.captures_at(haystack, byte_start)? {
         Some(caps) => {
             let m = build_match_data(re, haystack, &caps, enc);
             crate::lastmatch::set_last_match(Some(m.clone()));
@@ -437,7 +478,7 @@ pub fn regexp_match_at(
             crate::lastmatch::set_last_match(None);
             RubyValue::Nil
         }
-    }
+    })
 }
 
 fn build_match_data(
@@ -526,8 +567,8 @@ pub fn regexp_match(
     re: &RRegexp,
     haystack: &str,
     enc: crate::encoding::EncodingId,
-) -> RubyValue {
-    match re.engine.captures_first(haystack) {
+) -> Result<RubyValue, Signal> {
+    Ok(match re.engine.captures_first(haystack)? {
         Some(caps) => {
             let m = build_match_data(re, haystack, &caps, enc);
             crate::lastmatch::set_last_match(Some(m.clone()));
@@ -539,13 +580,13 @@ pub fn regexp_match(
             crate::lastmatch::set_last_match(None);
             RubyValue::Nil
         }
-    }
+    })
 }
 
 /// `Regexp#match?`/`String#match?` -- a plain bool, no `MatchData`
 /// allocated (mirrors real Ruby: `match?` is specifically the
 /// no-side-effect, no-allocation probe).
-pub fn regexp_is_match(re: &RRegexp, haystack: &str) -> bool {
+pub fn regexp_is_match(re: &RRegexp, haystack: &str) -> Result<bool, Signal> {
     re.engine.is_match(haystack)
 }
 
@@ -557,17 +598,19 @@ pub fn regexp_is_match(re: &RRegexp, haystack: &str) -> bool {
 /// every other engine consumer goes through. (Documented divergence: `^`/`\A`
 /// and look-behind see `haystack`'s start as the string start, not the
 /// original position -- acceptable for the scanner's tail-slice model.)
-pub fn regexp_anchored_len(re: &RRegexp, haystack: &str) -> Option<usize> {
-    let caps = re.engine.captures_first(haystack)?;
-    let (start, end) = caps.get(0)?;
-    (start == 0).then_some(end)
+pub fn regexp_anchored_len(re: &RRegexp, haystack: &str) -> Result<Option<usize>, Signal> {
+    Ok(re
+        .engine
+        .captures_first(haystack)?
+        .and_then(|caps| caps.get(0))
+        .and_then(|(start, end)| (start == 0).then_some(end)))
 }
 
 /// The byte span `(start, end)` of `re`'s leftmost match in `haystack`, or
 /// `None`. `StringScanner#scan_until`/`#exist?` need where the *next* match
 /// lands (not anchored), which is exactly this.
-pub fn regexp_find(re: &RRegexp, haystack: &str) -> Option<(usize, usize)> {
-    re.engine.captures_first(haystack).and_then(|c| c.get(0))
+pub fn regexp_find(re: &RRegexp, haystack: &str) -> Result<Option<(usize, usize)>, Signal> {
+    Ok(re.engine.captures_first(haystack)?.and_then(|c| c.get(0)))
 }
 
 /// One `StringScanner` hit -- everything the scanner's match surface needs, and
@@ -614,7 +657,7 @@ pub fn scanner_match(
     let pattern = husk.as_ref().unwrap_or(pattern);
     let (spans, names) = match pattern {
         crate::RubyValue::Regexp(re) => {
-            let caps = match re.engine.captures_first(tail) {
+            let caps = match re.engine.captures_first(tail)? {
                 Some(caps) if !anchored || caps.get(0).is_some_and(|(s, _)| s == 0) => caps,
                 _ => return Ok(None),
             };
@@ -662,7 +705,7 @@ fn scanner_match_fixed(
     let pattern = husk.as_ref().unwrap_or(pattern);
     let (spans, names) = match pattern {
         crate::RubyValue::Regexp(re) => {
-            let caps = match re.engine.captures_at(subject, at) {
+            let caps = match re.engine.captures_at(subject, at)? {
                 Some(caps) if !anchored || caps.spans[0].is_some_and(|(s, _)| s == at) => caps,
                 _ => return Ok(None),
             };
@@ -698,8 +741,12 @@ fn scanner_match_fixed(
 /// reach. Unlike `match?` it RECORDS the outcome in `$~`: a hit stores the
 /// match data, a miss clears it, so `$1` after a matched `when` arm reads the
 /// arm's own captures.
-pub fn regexp_case_eq(re: &RRegexp, haystack: &str, enc: crate::encoding::EncodingId) -> bool {
-    match re.engine.captures_first(haystack) {
+pub fn regexp_case_eq(
+    re: &RRegexp,
+    haystack: &str,
+    enc: crate::encoding::EncodingId,
+) -> Result<bool, Signal> {
+    Ok(match re.engine.captures_first(haystack)? {
         Some(caps) => {
             crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, enc)));
             true
@@ -708,7 +755,7 @@ pub fn regexp_case_eq(re: &RRegexp, haystack: &str, enc: crate::encoding::Encodi
             crate::lastmatch::set_last_match(None);
             false
         }
-    }
+    })
 }
 
 fn char_index(haystack: &str, byte_idx: usize) -> i64 {
@@ -726,7 +773,7 @@ pub fn regexp_match_index(
     re: &RRegexp,
     haystack: &str,
     enc: crate::encoding::EncodingId,
-) -> RubyValue {
+) -> Result<RubyValue, Signal> {
     match_index(re, haystack, enc, |c| {
         c.get(0).expect("group 0 always exists on a match").0
     })
@@ -741,7 +788,7 @@ pub fn regexp_search_index(
     re: &RRegexp,
     haystack: &str,
     enc: crate::encoding::EncodingId,
-) -> RubyValue {
+) -> Result<RubyValue, Signal> {
     match_index(re, haystack, enc, |c| c.start)
 }
 
@@ -750,8 +797,8 @@ fn match_index(
     haystack: &str,
     enc: crate::encoding::EncodingId,
     pick: fn(&Caps) -> usize,
-) -> RubyValue {
-    match re.engine.captures_first(haystack) {
+) -> Result<RubyValue, Signal> {
+    Ok(match re.engine.captures_first(haystack)? {
         Some(caps) => {
             let start = pick(&caps);
             crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, enc)));
@@ -761,7 +808,7 @@ fn match_index(
             crate::lastmatch::set_last_match(None);
             RubyValue::Nil
         }
-    }
+    })
 }
 
 /// `String#rindex(regexp[, pos])` -- the CHAR index of the RIGHTMOST match
@@ -772,7 +819,7 @@ pub fn regexp_rindex(
     haystack: &str,
     before: Option<usize>,
     enc: crate::encoding::EncodingId,
-) -> RubyValue {
+) -> Result<RubyValue, Signal> {
     // CRuby's `rindex(regexp)` is the LARGEST start position (char index, at or
     // before `before`) where the pattern matches ANCHORED -- it tries every
     // start from the end, so /\d+/ on "hello123world" answers 7 ("3"), not the
@@ -785,9 +832,9 @@ pub fn regexp_rindex(
         .char_indices()
         .nth(char_limit)
         .map_or(haystack.len(), |(b, _)| b);
-    match regexp_byterindex(re, haystack, byte_limit) {
+    Ok(match regexp_byterindex(re, haystack, byte_limit)? {
         Some(byte_start) => {
-            if let Some(caps) = anchored_caps_at(re, haystack, byte_start) {
+            if let Some(caps) = anchored_caps_at(re, haystack, byte_start)? {
                 crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, enc)));
             }
             RubyValue::Int(char_index(haystack, byte_start))
@@ -796,39 +843,49 @@ pub fn regexp_rindex(
             crate::lastmatch::set_last_match(None);
             RubyValue::Nil
         }
-    }
+    })
 }
 
 /// The capture spans of the match ANCHORED at `byte_start`, expressed as
 /// full-haystack byte offsets (so `$~`/`MatchData` slice correctly). `None` if
 /// nothing matches exactly there.
-fn anchored_caps_at(re: &RRegexp, haystack: &str, byte_start: usize) -> Option<Caps> {
-    let caps = re.engine.captures_first(&haystack[byte_start..])?;
-    if caps.get(0)?.0 != 0 {
-        return None; // not anchored at byte_start
+fn anchored_caps_at(
+    re: &RRegexp,
+    haystack: &str,
+    byte_start: usize,
+) -> Result<Option<Caps>, Signal> {
+    let Some(caps) = re.engine.captures_first(&haystack[byte_start..])? else {
+        return Ok(None);
+    };
+    if caps.get(0).is_none_or(|(s, _)| s != 0) {
+        return Ok(None); // not anchored at byte_start
     }
-    Some(Caps {
+    Ok(Some(Caps {
         spans: caps
             .spans
             .iter()
             .map(|s| s.map(|(a, b)| (a + byte_start, b + byte_start)))
             .collect(),
         start: caps.start + byte_start,
-    })
+    }))
 }
 
 /// `String#byterindex(regexp[, pos])` -- the BYTE offset of the LAST (highest)
 /// start position at or before `before` where `re` matches anchored, or
 /// `None`. CRuby's `rindex` tries every start from the end, so `/l+/` against
 /// `"hello"` finds the single `"l"` at 3, not the greedy `"ll"` leftmost at 2.
-pub fn regexp_byterindex(re: &RRegexp, haystack: &str, before: usize) -> Option<usize> {
+pub fn regexp_byterindex(
+    re: &RRegexp,
+    haystack: &str,
+    before: usize,
+) -> Result<Option<usize>, Signal> {
     let mut p = before.min(haystack.len());
     loop {
-        if haystack.is_char_boundary(p) && regexp_anchored_len(re, &haystack[p..]).is_some() {
-            return Some(p);
+        if haystack.is_char_boundary(p) && regexp_anchored_len(re, &haystack[p..])?.is_some() {
+            return Ok(Some(p));
         }
         if p == 0 {
-            return None;
+            return Ok(None);
         }
         p -= 1;
     }
@@ -877,8 +934,9 @@ fn escape_forward_slashes(source: &str) -> String {
             // pattern never reaches the terminal raw. The five ASCII
             // whitespace bytes are the exception ruby makes: `\t` and `\n`
             // print as themselves.
-            other if (other.is_ascii() && !other.is_ascii_graphic() && other != ' ')
-                && !matches!(other, '\t' | '\n' | '\x0b' | '\x0c' | '\r') =>
+            other
+                if (other.is_ascii() && !other.is_ascii_graphic() && other != ' ')
+                    && !matches!(other, '\t' | '\n' | '\x0b' | '\x0c' | '\r') =>
             {
                 out.push_str(&format!("\\x{:02X}", other as u32));
             }
@@ -937,14 +995,18 @@ pub fn regexp_inspect(re: &RRegexp) -> RubyValue {
 /// (the whole match) if the pattern has no capture groups, or as an `Array`
 /// of the captured groups (nil for a non-participating optional group) if it
 /// does -- matches real Ruby's own shape-switching behavior exactly.
-pub fn regexp_scan(re: &RRegexp, haystack: &str, enc: crate::encoding::EncodingId) -> RubyValue {
+pub fn regexp_scan(
+    re: &RRegexp,
+    haystack: &str,
+    enc: crate::encoding::EncodingId,
+) -> Result<RubyValue, Signal> {
     let has_groups = re.engine.captures_len() > 1;
     let mut results = Vec::new();
     // `$~` ends up on the LAST match -- CRuby's `scan` writes the backref per
     // iteration, so the final state is the last one (nil when nothing
     // matched, same as any failed match).
     let mut last_md = None;
-    for caps in re.engine.captures_all(haystack) {
+    for caps in re.engine.captures_all(haystack)? {
         last_md = Some(build_match_data(re, haystack, &caps, enc));
         if has_groups {
             let group_vals: Vec<RubyValue> = (1..caps.len())
@@ -962,7 +1024,7 @@ pub fn regexp_scan(re: &RRegexp, haystack: &str, enc: crate::encoding::EncodingI
         }
     }
     crate::lastmatch::set_last_match(last_md);
-    RubyValue::Array(array_new(results))
+    Ok(RubyValue::Array(array_new(results)))
 }
 
 /// `String#scan(regexp) { |match| ... }` -- the block form: yields each match
@@ -977,7 +1039,7 @@ pub fn regexp_scan_block(
     blk: &RProc,
 ) -> Result<(), Signal> {
     let has_groups = re.engine.captures_len() > 1;
-    for caps in re.engine.captures_all(haystack) {
+    for caps in re.engine.captures_all(haystack)? {
         let yielded = if has_groups {
             let group_vals: Vec<RubyValue> = (1..caps.len())
                 .map(|i| match caps.str(i, haystack) {
@@ -1007,11 +1069,11 @@ pub fn regexp_scan_block(
 /// default) drops trailing empties; `limit > 0` caps the field count with
 /// the tail kept whole; `limit < 0` keeps every field including trailing
 /// empties.
-pub fn regexp_split(re: &RRegexp, haystack: &str, limit: i64) -> RubyValue {
+pub fn regexp_split(re: &RRegexp, haystack: &str, limit: i64) -> Result<RubyValue, Signal> {
     let mut segments: Vec<String> = Vec::new();
     let mut last_end = 0usize;
     let mut fields = 0i64;
-    for caps in re.engine.captures_all(haystack) {
+    for caps in re.engine.captures_all(haystack)? {
         let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
         // A zero-width match at the current segment boundary produces no field
         // (CRuby's rb_str_split_m advances instead) -- this is what stops
@@ -1041,7 +1103,7 @@ pub fn regexp_split(re: &RRegexp, haystack: &str, limit: i64) -> RubyValue {
         .into_iter()
         .map(|s| RubyValue::Str(string_new(s)))
         .collect();
-    RubyValue::Array(array_new(items))
+    Ok(RubyValue::Array(array_new(items)))
 }
 
 /// Expands a `gsub`/`sub` replacement STRING's backreferences against one
@@ -1135,7 +1197,7 @@ pub fn regexp_gsub(re: &RRegexp, haystack: &str, replacement: &str) -> Result<Ru
     let names = re.engine.capture_names();
     let mut out = String::new();
     let mut last_end = 0usize;
-    for caps in re.engine.captures_all(haystack) {
+    for caps in re.engine.captures_all(haystack)? {
         let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
         out.push_str(&haystack[last_end..m_start]);
         out.push_str(&expand_replacement(
@@ -1155,7 +1217,7 @@ pub fn regexp_gsub(re: &RRegexp, haystack: &str, replacement: &str) -> Result<Ru
 /// `String#sub(regexp, replacement)` -- only the FIRST match replaced.
 pub fn regexp_sub(re: &RRegexp, haystack: &str, replacement: &str) -> Result<RubyValue, Signal> {
     let names = re.engine.capture_names();
-    match re.engine.captures_first(haystack) {
+    match re.engine.captures_first(haystack)? {
         Some(caps) => {
             let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
             let mut out = String::new();
@@ -1199,7 +1261,7 @@ pub fn regexp_gsub_block(
 ) -> Result<RubyValue, Signal> {
     let mut out = String::new();
     let mut last_end = 0usize;
-    for caps in re.engine.captures_all(haystack) {
+    for caps in re.engine.captures_all(haystack)? {
         let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
         out.push_str(&haystack[last_end..m_start]);
         // Each iteration sets `$~`/`$1..` so the block can read the capture
@@ -1222,7 +1284,7 @@ pub fn regexp_sub_block(
     enc: crate::encoding::EncodingId,
     blk: &RProc,
 ) -> Result<RubyValue, Signal> {
-    match re.engine.captures_first(haystack) {
+    match re.engine.captures_first(haystack)? {
         Some(caps) => {
             let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
             crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps, enc)));
@@ -1404,14 +1466,10 @@ mod tests {
     }
 
     #[test]
-    fn backreferences_and_lookaround_match_via_fancy_engine() {
+    fn backreferences_and_lookaround_match() {
         let dbl = regexp_new(r"(\w)\1", false, false, false).unwrap();
-        assert!(matches!(dbl.engine, Engine::Fancy(_)));
-        assert!(regexp_is_match(&dbl, "hello"));
-        assert!(!regexp_is_match(&dbl, "abc"));
-
-        let plain = regexp_new(r"\d+", false, false, false).unwrap();
-        assert!(matches!(plain.engine, Engine::Fast(_)));
+        assert!(regexp_is_match(&dbl, "hello").unwrap());
+        assert!(!regexp_is_match(&dbl, "abc").unwrap());
 
         let look = regexp_new(r"(?<=\$)\d+", false, false, false).unwrap();
         let RubyValue::Str(s) = regexp_gsub(&look, "$100 and $5", "N").unwrap() else {
@@ -1430,18 +1488,24 @@ mod tests {
     fn split_matches_real_ruby_leniency() {
         let comma = regexp_new(",", false, false, false).unwrap();
         assert_eq!(
-            strs(&regexp_split(&comma, "a,b,,c", 0)),
+            strs(&regexp_split(&comma, "a,b,,c", 0).unwrap()),
             ["a", "b", "", "c"]
         );
-        assert_eq!(strs(&regexp_split(&comma, ",a,b", 0)), ["", "a", "b"]);
-        assert_eq!(strs(&regexp_split(&comma, "a,b,", 0)), ["a", "b"]);
-        assert!(strs(&regexp_split(&comma, "", 0)).is_empty());
+        assert_eq!(
+            strs(&regexp_split(&comma, ",a,b", 0).unwrap()),
+            ["", "a", "b"]
+        );
+        assert_eq!(strs(&regexp_split(&comma, "a,b,", 0).unwrap()), ["a", "b"]);
+        assert!(strs(&regexp_split(&comma, "", 0).unwrap()).is_empty());
 
         let digit = regexp_new(r"\d", false, false, false).unwrap();
-        assert_eq!(strs(&regexp_split(&digit, "a1b2c3", 0)), ["a", "b", "c"]);
+        assert_eq!(
+            strs(&regexp_split(&digit, "a1b2c3", 0).unwrap()),
+            ["a", "b", "c"]
+        );
 
         let no_match = regexp_new("x", false, false, false).unwrap();
-        assert_eq!(strs(&regexp_split(&no_match, "abc", 0)), ["abc"]);
+        assert_eq!(strs(&regexp_split(&no_match, "abc", 0).unwrap()), ["abc"]);
     }
 
     #[test]
@@ -1469,31 +1533,33 @@ mod tests {
         assert_eq!(&*s.lock().to_utf8_lossy(), "he[l][l]o");
     }
 
-    /// Ruby's `^`/`$` are always line-anchored (`multi_line` unconditional);
-    /// `/m` maps to `dot_matches_new_line`, NOT `regex`'s own `multi_line` --
-    /// see this module's docs for why those are two different concepts
-    /// despite the same-ish name.
+    /// Ruby's `^`/`$` are always line-anchored, and `/m` makes `.` match a
+    /// newline -- onig's `MULTILINE` option, not a line-anchor mode.
     #[test]
-    fn flags_translate_to_the_correct_regex_crate_options() {
+    fn flags_mean_what_ruby_means() {
         let re = regexp_new("^line2", false, false, false).unwrap();
-        assert!(regexp_is_match(&re, "line1\nline2"));
+        assert!(regexp_is_match(&re, "line1\nline2").unwrap());
 
         let dot = regexp_new("c.d", false, false, false).unwrap();
-        assert!(!regexp_is_match(&dot, "abc\ndef"));
+        assert!(!regexp_is_match(&dot, "abc\ndef").unwrap());
         let dot_m = regexp_new("c.d", false, false, true).unwrap();
-        assert!(regexp_is_match(&dot_m, "abc\ndef"));
+        assert!(regexp_is_match(&dot_m, "abc\ndef").unwrap());
 
         let ci = regexp_new("hello", true, false, false).unwrap();
-        assert!(regexp_is_match(&ci, "HELLO"));
+        assert!(regexp_is_match(&ci, "HELLO").unwrap());
     }
 
     #[test]
     fn scan_switches_shape_based_on_capture_groups() {
         let word = regexp_new(r"\w+", false, false, false).unwrap();
-        assert_eq!(strs(&regexp_scan(&word, "one two", crate::encoding::UTF_8)), ["one", "two"]);
+        assert_eq!(
+            strs(&regexp_scan(&word, "one two", crate::encoding::UTF_8).unwrap()),
+            ["one", "two"]
+        );
 
         let pair = regexp_new(r"([a-z])(\d)", false, false, false).unwrap();
-        let RubyValue::Array(a) = regexp_scan(&pair, "a1b2", crate::encoding::UTF_8) else {
+        let RubyValue::Array(a) = regexp_scan(&pair, "a1b2", crate::encoding::UTF_8).unwrap()
+        else {
             panic!("expected an Array")
         };
         let groups = a.lock();

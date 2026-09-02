@@ -1717,7 +1717,7 @@ impl RubyValue {
     /// is `false` (real Ruby: `Regexp#===` returns `false`, not an error,
     /// for anything that doesn't respond to `to_str`), matching this
     /// function's own no-panic-on-mismatched-shape posture.
-    pub fn rb_case_eq(&self, subject: &RubyValue) -> bool {
+    pub fn rb_case_eq(&self, subject: &RubyValue) -> Result<bool, crate::Signal> {
         // A Symbol is a legal subject too (CRuby coerces it via `rb_sym2str`),
         // and anything else CLEARS `$~` rather than leaving a stale match.
         if let RubyValue::Regexp(re) = self {
@@ -1746,12 +1746,12 @@ impl RubyValue {
                     }
                     _ => {
                         crate::lastmatch::set_last_match(None);
-                        false
+                        Ok(false)
                     }
                 },
                 _ => {
                     crate::lastmatch::set_last_match(None);
-                    false
+                    Ok(false)
                 }
             };
         }
@@ -1761,7 +1761,7 @@ impl RubyValue {
         // rule (`(1..5) === "x"` is false, not an error; oracle-verified,
         // incl. `(1..6) === 5.5` true and `(1...5) === 5` false).
         if let RubyValue::Range(r) = self {
-            return range_covers(r.start.as_ref(), r.end.as_ref(), r.exclusive, subject);
+            return Ok(range_covers(r.start.as_ref(), r.end.as_ref(), r.exclusive, subject));
         }
         // `Module#===`: `case x when Integer` / `when Widget`
         // is an instance-of-ancestry check, NOT equality (`Widget ===
@@ -1769,9 +1769,9 @@ impl RubyValue {
         // itself). Registry-backed; only reachable in generated programs,
         // which always install one.
         if let RubyValue::Class(cid) = self {
-            return crate::dispatch::is_a_value(subject, *cid);
+            return Ok(crate::dispatch::is_a_value(subject, *cid));
         }
-        self.rb_eq(subject)
+        Ok(self.rb_eq(subject))
     }
 }
 
@@ -1934,7 +1934,7 @@ pub fn case_eq(pattern: &RubyValue, subject: &RubyValue) -> Result<bool, crate::
         // ->(v) { ... }`) -- the subject can be any value (e.g. a Class), so
         // this rides the normal `call`, not the integer fast-path ABI.
         RubyValue::Proc(p) => Ok(p.call(std::slice::from_ref(subject))?.truthy()),
-        _ => Ok(pattern.rb_case_eq(subject)),
+        _ => pattern.rb_case_eq(subject),
     }
 }
 

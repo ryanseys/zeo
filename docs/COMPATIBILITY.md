@@ -131,6 +131,44 @@ stderr that Ruby never produces.
 | `objspace` | always-on `ObjectSpace` rows | see below |
 | `io/console` | always-on `IO` rows over `termios(3)` | see below |
 
+### `Regexp`
+
+One engine: Oniguruma 6.9, vendored and built by the `onig` crate, in its
+Ruby syntax. CRuby runs Onigmo, a fork, and the two agree on nearly
+everything; what zeo adds on its own side is ruby's `re.c` preprocessing,
+which runs before the engine sees a pattern (`crates/zeo-rt/src/regexp/
+translate.rs`): the `\u{61 62}` codepoint LIST, the `\M-`/`\C-`/`\c`
+byte escapes with ruby's own "too short" / "invalid multibyte escape" checks
+against the pattern's encoding, and `a{2,1}` refused as Onigmo refuses it.
+
+Onigmo also has three character-range modes Oniguruma lacks, and zeo
+writes them into the pattern text (`regexp/charrange.rs`): by default `\w`,
+`\d` and `\s` are ASCII while `\b`, `\B` and the POSIX brackets are Unicode;
+`(?a)` moves everything to ASCII, `(?u)` everything to Unicode, `(?d)` is
+the default again, scoped exactly as ruby scopes them. The same walk gives a
+bare `\p{...}` Onigmo's case folding under `/i` (Oniguruma folds only a
+bracket class) and keeps an ASCII `\w` from folding past ASCII (`/\w/i`
+does not match `ſ`, in ruby or in zeo). `Regexp.timeout` and a pattern's
+own `timeout:` are enforced: onig counts retries rather than seconds, so
+the budget is handed out in doubling slices with the clock read between
+them, and `Regexp::TimeoutError` is raised once the deadline has passed.
+The rows that stay different:
+
+| Shape | ruby | zeo |
+|---|---|---|
+| `(?:(?!a))*b?`, `a(?:(?<=a))*b?` | compiles | `RegexpError: target of repeat operator is invalid` -- Oniguruma refuses a repeated zero-width group; Onigmo accepts it |
+| a bare `\p` | a literal `p` | `invalid character property name` -- Oniguruma reads `\p` as the property prefix |
+| a group named `)` | refused by `re.c` | accepted by the engine (`tests/gaps/regexp_group_name_validation.rb`) |
+| a pattern that backtracks past onig's retry limit with NO timeout set | runs to the end | answers no match, as if the pattern failed -- the retry limit is onig's, and Onigmo has none; under a timeout both raise `Regexp::TimeoutError` |
+| an ASCII `\w`/`\d`/`\s` INSIDE a bracket class under `/i` | never folds past ASCII (`/[\w]/i` does not match `ſ`) | folds the whole class, so `ſ` and `K` arrive through `s` and `k` (`tests/gaps/an_ascii_escape_inside_a_bracket_class_folds_past_ascii.rb`) |
+| `Regexp.linear_time?` | Onigmo's own analysis | a source scan: false iff the pattern has a backreference, which is Onigmo's rule too |
+| a subject in an encoding onig lacks (UTF8-MAC, CESU-8, CP949, GBK, Big5-HKSCS, Windows-1250, KOI8-U, Emacs-Mule) | matched in that encoding | matched over a lossy UTF-8 view of the subject (`tests/gaps/a_binary_regexp_holds_a_high_byte.rb` is the tracked case) |
+
+The engine-route divergences an earlier three-engine design carried (a
+forward backreference that never matched, `\K` reporting one position for
+both ends, `\b` with an ASCII word definition, `/i` on a backreference) are
+gone with it: every pattern runs on the one engine.
+
 ### `objspace`
 
 CRuby's `ext/objspace` adds its introspection methods to `ObjectSpace` when

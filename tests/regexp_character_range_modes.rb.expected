@@ -1,0 +1,51 @@
+w cjk                        nil
+W cjk                        0
+b cjk                        0
+word cjk                     0
+u w                          0
+u: w                         nil
+a b                          1
+a B                          0
+a word                       nil
+a ^alpha                     0
+a pWord                      0
+s nbsp                       nil
+space em                     0
+d w                          nil
+digits                       0
+[^W]                         0
+[W] cjk                      0
+[^w] cjk                     0
+pUpper/i                     0
+pLu/i                        0
+pLower/i                     0
+p^Lower/i                    nil
+PLower/i                     nil
+pLt/i                        0
+(?i)pLower                   0
+(?i)(?-i:pLower)             nil
+u w d w                      0
+w/i long s                   nil
+W/i long s                   0
+[a-z]/i long s               0
+k/i kelvin                   0
+h fullwidth                  nil
+xdigit fullwidth             nil
+h/i long s                   nil
+a h                          nil
+(?a) alone                   0
+-u                           RegexpError: undefined group option: /(?-u)\w/
+x comment                    0
+names                        ["x", "y"]
+source                       "(?a)\\w\\b"
+inspect                      "/(?u)\\w/i"
+p+quant                      ["abc"]
+pL/i neg class               []
+w in lookbehind              1
+scan w cjk                   ["abc"]
+gsub W                       "___abc"
+split s                      ["a", "b　c"]
+b unicode gsub               "|日本語| |です|"
+union                        "(?-mix:\\w)|(?-mix:(?a)\\b)"
+bare option then group       0
+nested option                0

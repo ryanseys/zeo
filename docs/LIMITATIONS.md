@@ -83,10 +83,10 @@ Real gaps with a named road; each closes when its road is walked.
 
 Deliberate answers, each with its reasoning ledgered where it lives.
 
-- **Ruby regular expressions compile under oniguruma first** -- the
-  engine CRuby's own forked from -- and a pattern it refuses is refused.
-  The handful of Onigmo-fork rows that differ are ruby's own `re.c`
-  behavior, ledgered in `docs/COMPATIBILITY.md`.
+- **Ruby regular expressions compile and match under Oniguruma** -- the
+  one engine, the one CRuby's own Onigmo forked from -- and a pattern it
+  refuses is refused. The handful of rows where the two forks answer
+  differently are ledgered in `docs/COMPATIBILITY.md` (`### Regexp`).
 - **`racc` runs its own pure-Ruby runtime**: the C accelerator is a pure
   speed-up with a complete in-gem fallback, so zeo declines the build
   and `Racc_Runtime_Type` answers `"ruby"`

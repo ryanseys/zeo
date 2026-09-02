@@ -11,7 +11,6 @@ per symbol and attributing each to the crate that mangled it:
 | bytes | component |
 |---|---|
 | 3,651,860 | `zeo_rt` itself |
-| 729,016 | the Rust `regex` crate (`regex_syntax` + `regex_automata`) |
 | 572,732 | unattributed (C objects with no mangling to read) |
 | 455,728 | std + core |
 | 227,808 | prism |
@@ -28,9 +27,9 @@ The rest of the file is not code: `__const` 1,238,088, `__eh_frame` 647,464,
 
 OpenSSL is 11 KB here and was ~1 MB before the alias tables became named
 symbols; that whole component now arrives only through a class table a program
-names. The `regex` crate is still 729 KB in a program with no regex in it,
-because `Marshal.load` can rebuild a `Regexp` and `Marshal`'s table is
-always-on.
+names. The Rust `regex` crate was 729 KB in a program with no regex in it
+(`Marshal.load` can rebuild a `Regexp`, and `Marshal`'s table is always-on)
+until Oniguruma became the only engine; that row is gone from the table.
 
 ## The cause: a link-time table is unstrippable
 
@@ -189,7 +188,6 @@ Dropping a table is safe to measure because a missing one is now LOUD:
 | | |
 |---|---|
 | always-on class tables | A `puts 1` still names most of the 170. The whole set attributes 2,482,240 bytes with the columns overlapping, and the core of it — String, Array, Hash, Integer, Float, Range — is unavoidable: a value of that kind arrives without the program naming it. What is left needs real reachability analysis (which classes a VALUE can flow into, not which the source names) plus give-everything hatches for `Marshal`, `ObjectSpace`, a computed `const_get` and a computed `send`. A module is the tractable half — it can only be reached by naming it or by a needed class including it. |
-| three regex engines | `Engine` is `Fast(regex)` / `Fancy(fancy_regex)` / `Onig`, and Cargo.toml already says Oniguruma "will replace fancy-regex". Retiring the two Rust engines drops 729 KB plus encoding_rs and unicode-normalization. It is a performance trade and wants its own bench pass. |
 | OpenSSL's provider graph | Self-rooting once anything calls EVP: `evp_generic_fetch` reaches every predefined provider. Gating it at the zeo-rt boundary is the only lever; the class-table work already does this for programs that never require it. |
 
 ## A trap this cost a pass on

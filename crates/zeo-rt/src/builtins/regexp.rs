@@ -8,10 +8,6 @@ use crate::builtins::inherited_row;
 use crate::builtins::regexp_error;
 use zeo_macros::ruby_class;
 
-/// `Regexp.timeout`'s cell -- see the accessor rows.
-static TIMEOUT: std::sync::LazyLock<parking_lot::Mutex<Option<RubyValue>>> =
-    std::sync::LazyLock::new(|| parking_lot::Mutex::new(None));
-
 ruby_class! {
     Regexp = zeo_abi::REGEXP_CLASS < zeo_abi::OBJECT_CLASS;
 
@@ -19,21 +15,14 @@ ruby_class! {
 
     seed seed_regexp_constants;
 
-    // `Regexp.timeout` -- the process-wide default match timeout. zeo enforces
-    // none, so the setter records the value and the getter reads it back
-    // (CRuby answers a Float or nil); a match never times out either way.
+    // `Regexp.timeout` -- the process-wide default match timeout, in seconds.
+    // A pattern's own `timeout:` overrides it; the engine raises
+    // `Regexp::TimeoutError` past either.
     def self."timeout" (_recv) {
-        Ok(match TIMEOUT.lock().as_ref() {
-            Some(v) => v.clone(),
-            None => RubyValue::Nil,
-        })
+        Ok(timeout_value(crate::regexp::global_timeout()))
     }
     def self."timeout=" (_recv, seconds) {
-        let stored = match seconds {
-            RubyValue::Nil => None,
-            v => Some(crate::builtins::kernel::float_impl(std::slice::from_ref(v))?),
-        };
-        *TIMEOUT.lock() = stored;
+        crate::regexp::set_global_timeout(crate::regexp::timeout_seconds(seconds)?);
         Ok(seconds.clone())
     }
     // `~re` -- match against `$_`, answering the match position or nil. The
@@ -84,12 +73,13 @@ ruby_class! {
     // (none), matching CRuby's historical boolean shorthand.
     // Ruby reaches `Regexp.new` through `Class#new`, but declares `compile` on
     // Regexp itself -- so the marker is per-name, not per-def.
-    def self."new" inherits | "compile" cfunc (_recv, arg1, arg2?) {
+    def self."new" inherits | "compile" cfunc (_recv, arg1, arg2?, **opts) {
+        let timeout = timeout_kwarg(opts)?;
         // A Regexp source: clone it verbatim (flags and all), ignoring any
         // extra options -- CRuby warns but reuses the original.
         if let Some(re) = crate::regexp::as_regexp(arg1) {
             return crate::regexp_new(&re.source, re.ignore_case, re.extended, re.multiline)
-                .map(RubyValue::Regexp)
+                .map(|re| RubyValue::Regexp(re.with_timeout(timeout)))
                 .map_err(|e| regexp_error!("{e}"));
         }
         let s = &crate::builtins::convert::to_rstr(arg1)?;
@@ -130,7 +120,7 @@ ruby_class! {
             false => zeo_abi::RegexpEncoding::Source,
         };
         crate::regexp::regexp_new_enc(&source, ignore_case, extended, multiline, enc)
-            .map(RubyValue::Regexp)
+            .map(|re| RubyValue::Regexp(re.with_timeout(timeout)))
             .map_err(|e| regexp_error!("{e}"))
     }
 
@@ -186,7 +176,7 @@ ruby_class! {
     }
 
     def "===" (recv, other) {
-        Ok(RubyValue::Bool(recv.rb_case_eq(other)))
+        Ok(RubyValue::Bool(recv.rb_case_eq(other)?))
     }
     // A literal that FORCED an encoding (`/e`, `/s`, `/u`) answers that one;
     // `/n` and a plain literal answer what their own source bytes compute to.
@@ -237,14 +227,14 @@ ruby_class! {
             re_of(recv),
             &h,
             at,
-        )))
+        )?))
     }
     def "match" cfunc (recv, arg1, arg2?, &block) {
         let Some((h, enc)) = subject_arg(live_re(recv)?, arg1)? else { return Ok(RubyValue::Nil) };
         // The optional start position, same rules as `match?` above; outside
         // the string is nil without running the engine.
         let m = match crate::builtins::string::match_haystack(&h, arg2)? {
-            Some(at) => crate::regexp::regexp_match_at(re_of(recv), &h, at, enc),
+            Some(at) => crate::regexp::regexp_match_at(re_of(recv), &h, at, enc)?,
             None => RubyValue::Nil,
         };
         // With a block, ruby YIELDS the MatchData on a hit and the call
@@ -258,7 +248,7 @@ ruby_class! {
     }
     def "=~" (recv, other) {
         let Some((h, enc)) = subject_arg(live_re(recv)?, other)? else { return Ok(RubyValue::Nil) };
-        Ok(crate::regexp_search_index(re_of(recv), &h, enc))
+        crate::regexp_search_index(re_of(recv), &h, enc)
     }
     // `casefold?` reports the `/i` flag.
     def "casefold?" (recv) {
@@ -317,11 +307,9 @@ ruby_class! {
             .collect();
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
-    // `#timeout` -- this pattern's per-match timeout; zeo sets none, so
-    // it reports the global default (`nil`, "no timeout").
+    // `#timeout` -- this pattern's own `timeout:`, never the global default.
     def "timeout" (recv) {
-        let _ = live_re(recv)?;
-        Ok(RubyValue::Nil)
+        Ok(timeout_value(live_re(recv)?.engine.timeout()))
     }
     // `#options` -- the `Regexp::` flag bitmask this pattern was built with.
     def "options" (recv) {
@@ -436,6 +424,28 @@ fn live_re(recv: &RubyValue) -> Result<&crate::RRegexp, crate::Signal> {
         true => Err(crate::builtins::type_error!("uninitialized Regexp")),
         false => Ok(re),
     }
+}
+
+/// A timeout as Ruby reports it: a Float, or nil for none.
+fn timeout_value(seconds: Option<f64>) -> RubyValue {
+    seconds.map_or(RubyValue::Nil, RubyValue::Float)
+}
+
+/// `Regexp.new`'s keyword half: `timeout:` is the only one it takes.
+fn timeout_kwarg(opts: Option<&RubyValue>) -> Result<Option<f64>, crate::Signal> {
+    let Some(RubyValue::Hash(h)) = opts else {
+        return Ok(None);
+    };
+    let key = RubyValue::Symbol(crate::Symbol::intern("timeout"));
+    for (k, _) in crate::hash_pairs(h) {
+        if !k.rb_eq(&key) {
+            return Err(crate::builtins::arg_error!(
+                "unknown keyword: {}",
+                k.inspect_string()
+            ));
+        }
+    }
+    crate::regexp::timeout_seconds(&crate::hash_get(h, &key))
 }
 
 /// A blank `Regexp` -- the one value whose `uninitialized` flag is set. Its

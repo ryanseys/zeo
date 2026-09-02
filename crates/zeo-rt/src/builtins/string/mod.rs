@@ -775,7 +775,7 @@ ruby_class! {
             if start > text.len() || !text.is_char_boundary(start) {
                 return Ok(RubyValue::Nil);
             }
-            return Ok(match crate::regexp::regexp_find(re, &text[start..]) {
+            return Ok(match crate::regexp::regexp_find(re, &text[start..])? {
                 Some((b, _)) => RubyValue::Int((start + b) as i64),
                 None => RubyValue::Nil,
             });
@@ -804,7 +804,7 @@ ruby_class! {
         // `byterindex(regexp[, pos])` -- the BYTE offset of the last match.
         if let RubyValue::Regexp(re) = arg1 {
             let text = rstr.lock().to_utf8_lossy().into_owned();
-            return Ok(match crate::regexp::regexp_byterindex(re, &text, before) {
+            return Ok(match crate::regexp::regexp_byterindex(re, &text, before)? {
                 Some(i) => RubyValue::Int(i as i64),
                 None => RubyValue::Nil,
             });
@@ -1390,7 +1390,7 @@ ruby_class! {
                 };
                 str_array(parts)
             }
-            Some(RubyValue::Regexp(re)) => crate::regexp_split(re, &text, limit),
+            Some(RubyValue::Regexp(re)) => crate::regexp_split(re, &text, limit)?,
             Some(_) => unreachable!("split separator normalized to Str/Regexp above"),
         };
         // Every field is a slice of the receiver's own text, so it carries the
@@ -1782,7 +1782,7 @@ ruby_class! {
             .map(|(b, _)| b)
             .unwrap_or(text.len());
         match arg1 {
-            RubyValue::Regexp(re) => match crate::regexp_match_index(re, &text[byte_start..], rstr.lock().encoding()) {
+            RubyValue::Regexp(re) => match crate::regexp_match_index(re, &text[byte_start..], rstr.lock().encoding())? {
                 RubyValue::Int(i) => Ok(RubyValue::Int(i + start_char as i64)),
                 other => Ok(other),
             },
@@ -1817,7 +1817,7 @@ ruby_class! {
             None => None,
         };
         match arg1 {
-            RubyValue::Regexp(re) => Ok(crate::regexp_rindex(re, &text, before, rstr.lock().encoding())),
+            RubyValue::Regexp(re) => crate::regexp_rindex(re, &text, before, rstr.lock().encoding()),
             other => {
                 let needle = convert::to_rstr(other)?.lock().to_utf8_lossy().into_owned();
                 // Search only within the prefix up to (and including a needle
@@ -1973,8 +1973,8 @@ ruby_class! {
                 // A Regexp prefix matches only when it matches anchored at the
                 // start; CRuby sets `$~` to the match (nil on no start-match).
                 RubyValue::Regexp(re) => {
-                    if crate::regexp::regexp_anchored_len(re, &text).is_some() {
-                        crate::regexp_match(re, &text, rstr.lock().encoding());
+                    if crate::regexp::regexp_anchored_len(re, &text)?.is_some() {
+                        crate::regexp_match(re, &text, rstr.lock().encoding())?;
                         return Ok(RubyValue::Bool(true));
                     }
                     crate::lastmatch::set_last_match(None);
@@ -2349,7 +2349,7 @@ ruby_class! {
                     (b.encoding(), b.ascii_only())
                 };
                 crate::builtins::encoding::guard_regexp_haystack(re, enc, ascii_only)?;
-                Ok(crate::regexp_search_index(re, &rstr.lock().to_utf8_lossy(), enc))
+                crate::regexp_search_index(re, &rstr.lock().to_utf8_lossy(), enc)
             }
             // Only a STRING operand is the TypeError. Ruby's `rb_str_match`
             // hands anything else back to the operand's own `=~`, so
@@ -2381,7 +2381,7 @@ ruby_class! {
         let md = match match_haystack(&text, arg2)? {
             // The groups are slices of the receiver's own text, so they come
             // back in the receiver's encoding.
-            Some(at) => crate::regexp::regexp_match_at(&re, &text, at, enc),
+            Some(at) => crate::regexp::regexp_match_at(&re, &text, at, enc)?,
             None => RubyValue::Nil,
         };
         // The block form runs on a match, answering the block's value; a miss
@@ -2400,7 +2400,7 @@ ruby_class! {
         // `match?` sets no `$~`, so it asks the engine directly at the
         // offset rather than building a MatchData to throw away.
         Ok(RubyValue::Bool(match match_haystack(&text, arg2)? {
-            Some(at) => crate::regexp::regexp_is_match_at(&re, &text, at),
+            Some(at) => crate::regexp::regexp_is_match_at(&re, &text, at)?,
             None => false,
         }))
     }
@@ -2418,7 +2418,7 @@ ruby_class! {
         // metacharacters), non-overlapping and left to right -- and an empty
         // pattern matches at every character boundary, both ends included.
         let matches: Vec<RubyValue> = match arg {
-            RubyValue::Regexp(re) => match crate::regexp_scan(re, &text, enc) {
+            RubyValue::Regexp(re) => match crate::regexp_scan(re, &text, enc)? {
                 RubyValue::Array(a) => a.lock().iter().cloned().collect(),
                 _ => Vec::new(),
             },

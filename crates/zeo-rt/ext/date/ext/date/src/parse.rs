@@ -17,8 +17,64 @@
 use crate::builtins::rational::rational_new;
 use crate::{RubyValue, string_new};
 use num_bigint::BigInt;
-use regex::Regex;
 use std::sync::LazyLock;
+
+/// One of the scanner's patterns, compiled under Oniguruma's Ruby syntax --
+/// the engine every `Regexp` in the runtime runs on, so `\b`, `\d` and
+/// `(?i)` here mean what they mean in date_parse.c's own patterns.
+struct Regex(onig::Regex);
+
+impl Regex {
+    fn new(pattern: &str) -> Result<Regex, onig::Error> {
+        onig::Regex::with_options(
+            pattern,
+            onig::RegexOptions::REGEX_OPTION_NONE,
+            onig::Syntax::ruby(),
+        )
+        .map(Regex)
+    }
+
+    fn captures<'t>(&self, text: &'t str) -> Option<Caps<'t>> {
+        self.0.captures(text).map(Caps)
+    }
+
+    fn captures_iter<'r, 't>(&'r self, text: &'t str) -> impl Iterator<Item = Caps<'t>> + 'r
+    where
+        't: 'r,
+    {
+        self.0.captures_iter(text).map(Caps)
+    }
+
+    /// The byte range of the leftmost match.
+    fn find(&self, text: &str) -> Option<std::ops::Range<usize>> {
+        self.0.find(text).map(|(s, e)| s..e)
+    }
+}
+
+/// One match's groups. A named group is reached by its NUMBER: Ruby numbers
+/// named groups in source order, so `(?<h>..)(?<mi>..)` are 1 and 2.
+struct Caps<'t>(onig::Captures<'t>);
+
+impl<'t> Caps<'t> {
+    /// Group `i`'s text, `None` when it did not participate.
+    fn get(&self, i: usize) -> Option<&'t str> {
+        self.0.at(i)
+    }
+
+    /// Group `i`'s byte range.
+    fn range(&self, i: usize) -> Option<std::ops::Range<usize>> {
+        self.0.pos(i).map(|(s, e)| s..e)
+    }
+}
+
+impl std::ops::Index<usize> for Caps<'_> {
+    type Output = str;
+    fn index(&self, i: usize) -> &str {
+        self.0
+            .at(i)
+            .unwrap_or_else(|| panic!("group {i} did not participate"))
+    }
+}
 
 const MONTHS: [&str; 12] = [
     "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
@@ -240,8 +296,8 @@ pub(super) fn named_offset(zone: &str) -> Option<i64> {
 fn strip_comments(text: &str) -> String {
     static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\([^()]*\)").expect("valid"));
     let mut out = text.to_string();
-    while let Some(m) = RE.find(&out) {
-        out.replace_range(m.range(), " ");
+    while let Some(r) = RE.find(&out) {
+        out.replace_range(r, " ");
     }
     out
 }
@@ -256,7 +312,7 @@ fn parse_day(rest: &mut String, f: &mut Fields) {
     let Some(m) = RE.captures(rest) else { return };
     let name = m[1].to_ascii_lowercase();
     let wday = DAYS.iter().position(|d| *d == name).expect("matched above");
-    let span = m.get(0).expect("group 0 always matches").range();
+    let span = m.range(0).expect("group 0 always matches");
     f.int("wday", wday as i64);
     rest.replace_range(span, " ");
 }
@@ -267,10 +323,10 @@ fn parse_day(rest: &mut String, f: &mut Fields) {
 fn parse_time(rest: &mut String, f: &mut Fields) {
     static RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(concat!(
-            r"(?i)(?P<h>\d+)\s*:\s*(?P<mi>\d+)",
-            r"(?:\s*:\s*(?P<s>\d+)(?:[.,](?P<f>\d+))?)?",
-            r"(?:\s*(?P<mer>[ap])\.?\s?m\.?)?",
-            r"(?:\s*(?P<zone>",
+            r"(?i)(?<h>\d+)\s*:\s*(?<mi>\d+)",
+            r"(?:\s*:\s*(?<s>\d+)(?:[.,](?<f>\d+))?)?",
+            r"(?:\s*(?<mer>[ap])\.?\s?m\.?)?",
+            r"(?:\s*(?<zone>",
             r"(?:gmt|utc?)?[-+]\d+(?:[:,.]?\d+(?::\d+)?)?",
             r"|(?:[[:alpha:].]+\s+)*(?:standard|daylight)\s+time\b",
             r"|[[:alpha:]]+(?:\s+dst)?\b",
@@ -279,21 +335,21 @@ fn parse_time(rest: &mut String, f: &mut Fields) {
         .expect("valid")
     });
     let Some(m) = RE.captures(rest) else { return };
-    let mut hour: i64 = m["h"].parse().unwrap_or(0);
-    match m.name("mer").map(|v| v.as_str().to_ascii_lowercase()) {
+    let mut hour: i64 = m[1].parse().unwrap_or(0);
+    match m.get(5).map(str::to_ascii_lowercase) {
         Some(mer) if mer == "p" && hour < 12 => hour += 12,
         Some(mer) if mer == "a" && hour == 12 => hour = 0,
         _ => {}
     }
-    if let Some(z) = m.name("zone") {
-        f.set_zone(z.as_str().trim());
+    if let Some(z) = m.get(6) {
+        f.set_zone(z.trim());
     }
     f.int("hour", hour);
-    f.int("min", m["mi"].parse().unwrap_or(0));
-    if let Some(s) = m.name("s") {
-        f.int("sec", s.as_str().parse().unwrap_or(0));
+    f.int("min", m[2].parse().unwrap_or(0));
+    if let Some(s) = m.get(3) {
+        f.int("sec", s.parse().unwrap_or(0));
     }
-    if let Some(frac) = m.name("f").map(|v| v.as_str()) {
+    if let Some(frac) = m.get(4) {
         // A fraction of a second is exact in CRuby: a Rational over a power of
         // ten, not the Float that reading it back as one would give.
         if let (Ok(num), Ok(den)) = (
@@ -304,7 +360,7 @@ fn parse_time(rest: &mut String, f: &mut Fields) {
             f.pairs.push(("sec_fraction", v));
         }
     }
-    let span = m.get(0).expect("group 0 always matches").range();
+    let span = m.range(0).expect("group 0 always matches");
     rest.replace_range(span, " ");
 }
 
@@ -348,7 +404,7 @@ fn parse_named_month(rest: &mut String, f: &mut Fields, comp: bool) -> bool {
         .expect("matched above") as i64
         + 1;
     let mut residue = rest.clone();
-    residue.replace_range(m.get(0).expect("group 0 always matches").range(), " ");
+    residue.replace_range(m.range(0).expect("group 0 always matches"), " ");
 
     let (mut year, mut mday) = (None, None);
     for n in numbers(&residue) {
@@ -386,7 +442,7 @@ fn parse_iso_week(rest: &mut String, f: &mut Fields, comp: bool) -> bool {
     f.int("cwyear", cwyear);
     f.int("cweek", m[2].parse().unwrap_or(0));
     if let Some(d) = m.get(3) {
-        f.int("cwday", d.as_str().parse().unwrap_or(0));
+        f.int("cwday", d.parse().unwrap_or(0));
     }
     rest.clear();
     true
@@ -431,7 +487,7 @@ fn parse_slash(rest: &mut String, f: &mut Fields, comp: bool) -> bool {
         Some(third) => {
             f.year(&m[1], comp);
             f.int("mon", m[2].parse().unwrap_or(0));
-            f.int("mday", third.as_str().parse().unwrap_or(0));
+            f.int("mday", third.parse().unwrap_or(0));
         }
         None if m[1].len() >= 3 => {
             f.year(&m[1], comp);
@@ -520,10 +576,10 @@ fn parse_digits(rest: &mut String, f: &mut Fields, comp: bool) -> bool {
     }
     split_fields(&d[ywidth..], keys, f);
     if let Some(t) = m.get(2) {
-        split_fields(t.as_str(), &["hour", "min", "sec"], f);
+        split_fields(t, &["hour", "min", "sec"], f);
     }
     if let Some(z) = m.get(4) {
-        f.set_zone(z.as_str().trim());
+        f.set_zone(z.trim());
     }
     rest.clear();
     true
