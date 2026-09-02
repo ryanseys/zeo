@@ -55,6 +55,18 @@ impl Loader {
                 });
                 return Ok(loaded_cext(hir, &library, init));
             }
+            // A shared object on a root that some OTHER Ruby built is refused
+            // by name: it is machine code against that Ruby's object layout,
+            // and dlopening it would fault at the first field read.
+            if let Some(foreign) = self.foreign_native_root(bare) {
+                return Err(format!(
+                    "cannot load such file -- {bare}: {} was not built by zeo, and a shared \
+                     object built for another Ruby's ABI cannot load (zeo compiles a gem's \
+                     extension from its source when the gem store is visible to the compile)",
+                    foreign.display()
+                )
+                .into());
+            }
             // A gem the external store locked but zeo can't provide gets its
             // precise reason (which native layout, why), not the generic miss.
             if let Some(reason) = self.store_exclusions.get(bare) {
@@ -174,9 +186,7 @@ impl Loader {
             && self.cext_gem(bare).is_some_and(|gem| {
                 // Same key `build_cext` memoizes under: gem plus WHICH of
                 // its extensions the feature names.
-                let idx = self.native_exts[gem]
-                    .extconf_index_for(bare)
-                    .unwrap_or(0);
+                let idx = self.native_exts[gem].extconf_index_for(bare).unwrap_or(0);
                 self.built_cexts.contains_key(&format!("{gem}#{idx}"))
             })
     }

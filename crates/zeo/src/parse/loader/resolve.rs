@@ -166,26 +166,46 @@ impl Loader {
     /// Roots only. A gem root is `build_cext`'s to answer, and searching them
     /// here would load a prebuilt `.so` from a store gem whose source zeo
     /// wants to compile itself.
+    ///
+    /// And only a shared object zeo BUILT (`zeo_rt::features::built_by_zeo`,
+    /// the sidecar `cext::mark_built` writes): one another Ruby built is
+    /// machine code against that Ruby's object layout, and the runtime
+    /// loader refuses it by the same rule.
     pub(super) fn resolve_native_root(&self, feature: &str) -> Option<(PathBuf, String)> {
         let named = |p: PathBuf| {
             let stem = p.file_stem()?.to_str()?.to_string();
             Some((p, stem))
         };
+        let usable = |c: &PathBuf| c.is_file() && zeo_rt::features::built_by_zeo(c);
         if is_native_feature(feature) {
             return self
                 .roots
                 .iter()
                 .map(|r| r.join(feature))
-                .find(|c| c.is_file())
+                .find(usable)
                 .and_then(named);
         }
         NATIVE_SUFFIXES
             .iter()
             .find_map(|s| {
                 let fname = format!("{feature}.{s}");
-                self.roots.iter().map(|r| r.join(&fname)).find(|c| c.is_file())
+                self.roots.iter().map(|r| r.join(&fname)).find(usable)
             })
             .and_then(named)
+    }
+
+    /// A shared object for `feature` on a `-I` root that zeo did NOT build --
+    /// what [`Self::resolve_native_root`] passed over -- so the refusal can
+    /// name the file and the reason instead of the generic miss.
+    pub(super) fn foreign_native_root(&self, feature: &str) -> Option<PathBuf> {
+        let foreign = |c: &PathBuf| c.is_file() && !zeo_rt::features::built_by_zeo(c);
+        if is_native_feature(feature) {
+            return self.roots.iter().map(|r| r.join(feature)).find(foreign);
+        }
+        NATIVE_SUFFIXES.iter().find_map(|s| {
+            let fname = format!("{feature}.{s}");
+            self.roots.iter().map(|r| r.join(&fname)).find(foreign)
+        })
     }
 
     /// `require "feature"` -> the first `<root>/<feature>.rb` that exists:
@@ -298,8 +318,7 @@ impl Loader {
                 .as_ref()
                 .is_some_and(|own| own != &pkg.name)
             {
-                foreign_hit = foreign_hit
-                    || pkg.roots.iter().any(|r| r.join(&fname).is_file());
+                foreign_hit = foreign_hit || pkg.roots.iter().any(|r| r.join(&fname).is_file());
                 continue;
             }
             // At most one hit per package: a package's OWN roots are

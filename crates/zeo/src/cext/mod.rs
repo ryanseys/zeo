@@ -292,8 +292,8 @@ pub fn jobs() -> usize {
 pub fn build_extension(dir: &Path, jobs: usize) -> Result<PathBuf, String> {
     let plan =
         build::Plan::of(dir).map_err(|e| format!("reading {}/Makefile: {e}", dir.display()))?;
-    match plan {
-        Ok(plan) => plan.run(jobs).map_err(|e| e.to_string()),
+    let product = match plan {
+        Ok(plan) => plan.run(jobs).map_err(|e| e.to_string())?,
         Err(why) => {
             tracing::debug!("cext: running make in {} -- {why}", dir.display());
             build::run_make(dir, jobs).map_err(|e| e.to_string())?;
@@ -302,9 +302,38 @@ pub fn build_extension(dir: &Path, jobs: usize) -> Result<PathBuf, String> {
                     "make ran in {} and produced no shared object",
                     dir.display()
                 )
-            })
+            })?
         }
-    }
+    };
+    mark_built(&product)?;
+    Ok(product)
+}
+
+/// Stamp `product` as zeo's own build, so a loader can tell it from a
+/// shared object some other Ruby built.
+///
+/// A gem store is full of the other kind: `bundle install` leaves the
+/// extension it compiled for CRuby beside the gem's Ruby
+/// (`gems/erb-6.0.7/lib/erb/escape.bundle`), on the very load path a
+/// runtime `require` searches. That object is machine code against CRuby's
+/// object layout; loaded into zeo it runs until the first `RSTRING_PTR` and
+/// then faults, with no name for what went wrong. zeo is source-compatible
+/// and ABI-incompatible, so the rule is that only a shared object zeo built
+/// is ever dlopened, and this sidecar is how a build says so.
+fn mark_built(product: &Path) -> Result<(), String> {
+    let marker = built_marker(product);
+    std::fs::write(
+        &marker,
+        format!("built by zeo {}\n", env!("CARGO_PKG_VERSION")),
+    )
+    .map_err(|e| format!("writing {}: {e}", marker.display()))
+}
+
+/// The sidecar [`mark_built`] writes: `<product>.zeo`.
+pub fn built_marker(product: &Path) -> PathBuf {
+    let mut name = product.file_name().unwrap_or_default().to_os_string();
+    name.push(".zeo");
+    product.with_file_name(name)
 }
 
 /// The shared object a `make` run left behind. The Makefile names it in

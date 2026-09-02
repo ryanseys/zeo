@@ -102,6 +102,15 @@ the build.
 * **A precompiled binary gem never loads.** `nokogiri-1.16.0-arm64-darwin`
   ships a `.so` built against CRuby's ABI. Install the ruby-platform variant
   (`bundle config set force_ruby_platform true`) and zeo compiles it.
+* **Only a shared object zeo built is dlopened.** zeo writes a `<product>.zeo`
+  sidecar beside everything it links, and both loaders (the compile-time
+  `-I` root search and the runtime `Kernel#require`) refuse a `.so`/`.bundle`
+  without one, naming the file. The load path is full of the other kind --
+  `bundle install` leaves the extension it compiled for CRuby beside the
+  gem's Ruby (`gems/erb-6.0.7/lib/erb/escape.bundle`) -- and that object
+  runs under zeo until its first field read, then faults. A `rescue
+  LoadError` around such a require takes the gem's own fallback, as on a
+  ruby without the extension.
 * **Autotools and `mini_portile` builds of a vendored C library are out of
   scope.** System-library mode through `have_library` works.
 * **Loading an extension arms the GVL** and turns off the lock-free

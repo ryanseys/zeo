@@ -376,3 +376,54 @@ fn a_disabled_builtin_name_reopens_one_user_class_across_files() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A shared object zeo did not build is refused BY NAME, on both loaders.
+///
+/// The load path is full of them: `bundle install` leaves the extension it
+/// compiled for CRuby beside the gem's Ruby, and a runtime `require` used to
+/// dlopen it -- machine code against CRuby's object layout, which ran until
+/// its first field read and then faulted with no name for what went wrong.
+/// Both the compile-time `-I` road (a literal require) and the runtime road
+/// (a computed one) now answer a `LoadError` that names the file and the
+/// reason, so a `rescue LoadError` takes the gem's own fallback exactly as
+/// it would on a ruby without the extension.
+#[test]
+fn a_shared_object_zeo_did_not_build_is_refused_by_name() {
+    let dir = std::env::temp_dir().join(format!("zeo-foreign-so-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let ext = if cfg!(target_os = "macos") {
+        "bundle"
+    } else {
+        "so"
+    };
+    std::fs::write(dir.join(format!("nope.{ext}")), b"not a shared object")
+        .expect("a fake product");
+    let out = Command::new(zeo_bin())
+        .arg("-I")
+        .arg(&dir)
+        .arg("-e")
+        .arg(
+            r#"begin
+  require "nope"
+rescue LoadError => e
+  puts e.message.include?("was not built by zeo")
+end
+name = "no" + "pe"
+begin
+  require name
+rescue LoadError => e
+  puts e.message.include?("was not built by zeo")
+end"#,
+        )
+        .env("ZEO_CACHE", "0")
+        .output()
+        .expect("zeo runs");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "true\ntrue\n",
+        "stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -293,7 +293,10 @@ pub fn resolve_native_on_disk(feature: &str, box_id: u32) -> Option<(std::path::
         let stem = p.file_stem()?.to_str()?.to_string();
         Some((p, stem))
     };
-    if NATIVE_SUFFIXES.iter().any(|s| feature.ends_with(&format!(".{s}"))) {
+    if NATIVE_SUFFIXES
+        .iter()
+        .any(|s| feature.ends_with(&format!(".{s}")))
+    {
         return resolve_on_disk(feature, box_id, false).and_then(named);
     }
     NATIVE_SUFFIXES
@@ -325,6 +328,22 @@ pub fn load_native_from_disk(feature: &str, box_id: u32) -> Option<Result<bool, 
              compile time publishes it; a computed one cannot)"
         )));
     }
+    // Only a shared object zeo built is ever dlopened. The load path is full
+    // of the other kind -- the extension `bundle install` compiled for CRuby
+    // sits beside the gem's Ruby -- and that is machine code against CRuby's
+    // object layout, which runs until its first field read and then faults
+    // with no name for what went wrong. zeo's build leaves a sidecar beside
+    // every product it links (`zeo::cext::mark_built`); its absence is the
+    // honest answer, and a `rescue LoadError` around the require then takes
+    // the gem's own fallback exactly as it would on a ruby without the
+    // extension.
+    if !built_by_zeo(&path) {
+        return Some(Err(crate::builtins::load_error!(
+            "cannot load such file -- {feature}: {entry} was not built by zeo, and a shared \
+             object built for another Ruby's ABI cannot load (zeo compiles a gem's extension \
+             from its source when the gem store is visible to the compile)"
+        )));
+    }
     Some(dlopen_extension(&entry, &init).inspect(|&loaded| {
         // `$LOADED_FEATURES` names the LIBRARY, which is what makes the second
         // require answer `false`. `cext::load` is idempotent by path, so the
@@ -333,6 +352,15 @@ pub fn load_native_from_disk(feature: &str, box_id: u32) -> Option<Result<bool, 
             feature_loaded(box_id, &entry, "");
         }
     }))
+}
+
+/// Whether `product` carries the `<product>.zeo` sidecar zeo's extension
+/// build writes beside everything it links. The same rule the compile-time
+/// loader applies to a `-I` root (`parse::loader::resolve`).
+pub fn built_by_zeo(product: &std::path::Path) -> bool {
+    let mut name = product.file_name().unwrap_or_default().to_os_string();
+    name.push(".zeo");
+    product.with_file_name(name).is_file()
 }
 
 #[cfg(feature = "cext")]
@@ -479,12 +507,16 @@ fn state() -> &'static parking_lot::Mutex<LoadState> {
 /// Installs the program's units. Emitted once, at startup, before `main`'s
 /// first statement -- a require in the very first line must already see them.
 pub fn install_feature_units(rows: &'static [(&'static str, UnitFn)]) {
-    let _ = UNITS.set(collect_units(rows.iter().map(|&(n, f)| (n, UnitImpl::Rust(f)))));
+    let _ = UNITS.set(collect_units(
+        rows.iter().map(|&(n, f)| (n, UnitImpl::Rust(f))),
+    ));
 }
 
 /// [`install_feature_units`] for a Cranelift-emitted program.
 pub fn install_feature_units_c(rows: &'static [(&'static str, CUnitFn)]) {
-    let _ = UNITS.set(collect_units(rows.iter().map(|&(n, f)| (n, UnitImpl::C(f)))));
+    let _ = UNITS.set(collect_units(
+        rows.iter().map(|&(n, f)| (n, UnitImpl::C(f))),
+    ));
 }
 
 /// The FIRST row claiming a spelling wins. Rows arrive in demand order, so
@@ -759,7 +791,10 @@ mod tests {
     /// sends the caller on to the disk search and then to its `LoadError`.
     #[test]
     fn a_feature_zeo_does_not_carry_is_declined() {
-        assert_eq!(super::load_builtin_feature("no_such_library_anywhere", 0), None);
+        assert_eq!(
+            super::load_builtin_feature("no_such_library_anywhere", 0),
+            None
+        );
         assert_eq!(super::load_builtin_feature("./a/relative/path", 0), None);
     }
 }
