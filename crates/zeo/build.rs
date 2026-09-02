@@ -633,9 +633,10 @@ fn surface_from_spec(spec: &ClassSpec, out: &mut Vec<Surface>) {
 /// the host at load. Two things stop that by default, and both need saying
 /// because each fails differently:
 ///
-/// * Nothing in `zeo` CALLS `rb_define_module`, so the linker never pulls
-///   that archive member in. `-force_load` takes every member whether it is
-///   referenced or not.
+/// * Nothing in `zeo` CALLS `rb_raise`, so the linker never pulls that
+///   archive member in. The C-API crate marks its own C archive
+///   `+whole-archive`, and Apple's `-all_load` takes every member of every
+///   archive on the line besides.
 /// * An executable's dynamic symbol table holds only what was asked for.
 ///   `-export_dynamic` publishes the rest, which is what `dlsym` reads.
 ///
@@ -673,7 +674,5 @@ fn export_cext_surface() {
         println!("cargo:rustc-link-arg-bins=-Wl,-all_load");
     } else {
         println!("cargo:rustc-link-arg-bins=-Wl,--export-dynamic");
-        println!("cargo:rustc-link-arg-bins=-Wl,--whole-archive");
-        println!("cargo:rustc-link-arg-bins=-Wl,--no-whole-archive");
     }
 }

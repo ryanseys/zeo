@@ -63,7 +63,10 @@ fn build_cext() {
         .include("cext/config")
         .flag("-fexceptions")
         .flag("-fasynchronous-unwind-tables")
-        .flag_if_supported("-Wno-unused-parameter");
+        .flag_if_supported("-Wno-unused-parameter")
+        // Nothing in Rust calls these; an extension resolves them at load.
+        // Without this the linker drops every member of the archive.
+        .link_lib_modifier("+whole-archive");
     build.warnings(true).compile("zeo_cext");
 }
 
