@@ -8,15 +8,13 @@
 //! come from the thing the install produces. A machine with no ruby on it
 //! must still reach a working `zeo bundle install`.
 //!
-//! The end-to-end behavioural proof is the gem probe's (the compile-side
-//! inputs `tests/bench/rubygems.rb` and `tests/bench/bundler.rb` are the same
-//! whole-graph programs; their golden runs cost minutes each and were retired
-//! from the suite). What lives here is everything cheaper than that: the
-//! vendoring is intact,
-//! the whole require graph still reaches codegen, the classes that matter
-//! survive it, and the disclosure record tells the truth about all of it. Those
-//! are the failures that would otherwise show up only as a long whole-gem
-//! compile ending in a diff.
+//! The end-to-end behavioural proof is the gem probe's and `bundler_parity`'s
+//! (the compile-side inputs `tests/bench/rubygems.rb` and `tests/bench/
+//! bundler.rb` are the same whole-graph programs; their golden runs cost
+//! minutes each and were retired from the suite, and so was a shared
+//! whole-graph compile that asserted class names). What lives here is only
+//! what costs milliseconds: the vendoring is intact and the two trees agree
+//! with the lock.
 
 use std::path::PathBuf;
 
@@ -125,117 +123,6 @@ fn the_bootstrap_pair_never_comes_out_of_the_store() {
             lib.dir.starts_with(repo(zeo::bundled::BOOTSTRAP_TIER)),
             "{name} resolved to {}",
             lib.dir.display()
-        );
-    }
-}
-
-/// One compile of the whole graph, shared by the tests below: `require
-/// "rubygems"` alone pulls hundreds of files through parse, analyze and
-/// codegen, so the suite pays for it once and asserts several things about
-/// the one result.
-/// `Analyzed` owns the whole `Compiler`, which is full of `RefCell`/`Cell`
-/// and deliberately not `Sync`, so the memo holds the ANSWERS rather than the
-/// analysis: every registered class's fully-qualified name, whether
-/// `Gem::Package::TarWriter` kept its own `def self.new`, and the disclosure
-/// record.
-struct GraphFacts {
-    classes: Vec<String>,
-    tar_writer_has_own_new: bool,
-}
-
-fn compiled_graph() -> &'static (GraphFacts, String) {
-    use std::sync::OnceLock;
-    static ONCE: OnceLock<(GraphFacts, String)> = OnceLock::new();
-    ONCE.get_or_init(|| {
-        let report =
-            std::env::temp_dir().join(format!("zeo-vendored-gems-{}.json", std::process::id()));
-        let _ = std::fs::remove_file(&report);
-        let opts = zeo::CompileOptions {
-            gem_report: Some(report.clone()),
-            ..Default::default()
-        };
-        let out = zeo::analyze_program(
-            "require \"rubygems\"\nrequire \"bundler\"\np Gem::Version.new(\"1.0\").to_s\n",
-            &opts,
-        )
-        .expect("rubygems + bundler reach codegen");
-        let json = std::fs::read_to_string(&report).expect("report was written");
-        let _ = std::fs::remove_file(&report);
-        let ids = (0..out.compiler.classes.len()).map(|i| zeo::compiler::ClassId(i as u32));
-        let classes: Vec<String> = ids.clone().map(|c| out.compiler.fq_name(c)).collect();
-        let tar_writer_has_own_new = ids
-            .clone()
-            .find(|&c| out.compiler.fq_name(c) == "Gem::Package::TarWriter")
-            .is_some_and(|c| out.compiler.lookup_class_method(c, "new").is_some());
-        (
-            GraphFacts {
-                classes,
-                tar_writer_has_own_new,
-            },
-            json,
-        )
-    })
-}
-
-#[test]
-fn the_whole_require_graph_reaches_codegen() {
-    let (facts, _) = compiled_graph();
-    // Reaching the emitter is not enough on its own: a class the analyze walk
-    // never registered is dropped silently, and the program still "compiles".
-    // Each name below is one the goldens then exercise. Asked of the CLASS
-    // TABLE, which is the thing that would be missing -- a substring search of
-    // emitted text answers the same question far less precisely.
-
-    for class in [
-        "Gem::Version",
-        "Gem::Requirement",
-        "Gem::Dependency",
-        "Gem::Specification",
-        "Gem::Platform",
-        "Gem::Timeout::Error",
-        "Gem::Resolver::InstallerSet",
-        "Gem::Package::TarWriter",
-        "Bundler::LockfileParser",
-        "Bundler::Dependency",
-        "Bundler::SpecSet",
-        "Bundler::FeatureFlag",
-        "Bundler::ConnectionPool::TimeoutError",
-    ] {
-        assert!(
-            facts.classes.iter().any(|n| n == class),
-            "the compiler registered no class named {class}"
-        );
-    }
-}
-
-#[test]
-fn a_class_with_its_own_self_new_keeps_the_wrapper() {
-    // `Gem::Package::TarWriter.new(io) { |tar| ... }` is a `def self.new` that
-    // yields and closes. Routing `.new` past it would drop the block on the
-    // floor, which compiles fine and writes an empty gem -- so assert the
-    // class-method channel is what the generated program calls.
-    let (facts, _) = compiled_graph();
-    assert!(
-        facts.tar_writer_has_own_new,
-        "no user `def self.new` is dispatched as a class method"
-    );
-}
-
-#[test]
-fn the_disclosure_record_names_both_as_faithful_bundled_gems() {
-    // Neither is a zeo reimplementation -- they are the upstream trees,
-    // verbatim -- so the record must NOT flag them as diverging. (`--gem-report`
-    // is the honesty anchor; a wrong entry here is a wrong claim to the user.)
-    let (_, json) = compiled_graph();
-    for gem in ["rubygems", "bundler"] {
-        let line = json
-            .lines()
-            .find(|l| l.trim_start().starts_with(&format!("{gem:?}:")))
-            .unwrap_or_else(|| panic!("{gem} is missing from the disclosure record:\n{json}"));
-        assert!(line.contains(r#""by": "bundled-gem""#), "{line}");
-        assert!(
-            !line.contains("diverges"),
-            "{gem} must not be flagged divergent: {line}"
         );
     }
 }

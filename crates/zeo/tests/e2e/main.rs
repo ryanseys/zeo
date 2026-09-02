@@ -32,7 +32,6 @@ mod collections;
 mod concurrency;
 mod control_flow;
 mod debuginfo;
-mod default_gem_store;
 mod enumerable;
 mod etc;
 mod eval;

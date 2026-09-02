@@ -4,10 +4,10 @@
 //! ARGV forwarding, exit-status forwarding, `-I` handling.
 //!
 //! Each test writes its sources into its own temp dir; programs are tiny,
-//! so each compile is cheap. The one deliberately heavy case
-//! (`a_failing_minitest_run_exits_nonzero`) splices the whole bundled
-//! minitest graph -- it is the wave's load-bearing promise
-//! (`zeo test.rb` fails when the tests fail) and worth its compile.
+//! so each compile is cheap. Nothing here requires a whole gem: the exit
+//! status an `at_exit` handler sets is pinned by the
+//! `at_exit_status_override` golden, and irb over a real pty by the
+//! `irb_runs_over_a_pty` golden.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -163,37 +163,6 @@ fn a_build_flag_after_the_file_is_argv_and_builds_nothing() {
     for want in ["-o <path> <input.rb>", "--compile <input.rb>"] {
         assert!(text.contains(want), "`zeo --help` has no `{want}` line:\n{text}");
     }
-}
-
-#[test]
-fn a_failing_minitest_run_exits_nonzero() {
-    // THE promise of run-by-default: `zeo test.rb` reports test failure
-    // through the exit status, the way `ruby test.rb` does. Minitest sets
-    // it via `exit` inside its autorun at_exit handler.
-    let dir = scratch("minitest-fail");
-    let rb = write(
-        &dir,
-        "failing_test.rb",
-        "require \"minitest/autorun\"\n\
-         class FailingTest < Minitest::Test\n\
-           def test_truth\n\
-             assert false, \"deliberate\"\n\
-           end\n\
-         end\n",
-    );
-
-    let out = zeo()
-        .arg(&rb)
-        .args(["--", "--seed", "42"])
-        .output()
-        .expect("spawn zeo");
-    let stdout = stdout_of(&out);
-    assert!(
-        stdout.contains("1 runs, 1 assertions, 1 failures"),
-        "stdout: {stdout}\nstderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(out.status.code(), Some(1), "a failing suite must exit 1");
 }
 
 fn stderr_of(out: &Output) -> String {
@@ -370,47 +339,6 @@ fn a_library_named_in_the_runtime_load_dial_loads_at_run_time() {
         "a sub-file of a deferred library loads at run time -- stderr: {}",
         stderr_of(&sub_file)
     );
-}
-
-/// `zeo --irb` opens a real irb session and evaluates what is typed at it.
-///
-/// The transcript arrives on stdin, which is also why the FLAG exists: the
-/// bare-`zeo` form asks whether both ends are a terminal, and a piped test has
-/// neither. `--irb` is the same shell said by name.
-///
-/// This is the second deliberately heavy case here, and it is affordable now:
-/// `require "irb"` compiles in about 1.6 seconds where it once took 18. What
-/// it proves is not one method but a graph -- reline's line editor,
-/// io/console, the ANSI IOGate, `IO.new` taking its options and `$LOAD_PATH`
-/// filled by the compiler -- each of which was its own fix, and none of which
-/// had an end-to-end test.
-#[test]
-fn the_irb_shell_evaluates_a_piped_transcript() {
-    use std::io::Write;
-
-    let mut child = zeo()
-        .arg("--irb")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("spawn zeo --irb");
-    child
-        .stdin
-        .take()
-        .expect("a piped stdin")
-        .write_all(b"p 6 * 7\nputs \"typed\"\n[1, 2].map { |n| n + 1 }\nexit\n")
-        .expect("write the transcript");
-
-    let out = child.wait_with_output().expect("wait for the shell");
-    let text = stdout_of(&out);
-    assert!(out.status.success(), "irb exited {:?}:\n{text}", out.status);
-    // The evaluated ANSWERS, not just the echoed input -- irb echoes what it
-    // reads from a pipe, so matching the input alone would pass on a shell
-    // that evaluated nothing.
-    for want in ["42", "typed", "[2, 3]"] {
-        assert!(text.contains(want), "irb never printed {want}:\n{text}");
-    }
 }
 
 /// A second run of an unchanged program does not compile it again.
