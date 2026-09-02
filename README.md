@@ -51,7 +51,9 @@ Read [Limits](#limits) before you depend on Zeo for anything.
 You need:
 
 - A Rust toolchain, **1.94+** (`rust-toolchain.toml` pins the exact version).
-- A **C compiler** (for Prism, Oniguruma, and the link step).
+- A **C compiler**. The tree has no C of its own; the compiler builds the
+  libraries a few `-sys` crates vendor (Prism, Oniguruma, libffi, OpenSSL),
+  links each program, and builds a gem's C extension.
 - **Ruby 4.0.6** — for `make deps`, which resolves the bundled stdlib
   out of `Gemfile.lock`, and to re-record test goldens. `mise.toml` pins it.
 
@@ -157,7 +159,9 @@ a `zeo-gems.json` record beside the artifact that names every substitution.
 
 A gem that ships its **C extension as source** is compiled from that source:
 Zeo runs the gemspec's `extconf.rb`, reads the Makefile mkmf writes, and
-compiles and links without `make`. A gem that ships a *precompiled* `.so`
+compiles and links without `make`. The extension builds against MRI's own
+headers, fetched at the first build and edited so that every macro reading
+an object's layout becomes a call. A gem that ships a *precompiled* `.so`
 can never load — that object is built against CRuby's ABI — and Zeo says so,
 naming the gem and the fix (install the ruby-platform variant). See
 [`docs/EXTENSIONS.md`](docs/EXTENSIONS.md).

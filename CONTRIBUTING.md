@@ -3,7 +3,8 @@
 ## Setup
 
 - Rust ≥ 1.94 (`rust-version` in `Cargo.toml`; `mise.toml` pins the toolchain
-  used in development) and a C compiler.
+  used in development) and a C compiler, for the libraries a few `-sys`
+  crates vendor and for the link step (see "No C, no headers" below).
 - A real Ruby matching the oracle version pinned in `mise.toml`
   (via `mise install`) — only needed when re-blessing golden output from the
   oracle (`cargo xtask bless`); the committed snapshots cover ordinary runs.
@@ -148,6 +149,25 @@ one run reports every stale one.
   wrong class or an invented name now.
 - Module docs explain *design rationale*, not narration; keep them current —
   a stale claim is treated as a bug.
+
+### No C, no headers
+
+zeo is Rust. The tree tracks no C, C++ or assembly source and no patch to
+one, and no copy of MRI's headers: the C API is `crates/zeo-capi`, Rust over
+the runtime, and an extension builds against upstream's headers fetched at
+the first build (`docs/EXTENSIONS.md`). Two gates hold the rule.
+`make no-c-files` (in `make hygiene`) lists tracked C by extension, and
+`crates/zeo/tests/checks/no_c.rs` holds the exceptions exact, each dated.
+`deny.toml` bans `cc`, `bindgen`, `cmake` and `cxx-build` except through the
+crates that compile a vendored library, and the same checks file pins that
+set: `onig_sys`, `ruby-prism-sys`, `libffi-sys`, `libmimalloc-sys`,
+`openssl-src`/`openssl-sys`, and criterion's `alloca`. `libc` is bindings,
+not a build, and is fine anywhere.
+
+To add a crate that compiles C: name it in `deny.toml`'s `wrappers` and in
+`no_c.rs`'s `C_COMPILING_CRATES`, with the library it wraps and why a Rust
+crate cannot do the job. A test that needs an extension writes the C from a
+string constant (`e2e::support::extension_dir`); it never tracks a `.c`.
 
 ## Commits
 

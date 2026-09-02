@@ -46,7 +46,8 @@ Real gaps with a named road; each closes when its road is walked.
 
 - **The C-API is third-party insurance, not the stdlib's default.**
   Every stdlib name is served by zeo's own Rust or Ruby; official C gems
-  compile and load through the vendored-header C API as an explicit
+  compile and load through the C API (`zeo-capi`, Rust over the runtime,
+  with MRI's headers fetched at the first build) as an explicit
   opt-in (a lockfile + store override, or `ZEO_DISABLE_BUILTIN`). The
   official C-gem sweep is the API's health gate: `make test-capi`
   builds every locked gem that ships a C extension from its own source,
@@ -127,5 +128,5 @@ its answer.
 - `Regexp#match` honors its position argument; `\G` anchors correctly on
   all three engine routes.
 - The C-extension route itself: a locked gem's C extension builds from
-  source, loads and runs through the vendored headers -- the sweep
+  source, loads and runs through MRI's fetched headers -- the sweep
   table above says which gems make it all the way.

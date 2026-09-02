@@ -23,10 +23,12 @@ directory. It adds 34 methods to `IO` itself, and one class owns one
 `gated "io/console"` and forward here. Only `IO::ConsoleMode`, a class of its
 own, carries its table in this tree.
 
-`ext/<name>/src/` is the NATIVE half — what CRuby writes in C. `lib/` is the
-Ruby half, reached by `require "<name>"`, which pulls the native one in with
-`require "<name>.so"`. A directory can have either half alone: `base64` is
-Rust only, `fiddle` is Ruby only.
+`ext/<name>/src/` is the NATIVE half — what CRuby writes in C, written in
+Rust here. No directory carries C: a library that wraps one (Oniguruma,
+libffi, OpenSSL) reaches it through a `-sys` crate, and `deny.toml` names
+the set. `lib/` is the Ruby half, reached by `require "<name>"`, which pulls
+the native one in with `require "<name>.so"`. A directory can have either
+half alone: `base64` is Rust only, `fiddle` is Ruby only.
 
 A `.gemspec` goes in only where upstream ships one. `socket`, `pty` and
 `monitor` are library files in ruby 4.0.6 rather than gems — `monitor.rb`
