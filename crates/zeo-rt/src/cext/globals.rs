@@ -209,6 +209,51 @@ mod tests {
         assert_eq!(ruby_name("rb_stdout"), None);
     }
 
+    /// The globals `fill` cannot name, listed so the set cannot grow
+    /// silently. `stubs.rs` promises `every_global_is_filled`; this is the
+    /// half a unit test can answer -- every class, module and exception
+    /// global derives a Ruby path, and only these do not. Each stays
+    /// `Qundef` today. The IO and separator `VALUE`s (`rb_stdout`,
+    /// `rb_rs`, ...) are real globals an extension may read, and filling
+    /// them is open work. The rest are not `VALUE`s at all -- a registry,
+    /// two type descriptors, and MRI's `ruby_version`-family C strings and
+    /// digit tables -- and a `VALUE` slot is the wrong shape for them.
+    /// Naming them here is what keeps a new unfillable global from hiding
+    /// among them.
+    #[test]
+    fn every_global_derives_a_name_except_the_named_few() {
+        const UNFILLABLE: &[&str] = &[
+            "rb_argv0",
+            "rb_default_rs",
+            "rb_fs",
+            "rb_memory_view_exported_object_registry",
+            "rb_memory_view_exported_object_registry_data_type",
+            "rb_output_fs",
+            "rb_output_rs",
+            "rb_ractor_local_storage_type_free",
+            "rb_rs",
+            "rb_stderr",
+            "rb_stdin",
+            "rb_stdout",
+            "ruby_api_version",
+            "ruby_copyright",
+            "ruby_description",
+            "ruby_digit36_to_number_table",
+            "ruby_engine",
+            "ruby_hexdigits",
+            "ruby_patchlevel",
+            "ruby_platform",
+            "ruby_release_date",
+            "ruby_version",
+        ];
+        let unnamed: Vec<&str> = GLOBALS
+            .iter()
+            .map(|(n, _)| *n)
+            .filter(|n| ruby_name(n).is_none())
+            .collect();
+        assert_eq!(unnamed, UNFILLABLE, "the set of globals fill cannot name changed");
+    }
+
     /// Every global the table names must be a global that exists. A typo
     /// here is a row that can never fill anything.
     #[test]
