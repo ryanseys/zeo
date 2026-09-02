@@ -2,7 +2,7 @@
 
 ## Setup
 
-- Rust ≥ 1.94 (`rust-version` in `Cargo.toml`; `mise.toml` pins the toolchain
+- Rust ≥ 1.99 (`rust-version` in `Cargo.toml`; `mise.toml` pins the toolchain
   used in development) and a C compiler, for the libraries a few `-sys`
   crates vendor and for the link step (see "No C, no headers" below).
 - A real Ruby matching the oracle version pinned in `mise.toml`

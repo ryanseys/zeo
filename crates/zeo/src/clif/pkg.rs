@@ -8,7 +8,9 @@
 //! `ProgramDesc` the runtime sees carries both programs' registrations.
 
 use super::module::Emitter;
-use super::statics::{CmRowSpec, DescRows, MetaRowSpec, ObjRowSpec, RegRowSpec, VisRowSpec, VmRowSpec};
+use super::statics::{
+    CmRowSpec, DescRows, MetaRowSpec, ObjRowSpec, RegRowSpec, VisRowSpec, VmRowSpec,
+};
 use crate::analyze::Analyzed;
 use crate::codegen_error::{CResult, CodegenError};
 use crate::package::{
@@ -42,10 +44,7 @@ fn symbol_of(em: &Emitter, f: FuncId) -> CResult<String> {
 /// this strengthens a `Local` declaration in place.
 fn export(em: &mut Emitter, f: FuncId) -> CResult<()> {
     let decl = em.module.declarations().get_function_decl(f);
-    let (name, sig) = (
-        decl.linkage_name(f).into_owned(),
-        decl.signature.clone(),
-    );
+    let (name, sig) = (decl.linkage_name(f).into_owned(), decl.signature.clone());
     em.module
         .declare_function(&name, Linkage::Export, &sig)
         .map_err(|e| CodegenError::internal(format!("exporting {name}: {e}")))?;
@@ -155,8 +154,8 @@ pub(crate) fn finish_package(
             crate::hir::Visibility::Protected => 2,
         };
         let extract = |em: &mut Emitter,
-                           sids: &[crate::compiler::ScopeId],
-                           class_side: bool|
+                       sids: &[crate::compiler::ScopeId],
+                       class_side: bool|
          -> CResult<Vec<MIfaceMethod>> {
             let mut out = Vec::new();
             for sid in sids {
@@ -223,7 +222,9 @@ pub(crate) fn finish_package(
     let iface_hash = format!(
         "{:016x}",
         crate::package::fnv64(
-            serde_json::to_string(&iface).expect("an iface serializes").as_bytes()
+            serde_json::to_string(&iface)
+                .expect("an iface serializes")
+                .as_bytes()
         )
     );
     let manifest = Manifest {
@@ -370,12 +371,9 @@ pub(crate) fn finish_package(
         ))
     })?;
 
-    rows.unit
-        .first()
-        .map(|(_, f)| *f)
-        .ok_or_else(|| {
-            CodegenError::unsupported("the package entry produced no unit".to_string(), None)
-        })
+    rows.unit.first().map(|(_, f)| *f).ok_or_else(|| {
+        CodegenError::unsupported("the package entry produced no unit".to_string(), None)
+    })
 }
 
 fn m_meta_row(r: &MetaRowSpec) -> MMetaRow {
@@ -470,8 +468,12 @@ pub(crate) fn merge_rows(
     // decides, exactly ruby's install-where-it-stands. The registration
     // pass already made every such name runtime-patched, so no host site
     // folds against either body.
+    /// (final class, name, class side, dispatch symbol) a unit installs.
+    type UnitInstall = (u32, String, bool, String);
+    /// (package, local class, dispatch symbol) of a static definition.
+    type DefSite = (u32, u32, String);
     let mut clash: std::collections::HashMap<(u32, String, bool), u32> = Default::default();
-    let mut unit_installs: std::collections::HashMap<(u32, u32), Vec<(u32, String, bool, String)>> =
+    let mut unit_installs: std::collections::HashMap<(u32, u32), Vec<UnitInstall>> =
         Default::default();
     {
         let mapped = |pi: usize, m: &Manifest, id: u32| -> Option<u32> {
@@ -487,21 +489,25 @@ pub(crate) fn merge_rows(
         };
         // (final class, name, class side) -> every (package, local class,
         // dispatch symbol) that statically defines it.
-        let mut seen: std::collections::HashMap<(u32, String, bool), Vec<(u32, u32, String)>> =
+        let mut seen: std::collections::HashMap<(u32, String, bool), Vec<DefSite>> =
             Default::default();
         for (pi, m) in manifests.iter().enumerate() {
             for r in &m.vm {
                 if let Some(fc) = mapped(pi, m, r.class) {
-                    seen.entry((fc, r.name.clone(), false))
-                        .or_default()
-                        .push((pi as u32, r.class, r.f.clone()));
+                    seen.entry((fc, r.name.clone(), false)).or_default().push((
+                        pi as u32,
+                        r.class,
+                        r.f.clone(),
+                    ));
                 }
             }
             for r in &m.cm {
                 if let Some(fc) = mapped(pi, m, r.class) {
-                    seen.entry((fc, r.name.clone(), true))
-                        .or_default()
-                        .push((pi as u32, r.class, r.f.clone()));
+                    seen.entry((fc, r.name.clone(), true)).or_default().push((
+                        pi as u32,
+                        r.class,
+                        r.f.clone(),
+                    ));
                 }
             }
         }
@@ -519,7 +525,11 @@ pub(crate) fn merge_rows(
                     .iter()
                     .find(|ic| ic.id == *local)
                     .and_then(|ic| {
-                        let list = if key.2 { &ic.class_methods } else { &ic.methods };
+                        let list = if key.2 {
+                            &ic.class_methods
+                        } else {
+                            &ic.methods
+                        };
                         list.iter().find(|im| im.name == key.1)
                     })
                     .and_then(|im| im.unit);
@@ -534,10 +544,12 @@ pub(crate) fn merge_rows(
                         None,
                     ));
                 };
-                unit_installs
-                    .entry((*pi, unit))
-                    .or_default()
-                    .push((key.0, key.1.clone(), key.2, fsym.clone()));
+                unit_installs.entry((*pi, unit)).or_default().push((
+                    key.0,
+                    key.1.clone(),
+                    key.2,
+                    fsym.clone(),
+                ));
             }
             let kept = rows.iter().map(|r| r.0).max().unwrap_or_default();
             clash.insert(key, kept);
@@ -740,15 +752,9 @@ pub(crate) fn merge_rows(
                 | zeo_abi::abi::REG_SET_ANCESTORS
                 | zeo_abi::abi::REG_REGISTER_BUILTIN
                 | zeo_abi::abi::REG_MARK_REFINEMENT
-                | zeo_abi::abi::REG_SINGLETON_SURROGATE => {
-                    r.ids.iter().map(|&i| rb(i)).collect()
-                }
-                zeo_abi::abi::REG_CONCEAL_METHOD => {
-                    r.ids.iter().map(|&i| i + stride).collect()
-                }
-                zeo_abi::abi::REG_BOOT_REDEF => {
-                    r.ids.iter().map(|&i| i + redef_stride).collect()
-                }
+                | zeo_abi::abi::REG_SINGLETON_SURROGATE => r.ids.iter().map(|&i| rb(i)).collect(),
+                zeo_abi::abi::REG_CONCEAL_METHOD => r.ids.iter().map(|&i| i + stride).collect(),
+                zeo_abi::abi::REG_BOOT_REDEF => r.ids.iter().map(|&i| i + redef_stride).collect(),
                 _ => r.ids,
             };
             // The shared-bootstrap rows both sides emit (a builtin's boot
@@ -759,9 +765,7 @@ pub(crate) fn merge_rows(
             let class = rb(r.class);
             if r.kind == zeo_abi::abi::REG_SINGLETON_SURROGATE {
                 let owner = ids[0]; // already remapped by the kind match
-                if let Some(other) =
-                    surrogate_owner_from.insert(owner, m.feature.clone())
-                {
+                if let Some(other) = surrogate_owner_from.insert(owner, m.feature.clone()) {
                     return Err(CodegenError::unsupported(
                         format!(
                             "packages '{other}' and '{}' both bring a singleton-\

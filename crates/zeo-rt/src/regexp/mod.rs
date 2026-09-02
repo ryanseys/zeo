@@ -195,7 +195,8 @@ pub fn timeout_seconds(v: &RubyValue) -> Result<Option<f64>, Signal> {
             ));
         }
     };
-    if !(seconds > 0.0) {
+    // NaN is invalid too, which `<= 0.0` alone would let through.
+    if seconds.is_nan() || seconds <= 0.0 {
         return Err(crate::builtins::arg_error!(
             "invalid timeout: {}",
             v.inspect_string()

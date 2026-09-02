@@ -643,7 +643,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
         // either name catch the other.
         let target = class
             .builtin_overlay
-            .map_or(crate::compiler::ClassId(idx as u32), |root| root);
+            .unwrap_or(crate::compiler::ClassId(idx as u32));
         // No separate own-row marking here: a VALUE row self-records
         // ownership at insert (`own_value_names`), and a bootstrap delta's
         // object-channel row marks nothing for a reopen either.

@@ -210,7 +210,9 @@ pub(crate) fn candidates(hir: &crate::hir::Hir) -> Vec<(Candidate, Vec<String>, 
         .collect()
 }
 
-/// One consult of the machine cache for `cand`.
+/// One consult of the machine cache for `cand`. Answered and taken apart
+/// at once, never stored, so the size gap between the arms costs nothing.
+#[allow(clippy::large_enum_variant)]
 enum Consult {
     /// A valid artifact, its parsed manifest, and the source files its
     /// cache entry vouches for (re-read, for the program manifest).
@@ -318,9 +320,7 @@ pub(crate) fn consult_new(
     let mut hits: Vec<HitRow> = Vec::new();
     let mut rejected_any = false;
     for (cand, required, deferred) in candidates(hir) {
-        if covered.contains(&cand.feature)
-            || auto.misses.iter().any(|m| m.name == cand.name)
-        {
+        if covered.contains(&cand.feature) || auto.misses.iter().any(|m| m.name == cand.name) {
             continue;
         }
         match consult(&cand) {
@@ -368,18 +368,15 @@ pub(crate) fn consult_new(
     // dependency the cache cannot answer drops the hit; the drop shrinks
     // the covered set, so this runs to a fixpoint.
     let mut chased: std::collections::HashSet<String> = std::collections::HashSet::new();
-    loop {
-        let Some((i, f)) = hits.iter().enumerate().find_map(|(i, h)| {
-            h.required
-                .iter()
-                .chain(&h.host_features)
-                // A feature the build serves natively is covered by the
-                // host binary itself; its gem never packages (`ext_backed`).
-                .find(|f| !covered.contains(*f) && !crate::lower::features::zeo_provides(f))
-                .map(|f| (i, f.clone()))
-        }) else {
-            break;
-        };
+    while let Some((i, f)) = hits.iter().enumerate().find_map(|(i, h)| {
+        h.required
+            .iter()
+            .chain(&h.host_features)
+            // A feature the build serves natively is covered by the
+            // host binary itself; its gem never packages (`ext_backed`).
+            .find(|f| !covered.contains(*f) && !crate::lower::features::zeo_provides(f))
+            .map(|f| (i, f.clone()))
+    }) {
         if chased.insert(f.clone())
             && let Some(cand) = bundled_provider(&f)
             && let Consult::Hit {
@@ -431,7 +428,10 @@ pub(crate) fn consult_new(
         }
     }
     hits.iter().for_each(|h| {
-        tracing::debug!("autopkg: linking '{}' from the package cache", h.cand.feature);
+        tracing::debug!(
+            "autopkg: linking '{}' from the package cache",
+            h.cand.feature
+        );
     });
     (hits.into_iter().map(|h| h.up).collect(), rejected_any)
 }
@@ -447,8 +447,7 @@ pub fn build_and_cache(cand: &Candidate) -> Result<(), String> {
     ));
     let opts = pkg_opts(&cand.feature, &cand.entry, manifest_out.clone())?;
     let key = crate::progcache::pkg_key("", &opts);
-    if crate::progcache::pkg_refusal(&key).is_some()
-        || crate::progcache::pkg_lookup(&key).is_some()
+    if crate::progcache::pkg_refusal(&key).is_some() || crate::progcache::pkg_lookup(&key).is_some()
     {
         return Ok(());
     }

@@ -50,7 +50,7 @@ Read [Limits](#limits) before you depend on Zeo for anything.
 
 You need:
 
-- A Rust toolchain, **1.94+** (`rust-toolchain.toml` pins the exact version).
+- A Rust toolchain, **1.99+** (`rust-toolchain.toml` pins the exact version).
 - A **C compiler**. The tree has no C of its own; the compiler builds the
   libraries a few `-sys` crates vendor (Prism, Oniguruma, libffi, OpenSSL),
   links each program, and builds a gem's C extension.
@@ -452,7 +452,7 @@ instantly, not generated code.
 
 ## The workspace
 
-Six crates, edition 2024, MSRV 1.94.
+Six crates, edition 2024, MSRV 1.99.
 
 ```
 crates/

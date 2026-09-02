@@ -7,6 +7,10 @@
 //! error: it means the extension passed a lock it never initialised or
 //! unlocked one it does not hold, and MRI aborts on it too.
 
+// One contract for every entry, stated above: C hands in a pointer to a
+// lock or condition variable it owns.
+#![allow(clippy::missing_safety_doc)]
+
 use std::ffi::c_int;
 
 use libc::{pthread_cond_t, pthread_mutex_t, pthread_t};

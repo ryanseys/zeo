@@ -90,9 +90,10 @@ jobs:
       # Deliberately OVERRIDES rust-toolchain.toml (the action exports
       # RUSTUP_TOOLCHAIN): this job checks the `rust-version` floor, not the
       # pin. So it does not use the shared rust action, which installs the pin.
+      # `beta` until 1.99.0 ships (about 2026-10-08), then "1.99".
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.94"
+          toolchain: "beta"
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true

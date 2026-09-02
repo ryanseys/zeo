@@ -71,8 +71,9 @@ fn lib_store(fx: &mut Fx, slot: usize, pairs: &[NodeId]) -> CResult<Operand> {
         n.max(1) as u32,
         0,
     ));
-    let values: Vec<NodeId> = pairs.chunks_exact(2).map(|p| p[1]).collect();
-    for (i, pair) in pairs.chunks_exact(2).enumerate() {
+    let pairs = pairs.as_chunks::<2>().0;
+    let values: Vec<NodeId> = pairs.iter().map(|p| p[1]).collect();
+    for (i, pair) in pairs.iter().enumerate() {
         let splatted = matches!(fx.an.compiler.hir[pair[0]], HirNode::IntegerLit(1));
         let v = fx.b.ins().iconst(types::I8, i64::from(u8::from(splatted)));
         let at = fx.slot_addr(splats, i as i32);

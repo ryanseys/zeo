@@ -467,6 +467,7 @@ enum CliRoad<'a> {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_via_cli(
     road: CliRoad<'_>,
     rb: &Path,
