@@ -175,11 +175,18 @@ the symbol.
 Zeo implements the **real `ffi` gem API**, not a custom DSL, so a program
 using it runs identically under CRuby+ffi and Zeo (the north star). `require
 "ffi"` is a native no-op; `extend FFI::Library` marks a module; `ffi_lib` and
-`attach_function` are recognized at **compile time** and emit a fn-local
-`extern "C"` declaration with `#[link(name = ..)]` plus a wrapper method that
-marshals `RubyValue`↔C — so the C function is called directly, no libffi and no
-`dlopen`. Both the plain `attach_function :name, [args], ret` and the 4-arg
-rename form `:ruby_name, :c_name, [args], ret` are supported.
+`attach_function` are recognized at **compile time** and each becomes a
+wrapper method whose body is emitted as machine code. The C symbol is
+resolved once per call site (`dlopen`/`dlsym`, the gem's own binding) into a
+word the wrapper reads on every later call. Two call tiers, one behaviour:
+a fixed signature over plain C scalars is a **direct** `call_indirect` on the
+declared C signature, with each argument converted through one runtime row
+(the gem's range checks and error texts) and the result wrapped inline;
+anything Cranelift cannot express — an enum, a callback, a by-value struct,
+`:strptr`, varargs, `blocking:` — goes through the runtime's **libffi**
+engine from one `.rodata` signature descriptor. Both the plain
+`attach_function :name, [args], ret` and the 4-arg rename form `:ruby_name,
+:c_name, [args], ret` are supported.
 
 **Types:** `:void`, the integer family (`:char`/`:short`/`:int`/`:long` and the
 fixed-width `:int8`…`:int64`), their unsigned twins and `:size_t`,

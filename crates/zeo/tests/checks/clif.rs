@@ -17,6 +17,22 @@ fn clif_snapshot_hello() {
     insta::assert_snapshot!(clif_of("puts \"Hello, world!\"\n"));
 }
 
+/// The direct FFI tier: the site word's load-or-resolve, one `to_int` row
+/// per argument, the `call_indirect` on the C signature, the
+/// `after_call` check and the inline `sextend` wrap. Only the wrapper's
+/// own block is kept -- `require "ffi"` brings the gem's Ruby half along.
+#[test]
+fn clif_snapshot_ffi_direct_call() {
+    let text = clif_of(
+        "require \"ffi\"\nmodule LibC\n  extend FFI::Library\n  ffi_lib FFI::Library::LIBC\n  attach_function :abs, [:int], :int\nend\nputs LibC.abs(-7)\n",
+    );
+    let block = text
+        .split(";; ")
+        .find(|b| b.starts_with("LibC.abs\n"))
+        .expect("the attach_function wrapper is emitted under its Ruby name");
+    insta::assert_snapshot!(format!(";; {block}"));
+}
+
 #[test]
 fn clif_snapshot_fib() {
     insta::assert_snapshot!(clif_of(

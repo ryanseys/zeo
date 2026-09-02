@@ -1,4 +1,4 @@
-use crate::support::run_ruby;
+use crate::support::{run_ruby, run_ruby_configured};
 
 #[test]
 fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
@@ -713,4 +713,90 @@ fn ffi_struct_by_value_argument() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "127.0.0.1\n0\ntrue\n");
+}
+
+/// The direct tier: every C scalar kind in and out, through the emitted
+/// `call_indirect` rather than the libffi engine. Widths and signedness
+/// are what the test is about -- a `long` past 32 bits, an `unsigned long`
+/// past `i64::MAX` (a Bignum), a `float` demoted and promoted, a `_Bool`,
+/// a NULL `:string` result (`nil`), a `:pointer` result read back.
+#[test]
+fn ffi_direct_tier_marshals_every_scalar_kind() {
+    let result = run_ruby(
+        r#"
+        require "ffi"
+        module LibC
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          attach_function :abs, [:int], :int
+          attach_function :labs, [:long], :long
+          attach_function :my_strlen, :strlen, [:string], :ulong
+          attach_function :getenv, [:string], :string
+          attach_function :strdup, [:string], :pointer
+          attach_function :free, [:pointer], :void
+          attach_function :strtoul, [:string, :pointer, :int], :ulong
+          attach_function :isalpha, [:int], :bool
+          attach_function :toupper, [:int], :int
+        end
+        module LibM
+          extend FFI::Library
+          ffi_lib "m"
+          attach_function :fabs, [:double], :double
+          attach_function :fabsf, [:float], :float
+        end
+        p LibC.abs(-7), LibC.labs(-(2**40)), LibC.my_strlen("hello")
+        p LibC.getenv("ZEO_NO_SUCH_VARIABLE")
+        d = LibC.strdup("copied")
+        p d.read_string
+        p LibC.free(d)
+        p LibC.strtoul("18446744073709551615", nil, 10)
+        p LibC.isalpha("a".ord), LibC.isalpha("1".ord), LibC.toupper("a".ord).chr
+        p LibM.fabs(-2.5), LibM.fabsf(-1.5)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "7\n1099511627776\n5\nnil\n\"copied\"\nnil\n18446744073709551615\ntrue\nfalse\n\"A\"\n2.5\n1.5\n"
+    );
+}
+
+/// A `:string` argument's NUL-terminated copy is owned by a pooled temp.
+/// When a LATER argument's coercion raises, the copy is released on the
+/// raise edge like any other temp -- the leak checker is what proves it,
+/// and the gem's own error texts are what the rescue prints.
+#[test]
+fn ffi_direct_tier_releases_a_string_copy_when_a_later_argument_raises() {
+    let result = run_ruby_configured(
+        r#"
+        require "ffi"
+        module LibC
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          attach_function :strtol, [:string, :pointer, :int], :long
+          attach_function :my_strlen, :strlen, [:string], :ulong
+        end
+        3.times do
+          begin
+            LibC.strtol("42", nil, "ten")
+          rescue TypeError => e
+            puts e.message
+          end
+        end
+        begin
+          LibC.my_strlen("a\0b")
+        rescue ArgumentError => e
+          puts e.message
+        end
+        puts LibC.strtol("42", nil, 10)
+        "#,
+        &[("ZEO_RT_LEAKCHECK", "1")],
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "no implicit conversion of String into Integer\n".repeat(3)
+            + "string contains null byte\n42\n"
+    );
 }

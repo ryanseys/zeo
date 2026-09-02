@@ -1,23 +1,22 @@
-//! The FFI half of the C-ABI surface: one entry that resolves an
-//! `attach_function`'s C symbol, and one that performs the call.
+//! The FFI half of the C-ABI surface: the entries that resolve an
+//! `attach_function`'s C symbol, the two call tiers' rows, and the
+//! class-body halves of a deferred `ffi_lib`/`enum`.
 //!
-//! The rustc backend emits a fn-local `extern "C"` block per call site and
-//! lets rustc link the library, classify by-value aggregates and marshal
-//! each argument inline. Cranelift can do none of that, so every tier here
-//! goes through the libffi engine the rustc backend already uses for a
-//! runtime-resolved library ([`crate::ffi::call_fixed`] and friends) --
-//! same coercions, same error text, one indirect call slower. A direct
-//! `call_indirect` on a declared C signature is the perf lever the plan
-//! records; correctness does not wait for it.
-//!
-//! The whole signature rides in `.rodata` as a [`FfiCallC`] tree, so the
-//! emitted code lowers only the argument EXPRESSIONS into a plain `argv`.
-//! Nothing is half-built when a coercion raises.
+//! The DIRECT tier's rows convert one argument or wrap one result each; the
+//! emitted code does the call itself on the declared C signature. The
+//! LIBFFI tier is one entry, [`zeo_rt_ffi_invoke`], for the shapes
+//! Cranelift cannot express (varargs, by-value aggregates, callbacks,
+//! enums): the whole signature rides in `.rodata` as a [`FfiCallC`] tree,
+//! so the emitted code lowers only the argument EXPRESSIONS into a plain
+//! `argv`, and nothing is half-built when a coercion raises. Both tiers
+//! share every coercion and every error text ([`crate::ffi`]).
 
 use zeo_abi::abi::{
     FFI_TY_CALLBACK, FFI_TY_ENUM, FFI_TY_ENUM_SLOT, FFI_TY_STRPTR, FFI_TY_STRUCT, FfiCallC,
     FfiTypeC, STATUS_OK, STATUS_SIGNAL, Str,
 };
+
+use zeo_abi::ffi::CScalar;
 
 use crate::RubyValue;
 use crate::signal::Signal;
@@ -190,6 +189,178 @@ pub unsafe extern "C" fn zeo_rt_ffi_invoke(
     }
 }
 
+// --- The direct tier's marshaling rows -------------------------------------
+//
+// A fixed-signature `attach_function` whose every position is a plain C
+// scalar is called by the emitted code itself (`call_indirect` on the
+// declared C signature). These rows are the halves the emitted code cannot
+// do inline: each Ruby argument's conversion, which carries ruby-ffi's own
+// range checks and error texts, and each heap-allocating result's wrap.
+// Every one is `catch_unwind`-guarded the way `zeo_rt_ffi_invoke` is: a
+// marshaling bug is a RuntimeError, not an abort.
+
+/// One C integer argument (or a `_Bool`, as 0/1) of `kind`, as the u64 bit
+/// pattern the emitted code narrows to the declared width.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_ffi_to_int(kind: u8, v: *const RubyValue, out: *mut u64) -> i32 {
+    let v = unsafe { &*v };
+    match guarded(|| direct_to_int(scalar_of(kind), v)) {
+        Ok(bits) => {
+            unsafe { out.write(bits) };
+            STATUS_OK
+        }
+        Err(s) => fail(s),
+    }
+}
+
+/// One C floating-point argument, as an `f64` (the emitted code demotes a
+/// `float`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_ffi_to_f64(v: *const RubyValue, out: *mut f64) -> i32 {
+    let v = unsafe { &*v };
+    match guarded(|| crate::ffi::to_f64(v)) {
+        Ok(f) => {
+            unsafe { out.write(f) };
+            STATUS_OK
+        }
+        Err(s) => fail(s),
+    }
+}
+
+/// One `:string` or `:pointer` argument, as the address C receives. A
+/// String makes a NUL-terminated COPY whose owner is written to `tmp`, an
+/// OWNED value the emitted code pools so the copy outlives the call; every
+/// other pointer leaves `tmp` nil.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_ffi_to_ptr(
+    kind: u8,
+    v: *const RubyValue,
+    tmp: *mut RubyValue,
+    out: *mut usize,
+) -> i32 {
+    let v = unsafe { &*v };
+    match guarded(|| direct_to_ptr(scalar_of(kind), v)) {
+        Ok((addr, owner)) => {
+            super::leakcheck::created(&owner);
+            unsafe {
+                tmp.write(owner);
+                out.write(addr);
+            }
+            STATUS_OK
+        }
+        Err(s) => fail(s),
+    }
+}
+
+/// An unsigned 64-bit C result -- past `i64::MAX` a Bignum, which the
+/// emitted code cannot build inline.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_ffi_from_uint(bits: u64, out: *mut RubyValue) {
+    let v = direct_from_uint(bits);
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
+/// A `:pointer` C result as an `FFI::Pointer`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_ffi_from_ptr(p: usize, out: *mut RubyValue) {
+    let v = direct_from_ptr(p);
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
+/// A `:string` C result read back as a binary String (`nil` for NULL).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_ffi_from_cstr(p: usize, out: *mut RubyValue) {
+    let v = unsafe { crate::ffi::from_cstr(p as *const std::os::raw::c_char) };
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+}
+
+/// After the C function returned: re-raise an exception a callback stashed
+/// while C had the stack -- the same question `zeo_rt_ffi_invoke` asks
+/// after every call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_ffi_after_call() -> i32 {
+    match after_call() {
+        Ok(()) => STATUS_OK,
+        Err(s) => fail(s),
+    }
+}
+
+/// Run one marshaling step with a Rust panic turned into the RuntimeError
+/// the Ruby caller can rescue, as `zeo_rt_ffi_invoke` does for its whole
+/// body.
+fn guarded<T>(f: impl FnOnce() -> Result<T, Signal>) -> Result<T, Signal> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(r) => r,
+        Err(payload) => Err(crate::ffi::panic_signal("FFI call", payload)),
+    }
+}
+
+#[cfg(feature = "ext-ffi")]
+fn direct_to_int(kind: CScalar, v: &RubyValue) -> Result<u64, Signal> {
+    if kind == CScalar::Bool {
+        return Ok(u64::from(crate::ffi::to_bool(v)));
+    }
+    crate::ffi::to_c_int(kind, v)
+}
+
+#[cfg(feature = "ext-ffi")]
+fn direct_to_ptr(kind: CScalar, v: &RubyValue) -> Result<(usize, RubyValue), Signal> {
+    // A String reaches C as a NUL-terminated copy for `:string` AND for
+    // `:pointer` -- the gem's own rule (`marshal_va` keeps it too).
+    if kind == CScalar::Str || matches!(v, RubyValue::Str(_)) {
+        let c = crate::ffi::to_cstring(v)?;
+        let owner = crate::string_from_bytes(c.into_bytes_with_nul(), crate::encoding::ASCII_8BIT);
+        // The copy's buffer moves for nobody: the owner is reachable only
+        // through the emitted code's temp slot, which never mutates it.
+        let addr = owner.lock().bytes().as_ptr() as usize;
+        return Ok((addr, RubyValue::Str(owner)));
+    }
+    Ok((crate::ffi::to_pointer(v)? as usize, RubyValue::Nil))
+}
+
+#[cfg(feature = "ext-ffi")]
+fn direct_from_uint(bits: u64) -> RubyValue {
+    crate::ffi::from_c_uint(bits)
+}
+
+#[cfg(feature = "ext-ffi")]
+fn direct_from_ptr(p: usize) -> RubyValue {
+    crate::ffi::from_pointer(p as *const std::os::raw::c_void)
+}
+
+#[cfg(feature = "ext-ffi")]
+fn after_call() -> Result<(), Signal> {
+    crate::ffi::take_callback_error()
+}
+
+#[cfg(not(feature = "ext-ffi"))]
+fn direct_to_int(_kind: CScalar, _v: &RubyValue) -> Result<u64, Signal> {
+    Err(no_ffi())
+}
+
+#[cfg(not(feature = "ext-ffi"))]
+fn direct_to_ptr(_kind: CScalar, _v: &RubyValue) -> Result<(usize, RubyValue), Signal> {
+    Err(no_ffi())
+}
+
+#[cfg(not(feature = "ext-ffi"))]
+fn direct_from_uint(bits: u64) -> RubyValue {
+    RubyValue::Int(bits as i64)
+}
+
+#[cfg(not(feature = "ext-ffi"))]
+fn direct_from_ptr(_p: usize) -> RubyValue {
+    RubyValue::Nil
+}
+
+#[cfg(not(feature = "ext-ffi"))]
+fn after_call() -> Result<(), Signal> {
+    Ok(())
+}
+
 #[cfg(not(feature = "ext-ffi"))]
 fn site_symbol(_: u32, _: &[&str], _: &str, _: u8) -> Result<*const std::os::raw::c_void, Signal> {
     Err(no_ffi())
@@ -316,9 +487,8 @@ unsafe fn invoke(
 
 /// One type's `CScalar`. An unknown code cannot happen: the emitter writes
 /// only what [`zeo_abi::ffi::CScalar::code`] produced.
-#[cfg(feature = "ext-ffi")]
-fn scalar_of(code: u8) -> crate::ffi::FfiKind {
-    zeo_abi::ffi::CScalar::from_code(code).expect("the emitter writes only real scalar codes")
+fn scalar_of(code: u8) -> CScalar {
+    CScalar::from_code(code).expect("the emitter writes only real scalar codes")
 }
 
 #[cfg(feature = "ext-ffi")]

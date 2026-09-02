@@ -71,6 +71,18 @@ pub(crate) fn define_callsites(em: &mut Emitter) -> CResult<()> {
         .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::CALLSITES)))
 }
 
+/// Define the `zeo_ffi_sites` array: one zeroed address word per
+/// `attach_function` site. Zero IS the valid "unresolved" state, so `.bss`
+/// needs no `zeo_unit_init` row.
+pub(crate) fn define_ffi_sites(em: &mut Emitter) -> CResult<()> {
+    let mut data = DataDescription::new();
+    data.define_zeroinit(em.ffi_words.max(1) as usize * abi::FFISYM_SITE_SIZE);
+    data.set_align(abi::SITE_ALIGN as u64);
+    em.module
+        .define_data(em.ffi_sites_id, &data)
+        .map_err(|e| CodegenError::internal(format!("defining {}: {e}", names::FFI_SITES)))
+}
+
 /// Define the `zeo_reopen_flags` array: one zeroed byte per builtin reopen.
 /// Zero means "the reopen has not run yet", which is exactly what `.bss`
 /// gives, so no `zeo_unit_init` row is needed.

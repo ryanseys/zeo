@@ -27,6 +27,11 @@ pub const CALLSITES: &str = "zeo_callsites";
 /// resolve through a singleton-chain arm of its own), so `Foo.new` needs
 /// this second array or it walks the chain on every call.
 pub const CM_SITES: &str = "zeo_cm_sites";
+/// The `.bss` array of `attach_function` sites -- one `FFISYM_SITE_SIZE`
+/// slot per call site, holding the resolved C address at
+/// `FFISYM_SITE_ADDR` once the first call has asked the runtime for it.
+/// Zero is "unresolved", so `.bss` needs no init row.
+pub const FFI_SITES: &str = "zeo_ffi_sites";
 /// The rodata `Str` table `zeo_rt_syms_init` interns from -- one row per
 /// `zeo_syms` slot, in the same order.
 pub const SYM_ROWS: &str = "zeo_sym_rows";

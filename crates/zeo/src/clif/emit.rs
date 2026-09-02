@@ -560,6 +560,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     statics::define_syms(em)?;
     statics::define_callsites(em)?;
     statics::define_cm_sites(em)?;
+    statics::define_ffi_sites(em)?;
     statics::define_const_sites(em)?;
     statics::define_new_sites(em)?;
     statics::define_dyn_sites(em)?;

@@ -188,6 +188,11 @@ pub(crate) struct Emitter {
     /// How many class-method cache slots the program needs; the index IS
     /// the slot index, and a slot carries no per-site constant.
     pub cm_sites: usize,
+    pub ffi_sites_id: DataId,
+    /// How many `attach_function` address words this unit holds. Counted
+    /// apart from `ffi_sites`, which is the RUNTIME's site id and comes from
+    /// the runtime's own band in an `eval`.
+    pub ffi_words: u32,
     pub const_sites_id: DataId,
     /// How many constant-read cache slots the program needs; same
     /// index-is-the-slot rule as `cm_sites`.
@@ -447,6 +452,11 @@ impl Emitter {
             .map_err(|e| {
                 CodegenError::internal(format!("declaring {}: {e}", super::names::CM_SITES))
             })?;
+        let ffi_sites_id = module
+            .declare_data(super::names::FFI_SITES, Linkage::Local, true, false)
+            .map_err(|e| {
+                CodegenError::internal(format!("declaring {}: {e}", super::names::FFI_SITES))
+            })?;
         let const_sites_id = module
             .declare_data(super::names::CONST_SITES, Linkage::Local, true, false)
             .map_err(|e| {
@@ -493,6 +503,8 @@ impl Emitter {
             rodata_id,
             syms_id,
             callsites_id,
+            ffi_sites_id,
+            ffi_words: 0,
             reopen_flags_id,
             reopen_flags: HashMap::new(),
             pkg: None,
@@ -558,6 +570,13 @@ impl Emitter {
         }
         self.ffi_sites += 1;
         self.ffi_sites - 1
+    }
+
+    /// The index of a fresh `zeo_ffi_sites` slot -- this unit's own word
+    /// for one `attach_function` site's resolved address.
+    pub(crate) fn mint_ffi_word(&mut self) -> u32 {
+        self.ffi_words += 1;
+        self.ffi_words - 1
     }
 
     /// The id-translation table's `DataId`, declared on first use. A

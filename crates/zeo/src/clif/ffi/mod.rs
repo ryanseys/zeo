@@ -1,19 +1,21 @@
 //! `attach_function` wrapper bodies: resolve the C symbol, marshal the
 //! arguments, call, wrap the result.
 //!
-//! The lowering distinguishes four tiers (a build-time-linkable library, a
-//! runtime-resolved one, a
-//! variadic call, a by-value aggregate). Cranelift
-//! can declare neither a link directive nor an aggregate ABI, so EVERY tier
-//! goes through the runtime's libffi engine: one `.rodata`
-//! [`zeo_abi::abi::FfiCallC`] describing the whole signature, one
-//! `zeo_rt_ffi_invoke` per call. A library named at build time is simply
-//! one whose symbol may also come from the process image -- which is what
-//! linking it amounted to.
+//! The symbol is resolved once per site: a `.bss` word (`zeo_ffi_sites`)
+//! holds the address after the first call asked the runtime for it, so a
+//! library named at build time and one opened at run time cost the same
+//! load on every later call.
 //!
-//! A direct `call_indirect` on a declared C signature is the perf tier the
-//! plan records as a lever; it changes no observable behaviour, so it does
-//! not gate parity.
+//! Two call tiers. A fixed-signature call whose every position is a plain
+//! C scalar is the DIRECT tier: the emitted code converts each argument
+//! through one runtime row (ruby-ffi's own range checks and error texts
+//! live there), then `call_indirect`s the declared C signature itself and
+//! wraps the result inline. Everything else -- an enum, a callback, a
+//! by-value struct, `:strptr`, varargs, `blocking:` -- is the LIBFFI tier:
+//! one `.rodata` [`zeo_abi::abi::FfiCallC`] describing the whole signature,
+//! one `zeo_rt_ffi_invoke` per call, which Cranelift cannot express (no
+//! variadic calls, no aggregate ABI). Both answer identically; the tier is
+//! a cost, never a behaviour.
 
 use crate::codegen_error::CResult;
 use cranelift_codegen::ir::{InstBuilder, types};
@@ -26,6 +28,11 @@ use super::ctx::Fx;
 use super::expr::lower_expr;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
+
+mod direct;
+mod markers;
+
+pub(crate) use markers::{is_marker, marker_call};
 
 /// One C type as the emitter records it for `.rodata` -- the `FfiTypeC`
 /// tree with every compile-time decision already made (a platform typedef
@@ -56,7 +63,20 @@ pub(crate) fn lower_ffi_call(fx: &mut Fx, site: NodeId, call: &FfiCall) -> CResu
     let spec =
         call_spec(call).map_err(|e| e.with_span_if_missing(fx.an.compiler.hir.span(site)))?;
     let addr = resolve_symbol(fx, call);
+    match direct::DirectSig::of(&spec) {
+        Some(sig) => direct::lower(fx, call, &sig, addr),
+        None => lower_libffi(fx, call, &spec, addr),
+    }
+}
 
+/// The libffi tier: the whole signature in `.rodata`, the arguments in a
+/// borrowed argv, one runtime call.
+fn lower_libffi(
+    fx: &mut Fx,
+    call: &FfiCall,
+    spec: &CallSpec,
+    addr: cranelift_codegen::ir::Value,
+) -> CResult<Operand> {
     // The arguments, in written order, into one contiguous slot array --
     // the same shape a dynamic send builds. Every marshaling decision is
     // already in the descriptor, so a coercion that raises inside the
@@ -70,7 +90,7 @@ pub(crate) fn lower_ffi_call(fx: &mut Fx, site: NodeId, call: &FfiCall) -> CResu
     let argv = build_argv(fx, &ids)?;
     let argc = fx.b.ins().iconst(fx.em.ptr, ids.len() as i64);
 
-    let desc_id = super::statics::define_ffi_call(fx.em, &spec)?;
+    let desc_id = super::statics::define_ffi_call(fx.em, spec)?;
     let desc_gv = fx.em.module.declare_data_in_func(desc_id, fx.b.func);
     let desc = fx.b.ins().symbol_value(fx.em.ptr, desc_gv);
 
@@ -86,9 +106,48 @@ pub(crate) fn lower_ffi_call(fx: &mut Fx, site: NodeId, call: &FfiCall) -> CResu
     })
 }
 
-/// The C symbol's address for this site, resolved once per site and cached
-/// in the runtime.
+/// The C symbol's address for this site: the site's `.bss` word when a
+/// call already filled it, else the runtime's resolver, whose answer is
+/// stored there. A resolution failure raises and stores nothing, so the
+/// next call asks again -- retrying a failed `require` re-raises too.
 fn resolve_symbol(fx: &mut Fx, call: &FfiCall) -> cranelift_codegen::ir::Value {
+    use cranelift_codegen::ir::MemFlagsData;
+    use zeo_abi::abi::{FFISYM_SITE_ADDR, FFISYM_SITE_SIZE};
+    let word = fx.em.mint_ffi_word();
+    let gv = fx
+        .em
+        .module
+        .declare_data_in_func(fx.em.ffi_sites_id, fx.b.func);
+    let base = fx.b.ins().symbol_value(fx.em.ptr, gv);
+    let slot = if word == 0 {
+        base
+    } else {
+        fx.b.ins()
+            .iadd_imm_u(base, i64::from(word) * FFISYM_SITE_SIZE as i64)
+    };
+    let cached = fx.b.ins().load(
+        fx.em.ptr,
+        MemFlagsData::trusted(),
+        slot,
+        FFISYM_SITE_ADDR as i32,
+    );
+    let resolve = fx.b.create_block();
+    let join = fx.b.create_block();
+    fx.b.append_block_param(join, fx.em.ptr);
+    fx.b.set_cold_block(resolve);
+    fx.b.ins()
+        .brif(cached, join, &[cached.into()], resolve, &[]);
+    fx.b.switch_to_block(resolve);
+    let addr = resolve_symbol_slow(fx, call);
+    fx.b.ins()
+        .store(MemFlagsData::trusted(), addr, slot, FFISYM_SITE_ADDR as i32);
+    fx.b.ins().jump(join, &[addr.into()]);
+    fx.b.switch_to_block(join);
+    fx.b.block_params(join)[0]
+}
+
+/// The runtime's resolver for one site, called on the cold edge.
+fn resolve_symbol_slow(fx: &mut Fx, call: &FfiCall) -> cranelift_codegen::ir::Value {
     use zeo_abi::abi::{FFI_SYM_LIB, FFI_SYM_LIB_OR_PROCESS, FFI_SYM_PROCESS};
     let id = fx.em.mint_ffi_site();
     let site_v = fx.b.ins().iconst(types::I32, i64::from(id));
@@ -145,7 +204,7 @@ fn resolve_symbol(fx: &mut Fx, call: &FfiCall) -> cranelift_codegen::ir::Value {
 
 /// A contiguous argv of BORROWED copies, owned temps pooled first --
 /// `call::build_argv`'s shape over plain node ids.
-fn build_argv(fx: &mut Fx, ids: &[NodeId]) -> CResult<cranelift_codegen::ir::Value> {
+pub(super) fn build_argv(fx: &mut Fx, ids: &[NodeId]) -> CResult<cranelift_codegen::ir::Value> {
     use cranelift_codegen::ir::{StackSlotData, StackSlotKind};
     use zeo_abi::abi::VALUE_SIZE;
     if ids.is_empty() {
@@ -266,125 +325,4 @@ fn cannot_lower(what: impl std::fmt::Display) -> crate::codegen_error::CodegenEr
         format!("the CLIF backend cannot lower {what} yet"),
         None,
     )
-}
-
-// ---------------------------------------------------------------------------
-// The class-body markers `lower::ffi` desugars a deferred directive into
-// ---------------------------------------------------------------------------
-
-/// Is `name` one of the markers `lower::ffi` desugars a deferred
-/// directive into? The names are reserved: no ruby source spells them.
-pub(crate) fn is_marker(name: &str) -> bool {
-    matches!(
-        name,
-        "__zeo_ffi_lib" | "__zeo_ffi_enum" | "__zeo_ffi_enum_get" | "__zeo_ffi_enum_put"
-    )
-}
-
-/// One marker call, lowered where it stands.
-pub(crate) fn marker_call(
-    fx: &mut Fx,
-    site: NodeId,
-    name: &str,
-    args: &[crate::hir::ArrayElem],
-) -> CResult<Operand> {
-    let shape = || format!("the `{name}` marker in this shape");
-    let ids: Option<Vec<NodeId>> = args
-        .iter()
-        .map(|a| match a {
-            crate::hir::ArrayElem::Single(id) => Some(*id),
-            crate::hir::ArrayElem::Splat(_) => None,
-        })
-        .collect();
-    // `lower::ffi` writes every marker as a leading integer slot plus
-    // plain arguments -- anything else is an internal error, not a program.
-    let Some(ids) = ids else {
-        return fx.unsupported(site, &shape());
-    };
-    let Some((&slot_id, rest)) = ids.split_first() else {
-        return fx.unsupported(site, &shape());
-    };
-    let crate::hir::HirNode::IntegerLit(slot) = fx.an.compiler.hir[slot_id] else {
-        return fx.unsupported(site, &shape());
-    };
-    let slot = slot as usize;
-    match name {
-        "__zeo_ffi_lib" if rest.len().is_multiple_of(2) => lib_store(fx, slot, rest),
-        "__zeo_ffi_enum" => enum_store(fx, slot, rest),
-        "__zeo_ffi_enum_get" | "__zeo_ffi_enum_put" if rest.len() == 1 => {
-            enum_field(fx, slot, rest[0], name.ends_with("put"))
-        }
-        _ => fx.unsupported(site, &shape()),
-    }
-}
-
-/// `__zeo_ffi_lib(slot, splatted?, expr, ...)`: the candidate expressions
-/// evaluate here, in class-body order, and the runtime dlopens every value
-/// EAGERLY -- so an unopenable library raises `LoadError` at this exact
-/// statement, as CRuby's `ffi_lib` does.
-fn lib_store(fx: &mut Fx, slot: usize, pairs: &[NodeId]) -> CResult<Operand> {
-    use cranelift_codegen::ir::{MemFlagsData, StackSlotData, StackSlotKind};
-    let n = pairs.len() / 2;
-    let splats = fx.b.create_sized_stack_slot(StackSlotData::new(
-        StackSlotKind::ExplicitSlot,
-        n.max(1) as u32,
-        0,
-    ));
-    let values: Vec<NodeId> = pairs.chunks_exact(2).map(|p| p[1]).collect();
-    for (i, pair) in pairs.chunks_exact(2).enumerate() {
-        let splatted = matches!(
-            fx.an.compiler.hir[pair[0]],
-            crate::hir::HirNode::IntegerLit(1)
-        );
-        let v = fx.b.ins().iconst(types::I8, i64::from(u8::from(splatted)));
-        let at = fx.slot_addr(splats, i as i32);
-        fx.b.ins().store(MemFlagsData::trusted(), v, at, 0);
-    }
-    let argv = build_argv(fx, &values)?;
-    let splats_ptr = fx.slot_addr(splats, 0);
-    let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
-    let n_v = fx.b.ins().iconst(fx.em.ptr, n as i64);
-    call_out(fx, "zeo_rt_ffi_lib_store", &[slot_v, argv, splats_ptr, n_v])
-}
-
-/// `__zeo_ffi_enum(slot, member, ...)`: the member list evaluates here and
-/// lands in the slot every signature lowered under it reads.
-fn enum_store(fx: &mut Fx, slot: usize, members: &[NodeId]) -> CResult<Operand> {
-    let argv = build_argv(fx, members)?;
-    let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
-    let n_v = fx.b.ins().iconst(fx.em.ptr, members.len() as i64);
-    call_out(fx, "zeo_rt_ffi_enum_store", &[slot_v, argv, n_v])
-}
-
-/// A deferred enum STRUCT FIELD's read (`int` -> Symbol) or write.
-fn enum_field(fx: &mut Fx, slot: usize, value: NodeId, put: bool) -> CResult<Operand> {
-    let op = lower_expr(fx, value)?;
-    let ptr = ownership::borrow_ptr(fx, &op);
-    if op.owned() {
-        let tag = op.tag();
-        ownership::pool_owned(fx, ptr, tag);
-    }
-    let slot_v = fx.b.ins().iconst(fx.em.ptr, slot as i64);
-    let put_v = fx.b.ins().iconst(types::I8, i64::from(u8::from(put)));
-    call_out(fx, "zeo_rt_ffi_enum_field", &[slot_v, put_v, ptr])
-}
-
-/// A fallible runtime call whose last argument is the `out` slot.
-fn call_out(
-    fx: &mut Fx,
-    name: &'static str,
-    args: &[cranelift_codegen::ir::Value],
-) -> CResult<Operand> {
-    let ss = fx.temp_slot();
-    let out = fx.slot_addr(ss, 0);
-    let mut all = args.to_vec();
-    all.push(out);
-    let status = fx.call_status(name, &all);
-    fx.fallible(status);
-    fx.owned_created += 1;
-    Ok(Operand::Slot {
-        ss,
-        owned: true,
-        tag: TagInfo::Unknown,
-    })
 }

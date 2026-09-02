@@ -443,6 +443,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_ffi_after_call",
+        params: &[],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_ffi_enum_field",
         params: &[Usize, U8, Ptr, Ptr],
         ret: Some(I32),
@@ -451,6 +456,21 @@ pub const CAPI: &[CapiSig] = &[
         name: "zeo_rt_ffi_enum_store",
         params: &[Usize, Ptr, Usize, Ptr],
         ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_ffi_from_cstr",
+        params: &[Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_ffi_from_ptr",
+        params: &[Usize, Ptr],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_ffi_from_uint",
+        params: &[Usize, Ptr],
+        ret: None,
     },
     CapiSig {
         name: "zeo_rt_ffi_invoke",
@@ -470,6 +490,21 @@ pub const CAPI: &[CapiSig] = &[
     CapiSig {
         name: "zeo_rt_ffi_sym_slot",
         params: &[U32, Usize, Ptr, Usize, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_ffi_to_f64",
+        params: &[Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_ffi_to_int",
+        params: &[U8, Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
+        name: "zeo_rt_ffi_to_ptr",
+        params: &[U8, Ptr, Ptr, Ptr],
         ret: Some(I32),
     },
     CapiSig {

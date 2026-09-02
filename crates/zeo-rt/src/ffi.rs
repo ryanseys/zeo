@@ -1345,7 +1345,6 @@ unsafe fn invoke_callback_caught(
 }
 
 /// The RuntimeError a caught panic becomes, carrying the panic's message.
-#[cfg(feature = "ext-ffi")]
 pub fn panic_signal(where_: &str, payload: Box<dyn std::any::Any + Send>) -> Signal {
     let msg = payload
         .downcast_ref::<String>()

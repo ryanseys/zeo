@@ -102,6 +102,11 @@ pub const NEW_SITE_SIZE: usize = 32;
 pub const CIVAR_SITE_SIZE: usize = 40;
 pub const REGEXP_SITE_SIZE: usize = 16;
 pub const FFISYM_SITE_SIZE: usize = 16;
+/// Where, inside an `attach_function` site's `.bss` slot (`zeo_ffi_sites`),
+/// the resolved C address lives. Zero means "not resolved yet": the emitted
+/// code loads it, and only on zero calls the runtime's resolver and stores
+/// what it answered.
+pub const FFISYM_SITE_ADDR: usize = 0;
 /// The common alignment of every site struct above.
 pub const SITE_ALIGN: usize = 8;
 
