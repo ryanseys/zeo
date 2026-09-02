@@ -1260,6 +1260,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: None,
     },
     CapiSig {
+        name: "zeo_rt_synthetic_c_frame_pop",
+        params: &[I8],
+        ret: None,
+    },
+    CapiSig {
+        name: "zeo_rt_synthetic_c_frame_push",
+        params: &[Ptr, Usize],
+        ret: Some(I8),
+    },
+    CapiSig {
         name: "zeo_rt_truthy",
         params: &[Ptr],
         ret: Some(U8),

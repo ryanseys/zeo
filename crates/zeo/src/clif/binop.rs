@@ -304,11 +304,19 @@ fn int_arm(
             fx.b.ins().brif(zero, raise, &[], live, &[]);
 
             fx.b.switch_to_block(raise);
+            // Ruby raises from inside `Integer#/`, a frame this inline path
+            // never pushed; the backtrace names it all the same.
+            let (lptr, llen) =
+                super::expr::rodata_name(fx, if modulo { "Integer#%" } else { "Integer#/" });
+            let pushed = fx
+                .call("zeo_rt_synthetic_c_frame_push", &[lptr, llen])
+                .expect("the push answers whether it pushed");
             let cid =
                 fx.b.ins()
                     .iconst(types::I32, i64::from(zeo_abi::ZERO_DIVISION_ERROR_CLASS.0));
             let (mptr, mlen) = super::expr::rodata_name(fx, "divided by 0");
             fx.call("zeo_rt_raise_error", &[cid, mptr, mlen]);
+            fx.call("zeo_rt_synthetic_c_frame_pop", &[pushed]);
             fx.b.ins().jump(fx.land, &[]);
 
             fx.b.switch_to_block(live);
@@ -453,7 +461,10 @@ fn boxed_binop(
     // BOTH sides Known and not both Int (literal-vs-literal mixed pairs,
     // rare): pretend both unknown so every arm keeps a runtime condition
     // and the block graph stays total. Both-Int returns above.
-    let (ka, kb) = if ka.is_some() && kb.is_some() && !(ka == Some(ValueTag::Int as u8) && kb == Some(ValueTag::Int as u8)) {
+    let (ka, kb) = if ka.is_some()
+        && kb.is_some()
+        && !(ka == Some(ValueTag::Int as u8) && kb == Some(ValueTag::Int as u8))
+    {
         (None, None)
     } else {
         (ka, kb)
@@ -499,8 +510,7 @@ fn boxed_binop(
     }
 
     // The tag bytes, loaded only for the sides not statically known.
-    let ta = (ka.is_none())
-        .then(|| fx.b.ins().load(types::I8, fl, pa, TAG_OFFSET as i32));
+    let ta = (ka.is_none()).then(|| fx.b.ins().load(types::I8, fl, pa, TAG_OFFSET as i32));
     // `x == nil` / `x != nil` against a LITERAL nil, with NilClass's own
     // rows untouched: a receiver whose tag IS Nil answers the constant --
     // that answer is NilClass#=='s, which pristineness pins. Every other
@@ -531,8 +541,7 @@ fn boxed_binop(
         }
         fx.b.switch_to_block(rest);
     }
-    let tb = (kb.is_none())
-        .then(|| fx.b.ins().load(types::I8, fl, pb, TAG_OFFSET as i32));
+    let tb = (kb.is_none()).then(|| fx.b.ins().load(types::I8, fl, pb, TAG_OFFSET as i32));
     let int_tag = i64::from(ValueTag::Int as u8);
     // Per side: None = statically false (the compare is never emitted),
     // Some = the runtime bit. A statically-TRUE side contributes no test.
@@ -589,8 +598,7 @@ fn boxed_binop(
     fx.b.switch_to_block(not_int);
     // A Known NON-NUMERIC side (`x == nil` past the peel, `"a" + b`)
     // rules every numeric pair out: straight to the dynamic arm.
-    let known_other =
-        |k: Option<u8>| matches!(k, Some(t) if t != int_t && t != float_t);
+    let known_other = |k: Option<u8>| matches!(k, Some(t) if t != int_t && t != float_t);
     if matches!(op.float_shape(), FloatShape::None) || known_other(ka) || known_other(kb) {
         fx.b.ins().jump(b_dyn, &[]);
     } else {
@@ -602,24 +610,20 @@ fn boxed_binop(
         // dispatch per evaluation. A pair a Known side rules out is not
         // emitted; a Known side that satisfies a pair contributes no test.
         let float_tag = i64::from(ValueTag::Float as u8);
-        let a_f = ka
-            .is_none()
-            .then(|| {
-                fx.b.ins().icmp_imm_u(
-                    IntCC::Equal,
-                    ta.expect("unknown side loads its tag"),
-                    float_tag,
-                )
-            });
-        let b_f = kb
-            .is_none()
-            .then(|| {
-                fx.b.ins().icmp_imm_u(
-                    IntCC::Equal,
-                    tb.expect("unknown side loads its tag"),
-                    float_tag,
-                )
-            });
+        let a_f = ka.is_none().then(|| {
+            fx.b.ins().icmp_imm_u(
+                IntCC::Equal,
+                ta.expect("unknown side loads its tag"),
+                float_tag,
+            )
+        });
+        let b_f = kb.is_none().then(|| {
+            fx.b.ins().icmp_imm_u(
+                IntCC::Equal,
+                tb.expect("unknown side loads its tag"),
+                float_tag,
+            )
+        });
         let a_i_bit = a_int.and_then(|x| x);
         let b_i_bit = b_int_p.and_then(|x| x);
         // A MIXED pair's COMPARISON is exact in ruby (`rb_integer_float_cmp`),
@@ -643,8 +647,7 @@ fn boxed_binop(
                 continue;
             }
             let mut cond: Option<cranelift_codegen::ir::Value> = None;
-            for (is_int, k, ib, fb) in
-                [(a_is_int, ka, a_i_bit, a_f), (b_is_int, kb, b_i_bit, b_f)]
+            for (is_int, k, ib, fb) in [(a_is_int, ka, a_i_bit, a_f), (b_is_int, kb, b_i_bit, b_f)]
             {
                 if k.is_some() {
                     continue; // statically satisfied

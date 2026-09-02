@@ -246,6 +246,8 @@ zeo_rt_svar_scope_push ([]) -> None
 zeo_rt_sym_intern ([Ptr, Usize]) -> Some(U32)
 zeo_rt_sym_value ([U32, Ptr]) -> None
 zeo_rt_syms_init ([Ptr, Usize, Ptr]) -> None
+zeo_rt_synthetic_c_frame_pop ([I8]) -> None
+zeo_rt_synthetic_c_frame_push ([Ptr, Usize]) -> Some(I8)
 zeo_rt_truthy ([Ptr]) -> Some(U8)
 zeo_rt_validate_alias_source ([U32, Ptr, Usize]) -> Some(I32)
 zeo_rt_value_super_args ([Ptr, Ptr, Usize, Ptr, U8, Ptr, Ptr, Ptr]) -> Some(I32)
