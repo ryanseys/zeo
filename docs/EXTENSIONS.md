@@ -113,10 +113,13 @@ the build.
   ruby without the extension.
 * **Autotools and `mini_portile` builds of a vendored C library are out of
   scope.** System-library mode through `have_library` works.
-* **Loading an extension arms the GVL** and turns off the lock-free
-  container path, process-wide. That is a real cost and it is not optional:
-  an extension may start a thread, and its C holds Ruby objects no other
-  thread's view accounts for.
+* **A C extension and a second Ruby thread arm the GVL**, and turn off the
+  lock-free container path for good. A single-threaded program keeps that
+  path; it is hidden only while one of the extension's own frames is live.
+  The cost is real once a thread exists and it is not optional: the C holds
+  Ruby objects no other thread's view accounts for. A thread the extension
+  starts through `rb_thread_create` counts; a raw `pthread_create` is outside
+  the contract.
 * **The shared object has to be there at run time.** An AOT binary dlopens
   it from the cache; it is not linked in. The gem report names the path.
 

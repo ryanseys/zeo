@@ -528,8 +528,9 @@ pub(super) enum NativeKind {
 /// Gems whose C extension is a pure ACCELERATOR: the same gem carries a
 /// complete Ruby fallback behind `rescue LoadError` (racc's parser.rb sets
 /// `Racc_Runtime_Type = 'ruby'` when `racc/cparse` fails to load). zeo
-/// declines the build -- loading any C extension arms the GVL process-wide
-/// -- and the gem's own rescue takes the Ruby runtime, which zeo compiles.
+/// declines the build -- a C extension arms the GVL once a thread exists, and
+/// its frames hide the lock-free path -- and the gem's own rescue takes the
+/// Ruby runtime, which zeo compiles.
 const ACCELERATOR_ONLY: &[&str] = &["racc"];
 
 /// Which of the three signals a resolved gemspec carries.

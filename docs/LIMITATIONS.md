@@ -30,9 +30,10 @@ Differences the architecture chooses; they will not close.
   declined (zeo's front end embeds prism), and `continuation` is
   declined.
 - **Threads run in parallel without a global VM lock.** The GVL exists
-  only for C extensions: loading one arms it process-wide, and nothing
-  else does -- `the_zeo_native_stdlib_never_arms_the_gvl` pins that the
-  whole zeo-native stdlib never arms it. Scheduling interleavings and
+  only for C extensions: one arms it the moment a second Ruby thread
+  exists, and nothing else does -- `the_zeo_native_stdlib_never_arms_the_gvl`
+  pins that the whole zeo-native stdlib never arms it, and the C-gem sweep
+  pins that a single-threaded program with a C extension does not either. Scheduling interleavings and
   data-race observability therefore differ from CRuby; `ZEO_GVL=1`
   restores CRuby's handoff for differential debugging.
 - **Object identity is not an address.** Allocation tracing and

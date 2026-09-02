@@ -69,12 +69,13 @@ pub fn mark_sole_thread() {
 /// ivar and container access takes its locking arm.
 ///
 /// A MEASUREMENT dial, and it measures something the runtime does to itself:
-/// loading any C extension calls [`arm_for_cext`], which clears the same
-/// claim process-wide. So this is that cost with no gem in the way -- the
-/// alternative is to A/B a Rust ext against its real gem, where the two
-/// implementations differ by far more than the GVL and the number means
-/// nothing. (One such attempt, 2026-08-29, compared 340ms against 344ms and
-/// was invalid for a worse reason still: both runs had loaded zeo's builtin.)
+/// a live C frame hides the same claim (`cframes`), and a C extension plus a
+/// second Ruby thread clears it for good ([`note_cext_loaded`]). So this is
+/// that cost with no gem in the way -- the alternative is to A/B a Rust ext
+/// against its real gem, where the two implementations differ by far more
+/// than the GVL and the number means nothing. (One such attempt, 2026-08-29,
+/// compared 340ms against 344ms and was invalid for a worse reason still:
+/// both runs had loaded zeo's builtin.)
 ///
 /// MEASURED 2026-08-30, release bank, one subprocess per iteration:
 /// attr_accessor 510->856ms (+68%), getivar 53.6->88.4ms (+65%), setivar and
@@ -87,9 +88,8 @@ pub fn mark_sole_thread() {
 /// every container access, and a dial there would measure the dial.
 fn sole_thread_refused() -> bool {
     static REFUSED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *REFUSED.get_or_init(|| {
-        std::env::var_os("ZEO_RT_NO_SOLE_THREAD").is_some_and(|v| !v.is_empty())
-    })
+    *REFUSED
+        .get_or_init(|| std::env::var_os("ZEO_RT_NO_SOLE_THREAD").is_some_and(|v| !v.is_empty()))
 }
 
 /// Whether the caller may take a lock-free path over data only Ruby threads
@@ -112,6 +112,14 @@ pub fn clear_sole_thread() {
     SOLE.with(|s| s.set(false));
 }
 
+/// Take the claim away for the length of a C frame, answering whether there
+/// was one to take. C holds raw views into Ruby objects that a lock-free
+/// `&mut` would move under it; the frame's close puts the claim back with
+/// [`mark_sole_thread`], which re-checks that no thread appeared meanwhile.
+pub(crate) fn hide_sole_thread() -> bool {
+    SOLE.with(|s| s.replace(false))
+}
+
 /// Called BEFORE spawning a Ruby thread or Ractor, never after.
 ///
 /// Two happens-before edges close the invariant, and the second is the one a
@@ -132,7 +140,56 @@ pub fn note_thread_spawn() {
     #[cfg(debug_assertions)]
     crate::collections::debug_assert_no_live_fast_guards("Thread/Ractor spawn");
     SOLE.with(|s| s.set(false));
-    MULTI_THREADED.store(true, Ordering::Release);
+    MULTI_THREADED.store(true, Ordering::SeqCst);
+    if CEXT_LOADED.load(Ordering::SeqCst) {
+        arm_for_cext();
+    }
+}
+
+/// Whether a C extension has loaded. With [`MULTI_THREADED`] it forms the
+/// latch: whichever of the two events comes second arms the Gvl. Both sides
+/// store then load with `SeqCst`, so a load and a spawn on two threads at
+/// once cannot both miss each other.
+static CEXT_LOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the latch has fired -- once is enough.
+static CEXT_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A C extension is about to run its `Init_`.
+///
+/// Alone, this changes nothing: a single-threaded program keeps its lock-free
+/// path, and the extension's own frames hide the claim while they are live
+/// (`cframes`). What an extension breaks is the premise of TWO Ruby threads
+/// running at once -- its C holds Ruby objects in locals no other thread's
+/// view accounts for -- so the Gvl arms when a second thread exists, whether
+/// it is spawned after this call ([`note_thread_spawn`]) or was running
+/// already. A thread the extension creates itself goes through `Thread.new`
+/// and is caught the same way; a raw `pthread_create` is outside the contract.
+pub fn note_cext_loaded() {
+    CEXT_LOADED.store(true, Ordering::SeqCst);
+    if MULTI_THREADED.load(Ordering::SeqCst) {
+        arm_for_cext();
+    }
+}
+
+/// The one line the latch logs when it fires. A CONSTANT so the instruments
+/// that assert it stays silent (the zeo-native stdlib in the pure_gems e2e,
+/// the single-threaded smokes of the C-gem sweep) and this producer cannot
+/// drift apart.
+pub const CEXT_ARMED_SENTINEL: &str =
+    "a C extension and a second Ruby thread: the GVL is armed and the lock-free path is off";
+
+/// Arm the process Gvl with the calling thread as holder. Threads that were
+/// already running never acquired, so they never wait (see [`Gvl::arm`]);
+/// that is the most a latch can do after the fact, and it is stated rather
+/// than hidden.
+#[cold]
+fn arm_for_cext() {
+    if CEXT_ARMED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tracing::debug!("{CEXT_ARMED_SENTINEL}");
+    process_gvl().arm();
 }
 
 /// Put this process back to "no Ruby thread has ever been spawned", so a test
@@ -146,6 +203,8 @@ pub fn note_thread_spawn() {
 #[cfg(test)]
 pub(crate) fn reset_thread_flags_for_test() {
     MULTI_THREADED.store(false, Ordering::Release);
+    CEXT_LOADED.store(false, Ordering::Release);
+    CEXT_ARMED.store(false, Ordering::Release);
     SOLE.with(|s| s.set(false));
 }
 
@@ -268,7 +327,9 @@ impl ThreadCtx {
 /// parallel; only the member registry (which feeds the timer and, later,
 /// `Thread.list`) does anything.
 pub struct Gvl {
-    armed: bool,
+    /// Decided at creation, or flipped on ONCE by [`Gvl::arm`]; never off
+    /// again.
+    armed: std::sync::atomic::AtomicBool,
     state: Mutex<GvlState>,
     cv: Condvar,
     /// The Ruby threads attached to this Gvl. The timer arms only when at
@@ -292,7 +353,7 @@ struct GvlState {
 impl Gvl {
     fn with_armed(armed: bool) -> Arc<Gvl> {
         Arc::new(Gvl {
-            armed,
+            armed: std::sync::atomic::AtomicBool::new(armed),
             state: Mutex::new(GvlState {
                 next_ticket: 0,
                 now_serving: 0,
@@ -324,7 +385,25 @@ impl Gvl {
     }
 
     pub fn is_armed(&self) -> bool {
-        self.armed
+        self.armed.load(Ordering::Acquire)
+    }
+
+    /// Switch a disabled Gvl to the armed handoff, with the calling thread as
+    /// holder -- as if its `acquire` at startup had been the real thing.
+    ///
+    /// Meant for the moment exactly one Ruby thread runs (before a spawn).
+    /// Any other thread already running never acquired, so it never waits
+    /// and keeps running in parallel; only threads that acquire from here on
+    /// take turns. A no-op on a Gvl that is armed already.
+    pub fn arm(&self) {
+        let mut s = self.state.lock();
+        if self.is_armed() {
+            return;
+        }
+        s.next_ticket = 1;
+        s.now_serving = 0;
+        s.holder = Some(std::thread::current().id());
+        self.armed.store(true, Ordering::Release);
     }
 
     /// Register a Ruby thread with this Gvl (spawn-time). Also prunes
@@ -366,12 +445,12 @@ impl Gvl {
 
     /// Whether the CALLING thread is the current holder (armed mode).
     fn holds(&self) -> bool {
-        self.armed && self.state.lock().holder == Some(std::thread::current().id())
+        self.is_armed() && self.state.lock().holder == Some(std::thread::current().id())
     }
 
     /// Block until it is this thread's turn to run (FIFO). No-op unarmed.
     pub fn acquire(&self) {
-        if !self.armed {
+        if !self.is_armed() {
             return;
         }
         let mut s = self.state.lock();
@@ -388,7 +467,7 @@ impl Gvl {
     /// thread reaching a shared blocking primitive) -- only the holder may
     /// advance the queue.
     pub fn release(&self) {
-        if !self.armed {
+        if !self.is_armed() {
             return;
         }
         let mut s = self.state.lock();
@@ -431,7 +510,7 @@ impl Gvl {
     /// `check_ints` and yields; everyone else consumes it harmlessly. A
     /// lone thread (or the parallel mode) gets no tick at all.
     pub fn timer_tick(&self) {
-        if !self.armed || self.live_members() < 2 {
+        if !self.is_armed() || self.live_members() < 2 {
             return;
         }
         for w in self.members.lock().iter() {
@@ -473,7 +552,7 @@ impl Gvl {
     /// from a thread C spawned itself -- arrives without it. The guard
     /// releases only what it took.
     pub fn hold_reentrant(&self) -> Option<HoldGuard<'_>> {
-        if !self.armed || self.holds() {
+        if !self.is_armed() || self.holds() {
             return None;
         }
         Some(self.hold())
@@ -500,40 +579,6 @@ static PROCESS_GVL: std::sync::OnceLock<Arc<Gvl>> = std::sync::OnceLock::new();
 /// any mode (a disabled Gvl's operations are free no-ops).
 pub fn process_gvl() -> &'static Arc<Gvl> {
     PROCESS_GVL.get_or_init(Gvl::from_env)
-}
-
-/// A C extension has loaded: from here the process runs under CRuby's rules.
-///
-/// Two things change, and the second is the one that cannot be skipped.
-///
-/// The Gvl is ARMED, so two Ruby threads no longer run at once -- an
-/// extension's `Init_` may start a thread, and its C code holds Ruby objects
-/// in locals no other thread's view accounts for. This only takes effect when
-/// nothing has read [`process_gvl`] yet: the mode is decided once, on first
-/// access, and the `Arc` cannot be swapped under a thread already holding it.
-/// A program that had already touched it keeps the mode it chose, which is
-/// reported rather than silently ignored.
-///
-/// The sole-thread claim is CLEARED unconditionally. That is the lock-free
-/// fast path over containers, and its premise -- exactly one Ruby thread, and
-/// it is this one -- is exactly what an extension can break without telling
-/// anyone. Clearing it costs a lock per container access and is never wrong.
-///
-/// Answers whether the Gvl actually armed.
-/// The one line every GVL arming logs. A CONSTANT so the instrument that
-/// asserts the zeo-native stdlib never arms (pure_gems e2e) and this
-/// producer cannot drift apart.
-pub const CEXT_ARMED_SENTINEL: &str =
-    "a C extension armed the GVL; the lock-free path is off process-wide";
-
-pub fn arm_for_cext() -> bool {
-    tracing::debug!("{CEXT_ARMED_SENTINEL}");
-    clear_sole_thread();
-    MULTI_THREADED.store(true, Ordering::Release);
-    // A `false` here is not a failure: the program asked for the parallel
-    // default and got it, and the fast path -- the part an extension can
-    // actually corrupt -- is off either way. The caller decides what to say.
-    PROCESS_GVL.get_or_init(Gvl::armed).is_armed()
 }
 
 /// Run `f` with the process Gvl released -- the wrapper every potentially
@@ -990,6 +1035,34 @@ mod tests {
         })
         .join()
         .unwrap();
+    }
+
+    /// Arming a disabled Gvl makes the caller the holder: a thread that
+    /// acquires afterwards waits for the caller's release, and the caller's
+    /// `without` really releases.
+    #[test]
+    fn arming_makes_the_caller_the_holder() {
+        let gvl = Gvl::disabled();
+        gvl.acquire();
+        gvl.arm();
+        assert!(gvl.is_armed() && gvl.holds());
+        let entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (g, e) = (gvl.clone(), entered.clone());
+        let waiter = std::thread::spawn(move || {
+            g.acquire();
+            e.store(true, Ordering::SeqCst);
+            g.release();
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(
+            !entered.load(Ordering::SeqCst),
+            "the waiter ran past the holder"
+        );
+        gvl.without(|| {
+            waiter.join().unwrap();
+        });
+        assert!(entered.load(Ordering::SeqCst) && gvl.holds());
+        gvl.release();
     }
 
     /// The rendezvous stops a running thread and lets it go again. Worth a

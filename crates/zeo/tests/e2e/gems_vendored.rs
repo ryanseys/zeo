@@ -129,7 +129,8 @@ fn the_bootstrap_pair_never_comes_out_of_the_store() {
 
 /// racc's C extension is a pure ACCELERATOR -- its own parser.rb carries a
 /// complete Ruby runtime behind `rescue LoadError`. The store must serve the
-/// gem WITHOUT building cparse (which would arm the GVL process-wide): no
+/// gem WITHOUT building cparse (a C extension in a threaded program arms the
+/// GVL): no
 /// compiled-extension row, and the runtime require of `racc/cparse` stays a
 /// catchable LoadError so the gem's own rescue picks the Ruby runtime.
 #[test]

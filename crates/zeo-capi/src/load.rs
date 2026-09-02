@@ -4,13 +4,15 @@
 //! this call where the `require` sat. What is left is the two steps CRuby's
 //! `dln_load` takes, and one that is zeo's own.
 //!
-//! # Arming the GVL is not optional
+//! # The GVL is a latch, not a load-time cost
 //!
 //! Ruby code compiled by zeo runs without a global lock whenever it can prove
-//! it is alone. A C extension breaks that proof the moment it loads: it may
-//! start a thread, and it certainly holds Ruby objects in C locals no other
-//! thread's view accounts for. So loading ARMS the GVL, process-wide, before
-//! `Init_` runs -- and that is a cost worth naming rather than hiding.
+//! it is alone. A C extension breaks that proof only together with a second
+//! Ruby thread: its C holds Ruby objects in locals no other thread's view
+//! accounts for. So loading notes the extension (`gvl::note_cext_loaded`)
+//! and the GVL arms when a second thread exists -- spawned later, or running
+//! already. A single-threaded program keeps its lock-free path, hidden only
+//! while one of the extension's own frames is live (`unwind::protect`).
 //!
 //! # Once per library, by path
 //!
@@ -28,12 +30,18 @@ use zeo_rt::Signal;
 /// Every library already loaded, by the path `dlopen` was given.
 static LOADED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
+/// The line every load logs, at debug level under the `zeo_capi::load`
+/// target. A CONSTANT so the C-gem sweep, which takes it as proof that the
+/// gem's own extension answered rather than zeo's Rust half, cannot drift
+/// from the producer.
+pub const LOADED_SENTINEL: &str = "load C extension";
+
 /// `dlopen(path)`, then call `Init_<init>`.
 ///
 /// Answers whether it loaded -- false for a library already in, which is what
 /// `require` answers for a feature already loaded.
 pub fn load(path: &str, init: &str) -> Result<bool, Signal> {
-    tracing::debug!(path, init, "load C extension");
+    tracing::debug!(path, init, "{LOADED_SENTINEL}");
     let already = LOADED
         .lock()
         .ok()
@@ -60,13 +68,9 @@ pub fn load(path: &str, init: &str) -> Result<bool, Signal> {
 
     // Before `Init_` runs, and in this order: the globals an `Init_` reads on
     // its first line (`rb_define_class_under(rb_cObject, ...)`), then the
-    // GVL, then the scope its handles are pinned in.
+    // GVL latch, then the scope its handles are pinned in.
     super::globals::fill();
-    // A `false` means the process Gvl was already created disabled, which
-    // only a program that spawned a thread before its first `require` can
-    // reach. The sole-thread fast path is off either way, and that is the
-    // half an extension can corrupt.
-    let _armed = zeo_rt::gvl::arm_for_cext();
+    zeo_rt::gvl::note_cext_loaded();
     let scope = super::scope::Scope::enter();
     // SAFETY: `dlsym` answered, and `Init_` is `void (*)(void)` by MRI's own
     // contract -- the name is what the extension's build asserts.

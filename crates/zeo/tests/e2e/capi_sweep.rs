@@ -14,9 +14,11 @@
 //! the `require` reaches the gem's `extconf.rb`, `cc`, `dlopen` and `Init_`.
 //!
 //! A pass needs three things at once: exit 0, byte-identical stdout, and
-//! the runtime's own "a C extension loaded" sentinel on stderr -- without
-//! the third a green row could be zeo's Rust half answering, which is the
-//! trap `ZEO_DISABLE_BUILTIN` was built to expose.
+//! the loader's own "load C extension" line on stderr -- without the third
+//! a green row could be zeo's Rust half answering, which is the trap
+//! `ZEO_DISABLE_BUILTIN` was built to expose. And one thing absent: the GVL
+//! latch's line. Every smoke is single-threaded, so a C extension alone must
+//! leave the lock-free path on.
 //!
 //! `XFAIL.json` is the ledger of gems that do not pass yet, each with the
 //! reason. An XFAIL that passes FAILS its test ("stale XFAIL"), so the
@@ -95,19 +97,22 @@ fn sweep(gem: &str) {
         .current_dir(root())
         .env("ZEO_DISABLE_BUILTIN", gem)
         .env("ZEO_CACHE", "0")
-        // Only the arming line is wanted; a full debug log is megabytes.
-        .env("ZEO_LOG", "zeo_rt::gvl=debug")
+        // Only the load and latch lines are wanted; a full debug log is
+        // megabytes.
+        .env("ZEO_LOG", "zeo_capi::load=debug,zeo_rt::gvl=debug")
         .env_remove("RUBYOPT")
         .env_remove("RUBYLIB")
         .output()
         .expect("zeo runs");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let loaded = stderr.contains(zeo_rt::gvl::CEXT_ARMED_SENTINEL);
+    let loaded = stderr.contains(zeo_capi::load::LOADED_SENTINEL);
+    let armed = stderr.contains(zeo_rt::gvl::CEXT_ARMED_SENTINEL);
     let same = out.stdout == expected;
-    let passed = out.status.success() && same && loaded;
+    let passed = out.status.success() && same && loaded && !armed;
     let report = || {
         format!(
             "gem: {gem}\nexit: {}\nstdout matches ruby: {same}\nC extension loaded: {loaded}\n\
+             GVL armed (must stay off, the smoke is single-threaded): {armed}\n\
              --- zeo stdout ---\n{}\n--- expected ---\n{}\n--- stderr (tail) ---\n{}",
             out.status,
             String::from_utf8_lossy(&out.stdout),

@@ -657,7 +657,8 @@ Zeo is experimental. The known limits, all deliberate and recorded:
   expose a representation Zeo does not have). A gem shipping a *precompiled*
   `.so` never loads: that object is CRuby's ABI. Autotools and
   `mini_portile` builds of a vendored C library are out of scope;
-  `have_library` works. Loading an extension arms the GVL process-wide.
+  `have_library` works. A C extension together with a second Ruby thread
+  arms the GVL; a single-threaded program keeps the lock-free path.
 - **`Ruby::Box` isolation is partial.** A box works at compile time and at
   run time — `Ruby::Box.new`, `box.eval`, `box.require`, and `Box.current`
   all answer — and it isolates constants and globals. It does not yet

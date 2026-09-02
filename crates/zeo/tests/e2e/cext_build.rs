@@ -523,3 +523,74 @@ p state != 0, r, err.class, err.message
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The GVL is a latch, not a load-time cost. A single-threaded program that
+/// loads a C extension keeps its lock-free path, and the second Ruby thread
+/// arms the GVL -- spawned after the load, or running before it. The latch's
+/// own log line is the instrument, the same constant the C-gem sweep and the
+/// pure-stdlib test watch for.
+#[test]
+fn a_c_extension_arms_the_gvl_only_with_a_second_thread() {
+    if !have("cc") {
+        eprintln!("skipping: this machine has no `cc`");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("zeo-cext-latch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(
+        dir.join("extconf.rb"),
+        "require \"mkmf\"\ncreate_makefile(\"latch_probe\")\n",
+    )
+    .expect("write extconf.rb");
+    std::fs::write(
+        dir.join("latch_probe.c"),
+        r#"#include <ruby.h>
+
+static VALUE answer(VALUE self) { return INT2NUM(42); }
+
+void Init_latch_probe(void)
+{
+    VALUE m = rb_define_module("LatchProbe");
+    rb_define_singleton_method(m, "answer", answer, 0);
+}
+"#,
+    )
+    .expect("write latch_probe.c");
+    zeo::cext::configure(&zeo_bin(), &dir, Path::new("extconf.rb"), &[])
+        .unwrap_or_else(|e| panic!("{e}"));
+    zeo::cext::build_extension(&dir, 4).unwrap_or_else(|e| panic!("{e}"));
+
+    let prelude = format!("$LOAD_PATH.unshift({:?})\n", dir.display().to_string());
+    let run = |body: &str| {
+        let out = Command::new(zeo_bin())
+            .arg("-e")
+            .arg(format!("{prelude}{body}"))
+            .env("ZEO_CACHE", "0")
+            .env("ZEO_LOG", "zeo_rt::gvl=debug")
+            .output()
+            .expect("zeo runs");
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "42\n",
+            "program:\n{body}\nstderr:\n{stderr}"
+        );
+        stderr.contains(zeo_rt::gvl::CEXT_ARMED_SENTINEL)
+    };
+
+    assert!(
+        !run("require \"latch_probe\"\np LatchProbe.answer\n"),
+        "a single-threaded program armed the GVL"
+    );
+    assert!(
+        run("require \"latch_probe\"\np Thread.new { LatchProbe.answer }.value\n"),
+        "a thread spawned after the load did not arm the GVL"
+    );
+    assert!(
+        run("Thread.new { 1 }.join\nrequire \"latch_probe\"\np LatchProbe.answer\n"),
+        "a load after a thread did not arm the GVL"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
