@@ -103,4 +103,32 @@ module MakeMakefile
     end
   end
   prepend ZeoProbes
+
+  # A raise is a Rust unwind through the extension's own frames, so its
+  # objects must carry unwind tables. `RbConfig` puts the flags in `cflags`;
+  # a gem that appends the `-fno-` twins takes them away again, and its
+  # first raise would then abort the process instead of reaching `rescue`.
+  # The flags go, with a warning, and `zeo` refuses a Makefile that still
+  # carries one (`cext/mod.rs`).
+  module ZeoUnwindTables
+    UNWIND_OFF = %w[-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables].freeze
+
+    def create_makefile(*args, &block)
+      $CFLAGS = zeo_keep_unwind_tables("$CFLAGS", $CFLAGS)
+      $CXXFLAGS = zeo_keep_unwind_tables("$CXXFLAGS", $CXXFLAGS)
+      super
+    end
+
+    private
+
+    def zeo_keep_unwind_tables(name, flags)
+      return flags if flags.nil?
+      words = flags.split
+      off = words & UNWIND_OFF
+      return flags if off.empty?
+      warn "zeo: dropping #{off.join(' ')} from #{name}: an extension's objects must carry unwind tables"
+      (words - UNWIND_OFF).join(" ")
+    end
+  end
+  prepend ZeoUnwindTables
 end

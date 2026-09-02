@@ -75,13 +75,17 @@ crate::cext_fn! {
         base: *mut c_void,
         n: usize,
         size: usize,
-        cmp: unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int,
+        cmp: unsafe extern "C-unwind" fn(*const c_void, *const c_void, *mut c_void) -> c_int,
         arg: *mut c_void,
     ) -> () {
         if base.is_null() || size == 0 || n < 2 {
             return Ok(());
         }
-        let mut args = BsdQsortArgs { cmp, arg };
+        let mut args = BsdQsortArgs {
+            cmp,
+            arg,
+            raised: None,
+        };
         let d: *mut c_void = std::ptr::from_mut(&mut args).cast();
         // SAFETY: the caller promised `n` elements of `size` bytes at `base`,
         // and `args` outlives the call.
@@ -91,14 +95,16 @@ crate::cext_fn! {
             #[cfg(not(any(target_vendor = "apple", target_os = "freebsd")))]
             libc::qsort_r(base, n, size, Some(bsd_qsort_cmp), d);
         }
-        Ok(())
+        // A raise from the comparator waited here for libc to hand the
+        // stack back.
+        args.raised.map_or(Ok(()), Err)
     }
 
     /// `ruby_each_words(str, f, arg)`: split on commas and whitespace and
     /// call `f` per word. MRI parses `RUBYOPT`-shaped lists with it.
     fn ruby_each_words(
         s: *const c_char,
-        f: unsafe extern "C" fn(*const c_char, c_int, *mut c_void),
+        f: unsafe extern "C-unwind" fn(*const c_char, c_int, *mut c_void),
         arg: *mut c_void,
     ) -> () {
         for word in unsafe { cstr(s) }.split([',', ' ', '\t', '\n']) {
@@ -107,7 +113,7 @@ crate::cext_fn! {
             }
             let c = super::symbol::cstr_for_owned(word);
             // SAFETY: the caller's own callback, on a NUL-terminated word.
-            super::jmp::protect(|| unsafe { f(c, word.len() as c_int, arg) })?;
+            super::unwind::protect(|| unsafe { f(c, word.len() as c_int, arg) })?;
         }
         Ok(())
     }
@@ -254,31 +260,42 @@ fn scan_double(text: &str) -> (f64, usize) {
 }
 
 /// MRI's `bsd_qsort_r_args`: the extension's comparator carries its own
-/// `arg`, so the one libc passes is this pair.
+/// `arg`, so the one libc passes is this triple.
 struct BsdQsortArgs {
-    cmp: unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int,
+    cmp: unsafe extern "C-unwind" fn(*const c_void, *const c_void, *mut c_void) -> c_int,
     arg: *mut c_void,
+    /// The comparator's raise, parked until `qsort_r` returns: an unwind
+    /// must not cross libc's frames. Every later comparison answers 0.
+    raised: Option<zeo_rt::Signal>,
+}
+
+/// The comparator's raise, caught here and parked in the triple.
+fn compare(d: *mut c_void, a: *const c_void, b: *const c_void) -> c_int {
+    // SAFETY: `ruby_qsort` handed libc a `*mut BsdQsortArgs` and two pointers
+    // into the caller's own buffer; libc hands all three back unchanged.
+    let args = unsafe { &mut *d.cast::<BsdQsortArgs>() };
+    if args.raised.is_some() {
+        return 0;
+    }
+    match super::unwind::protect(|| unsafe { (args.cmp)(a, b, args.arg) }) {
+        Ok(order) => order,
+        Err(sig) => {
+            args.raised = Some(sig);
+            0
+        }
+    }
 }
 
 /// MRI's `cmp_bsd_qsort`, on the argument order this platform's `qsort_r`
-/// uses. `extern "C"` makes a panic abort rather than unwind through libc.
+/// uses. `extern "C"`, as libc's signature demands: nothing unwinds out.
 #[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
 unsafe extern "C" fn bsd_qsort_cmp(d: *mut c_void, a: *const c_void, b: *const c_void) -> c_int {
-    // SAFETY: `ruby_qsort` handed libc a `*mut BsdQsortArgs` and two pointers
-    // into the caller's own buffer; libc hands all three back unchanged.
-    unsafe {
-        let args = &*d.cast::<BsdQsortArgs>();
-        (args.cmp)(a, b, args.arg)
-    }
+    compare(d, a, b)
 }
 
 #[cfg(not(any(target_vendor = "apple", target_os = "freebsd")))]
 unsafe extern "C" fn bsd_qsort_cmp(a: *const c_void, b: *const c_void, d: *mut c_void) -> c_int {
-    // SAFETY: as above.
-    unsafe {
-        let args = &*d.cast::<BsdQsortArgs>();
-        (args.cmp)(a, b, args.arg)
-    }
+    compare(d, a, b)
 }
 
 #[cfg(test)]

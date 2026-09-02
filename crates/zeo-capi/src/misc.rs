@@ -306,7 +306,7 @@ crate::cext_fn! {
     /// support and answering "deleted" without deleting would be worse.
     fn rb_hash_foreach(
         h: Value,
-        f: unsafe extern "C" fn(Value, Value, Value) -> c_int,
+        f: unsafe extern "C-unwind" fn(Value, Value, Value) -> c_int,
         arg: Value,
     ) -> Value {
         let hv = unsafe { value_of(h) };
@@ -319,7 +319,7 @@ crate::cext_fn! {
             hh.lock().iter().map(|(_, (k, v))| (k.clone(), v.clone())).collect();
         for (k, v) in pairs {
             let (k, v) = (to_value(&k)?, to_value(&v)?);
-            let go = super::jmp::protect(|| unsafe { f(k, v, arg) })?;
+            let go = super::unwind::protect(|| unsafe { f(k, v, arg) })?;
             if go != 0 {
                 break;
             }
@@ -495,7 +495,7 @@ fn check(v: &RubyValue, meth: &str) -> RubyValue {
 ///
 /// Both pointers must be NUL-terminated.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn st_strcasecmp(a: *const c_char, b: *const c_char) -> c_int {
+pub unsafe extern "C-unwind" fn st_strcasecmp(a: *const c_char, b: *const c_char) -> c_int {
     unsafe { st_strncasecmp(a, b, usize::MAX) }
 }
 
@@ -503,7 +503,11 @@ pub unsafe extern "C" fn st_strcasecmp(a: *const c_char, b: *const c_char) -> c_
 ///
 /// Both pointers must be NUL-terminated, or name `n` readable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn st_strncasecmp(a: *const c_char, b: *const c_char, n: usize) -> c_int {
+pub unsafe extern "C-unwind" fn st_strncasecmp(
+    a: *const c_char,
+    b: *const c_char,
+    n: usize,
+) -> c_int {
     let mut i = 0usize;
     while i < n {
         // SAFETY: the caller's contract -- both runs are readable to their
@@ -526,7 +530,7 @@ pub unsafe extern "C" fn st_strncasecmp(a: *const c_char, b: *const c_char, n: u
 }
 
 /// The callbacks `ruby_vm_at_exit` registered, run once at shutdown.
-static VM_AT_EXIT: parking_lot::Mutex<Vec<unsafe extern "C" fn(*mut c_void)>> =
+static VM_AT_EXIT: parking_lot::Mutex<Vec<unsafe extern "C-unwind" fn(*mut c_void)>> =
     parking_lot::Mutex::new(Vec::new());
 
 /// The shutdown half: called by the lifecycle after `at_exit` handlers and
@@ -544,7 +548,7 @@ pub fn run_vm_at_exit() {
 crate::cext_fn! {
     /// `ruby_vm_at_exit(func)`: run `func` when the VM ends. Registration
     /// only -- the lifecycle drains the list at shutdown.
-    fn ruby_vm_at_exit(func: unsafe extern "C" fn(*mut c_void)) -> () {
+    fn ruby_vm_at_exit(func: unsafe extern "C-unwind" fn(*mut c_void)) -> () {
         VM_AT_EXIT.lock().push(func);
         Ok(())
     }

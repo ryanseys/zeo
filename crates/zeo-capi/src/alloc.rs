@@ -82,7 +82,7 @@ pub unsafe fn xrealloc(p: *mut c_void, size: usize) -> *mut c_void {
 /// `NoMemoryError`; zeo raises the same, so a `rescue NoMemoryError` around
 /// a big allocation still works.
 fn no_memory(size: usize) -> ! {
-    crate::jmp::raise(zeo_rt::builtins::no_memory_error!(
+    crate::unwind::raise(zeo_rt::builtins::no_memory_error!(
         "failed to allocate {size} bytes"
     ))
 }
@@ -103,7 +103,7 @@ macro_rules! alloc_fn {
         #[unsafe(no_mangle)]
         // A C ABI entry point with MRI's own contract, stated per row above.
         #[allow(clippy::missing_safety_doc)]
-        pub unsafe extern "C" fn $name($($arg : $ty),*) -> $ret $body
+        pub unsafe extern "C-unwind" fn $name($($arg : $ty),*) -> $ret $body
     )*};
 }
 
@@ -145,7 +145,7 @@ alloc_fn! {
 fn checked(count: usize, size: usize) -> usize {
     match count.checked_mul(size) {
         Some(n) => n,
-        None => crate::jmp::raise(zeo_rt::builtins::no_memory_error!(
+        None => crate::unwind::raise(zeo_rt::builtins::no_memory_error!(
             "malloc: possible integer overflow ({count} * {size})"
         )),
     }

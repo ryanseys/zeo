@@ -131,6 +131,17 @@ that allocator, run the `ruby_vm_at_exit` callbacks -- through
 `--no-default-features` compiles every program; a `require` of a compiled
 extension then answers `LoadError` naming the missing support.
 
+**A raise is a Rust unwind.** `rb_raise` and every other raising entry
+start an unwind that carries the exception, and the entry that called into
+the extension (`rb_protect`, a method trampoline, `Init_`) catches it and
+answers the Ruby exception. The unwind travels through the extension's own
+frames, so its objects must carry unwind tables: `RbConfig`'s `cflags` add
+`-fexceptions -fasynchronous-unwind-tables`, `mkmf` drops a gem's own
+`-fno-` twins with a warning, and zeo refuses to build a Makefile that still
+carries one. A C++ extension that wraps a Ruby call in `catch (...)`
+intercepts the unwind; `rb_protect` is the spelling for that. A genuine bug
+in zeo (a Rust panic) is never turned into a Ruby exception.
+
 `crates/zeo-capi/src/api.rs` is the census: every symbol an extension can link
 against, read off clang's AST of every public header. 33 of them are
 REFUSALS, not gaps, and each raises with its reason:

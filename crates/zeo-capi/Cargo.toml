@@ -32,7 +32,7 @@ tracing.workspace = true
 zeo-rt = { workspace = true, features = ["unit-tables"] }
 
 [build-dependencies]
-# `csrc/*.c`: the entries Rust cannot yet write (setjmp/longjmp, va_list).
+# `csrc/*.c`: the variadic entries Rust cannot write before 1.99 (`va_list`).
 cc = "1"
 # `$OUT_DIR/cext_layout.rs` -- the Rust mirror of the MRI structs the C
 # extension views fill, read from the vendored headers. Already in the graph

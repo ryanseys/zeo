@@ -166,10 +166,10 @@ crate::cext_fn! {
 ///
 /// `v` must be a live Array `VALUE`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rbimpl_zeo_ary_len(v: Value) -> c_long {
+pub unsafe extern "C-unwind" fn rbimpl_zeo_ary_len(v: Value) -> c_long {
     match unsafe { as_ary(v) } {
         Ok(a) => a.lock().len() as c_long,
-        Err(sig) => super::jmp::raise(sig),
+        Err(sig) => super::unwind::raise(sig),
     }
 }
 
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn rbimpl_zeo_ary_len(v: Value) -> c_long {
 /// here as there. Out of range answers `Qnil` rather than reading memory,
 /// which is the safe direction.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rbimpl_zeo_ary_aref(v: Value, i: c_long) -> Value {
+pub unsafe extern "C-unwind" fn rbimpl_zeo_ary_aref(v: Value, i: c_long) -> Value {
     let out = (|| -> Result<Value, zeo_rt::Signal> {
         let a = unsafe { as_ary(v)? };
         let g = a.lock();
@@ -192,7 +192,7 @@ pub unsafe extern "C" fn rbimpl_zeo_ary_aref(v: Value, i: c_long) -> Value {
     })();
     match out {
         Ok(v) => v,
-        Err(sig) => super::jmp::raise(sig),
+        Err(sig) => super::unwind::raise(sig),
     }
 }
 
@@ -202,7 +202,7 @@ pub unsafe extern "C" fn rbimpl_zeo_ary_aref(v: Value, i: c_long) -> Value {
 ///
 /// `v` must be a live Array `VALUE`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rbimpl_zeo_ary_aset(v: Value, i: c_long, item: Value) {
+pub unsafe extern "C-unwind" fn rbimpl_zeo_ary_aset(v: Value, i: c_long, item: Value) {
     let out = (|| -> Result<(), zeo_rt::Signal> {
         let a = unsafe { as_ary(v)? };
         let item = unsafe { value_of(item) };
@@ -213,7 +213,7 @@ pub unsafe extern "C" fn rbimpl_zeo_ary_aset(v: Value, i: c_long, item: Value) {
         Ok(())
     })();
     if let Err(sig) = out {
-        super::jmp::raise(sig);
+        super::unwind::raise(sig);
     }
 }
 
@@ -225,7 +225,7 @@ pub unsafe extern "C" fn rbimpl_zeo_ary_aset(v: Value, i: c_long, item: Value) {
 ///
 /// `v` must be a live Array `VALUE`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rbimpl_zeo_ary_const_ptr(v: Value) -> *const Value {
+pub unsafe extern "C-unwind" fn rbimpl_zeo_ary_const_ptr(v: Value) -> *const Value {
     let out = (|| -> Result<*const Value, zeo_rt::Signal> {
         let a = unsafe { as_ary(v)? };
         let key = std::sync::Arc::as_ptr(&a) as *const () as usize;
@@ -249,7 +249,7 @@ pub unsafe extern "C" fn rbimpl_zeo_ary_const_ptr(v: Value) -> *const Value {
     })();
     match out {
         Ok(p) => p,
-        Err(sig) => super::jmp::raise(sig),
+        Err(sig) => super::unwind::raise(sig),
     }
 }
 
@@ -272,7 +272,7 @@ pub(super) fn ary_ptr_len(v: Value) -> Result<(*const Value, c_long), zeo_rt::Si
 ///
 /// `v` must be a live Array `VALUE`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rbimpl_zeo_ary_ptr(v: Value) -> *mut Value {
+pub unsafe extern "C-unwind" fn rbimpl_zeo_ary_ptr(v: Value) -> *mut Value {
     unsafe { rbimpl_zeo_ary_const_ptr(v).cast_mut() }
 }
 
@@ -460,7 +460,7 @@ crate::cext_fn! {
     fn rb_hash_update_by(
         dst: Value,
         src: Value,
-        func: Option<unsafe extern "C" fn(Value, Value, Value) -> Value>,
+        func: Option<unsafe extern "C-unwind" fn(Value, Value, Value) -> Value>,
     ) -> Value {
         let d = unsafe { as_hash(dst)? };
         let s = unsafe { as_hash(src)? };
@@ -473,7 +473,7 @@ crate::cext_fn! {
                 (Some(old), Some(f)) => {
                     let (rk, ro, rn) = (to_value(&k)?, to_value(&old)?, to_value(&new)?);
                     // SAFETY: the caller's own callback, on pinned handles.
-                    let out = super::jmp::protect(|| unsafe { f(rk, ro, rn) })?;
+                    let out = super::unwind::protect(|| unsafe { f(rk, ro, rn) })?;
                     unsafe { value_of(out) }
                 }
                 _ => new,

@@ -323,7 +323,7 @@ crate::cext_fn! {
         olen: c_long,
         argc: c_int,
         argv: *const Value,
-        func: unsafe extern "C" fn(Value, c_long) -> Value,
+        func: unsafe extern "C-unwind" fn(Value, c_long) -> Value,
     ) -> Value {
         let mut out: Vec<RubyValue> = Vec::new();
         for arg in unsafe { args_of(argc, argv) } {
@@ -415,13 +415,13 @@ crate::cext_fn! {
     }
 
     /// `rb_set_end_proc(f, arg)`: run `f` at exit, which is `Kernel#at_exit`.
-    fn rb_set_end_proc(f: unsafe extern "C" fn(Value), arg: Value) -> () {
+    fn rb_set_end_proc(f: unsafe extern "C-unwind" fn(Value), arg: Value) -> () {
         let (addr, a) = (f as usize, arg);
         let body = zeo_rt::rproc::ProcBuilder::from_rust(
             move |_recv, _args, _block| {
                 // SAFETY: the caller's own function, in the loaded image.
-                let f: unsafe extern "C" fn(Value) = unsafe { std::mem::transmute(addr) };
-                super::jmp::protect(|| unsafe { f(a) })?;
+                let f: unsafe extern "C-unwind" fn(Value) = unsafe { std::mem::transmute(addr) };
+                super::unwind::protect(|| unsafe { f(a) })?;
                 Ok(RubyValue::Nil)
             },
             RubyValue::Nil,
@@ -717,7 +717,7 @@ crate::cext_fn! {
     fn ruby_glob(
         pattern: *const c_char,
         _flags: c_int,
-        f: unsafe extern "C" fn(*const c_char, Value, *mut c_void) -> c_int,
+        f: unsafe extern "C-unwind" fn(*const c_char, Value, *mut c_void) -> c_int,
         arg: Value,
     ) -> c_int {
         glob_walk(&unsafe { cstr(pattern) }, f, arg)
@@ -727,7 +727,7 @@ crate::cext_fn! {
     fn ruby_brace_glob(
         pattern: *const c_char,
         _flags: c_int,
-        f: unsafe extern "C" fn(*const c_char, Value, *mut c_void) -> c_int,
+        f: unsafe extern "C-unwind" fn(*const c_char, Value, *mut c_void) -> c_int,
         arg: Value,
     ) -> c_int {
         glob_walk(&unsafe { cstr(pattern) }, f, arg)
@@ -736,13 +736,13 @@ crate::cext_fn! {
     /// `rb_glob(pattern, f, arg)`: the void-returning spelling.
     fn rb_glob(
         pattern: *const c_char,
-        f: unsafe extern "C" fn(*const c_char, Value, *mut c_void),
+        f: unsafe extern "C-unwind" fn(*const c_char, Value, *mut c_void),
         arg: Value,
     ) -> () {
         for path in glob_paths(&unsafe { cstr(pattern) })? {
             let c = super::symbol::cstr_for_owned(&path);
             // SAFETY: the caller's own callback, on a NUL-terminated path.
-            super::jmp::protect(|| unsafe { f(c, arg, std::ptr::null_mut()) })?;
+            super::unwind::protect(|| unsafe { f(c, arg, std::ptr::null_mut()) })?;
         }
         Ok(())
     }
@@ -1031,7 +1031,7 @@ crate::cext_fn! {
 ///
 /// `members` must name `n` NUL-terminated strings.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn zeo_cext_data_define(
+pub unsafe extern "C-unwind" fn zeo_cext_data_define(
     super_class: Value,
     members: *const *const c_char,
     n: c_int,
@@ -1046,7 +1046,7 @@ pub unsafe extern "C" fn zeo_cext_data_define(
     })();
     match out {
         Ok(v) => v,
-        Err(sig) => super::jmp::raise(sig),
+        Err(sig) => super::unwind::raise(sig),
     }
 }
 
@@ -1062,7 +1062,7 @@ pub unsafe extern "C" fn zeo_cext_data_define(
 /// `members` must name `n` NUL-terminated strings, and `name` must be
 /// NUL-terminated or null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn zeo_cext_struct_define_noaccessor(
+pub unsafe extern "C-unwind" fn zeo_cext_struct_define_noaccessor(
     outer: Value,
     name: *const c_char,
     _super_class: Value,
@@ -1097,7 +1097,7 @@ pub unsafe extern "C" fn zeo_cext_struct_define_noaccessor(
     })();
     match out {
         Ok(v) => v,
-        Err(sig) => super::jmp::raise(sig),
+        Err(sig) => super::unwind::raise(sig),
     }
 }
 
@@ -1248,13 +1248,13 @@ fn select_on(fd: c_int, writable: bool, timeout: Option<f64>) -> Result<c_int, S
 
 fn glob_walk(
     pattern: &str,
-    f: unsafe extern "C" fn(*const c_char, Value, *mut c_void) -> c_int,
+    f: unsafe extern "C-unwind" fn(*const c_char, Value, *mut c_void) -> c_int,
     arg: Value,
 ) -> Result<c_int, Signal> {
     for path in glob_paths(pattern)? {
         let c = super::symbol::cstr_for_owned(&path);
         // SAFETY: the caller's own callback, on a NUL-terminated path.
-        let verdict = super::jmp::protect(|| unsafe { f(c, arg, std::ptr::null_mut()) })?;
+        let verdict = super::unwind::protect(|| unsafe { f(c, arg, std::ptr::null_mut()) })?;
         if verdict != 0 {
             return Ok(verdict);
         }

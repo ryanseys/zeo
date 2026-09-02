@@ -90,6 +90,22 @@ impl std::fmt::Display for Refusal {
     }
 }
 
+/// The flags that strip the unwind tables a raise travels through. mkmf
+/// drops them from a gem's own additions with a warning, so one reaching
+/// a Makefile came from a rule zeo cannot see -- and neither road builds it.
+pub const UNWIND_OFF: &[&str] = &[
+    "-fno-exceptions",
+    "-fno-unwind-tables",
+    "-fno-asynchronous-unwind-tables",
+];
+
+fn unwind_tables_off(mk: &Makefile) -> Option<String> {
+    ["CFLAGS", "CXXFLAGS"]
+        .iter()
+        .flat_map(|k| mk.words(k))
+        .find(|w| UNWIND_OFF.contains(&w.as_str()))
+}
+
 /// The compiler for a source, by its extension, and which flags it takes.
 ///
 /// C++ and Objective-C++ go through `$(CXX)` and `$(CXXFLAGS)` -- using the C
@@ -116,7 +132,14 @@ impl Plan {
             return Ok(Err(Refusal::Forced));
         }
         let text = std::fs::read_to_string(dir.join("Makefile"))?;
-        Ok(Self::from_makefile(dir, &Makefile::parse(&text)))
+        let mk = Makefile::parse(&text);
+        if let Some(flag) = unwind_tables_off(&mk) {
+            return Err(std::io::Error::other(format!(
+                "the Makefile turns unwind tables off with `{flag}`; a raise is an unwind \
+                 through the extension's own frames (docs/EXTENSIONS.md)"
+            )));
+        }
+        Ok(Self::from_makefile(dir, &mk))
     }
 
     /// The same decision over an already-parsed Makefile, so a test can make
@@ -534,6 +557,17 @@ $(TARGET_SO): $(OBJS) Makefile
 
     /// `create_makefile` never ran, so there is nothing to build. Saying so
     /// beats linking an empty bundle.
+    #[test]
+    fn a_makefile_that_turns_unwind_tables_off_is_named() {
+        let mk = Makefile::parse("CFLAGS = -O2 -fno-asynchronous-unwind-tables\nCXXFLAGS = -O2\n");
+        assert_eq!(
+            unwind_tables_off(&mk).as_deref(),
+            Some("-fno-asynchronous-unwind-tables")
+        );
+        let mk = Makefile::parse("CFLAGS = -O2 -fexceptions\nCXXFLAGS = -O2\n");
+        assert_eq!(unwind_tables_off(&mk), None);
+    }
+
     #[test]
     fn a_makefile_with_no_target_is_refused() {
         let dir = Dir::with("notarget", &[]);

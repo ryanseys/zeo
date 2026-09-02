@@ -70,8 +70,8 @@ pub fn load(path: &str, init: &str) -> Result<bool, Signal> {
     let scope = super::scope::Scope::enter();
     // SAFETY: `dlsym` answered, and `Init_` is `void (*)(void)` by MRI's own
     // contract -- the name is what the extension's build asserts.
-    let init_fn: unsafe extern "C" fn() = unsafe { std::mem::transmute(entry) };
-    let out = super::jmp::protect(|| unsafe { init_fn() });
+    let init_fn: unsafe extern "C-unwind" fn() = unsafe { std::mem::transmute(entry) };
+    let out = super::unwind::protect(|| unsafe { init_fn() });
     drop(scope);
     out?;
     Ok(true)

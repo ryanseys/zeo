@@ -927,10 +927,10 @@ fn string_value_in(slot: *mut Value) -> Result<Value, zeo_rt::Signal> {
 ///
 /// `v` must be a live String `VALUE`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rbimpl_zeo_str_ptr(v: Value) -> *mut c_char {
+pub unsafe extern "C-unwind" fn rbimpl_zeo_str_ptr(v: Value) -> *mut c_char {
     match unsafe { as_str(v) } {
         Ok(s) => pin_bytes(&s),
-        Err(sig) => super::jmp::raise(sig),
+        Err(sig) => super::unwind::raise(sig),
     }
 }
 
@@ -960,10 +960,10 @@ pub(super) fn str_ptr_len(v: Value) -> Result<(*mut c_char, c_long), zeo_rt::Sig
 ///
 /// `v` must be a live String `VALUE`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rbimpl_zeo_str_len(v: Value) -> c_long {
+pub unsafe extern "C-unwind" fn rbimpl_zeo_str_len(v: Value) -> c_long {
     let s = match unsafe { as_str(v) } {
         Ok(s) => s,
-        Err(sig) => super::jmp::raise(sig),
+        Err(sig) => super::unwind::raise(sig),
     };
     let key = std::sync::Arc::as_ptr(&s) as *const () as usize;
     let pinned =

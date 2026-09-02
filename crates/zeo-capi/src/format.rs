@@ -37,7 +37,7 @@ pub(super) fn flush_texts() {
 /// `v` must be a live `VALUE`; the formatter read it out of the caller's own
 /// `va_list` at the type `PRIsVALUE` names.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn zeo_cext_value_text(v: Value, inspect: i32) -> *const c_char {
+pub unsafe extern "C-unwind" fn zeo_cext_value_text(v: Value, inspect: i32) -> *const c_char {
     let recv = unsafe { value_of(v) };
     let meth = if inspect != 0 { "inspect" } else { "to_s" };
     // A raise from inside `to_s` cannot travel: the caller is a C formatter
@@ -76,12 +76,12 @@ fn hold(text: String) -> *const c_char {
 ///
 /// `p` must name `len` readable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn zeo_cext_str_new_len(p: *const c_char, len: c_long) -> Value {
+pub unsafe extern "C-unwind" fn zeo_cext_str_new_len(p: *const c_char, len: c_long) -> Value {
     let bytes = unsafe { super::string::borrow_bytes(p, len) };
     let s = RubyValue::Str(zeo_rt::string_from_bytes(bytes, zeo_rt::encoding::UTF_8));
     match to_value(&s) {
         Ok(v) => v,
-        Err(sig) => super::jmp::raise(sig),
+        Err(sig) => super::unwind::raise(sig),
     }
 }
 
@@ -92,10 +92,14 @@ pub unsafe extern "C" fn zeo_cext_str_new_len(p: *const c_char, len: c_long) -> 
 /// `p` must name `len` readable bytes and `str` must be a live String
 /// `VALUE`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn zeo_cext_str_cat_len(str: Value, p: *const c_char, len: c_long) -> Value {
+pub unsafe extern "C-unwind" fn zeo_cext_str_cat_len(
+    str: Value,
+    p: *const c_char,
+    len: c_long,
+) -> Value {
     let bytes = unsafe { super::string::borrow_bytes(p, len) };
     let RubyValue::Str(s) = (unsafe { value_of(str) }) else {
-        super::jmp::raise(zeo_rt::builtins::type_error!("rb_str_catf needs a String"))
+        super::unwind::raise(zeo_rt::builtins::type_error!("rb_str_catf needs a String"))
     };
     let mut g = s.lock();
     let mut all = g.bytes().to_vec();

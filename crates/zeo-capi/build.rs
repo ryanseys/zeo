@@ -45,15 +45,13 @@ const MIRRORED: &str = "RBasic|RString|RArray|RObject|RRegexp|RMatch|RFile|RData
 |ruby_value_type|ruby_fl_type|ruby_rstring_flags|ruby_robject_flags|ruby_rarray_flags\
 |rbimpl_typeddata_flags";
 
-/// Compile `csrc/`: the entries that need C.
+/// Compile `csrc/`: the variadic entries, which Rust cannot write before
+/// 1.99 -- it cannot read a `va_list`, and guessing is how a pointer gets
+/// read out of the wrong register.
 ///
-/// `cext_jmp.c` owns the `setjmp`/`longjmp` pair a raise travels through.
-/// `cext_va.c`, `cext_fmt.c` and `cext_err.c` hold every variadic entry: Rust
-/// cannot read a `va_list`, and guessing is how a pointer gets read out of the
-/// wrong register. `cext_err.c` also owns `errno`, which is a macro over a
-/// per-thread location Rust cannot name. `cext_native_thread.c` takes pointers
-/// to a real `pthread_mutex_t` and `pthread_cond_t`, which is a layout only C
-/// knows.
+/// A raise is a Rust unwind through these frames (they call the Rust
+/// entries that raise), so they carry unwind tables, exactly as a gem's own
+/// objects must.
 fn build_cext() {
     let mut build = cc::Build::new();
     for f in CEXT_SOURCES {
@@ -63,14 +61,10 @@ fn build_cext() {
     build
         .include("cext/include")
         .include("cext/config")
+        .flag("-fexceptions")
+        .flag("-fasynchronous-unwind-tables")
         .flag_if_supported("-Wno-unused-parameter");
     build.warnings(true).compile("zeo_cext");
 }
 
-const CEXT_SOURCES: &[&str] = &[
-    "cext_jmp.c",
-    "cext_va.c",
-    "cext_fmt.c",
-    "cext_err.c",
-    "cext_native_thread.c",
-];
+const CEXT_SOURCES: &[&str] = &["cext_va.c", "cext_fmt.c", "cext_err.c"];

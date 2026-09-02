@@ -427,3 +427,99 @@ end"#,
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A raise is a Rust unwind through the extension's own frames.
+///
+/// `rb_raise` three C frames deep lands in the Ruby `rescue` above the
+/// call; `rb_protect` catches its body's raise, answers a non-zero state and
+/// leaves the exception in `rb_errinfo`. Both need the extension's objects
+/// to carry unwind tables, which is why the Makefile's compile line is
+/// asserted too: without `-fexceptions -fasynchronous-unwind-tables` the
+/// unwind cannot cross those frames.
+#[test]
+fn a_raise_unwinds_the_extensions_own_frames() {
+    if !have("cc") {
+        eprintln!("skipping: this machine has no `cc`");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("zeo-cext-unwind-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(
+        dir.join("extconf.rb"),
+        "require \"mkmf\"\n$CFLAGS << \" -fno-exceptions\"\ncreate_makefile(\"unwind_probe\")\n",
+    )
+    .expect("write extconf.rb");
+    std::fs::write(
+        dir.join("unwind_probe.c"),
+        r#"#include <ruby.h>
+
+static VALUE deep3(VALUE self) { rb_raise(rb_eArgError, "three frames deep"); }
+static VALUE deep2(VALUE self) { return deep3(self); }
+static VALUE deep1(VALUE self) { return deep2(self); }
+
+static VALUE body(VALUE arg) { rb_raise(rb_eRuntimeError, "inside rb_protect"); }
+
+static VALUE protected_state(VALUE self)
+{
+    int state = 0;
+    VALUE r = rb_protect(body, Qnil, &state);
+    VALUE err = rb_errinfo();
+    rb_set_errinfo(Qnil);
+    return rb_ary_new_from_args(3, INT2NUM(state), r, err);
+}
+
+void Init_unwind_probe(void)
+{
+    VALUE m = rb_define_module("UnwindProbe");
+    rb_define_singleton_method(m, "deep", deep1, 0);
+    rb_define_singleton_method(m, "protected_state", protected_state, 0);
+}
+"#,
+    )
+    .expect("write unwind_probe.c");
+    zeo::cext::configure(&zeo_bin(), &dir, Path::new("extconf.rb"), &[])
+        .unwrap_or_else(|e| panic!("{e}"));
+    let makefile = std::fs::read_to_string(dir.join("Makefile")).expect("mkmf wrote a Makefile");
+    let cflags = makefile
+        .lines()
+        .find(|l| l.starts_with("CFLAGS"))
+        .expect("the Makefile has a CFLAGS line");
+    assert!(
+        cflags.contains("-fexceptions") && cflags.contains("-fasynchronous-unwind-tables"),
+        "the compile line carries no unwind tables: {cflags}"
+    );
+    assert!(
+        !cflags.contains("-fno-exceptions"),
+        "the gem's -fno-exceptions survived mkmf: {cflags}"
+    );
+    zeo::cext::build_extension(&dir, 4).unwrap_or_else(|e| panic!("{e}"));
+
+    let program = format!(
+        r#"$LOAD_PATH.unshift({dir:?})
+require "unwind_probe"
+begin
+  UnwindProbe.deep
+rescue ArgumentError => e
+  p e.message
+end
+state, r, err = UnwindProbe.protected_state
+p state != 0, r, err.class, err.message
+"#,
+        dir = dir.display().to_string(),
+    );
+    let out = Command::new(zeo_bin())
+        .arg("-e")
+        .arg(&program)
+        .env("ZEO_CACHE", "0")
+        .output()
+        .expect("zeo runs");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "\"three frames deep\"\ntrue\nnil\nRuntimeError\n\"inside rb_protect\"\n",
+        "stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

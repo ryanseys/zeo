@@ -40,7 +40,7 @@ use zeo_rt::RubyValue;
 use zeo_rt::dispatch::{ClassId, RObj, RubyObject};
 
 /// `RUBY_DATA_FUNC`.
-pub type DataFunc = Option<unsafe extern "C" fn(*mut c_void)>;
+pub type DataFunc = Option<unsafe extern "C-unwind" fn(*mut c_void)>;
 
 /// MRI's `struct rb_data_type_struct`. Field order is the vendored header's
 /// and is read by C, so it is `#[repr(C)]` and must not be reordered.
@@ -48,7 +48,7 @@ pub type DataFunc = Option<unsafe extern "C" fn(*mut c_void)>;
 pub struct DataTypeFns {
     pub dmark: DataFunc,
     pub dfree: DataFunc,
-    pub dsize: Option<unsafe extern "C" fn(*const c_void) -> usize>,
+    pub dsize: Option<unsafe extern "C-unwind" fn(*const c_void) -> usize>,
     pub dcompact: DataFunc,
     pub reserved: [*mut c_void; 1],
 }
@@ -532,14 +532,14 @@ mod tests {
 
     static mut MARKED: usize = 0;
 
-    unsafe extern "C" fn count_marks(_p: *mut c_void) {
+    unsafe extern "C-unwind" fn count_marks(_p: *mut c_void) {
         // Two edges, so the test can tell "ran" from "ran once".
         super::mark_edge(RubyValue::Int(1));
         super::mark_edge(RubyValue::Int(2));
         unsafe { MARKED += 1 };
     }
 
-    unsafe extern "C" fn no_free(_p: *mut c_void) {}
+    unsafe extern "C-unwind" fn no_free(_p: *mut c_void) {}
 
     static COUNTING: Descriptor = Descriptor(DataType {
         wrap_struct_name: c"zeo/test/counting".as_ptr(),
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn dfree_runs_when_the_last_reference_goes() {
         static FREED: AtomicUsize = AtomicUsize::new(0);
-        unsafe extern "C" fn counting_free(_p: *mut c_void) {
+        unsafe extern "C-unwind" fn counting_free(_p: *mut c_void) {
             FREED.fetch_add(1, Ordering::Relaxed);
         }
         static FREEING: Descriptor = Descriptor(DataType {

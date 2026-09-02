@@ -92,9 +92,9 @@ where
 /// or unwind), on this (the resumer's) stack.
 pub fn resume<I, Y, R>(coro: &mut Coroutine<I, Y, R>, input: I) -> CoroutineResult<Y, R> {
     let _restore = RestoreOnExit(CURRENT.with(|c| c.get()));
-    // A C extension's `jmp_buf` chain names addresses on ONE stack, so it
-    // travels with the stack for the same reason `CURRENT` does. The
-    // coroutine starts with an empty chain and the resumer gets its own back.
+    // A C extension's protected frames are open on ONE stack, so their
+    // count travels with the stack for the same reason `CURRENT` does. The
+    // coroutine starts with none open and the resumer gets its own back.
     let _cframes = crate::cframes::SwitchGuard::enter();
     coro.resume(input)
 }
@@ -122,7 +122,7 @@ pub fn yield_current<I: 'static, Y: 'static>(value: Y) -> Option<I> {
     // while it is the one executing this very call. The TypeId check above
     // rules out a mismatched cast (invariant 3).
     let yielder = unsafe { &*(ptr as *const Yielder<I, Y>) };
-    // Same reason as in `resume`: this stack's cext chain is ours, and the
+    // Same reason as in `resume`: this stack's frame count is ours, and the
     // resumer replaces it with its own while we sleep.
     let cframes = crate::cframes::save();
     let input = yielder.suspend(value);

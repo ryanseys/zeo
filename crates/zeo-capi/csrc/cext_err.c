@@ -1,16 +1,10 @@
 /*
- * Raising, warning, and `errno`.
- *
- * Two things here cannot be written in Rust.
+ * Raising and warning.
  *
  * The variadic raises take a format string, so they need `<stdarg.h>` for
  * the same reason `cext_va.c` does. Each formats its message with
  * `zeo_cext_vsnprintf` -- MRI's format, `PRIsVALUE` included -- and hands the
  * result to the Rust entry that builds and throws the exception.
- *
- * `errno` is a macro over a per-thread location, and `rb_errno_ptr` hands out
- * that location's ADDRESS. There is no way to name it from Rust, and reading
- * a copy would give an extension a pointer whose writes go nowhere.
  *
  * Every function that MRI marks `noreturn` is `noreturn` here: the Rust side
  * longjmps, and a compiler that believes the call returns emits dead code
@@ -31,11 +25,6 @@ extern void zeo_cext_sys_warning(const char *msg, int code);
 extern void zeo_cext_name_error(VALUE name, const char *msg);
 extern void zeo_cext_loaderror(const char *msg, VALUE path);
 extern void zeo_cext_frozen_error(VALUE obj, const char *msg);
-extern void rb_syserr_fail(int code, const char *msg);
-extern void rb_syserr_fail_str(int code, VALUE msg);
-extern void rb_mod_syserr_fail(VALUE mod, int code, const char *msg);
-extern void rb_mod_syserr_fail_str(VALUE mod, int code, VALUE msg);
-extern void rb_readwrite_syserr_fail(int waiting, int code, const char *msg);
 extern VALUE rb_id2sym(ID id);
 extern void rb_bug(const char *fmt);
 extern int ruby_snprintf(char *buf, size_t cap, const char *fmt, ...);
@@ -49,50 +38,6 @@ extern int ruby_snprintf(char *buf, size_t cap, const char *fmt, ...);
         zeo_cext_vsnprintf((buf), sizeof(buf), (fmt), ap); \
         va_end(ap);                                     \
     } while (0)
-
-/* ---- errno ---------------------------------------------------------- */
-
-int rb_errno(void)
-{
-    return errno;
-}
-
-int *rb_errno_ptr(void)
-{
-    return &errno;
-}
-
-void rb_errno_set(int e)
-{
-    errno = e;
-}
-
-/* ---- the `errno`-reading raises ------------------------------------- */
-
-void rb_sys_fail(const char *msg)
-{
-    rb_syserr_fail(errno, msg);
-}
-
-void rb_sys_fail_str(VALUE msg)
-{
-    rb_syserr_fail_str(errno, msg);
-}
-
-void rb_mod_sys_fail(VALUE mod, const char *msg)
-{
-    rb_mod_syserr_fail(mod, errno, msg);
-}
-
-void rb_mod_sys_fail_str(VALUE mod, VALUE msg)
-{
-    rb_mod_syserr_fail_str(mod, errno, msg);
-}
-
-void rb_readwrite_sys_fail(int waiting, const char *msg)
-{
-    rb_readwrite_syserr_fail(waiting, errno, msg);
-}
 
 /* ---- warnings ------------------------------------------------------- */
 

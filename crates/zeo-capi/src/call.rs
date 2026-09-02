@@ -111,11 +111,11 @@ crate::cext_fn! {
     /// left through a raise, and the pending exception is readable with
     /// `rb_errinfo` until it is cleared or re-raised.
     fn rb_protect(
-        body: unsafe extern "C" fn(Value) -> Value,
+        body: unsafe extern "C-unwind" fn(Value) -> Value,
         arg: Value,
         state: *mut c_int,
     ) -> Value {
-        let out = super::jmp::protect(|| unsafe { body(arg) });
+        let out = super::unwind::protect(|| unsafe { body(arg) });
         if !state.is_null() {
             // SAFETY: the caller's own `int` slot.
             unsafe { state.write(c_int::from(out.is_err())) };
@@ -133,13 +133,13 @@ crate::cext_fn! {
     /// paths, and a raise from the ensure body itself replaces the original
     /// -- which is what ruby's own `ensure` does.
     fn rb_ensure(
-        body: unsafe extern "C" fn(Value) -> Value,
+        body: unsafe extern "C-unwind" fn(Value) -> Value,
         barg: Value,
-        ens: unsafe extern "C" fn(Value) -> Value,
+        ens: unsafe extern "C-unwind" fn(Value) -> Value,
         earg: Value,
     ) -> Value {
-        let out = super::jmp::protect(|| unsafe { body(barg) });
-        let cleanup = super::jmp::protect(|| unsafe { ens(earg) });
+        let out = super::unwind::protect(|| unsafe { body(barg) });
+        let cleanup = super::unwind::protect(|| unsafe { ens(earg) });
         cleanup?;
         out
     }
@@ -148,20 +148,20 @@ crate::cext_fn! {
     /// class list into `classes`; an EMPTY list is `rb_rescue`, which means
     /// `StandardError`.
     fn zeo_cext_rescue2(
-        body: unsafe extern "C" fn(Value) -> Value,
+        body: unsafe extern "C-unwind" fn(Value) -> Value,
         barg: Value,
-        resc: unsafe extern "C" fn(Value, Value) -> Value,
+        resc: unsafe extern "C-unwind" fn(Value, Value) -> Value,
         rarg: Value,
         classes: *const Value,
         nclasses: c_int,
     ) -> Value {
         let wanted = unsafe { args_of(nclasses, classes) };
-        match super::jmp::protect(|| unsafe { body(barg) }) {
+        match super::unwind::protect(|| unsafe { body(barg) }) {
             Ok(v) => Ok(v),
             Err(Signal::Raise(exc)) if rescued_by(&exc, &wanted) => {
                 set_errinfo(&Signal::Raise(exc.clone()));
                 let e = to_value(&exc)?;
-                super::jmp::protect(|| unsafe { resc(rarg, e) })
+                super::unwind::protect(|| unsafe { resc(rarg, e) })
             }
             Err(other) => Err(other),
         }
@@ -515,13 +515,13 @@ pub fn scan_args_plan(fmt: &str) -> Option<(usize, usize, bool, bool)> {
 mod tests {
     use super::*;
 
-    unsafe extern "C" fn returns(v: Value) -> Value {
+    unsafe extern "C-unwind" fn returns(v: Value) -> Value {
         v
     }
-    unsafe extern "C" fn raises(_v: Value) -> Value {
-        super::super::jmp::raise(Signal::Break(RubyValue::Int(1)))
+    unsafe extern "C-unwind" fn raises(_v: Value) -> Value {
+        super::super::unwind::raise(Signal::Break(RubyValue::Int(1)))
     }
-    unsafe extern "C" fn note(v: Value) -> Value {
+    unsafe extern "C-unwind" fn note(v: Value) -> Value {
         RAN.with(|r| r.set(r.get() + 1));
         v
     }
@@ -551,7 +551,7 @@ mod tests {
         assert_eq!(v, value::fixnum(7));
         assert_eq!(RAN.with(std::cell::Cell::get), 1);
 
-        let out = super::super::jmp::protect(|| unsafe {
+        let out = super::super::unwind::protect(|| unsafe {
             rb_ensure(raises, value::Q_NIL, note, value::Q_NIL)
         });
         assert!(out.is_err(), "the body's raise was swallowed");

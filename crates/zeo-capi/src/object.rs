@@ -514,7 +514,7 @@ crate::cext_fn! {
     /// going; anything else stops, which is what `rb_hash_foreach` does too.
     fn rb_ivar_foreach(
         obj: Value,
-        f: unsafe extern "C" fn(Id, Value, usize) -> c_int,
+        f: unsafe extern "C-unwind" fn(Id, Value, usize) -> c_int,
         arg: usize,
     ) -> () {
         let recv = unsafe { value_of(obj) };
@@ -526,7 +526,7 @@ crate::cext_fn! {
             let val = zeo_rt::dispatch::instance_variable_get(&recv, &name)?;
             let RubyValue::Symbol(s) = &name else { continue };
             let (id, val) = ((*s).to_u32() as Id, to_value(&val)?);
-            let go = super::jmp::protect(|| unsafe { f(id, val, arg) })?;
+            let go = super::unwind::protect(|| unsafe { f(id, val, arg) })?;
             if go != 0 {
                 break;
             }

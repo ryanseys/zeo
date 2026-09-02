@@ -32,7 +32,7 @@ use zeo_rt::builtins::wrong_arg_type;
 use zeo_rt::{RubyValue, Signal, Symbol};
 
 /// `rb_block_call_func_t`.
-pub type BlockFunc = unsafe extern "C" fn(Value, Value, c_int, *const Value, Value) -> Value;
+pub type BlockFunc = unsafe extern "C-unwind" fn(Value, Value, c_int, *const Value, Value) -> Value;
 
 /// A C block as the `Option<RubyValue>` `send_value` takes.
 ///
@@ -85,14 +85,14 @@ crate::cext_fn! {
     /// it works the same way -- the block is installed on the frame rather
     /// than passed as an argument.
     fn rb_iterate(
-        body: unsafe extern "C" fn(Value) -> Value,
+        body: unsafe extern "C-unwind" fn(Value) -> Value,
         barg: Value,
         block: Option<BlockFunc>,
         arg: Value,
     ) -> Value {
         let installed = unsafe { as_block(block, arg) };
         let _frame = super::call::BlockFrame::enter(installed);
-        super::jmp::protect(|| unsafe { body(barg) })
+        super::unwind::protect(|| unsafe { body(barg) })
     }
 
     /// `rb_each(obj)`: `obj.each` with the current block, which is what
@@ -675,7 +675,7 @@ crate::cext_fn! {
     /// being visited, run it with `recur = 1` instead. This is what stops
     /// `[a].tap { a << it }.inspect` from looping forever.
     fn rb_exec_recursive(
-        f: unsafe extern "C" fn(Value, Value, c_int) -> Value,
+        f: unsafe extern "C-unwind" fn(Value, Value, c_int) -> Value,
         obj: Value,
         arg: Value,
     ) -> Value {
@@ -685,7 +685,7 @@ crate::cext_fn! {
     /// `rb_exec_recursive_outer`: on recursion it does not call `f` at all,
     /// it throws to the OUTERMOST frame. `Array#hash` relies on that.
     fn rb_exec_recursive_outer(
-        f: unsafe extern "C" fn(Value, Value, c_int) -> Value,
+        f: unsafe extern "C-unwind" fn(Value, Value, c_int) -> Value,
         obj: Value,
         arg: Value,
     ) -> Value {
@@ -693,7 +693,7 @@ crate::cext_fn! {
     }
 
     fn rb_exec_recursive_paired(
-        f: unsafe extern "C" fn(Value, Value, c_int) -> Value,
+        f: unsafe extern "C-unwind" fn(Value, Value, c_int) -> Value,
         obj: Value,
         paired: Value,
         arg: Value,
@@ -702,7 +702,7 @@ crate::cext_fn! {
     }
 
     fn rb_exec_recursive_paired_outer(
-        f: unsafe extern "C" fn(Value, Value, c_int) -> Value,
+        f: unsafe extern "C-unwind" fn(Value, Value, c_int) -> Value,
         obj: Value,
         paired: Value,
         arg: Value,
@@ -760,7 +760,7 @@ fn protect_into(
     state: *mut c_int,
     body: impl FnOnce() -> Result<Value, Signal>,
 ) -> Result<Value, Signal> {
-    let out = super::jmp::protect(body);
+    let out = super::unwind::protect(body);
     let failed = matches!(out, Ok(Err(_)) | Err(_));
     if !state.is_null() {
         // SAFETY: the caller's own `int` slot.
@@ -823,7 +823,7 @@ thread_local! {
 }
 
 fn exec_recursive(
-    f: unsafe extern "C" fn(Value, Value, c_int) -> Value,
+    f: unsafe extern "C-unwind" fn(Value, Value, c_int) -> Value,
     obj: Value,
     paired: Value,
     arg: Value,
@@ -831,11 +831,11 @@ fn exec_recursive(
     let seen = VISITING.with_borrow(|v| v.contains(&(obj, paired)));
     if seen {
         // SAFETY: the caller's own function; `recur = 1` is MRI's flag.
-        return super::jmp::protect(|| unsafe { f(obj, arg, 1) });
+        return super::unwind::protect(|| unsafe { f(obj, arg, 1) });
     }
     VISITING.with_borrow_mut(|v| v.push((obj, paired)));
     // SAFETY: as above.
-    let out = super::jmp::protect(|| unsafe { f(obj, arg, 0) });
+    let out = super::unwind::protect(|| unsafe { f(obj, arg, 0) });
     VISITING.with_borrow_mut(|v| {
         v.retain(|p| *p != (obj, paired));
     });

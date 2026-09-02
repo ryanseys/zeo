@@ -93,7 +93,7 @@ impl Drop for Scope {
         super::format::flush_texts();
         super::gc::flush_tmp_buffers();
         let pinned = SCOPES.with_borrow_mut(|s| {
-            // Not an equality assert: `jmp::protect` may already have unwound
+            // Not an equality assert: `unwind::protect` may already have unwound
             // this scope by hand after a longjmp, and then there is nothing
             // left to pop and nothing wrong.
             debug_assert!(s.len() <= self.depth, "cext scopes popped out of order");
@@ -127,44 +127,9 @@ pub(super) fn pin(addr: usize) {
     });
 }
 
-/// How deep the scope stack is. `cext::jmp` unwinds against it.
+/// How deep the scope stack is. Tests read it.
 pub fn depth() -> usize {
     SCOPES.with_borrow(Vec::len)
-}
-
-/// Pop every scope above `depth`, releasing its pins.
-///
-/// A `longjmp` out of C skips `Scope::drop` for every frame it flies past, so
-/// `cext::jmp::protect` calls this on the raising path. Without it every
-/// handle an extension touched before it raised would stay pinned for the
-/// life of the process, and a gem that raises in a loop would be an
-/// unbounded leak.
-///
-/// The `Scope` values themselves are gone with the C stack; this is only the
-/// bookkeeping they would have done.
-pub(super) fn unwind_to(depth: usize) {
-    if depth < SCOPES.with_borrow(Vec::len) {
-        // Same reason as in `Scope::drop`: a raise must not lose a write the
-        // extension had already made through `RSTRING_PTR`.
-        super::string::flush_pins();
-        super::collection::flush_projections();
-        super::view::flush_views();
-        super::format::flush_texts();
-        super::gc::flush_tmp_buffers();
-    }
-    loop {
-        let Some(pinned) = SCOPES.with_borrow_mut(|s| (s.len() > depth).then(|| s.pop()).flatten())
-        else {
-            return;
-        };
-        // Same rule as `Scope::drop`: mark-rooted stores survive the raise.
-        for &addr in &pinned {
-            super::data::refresh_marks_for(addr);
-        }
-        for addr in pinned {
-            super::handles::unpin(addr);
-        }
-    }
 }
 
 #[cfg(test)]

@@ -67,7 +67,7 @@ fn nested(outer: &str, inner: &str) -> Result<RubyValue, Signal> {
 /// `f` must have that shape and must live as long as the process, which is
 /// true of every function in a loaded extension.
 pub(super) unsafe fn block_proc(
-    f: unsafe extern "C" fn(Value, Value, c_int, *const Value, Value) -> Value,
+    f: unsafe extern "C-unwind" fn(Value, Value, c_int, *const Value, Value) -> Value,
     arg: Value,
 ) -> zeo_rt::RProc {
     // `usize` rather than the pointer, so the closure is `Send + Sync`.
@@ -86,9 +86,14 @@ pub(super) unsafe fn block_proc(
             };
             // SAFETY: the caller of `block_proc` promised the shape, and
             // every `VALUE` here was pinned one statement ago.
-            let body: unsafe extern "C" fn(Value, Value, c_int, *const Value, Value) -> Value =
-                unsafe { std::mem::transmute(addr) };
-            let out = super::jmp::protect(|| unsafe {
+            let body: unsafe extern "C-unwind" fn(
+                Value,
+                Value,
+                c_int,
+                *const Value,
+                Value,
+            ) -> Value = unsafe { std::mem::transmute(addr) };
+            let out = super::unwind::protect(|| unsafe {
                 body(first, arg, raw.len() as c_int, raw.as_ptr(), blk)
             })?;
             scope.keep(out);
@@ -112,7 +117,7 @@ crate::cext_fn! {
     /// `f` must not call back into Ruby -- MRI's contract too, and the
     /// reason `rb_thread_call_with_gvl` exists.
     fn rb_thread_call_without_gvl(
-        f: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        f: unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void,
         arg: *mut c_void,
         _ubf: *mut c_void,
         _ubf_arg: *mut c_void,
@@ -127,7 +132,7 @@ crate::cext_fn! {
     /// tune MRI's interrupt handling around the release; zeo has no pending
     /// interrupt to consult there, so every flag is a no-op and `f` runs.
     fn rb_nogvl(
-        f: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        f: unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void,
         arg: *mut c_void,
         _ubf: *mut c_void,
         _ubf_arg: *mut c_void,
@@ -141,7 +146,7 @@ crate::cext_fn! {
     /// thread was interrupted before `f` ran. zeo has no interrupt to check
     /// at that point, so `f` always runs.
     fn rb_thread_call_without_gvl2(
-        f: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        f: unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void,
         arg: *mut c_void,
         ubf: *mut c_void,
         ubf_arg: *mut c_void,
@@ -159,7 +164,7 @@ crate::cext_fn! {
     /// only to an extension that relies on the nesting for mutual exclusion
     /// rather than for correctness of the Ruby calls inside.
     fn rb_thread_call_with_gvl(
-        f: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        f: unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void,
         arg: *mut c_void,
     ) -> *mut c_void {
         // SAFETY: the caller's own function and argument.
@@ -199,15 +204,15 @@ crate::cext_fn! {
     ///
     /// The body is a bare `VALUE (*)(void *)`, not `rb_block_call_func_t`, so
     /// it needs its own wrapper rather than [`block_proc`].
-    fn rb_thread_create(f: unsafe extern "C" fn(*mut c_void) -> Value, arg: *mut c_void) -> Value {
+    fn rb_thread_create(f: unsafe extern "C-unwind" fn(*mut c_void) -> Value, arg: *mut c_void) -> Value {
         let (addr, argp) = (f as usize, arg as usize);
         let body = zeo_rt::rproc::ProcBuilder::from_rust(
             move |_recv, _args, _block| {
                 let scope = super::scope::Scope::enter();
                 // SAFETY: the caller promised the shape and the lifetime.
-                let f: unsafe extern "C" fn(*mut c_void) -> Value =
+                let f: unsafe extern "C-unwind" fn(*mut c_void) -> Value =
                     unsafe { std::mem::transmute(addr) };
-                let out = super::jmp::protect(|| unsafe { f(argp as *mut c_void) })?;
+                let out = super::unwind::protect(|| unsafe { f(argp as *mut c_void) })?;
                 scope.keep(out);
                 let answer = unsafe { value_of(out) };
                 drop(scope);
@@ -314,12 +319,12 @@ crate::cext_fn! {
     /// reason an extension uses this rather than lock/unlock by hand.
     fn rb_mutex_synchronize(
         m: Value,
-        func: unsafe extern "C" fn(Value) -> Value,
+        func: unsafe extern "C-unwind" fn(Value) -> Value,
         arg: Value,
     ) -> Value {
         let mu = unsafe { value_of(m) };
         send(&mu, "lock", &[])?;
-        let out = super::jmp::protect(|| unsafe { func(arg) });
+        let out = super::unwind::protect(|| unsafe { func(arg) });
         send(&mu, "unlock", &[])?;
         out
     }
@@ -331,7 +336,7 @@ crate::cext_fn! {
     }
 
     fn rb_fiber_new(
-        f: unsafe extern "C" fn(Value, Value, c_int, *const Value, Value) -> Value,
+        f: unsafe extern "C-unwind" fn(Value, Value, c_int, *const Value, Value) -> Value,
         arg: Value,
     ) -> Value {
         new_fiber(f, arg, None)
@@ -340,7 +345,7 @@ crate::cext_fn! {
     /// `rb_fiber_new_storage(f, arg, storage)`: the same, with the fiber's
     /// initial `Fiber#storage`.
     fn rb_fiber_new_storage(
-        f: unsafe extern "C" fn(Value, Value, c_int, *const Value, Value) -> Value,
+        f: unsafe extern "C-unwind" fn(Value, Value, c_int, *const Value, Value) -> Value,
         arg: Value,
         storage: Value,
     ) -> Value {
@@ -388,7 +393,7 @@ fn sleep_for(sec: Option<RubyValue>) -> Result<(), Signal> {
 }
 
 fn new_fiber(
-    f: unsafe extern "C" fn(Value, Value, c_int, *const Value, Value) -> Value,
+    f: unsafe extern "C-unwind" fn(Value, Value, c_int, *const Value, Value) -> Value,
     arg: Value,
     storage: Option<RubyValue>,
 ) -> Result<Value, Signal> {

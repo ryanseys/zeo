@@ -197,6 +197,54 @@ crate::cext_fn! {
         Err(tagged_value(&m, syserr(code, Some(&what)))?)
     }
 
+    /// `errno` is a macro over a per-thread location, and `rb_errno_ptr`
+    /// hands out that location's address -- the libc's own answer.
+    fn rb_errno() -> c_int {
+        Ok(errno())
+    }
+
+    fn rb_errno_ptr() -> *mut c_int {
+        Ok(errno_location())
+    }
+
+    fn rb_errno_set(e: c_int) -> () {
+        unsafe { errno_location().write(e) };
+        Ok(())
+    }
+
+    /// `rb_sys_fail(mesg)`: `rb_syserr_fail` for the current `errno`, read
+    /// first thing so nothing here can move it.
+    fn rb_sys_fail(msg: *const c_char) -> () {
+        let code = errno();
+        let what = if msg.is_null() { None } else { Some(unsafe { cstr(msg) }) };
+        Err(syserr(code, what.as_deref()))
+    }
+
+    fn rb_sys_fail_str(msg: Value) -> () {
+        let code = errno();
+        let what = unsafe { text_of(msg)? };
+        Err(syserr(code, Some(&what)))
+    }
+
+    fn rb_mod_sys_fail(module: Value, msg: *const c_char) -> () {
+        let code = errno();
+        let what = unsafe { cstr(msg) };
+        Err(tagged(module, syserr(code, Some(&what)))?)
+    }
+
+    fn rb_mod_sys_fail_str(module: Value, msg: Value) -> () {
+        let code = errno();
+        let what = unsafe { text_of(msg)? };
+        Err(tagged(module, syserr(code, Some(&what)))?)
+    }
+
+    fn rb_readwrite_sys_fail(waiting: c_int, msg: *const c_char) -> () {
+        let code = errno();
+        let what = unsafe { cstr(msg) };
+        let m = wait_module(waiting)?;
+        Err(tagged_value(&m, syserr(code, Some(&what)))?)
+    }
+
     // ---- warnings ------------------------------------------------------
 
     /// `rb_warn`'s worker, and `rb_warning`'s and `rb_category_warn`'s: the
@@ -308,4 +356,20 @@ fn category_name(cat: c_int) -> Option<&'static str> {
         4 => Some("strict_unused_block"),
         _ => None,
     }
+}
+
+/// The calling thread's `errno` slot.
+fn errno_location() -> *mut c_int {
+    #[cfg(target_vendor = "apple")]
+    unsafe {
+        libc::__error()
+    }
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::__errno_location()
+    }
+}
+
+fn errno() -> c_int {
+    unsafe { *errno_location() }
 }

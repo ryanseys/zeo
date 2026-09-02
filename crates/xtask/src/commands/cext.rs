@@ -396,9 +396,10 @@ fn parse_ast(text: &str) -> Result<Vec<Decl>, Error> {
 fn implemented() -> Result<Vec<String>, Error> {
     // Two spellings reach the same place: a hand-written export, and the
     // `cext_fn!` macro that wraps a `Result` body into one.
-    let exported =
-        Regex::new(r#"#\[unsafe\(no_mangle\)\]\s*(?:pub\s+)?(?:unsafe\s+)?extern "C" fn (\w+)"#)
-            .expect("a valid pattern");
+    let exported = Regex::new(
+        r#"#\[unsafe\(no_mangle\)\]\s*(?:pub\s+)?(?:unsafe\s+)?extern "C(?:-unwind)?" fn (\w+)"#,
+    )
+    .expect("a valid pattern");
     let wrapped =
         Regex::new(r"(?m)^\s*fn (rb_\w+|ruby_\w+|rbimpl_zeo_\w+)\s*\(").expect("a valid pattern");
     // The variadic entries live in `csrc/*.c`, because Rust cannot read a
@@ -618,7 +619,7 @@ fn render_stubs(decls: &[Decl]) -> String {
         .iter()
         .map(|d| {
             format!(
-                "#[unsafe(no_mangle)]\npub extern \"C\" fn {}() -> ! {{\n    unimplemented({:?})\n}}\n",
+                "#[unsafe(no_mangle)]\npub extern \"C-unwind\" fn {}() -> ! {{\n    unimplemented({:?})\n}}\n",
                 d.name, d.name
             )
         })
@@ -627,7 +628,7 @@ fn render_stubs(decls: &[Decl]) -> String {
         .iter()
         .map(|d| {
             format!(
-                "#[unsafe(no_mangle)]\npub extern \"C\" fn {}() -> ! {{\n    refused({:?}, {:?})\n}}\n",
+                "#[unsafe(no_mangle)]\npub extern \"C-unwind\" fn {}() -> ! {{\n    refused({:?}, {:?})\n}}\n",
                 d.name,
                 d.name,
                 refused(&d.name).expect("a refused decl carries a reason")
@@ -642,7 +643,7 @@ fn render_stubs(decls: &[Decl]) -> String {
     } else {
         "/// Raise, naming the symbol the extension asked for.\n\
          fn unimplemented(what: &'static str) -> ! {\n    \
-             crate::jmp::raise(zeo_rt::builtins::not_impl_error!(\n        \
+             crate::unwind::raise(zeo_rt::builtins::not_impl_error!(\n        \
                  \"{what} is not implemented by zeo\"\n    \
              ))\n\
          }\n"
@@ -719,7 +720,7 @@ pub fn global(name: &str) -> Option<usize> {{
 /// travels with the raise, so a gem author reading the message learns what to
 /// reach for instead.
 fn refused(what: &'static str, why: &'static str) -> ! {{
-    crate::jmp::raise(zeo_rt::builtins::not_impl_error!(
+    crate::unwind::raise(zeo_rt::builtins::not_impl_error!(
         "{{what}} is not supported by zeo: {{why}}"
     ))
 }}

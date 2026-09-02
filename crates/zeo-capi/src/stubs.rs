@@ -186,7 +186,7 @@ pub fn global(name: &str) -> Option<usize> {
 
 /// Raise, naming the symbol the extension asked for.
 fn unimplemented(what: &'static str) -> ! {
-    crate::jmp::raise(zeo_rt::builtins::not_impl_error!(
+    crate::unwind::raise(zeo_rt::builtins::not_impl_error!(
         "{what} is not implemented by zeo"
     ))
 }
@@ -195,7 +195,7 @@ fn unimplemented(what: &'static str) -> ! {
 /// travels with the raise, so a gem author reading the message learns what to
 /// reach for instead.
 fn refused(what: &'static str, why: &'static str) -> ! {
-    crate::jmp::raise(zeo_rt::builtins::not_impl_error!(
+    crate::unwind::raise(zeo_rt::builtins::not_impl_error!(
         "{what} is not supported by zeo: {why}"
     ))
 }
@@ -416,651 +416,651 @@ pub static ruby_release_date: Global = unfilled();
 pub static ruby_version: Global = unfilled();
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_add_event_hook2() -> ! {
+pub extern "C-unwind" fn rb_add_event_hook2() -> ! {
     unimplemented("rb_add_event_hook2")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_debug_inspector_backtrace_locations() -> ! {
+pub extern "C-unwind" fn rb_debug_inspector_backtrace_locations() -> ! {
     unimplemented("rb_debug_inspector_backtrace_locations")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_debug_inspector_current_depth() -> ! {
+pub extern "C-unwind" fn rb_debug_inspector_current_depth() -> ! {
     unimplemented("rb_debug_inspector_current_depth")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_debug_inspector_frame_binding_get() -> ! {
+pub extern "C-unwind" fn rb_debug_inspector_frame_binding_get() -> ! {
     unimplemented("rb_debug_inspector_frame_binding_get")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_debug_inspector_frame_class_get() -> ! {
+pub extern "C-unwind" fn rb_debug_inspector_frame_class_get() -> ! {
     unimplemented("rb_debug_inspector_frame_class_get")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_debug_inspector_frame_depth() -> ! {
+pub extern "C-unwind" fn rb_debug_inspector_frame_depth() -> ! {
     unimplemented("rb_debug_inspector_frame_depth")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_debug_inspector_frame_iseq_get() -> ! {
+pub extern "C-unwind" fn rb_debug_inspector_frame_iseq_get() -> ! {
     unimplemented("rb_debug_inspector_frame_iseq_get")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_debug_inspector_frame_self_get() -> ! {
+pub extern "C-unwind" fn rb_debug_inspector_frame_self_get() -> ! {
     unimplemented("rb_debug_inspector_frame_self_get")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_debug_inspector_open() -> ! {
+pub extern "C-unwind" fn rb_debug_inspector_open() -> ! {
     unimplemented("rb_debug_inspector_open")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_append() -> ! {
+pub extern "C-unwind" fn rb_econv_append() -> ! {
     unimplemented("rb_econv_append")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_asciicompat_encoding() -> ! {
+pub extern "C-unwind" fn rb_econv_asciicompat_encoding() -> ! {
     unimplemented("rb_econv_asciicompat_encoding")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_binmode() -> ! {
+pub extern "C-unwind" fn rb_econv_binmode() -> ! {
     unimplemented("rb_econv_binmode")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_check_error() -> ! {
+pub extern "C-unwind" fn rb_econv_check_error() -> ! {
     unimplemented("rb_econv_check_error")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_close() -> ! {
+pub extern "C-unwind" fn rb_econv_close() -> ! {
     unimplemented("rb_econv_close")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_convert() -> ! {
+pub extern "C-unwind" fn rb_econv_convert() -> ! {
     unimplemented("rb_econv_convert")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_decorate_at_first() -> ! {
+pub extern "C-unwind" fn rb_econv_decorate_at_first() -> ! {
     unimplemented("rb_econv_decorate_at_first")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_decorate_at_last() -> ! {
+pub extern "C-unwind" fn rb_econv_decorate_at_last() -> ! {
     unimplemented("rb_econv_decorate_at_last")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_encoding_to_insert_output() -> ! {
+pub extern "C-unwind" fn rb_econv_encoding_to_insert_output() -> ! {
     unimplemented("rb_econv_encoding_to_insert_output")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_has_convpath_p() -> ! {
+pub extern "C-unwind" fn rb_econv_has_convpath_p() -> ! {
     unimplemented("rb_econv_has_convpath_p")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_insert_output() -> ! {
+pub extern "C-unwind" fn rb_econv_insert_output() -> ! {
     unimplemented("rb_econv_insert_output")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_make_exception() -> ! {
+pub extern "C-unwind" fn rb_econv_make_exception() -> ! {
     unimplemented("rb_econv_make_exception")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_open() -> ! {
+pub extern "C-unwind" fn rb_econv_open() -> ! {
     unimplemented("rb_econv_open")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_open_exc() -> ! {
+pub extern "C-unwind" fn rb_econv_open_exc() -> ! {
     unimplemented("rb_econv_open_exc")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_open_opts() -> ! {
+pub extern "C-unwind" fn rb_econv_open_opts() -> ! {
     unimplemented("rb_econv_open_opts")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_prepare_options() -> ! {
+pub extern "C-unwind" fn rb_econv_prepare_options() -> ! {
     unimplemented("rb_econv_prepare_options")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_prepare_opts() -> ! {
+pub extern "C-unwind" fn rb_econv_prepare_opts() -> ! {
     unimplemented("rb_econv_prepare_opts")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_putback() -> ! {
+pub extern "C-unwind" fn rb_econv_putback() -> ! {
     unimplemented("rb_econv_putback")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_putbackable() -> ! {
+pub extern "C-unwind" fn rb_econv_putbackable() -> ! {
     unimplemented("rb_econv_putbackable")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_set_replacement() -> ! {
+pub extern "C-unwind" fn rb_econv_set_replacement() -> ! {
     unimplemented("rb_econv_set_replacement")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_str_append() -> ! {
+pub extern "C-unwind" fn rb_econv_str_append() -> ! {
     unimplemented("rb_econv_str_append")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_str_convert() -> ! {
+pub extern "C-unwind" fn rb_econv_str_convert() -> ! {
     unimplemented("rb_econv_str_convert")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_substr_append() -> ! {
+pub extern "C-unwind" fn rb_econv_substr_append() -> ! {
     unimplemented("rb_econv_substr_append")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_econv_substr_convert() -> ! {
+pub extern "C-unwind" fn rb_econv_substr_convert() -> ! {
     unimplemented("rb_econv_substr_convert")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_internal_thread_add_event_hook() -> ! {
+pub extern "C-unwind" fn rb_internal_thread_add_event_hook() -> ! {
     unimplemented("rb_internal_thread_add_event_hook")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_internal_thread_remove_event_hook() -> ! {
+pub extern "C-unwind" fn rb_internal_thread_remove_event_hook() -> ! {
     unimplemented("rb_internal_thread_remove_event_hook")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_io_extract_encoding_option() -> ! {
+pub extern "C-unwind" fn rb_io_extract_encoding_option() -> ! {
     unimplemented("rb_io_extract_encoding_option")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_io_extract_modeenc() -> ! {
+pub extern "C-unwind" fn rb_io_extract_modeenc() -> ! {
     unimplemented("rb_io_extract_modeenc")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_io_make_open_file() -> ! {
+pub extern "C-unwind" fn rb_io_make_open_file() -> ! {
     unimplemented("rb_io_make_open_file")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_available_p() -> ! {
+pub extern "C-unwind" fn rb_memory_view_available_p() -> ! {
     unimplemented("rb_memory_view_available_p")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_extract_item_members() -> ! {
+pub extern "C-unwind" fn rb_memory_view_extract_item_members() -> ! {
     unimplemented("rb_memory_view_extract_item_members")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_fill_contiguous_strides() -> ! {
+pub extern "C-unwind" fn rb_memory_view_fill_contiguous_strides() -> ! {
     unimplemented("rb_memory_view_fill_contiguous_strides")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_get() -> ! {
+pub extern "C-unwind" fn rb_memory_view_get() -> ! {
     unimplemented("rb_memory_view_get")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_get_item() -> ! {
+pub extern "C-unwind" fn rb_memory_view_get_item() -> ! {
     unimplemented("rb_memory_view_get_item")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_get_item_pointer() -> ! {
+pub extern "C-unwind" fn rb_memory_view_get_item_pointer() -> ! {
     unimplemented("rb_memory_view_get_item_pointer")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_init_as_byte_array() -> ! {
+pub extern "C-unwind" fn rb_memory_view_init_as_byte_array() -> ! {
     unimplemented("rb_memory_view_init_as_byte_array")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_is_column_major_contiguous() -> ! {
+pub extern "C-unwind" fn rb_memory_view_is_column_major_contiguous() -> ! {
     unimplemented("rb_memory_view_is_column_major_contiguous")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_is_row_major_contiguous() -> ! {
+pub extern "C-unwind" fn rb_memory_view_is_row_major_contiguous() -> ! {
     unimplemented("rb_memory_view_is_row_major_contiguous")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_item_size_from_format() -> ! {
+pub extern "C-unwind" fn rb_memory_view_item_size_from_format() -> ! {
     unimplemented("rb_memory_view_item_size_from_format")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_parse_item_format() -> ! {
+pub extern "C-unwind" fn rb_memory_view_parse_item_format() -> ! {
     unimplemented("rb_memory_view_parse_item_format")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_prepare_item_desc() -> ! {
+pub extern "C-unwind" fn rb_memory_view_prepare_item_desc() -> ! {
     unimplemented("rb_memory_view_prepare_item_desc")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_register() -> ! {
+pub extern "C-unwind" fn rb_memory_view_register() -> ! {
     unimplemented("rb_memory_view_register")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_memory_view_release() -> ! {
+pub extern "C-unwind" fn rb_memory_view_release() -> ! {
     unimplemented("rb_memory_view_release")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_postponed_job_preregister() -> ! {
+pub extern "C-unwind" fn rb_postponed_job_preregister() -> ! {
     unimplemented("rb_postponed_job_preregister")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_postponed_job_register() -> ! {
+pub extern "C-unwind" fn rb_postponed_job_register() -> ! {
     unimplemented("rb_postponed_job_register")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_postponed_job_register_one() -> ! {
+pub extern "C-unwind" fn rb_postponed_job_register_one() -> ! {
     unimplemented("rb_postponed_job_register_one")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_postponed_job_trigger() -> ! {
+pub extern "C-unwind" fn rb_postponed_job_trigger() -> ! {
     unimplemented("rb_postponed_job_trigger")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_frame_absolute_path() -> ! {
+pub extern "C-unwind" fn rb_profile_frame_absolute_path() -> ! {
     unimplemented("rb_profile_frame_absolute_path")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_frame_base_label() -> ! {
+pub extern "C-unwind" fn rb_profile_frame_base_label() -> ! {
     unimplemented("rb_profile_frame_base_label")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_frame_classpath() -> ! {
+pub extern "C-unwind" fn rb_profile_frame_classpath() -> ! {
     unimplemented("rb_profile_frame_classpath")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_frame_first_lineno() -> ! {
+pub extern "C-unwind" fn rb_profile_frame_first_lineno() -> ! {
     unimplemented("rb_profile_frame_first_lineno")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_frame_full_label() -> ! {
+pub extern "C-unwind" fn rb_profile_frame_full_label() -> ! {
     unimplemented("rb_profile_frame_full_label")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_frame_label() -> ! {
+pub extern "C-unwind" fn rb_profile_frame_label() -> ! {
     unimplemented("rb_profile_frame_label")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_frame_method_name() -> ! {
+pub extern "C-unwind" fn rb_profile_frame_method_name() -> ! {
     unimplemented("rb_profile_frame_method_name")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_frame_path() -> ! {
+pub extern "C-unwind" fn rb_profile_frame_path() -> ! {
     unimplemented("rb_profile_frame_path")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_frame_qualified_method_name() -> ! {
+pub extern "C-unwind" fn rb_profile_frame_qualified_method_name() -> ! {
     unimplemented("rb_profile_frame_qualified_method_name")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_frame_singleton_method_p() -> ! {
+pub extern "C-unwind" fn rb_profile_frame_singleton_method_p() -> ! {
     unimplemented("rb_profile_frame_singleton_method_p")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_frames() -> ! {
+pub extern "C-unwind" fn rb_profile_frames() -> ! {
     unimplemented("rb_profile_frames")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_profile_thread_frames() -> ! {
+pub extern "C-unwind" fn rb_profile_thread_frames() -> ! {
     unimplemented("rb_profile_thread_frames")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_rand_bytes_int32() -> ! {
+pub extern "C-unwind" fn rb_rand_bytes_int32() -> ! {
     unimplemented("rb_rand_bytes_int32")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_random_base_init() -> ! {
+pub extern "C-unwind" fn rb_random_base_init() -> ! {
     unimplemented("rb_random_base_init")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_random_mark() -> ! {
+pub extern "C-unwind" fn rb_random_mark() -> ! {
     unimplemented("rb_random_mark")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_reg_adjust_startpos() -> ! {
+pub extern "C-unwind" fn rb_reg_adjust_startpos() -> ! {
     unimplemented("rb_reg_adjust_startpos")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_reg_onig_match() -> ! {
+pub extern "C-unwind" fn rb_reg_onig_match() -> ! {
     unimplemented("rb_reg_onig_match")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_reg_prepare_re() -> ! {
+pub extern "C-unwind" fn rb_reg_prepare_re() -> ! {
     unimplemented("rb_reg_prepare_re")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_reg_region_copy() -> ! {
+pub extern "C-unwind" fn rb_reg_region_copy() -> ! {
     unimplemented("rb_reg_region_copy")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_reg_regsub() -> ! {
+pub extern "C-unwind" fn rb_reg_regsub() -> ! {
     unimplemented("rb_reg_regsub")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_reg_search() -> ! {
+pub extern "C-unwind" fn rb_reg_search() -> ! {
     unimplemented("rb_reg_search")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_remove_event_hook_with_data() -> ! {
+pub extern "C-unwind" fn rb_remove_event_hook_with_data() -> ! {
     unimplemented("rb_remove_event_hook_with_data")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_thread_add_event_hook() -> ! {
+pub extern "C-unwind" fn rb_thread_add_event_hook() -> ! {
     unimplemented("rb_thread_add_event_hook")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_thread_add_event_hook2() -> ! {
+pub extern "C-unwind" fn rb_thread_add_event_hook2() -> ! {
     unimplemented("rb_thread_add_event_hook2")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_thread_remove_event_hook() -> ! {
+pub extern "C-unwind" fn rb_thread_remove_event_hook() -> ! {
     unimplemented("rb_thread_remove_event_hook")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_thread_remove_event_hook_with_data() -> ! {
+pub extern "C-unwind" fn rb_thread_remove_event_hook_with_data() -> ! {
     unimplemented("rb_thread_remove_event_hook_with_data")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_binding() -> ! {
+pub extern "C-unwind" fn rb_tracearg_binding() -> ! {
     unimplemented("rb_tracearg_binding")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_callee_id() -> ! {
+pub extern "C-unwind" fn rb_tracearg_callee_id() -> ! {
     unimplemented("rb_tracearg_callee_id")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_defined_class() -> ! {
+pub extern "C-unwind" fn rb_tracearg_defined_class() -> ! {
     unimplemented("rb_tracearg_defined_class")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_eval_script() -> ! {
+pub extern "C-unwind" fn rb_tracearg_eval_script() -> ! {
     unimplemented("rb_tracearg_eval_script")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_event() -> ! {
+pub extern "C-unwind" fn rb_tracearg_event() -> ! {
     unimplemented("rb_tracearg_event")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_event_flag() -> ! {
+pub extern "C-unwind" fn rb_tracearg_event_flag() -> ! {
     unimplemented("rb_tracearg_event_flag")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_from_tracepoint() -> ! {
+pub extern "C-unwind" fn rb_tracearg_from_tracepoint() -> ! {
     unimplemented("rb_tracearg_from_tracepoint")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_instruction_sequence() -> ! {
+pub extern "C-unwind" fn rb_tracearg_instruction_sequence() -> ! {
     unimplemented("rb_tracearg_instruction_sequence")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_lineno() -> ! {
+pub extern "C-unwind" fn rb_tracearg_lineno() -> ! {
     unimplemented("rb_tracearg_lineno")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_method_id() -> ! {
+pub extern "C-unwind" fn rb_tracearg_method_id() -> ! {
     unimplemented("rb_tracearg_method_id")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_object() -> ! {
+pub extern "C-unwind" fn rb_tracearg_object() -> ! {
     unimplemented("rb_tracearg_object")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_parameters() -> ! {
+pub extern "C-unwind" fn rb_tracearg_parameters() -> ! {
     unimplemented("rb_tracearg_parameters")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_path() -> ! {
+pub extern "C-unwind" fn rb_tracearg_path() -> ! {
     unimplemented("rb_tracearg_path")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_raised_exception() -> ! {
+pub extern "C-unwind" fn rb_tracearg_raised_exception() -> ! {
     unimplemented("rb_tracearg_raised_exception")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_return_value() -> ! {
+pub extern "C-unwind" fn rb_tracearg_return_value() -> ! {
     unimplemented("rb_tracearg_return_value")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracearg_self() -> ! {
+pub extern "C-unwind" fn rb_tracearg_self() -> ! {
     unimplemented("rb_tracearg_self")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracepoint_disable() -> ! {
+pub extern "C-unwind" fn rb_tracepoint_disable() -> ! {
     unimplemented("rb_tracepoint_disable")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracepoint_enable() -> ! {
+pub extern "C-unwind" fn rb_tracepoint_enable() -> ! {
     unimplemented("rb_tracepoint_enable")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracepoint_enabled_p() -> ! {
+pub extern "C-unwind" fn rb_tracepoint_enabled_p() -> ! {
     unimplemented("rb_tracepoint_enabled_p")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_tracepoint_new() -> ! {
+pub extern "C-unwind" fn rb_tracepoint_new() -> ! {
     unimplemented("rb_tracepoint_new")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_enc_find_basename() -> ! {
+pub extern "C-unwind" fn ruby_enc_find_basename() -> ! {
     unimplemented("ruby_enc_find_basename")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_enc_find_extname() -> ! {
+pub extern "C-unwind" fn ruby_enc_find_extname() -> ! {
     unimplemented("ruby_enc_find_extname")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_vm_destruct() -> ! {
+pub extern "C-unwind" fn ruby_vm_destruct() -> ! {
     unimplemented("ruby_vm_destruct")
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_add_event_hook() -> ! {
+pub extern "C-unwind" fn rb_add_event_hook() -> ! {
     refused(
         "rb_add_event_hook",
         "the C-level TracePoint; zeo's TracePoint is Ruby-level and its event set does not line up with rb_event_flag_t",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_big_2comp() -> ! {
+pub extern "C-unwind" fn rb_big_2comp() -> ! {
     refused(
         "rb_big_2comp",
         "this exposes MRI's Bignum digit array, which zeo does not have; rb_integer_pack and rb_integer_unpack are the supported way",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_big_new() -> ! {
+pub extern "C-unwind" fn rb_big_new() -> ! {
     refused(
         "rb_big_new",
         "this exposes MRI's Bignum digit array, which zeo does not have; rb_integer_pack and rb_integer_unpack are the supported way",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_big_pack() -> ! {
+pub extern "C-unwind" fn rb_big_pack() -> ! {
     refused(
         "rb_big_pack",
         "this exposes MRI's Bignum digit array, which zeo does not have; rb_integer_pack and rb_integer_unpack are the supported way",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_big_resize() -> ! {
+pub extern "C-unwind" fn rb_big_resize() -> ! {
     refused(
         "rb_big_resize",
         "this exposes MRI's Bignum digit array, which zeo does not have; rb_integer_pack and rb_integer_unpack are the supported way",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_big_unpack() -> ! {
+pub extern "C-unwind" fn rb_big_unpack() -> ! {
     refused(
         "rb_big_unpack",
         "this exposes MRI's Bignum digit array, which zeo does not have; rb_integer_pack and rb_integer_unpack are the supported way",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_hash_bulk_insert_into_st_table() -> ! {
+pub extern "C-unwind" fn rb_hash_bulk_insert_into_st_table() -> ! {
     refused(
         "rb_hash_bulk_insert_into_st_table",
         "this hands out a Ruby Hash's internal st_table, which zeo does not store; rb_hash_foreach and rb_hash_aset reach the same data",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_hash_tbl() -> ! {
+pub extern "C-unwind" fn rb_hash_tbl() -> ! {
     refused(
         "rb_hash_tbl",
         "this hands out a Ruby Hash's internal st_table, which zeo does not store; rb_hash_foreach and rb_hash_aset reach the same data",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_load_file() -> ! {
+pub extern "C-unwind" fn rb_load_file() -> ! {
     refused(
         "rb_load_file",
         "this answers a NODE*, MRI's parse tree; zeo compiles through prism and builds no such thing",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_load_file_str() -> ! {
+pub extern "C-unwind" fn rb_load_file_str() -> ! {
     refused(
         "rb_load_file_str",
         "this answers a NODE*, MRI's parse tree; zeo compiles through prism and builds no such thing",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_marshal_define_compat() -> ! {
+pub extern "C-unwind" fn rb_marshal_define_compat() -> ! {
     refused(
         "rb_marshal_define_compat",
         "this writes Marshal's internal compatibility table, which zeo's Marshal does not have",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn rb_remove_event_hook() -> ! {
+pub extern "C-unwind" fn rb_remove_event_hook() -> ! {
     refused(
         "rb_remove_event_hook",
         "the C-level TracePoint; see rb_add_event_hook",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_cleanup() -> ! {
+pub extern "C-unwind" fn ruby_cleanup() -> ! {
     refused(
         "ruby_cleanup",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_exec_node() -> ! {
+pub extern "C-unwind" fn ruby_exec_node() -> ! {
     refused(
         "ruby_exec_node",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_executable_node() -> ! {
+pub extern "C-unwind" fn ruby_executable_node() -> ! {
     refused(
         "ruby_executable_node",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_finalize() -> ! {
+pub extern "C-unwind" fn ruby_finalize() -> ! {
     refused(
         "ruby_finalize",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_incpush() -> ! {
+pub extern "C-unwind" fn ruby_incpush() -> ! {
     refused(
         "ruby_incpush",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_init() -> ! {
+pub extern "C-unwind" fn ruby_init() -> ! {
     refused(
         "ruby_init",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_init_loadpath() -> ! {
+pub extern "C-unwind" fn ruby_init_loadpath() -> ! {
     refused(
         "ruby_init_loadpath",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_init_stack() -> ! {
+pub extern "C-unwind" fn ruby_init_stack() -> ! {
     refused(
         "ruby_init_stack",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_options() -> ! {
+pub extern "C-unwind" fn ruby_options() -> ! {
     refused(
         "ruby_options",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_process_options() -> ! {
+pub extern "C-unwind" fn ruby_process_options() -> ! {
     refused(
         "ruby_process_options",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_prog_init() -> ! {
+pub extern "C-unwind" fn ruby_prog_init() -> ! {
     refused(
         "ruby_prog_init",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_run_node() -> ! {
+pub extern "C-unwind" fn ruby_run_node() -> ! {
     refused(
         "ruby_run_node",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_script() -> ! {
+pub extern "C-unwind" fn ruby_script() -> ! {
     refused(
         "ruby_script",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_set_argv() -> ! {
+pub extern "C-unwind" fn ruby_set_argv() -> ! {
     refused(
         "ruby_set_argv",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_set_script_name() -> ! {
+pub extern "C-unwind" fn ruby_set_script_name() -> ! {
     refused(
         "ruby_set_script_name",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_setup() -> ! {
+pub extern "C-unwind" fn ruby_setup() -> ! {
     refused(
         "ruby_setup",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_show_copyright() -> ! {
+pub extern "C-unwind" fn ruby_show_copyright() -> ! {
     refused(
         "ruby_show_copyright",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_show_version() -> ! {
+pub extern "C-unwind" fn ruby_show_version() -> ! {
     refused(
         "ruby_show_version",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_sig_finalize() -> ! {
+pub extern "C-unwind" fn ruby_sig_finalize() -> ! {
     refused(
         "ruby_sig_finalize",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_stop() -> ! {
+pub extern "C-unwind" fn ruby_stop() -> ! {
     refused(
         "ruby_stop",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",
     )
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruby_sysinit() -> ! {
+pub extern "C-unwind" fn ruby_sysinit() -> ! {
     refused(
         "ruby_sysinit",
         "zeo's VM is already running: these boot, configure or shut down an interpreter, and an extension loaded INTO one cannot do that",

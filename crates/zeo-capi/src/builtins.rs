@@ -282,8 +282,8 @@ crate::cext_fn! {
     fn rb_define_hooked_variable(
         name: *const c_char,
         slot: *mut Value,
-        get: Option<unsafe extern "C" fn(Id, *mut Value) -> Value>,
-        set: Option<unsafe extern "C" fn(Value, Id, *mut Value)>,
+        get: Option<unsafe extern "C-unwind" fn(Id, *mut Value) -> Value>,
+        set: Option<unsafe extern "C-unwind" fn(Value, Id, *mut Value)>,
     ) -> () {
         bind_hooked(&unsafe { cstr(name) }, slot, get, set)
     }
@@ -292,8 +292,8 @@ crate::cext_fn! {
     /// at all.
     fn rb_define_virtual_variable(
         name: *const c_char,
-        get: Option<unsafe extern "C" fn(Id, *mut Value) -> Value>,
-        set: Option<unsafe extern "C" fn(Value, Id, *mut Value)>,
+        get: Option<unsafe extern "C-unwind" fn(Id, *mut Value) -> Value>,
+        set: Option<unsafe extern "C-unwind" fn(Value, Id, *mut Value)>,
     ) -> () {
         bind_hooked(&unsafe { cstr(name) }, std::ptr::null_mut(), get, set)
     }
@@ -355,7 +355,7 @@ crate::cext_fn! {
     /// going, as the `st_table` walks do.
     fn rb_set_foreach(
         set: Value,
-        f: unsafe extern "C" fn(Value, Value) -> c_int,
+        f: unsafe extern "C-unwind" fn(Value, Value) -> c_int,
         arg: Value,
     ) -> () {
         let s = unsafe { value_of(set) };
@@ -365,7 +365,7 @@ crate::cext_fn! {
         };
         for item in items {
             let v = to_value(&item)?;
-            if super::jmp::protect(|| unsafe { f(v, arg) })? != 0 {
+            if super::unwind::protect(|| unsafe { f(v, arg) })? != 0 {
                 break;
             }
         }
@@ -835,8 +835,8 @@ struct Slot {
     /// It lives in the loaded image for the life of the process.
     addr: usize,
     writable: bool,
-    get: Option<unsafe extern "C" fn(Id, *mut Value) -> Value>,
-    set: Option<unsafe extern "C" fn(Value, Id, *mut Value)>,
+    get: Option<unsafe extern "C-unwind" fn(Id, *mut Value) -> Value>,
+    set: Option<unsafe extern "C-unwind" fn(Value, Id, *mut Value)>,
 }
 
 // SAFETY: `addr` is an address in the loaded extension's own image, and the
@@ -856,8 +856,8 @@ fn bind_slot(name: &str, slot: *mut Value, writable: bool) -> Result<(), Signal>
 fn bind_hooked(
     name: &str,
     slot: *mut Value,
-    get: Option<unsafe extern "C" fn(Id, *mut Value) -> Value>,
-    set: Option<unsafe extern "C" fn(Value, Id, *mut Value)>,
+    get: Option<unsafe extern "C-unwind" fn(Id, *mut Value) -> Value>,
+    set: Option<unsafe extern "C-unwind" fn(Value, Id, *mut Value)>,
 ) -> Result<(), Signal> {
     register_slot(name, slot, set.is_some() || !slot.is_null(), get, set)
 }
@@ -873,8 +873,8 @@ fn register_slot(
     name: &str,
     slot: *mut Value,
     writable: bool,
-    get: Option<unsafe extern "C" fn(Id, *mut Value) -> Value>,
-    set: Option<unsafe extern "C" fn(Value, Id, *mut Value)>,
+    get: Option<unsafe extern "C-unwind" fn(Id, *mut Value) -> Value>,
+    set: Option<unsafe extern "C-unwind" fn(Value, Id, *mut Value)>,
 ) -> Result<(), Signal> {
     let full = if name.starts_with('$') {
         name.to_string()

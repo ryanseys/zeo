@@ -36,8 +36,8 @@ pub type StIndex = usize;
 /// `struct st_hash_type`, which the caller owns and this only reads.
 #[repr(C)]
 pub struct StHashType {
-    pub compare: Option<unsafe extern "C" fn(StData, StData) -> c_int>,
-    pub hash: Option<unsafe extern "C" fn(StData) -> StIndex>,
+    pub compare: Option<unsafe extern "C-unwind" fn(StData, StData) -> c_int>,
+    pub hash: Option<unsafe extern "C-unwind" fn(StData) -> StIndex>,
 }
 
 /// `struct st_table`, field for field. Only `type` and `num_entries` carry a
@@ -311,7 +311,7 @@ macro_rules! st_fn {
         #[unsafe(no_mangle)]
         // A C ABI entry point with MRI's own `st_*` contract.
         #[allow(clippy::missing_safety_doc)]
-        pub unsafe extern "C" fn $name($($arg : $ty),*) -> $ret $body
+        pub unsafe extern "C-unwind" fn $name($($arg : $ty),*) -> $ret $body
     )*};
 }
 
@@ -398,7 +398,7 @@ st_fn! {
         tbl: *mut StTable,
         key: StData,
         val: StData,
-        func: Option<unsafe extern "C" fn(StData) -> StData>,
+        func: Option<unsafe extern "C-unwind" fn(StData) -> StData>,
     ) -> c_int {
         let ty = table_type(tbl);
         let found = with_store(tbl, |s| unsafe { s.find(ty, key) }).flatten();
@@ -554,7 +554,7 @@ st_fn! {
     /// it. Answers 0, as MRI does.
     fn rb_st_foreach(
         tbl: *mut StTable,
-        f: Option<unsafe extern "C" fn(StData, StData, StData) -> c_int>,
+        f: Option<unsafe extern "C-unwind" fn(StData, StData, StData) -> c_int>,
         arg: StData,
     ) -> c_int {
         let Some(f) = f else { return 0 };
@@ -578,7 +578,7 @@ st_fn! {
     /// already safe here, because the walk runs over a snapshot.
     fn rb_st_foreach_safe(
         tbl: *mut StTable,
-        f: Option<unsafe extern "C" fn(StData, StData, StData) -> c_int>,
+        f: Option<unsafe extern "C-unwind" fn(StData, StData, StData) -> c_int>,
         arg: StData,
     ) -> () {
         unsafe { rb_st_foreach(tbl, f, arg) };
@@ -590,7 +590,7 @@ st_fn! {
     /// `ST_CHECK` continues.
     fn rb_st_foreach_check(
         tbl: *mut StTable,
-        f: Option<unsafe extern "C" fn(StData, StData, StData, c_int) -> c_int>,
+        f: Option<unsafe extern "C-unwind" fn(StData, StData, StData, c_int) -> c_int>,
         arg: StData,
         _never: StData,
     ) -> c_int {
@@ -614,8 +614,8 @@ st_fn! {
     /// `ST_REPLACE` to ask `replace` for a new key and value.
     fn rb_st_foreach_with_replace(
         tbl: *mut StTable,
-        f: Option<unsafe extern "C" fn(StData, StData, StData, c_int) -> c_int>,
-        replace: Option<unsafe extern "C" fn(*mut StData, *mut StData, StData, c_int) -> c_int>,
+        f: Option<unsafe extern "C-unwind" fn(StData, StData, StData, c_int) -> c_int>,
+        replace: Option<unsafe extern "C-unwind" fn(*mut StData, *mut StData, StData, c_int) -> c_int>,
         arg: StData,
     ) -> c_int {
         let Some(f) = f else { return 0 };
@@ -647,7 +647,7 @@ st_fn! {
     fn rb_st_update(
         tbl: *mut StTable,
         key: StData,
-        func: Option<unsafe extern "C" fn(*mut StData, *mut StData, StData, c_int) -> c_int>,
+        func: Option<unsafe extern "C-unwind" fn(*mut StData, *mut StData, StData, c_int) -> c_int>,
         arg: StData,
     ) -> c_int {
         let Some(func) = func else { return 0 };
@@ -1014,7 +1014,7 @@ mod tests {
     /// it decides from the callback's answer rather than the caller's.
     #[test]
     fn update_inserts_then_replaces_then_deletes() {
-        unsafe extern "C" fn set_to(
+        unsafe extern "C-unwind" fn set_to(
             _k: *mut StData,
             v: *mut StData,
             arg: StData,
@@ -1023,7 +1023,7 @@ mod tests {
             unsafe { v.write(arg) };
             ST_CONTINUE
         }
-        unsafe extern "C" fn drop_it(
+        unsafe extern "C-unwind" fn drop_it(
             _k: *mut StData,
             _v: *mut StData,
             _arg: StData,
@@ -1052,7 +1052,7 @@ mod tests {
     fn a_walk_honours_delete_and_stop() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static SEEN: AtomicUsize = AtomicUsize::new(0);
-        unsafe extern "C" fn drop_evens(k: StData, _v: StData, _a: StData) -> c_int {
+        unsafe extern "C-unwind" fn drop_evens(k: StData, _v: StData, _a: StData) -> c_int {
             SEEN.fetch_add(1, Ordering::Relaxed);
             if k.is_multiple_of(2) {
                 ST_DELETE
@@ -1060,7 +1060,7 @@ mod tests {
                 ST_CONTINUE
             }
         }
-        unsafe extern "C" fn stop_at_two(_k: StData, _v: StData, _a: StData) -> c_int {
+        unsafe extern "C-unwind" fn stop_at_two(_k: StData, _v: StData, _a: StData) -> c_int {
             if SEEN.fetch_add(1, Ordering::Relaxed) >= 1 {
                 ST_STOP
             } else {

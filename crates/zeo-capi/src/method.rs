@@ -26,7 +26,7 @@
 //!
 //! A trampoline is a Ruby-to-C boundary, so it does what every one of them
 //! does: push a [`super::scope::Scope`] so the arguments' handles outlive the
-//! call, and run inside [`super::jmp::protect`] so an `rb_raise` from deep
+//! call, and run inside [`super::unwind::protect`] so an `rb_raise` from deep
 //! inside the extension comes back as an `Err` instead of flying past Rust
 //! frames.
 
@@ -81,7 +81,7 @@ unsafe fn call_c(f: MethodPtr, argc: c_int, this: Value, args: &[Value]) -> Valu
                     // SAFETY: the caller's contract -- `argc` IS the shape.
                     // One `Value` parameter per name in the arm's list;
                     // `arg_ty!` discards the name and keeps the count.
-                    let f: unsafe extern "C" fn(Value $(, arg_ty!($a))*) -> Value =
+                    let f: unsafe extern "C-unwind" fn(Value $(, arg_ty!($a))*) -> Value =
                         unsafe { std::mem::transmute(f) };
                     let [$($a),*] = <[Value; $n]>::try_from(args)
                         .expect("the arity guard already counted these");
@@ -93,7 +93,7 @@ unsafe fn call_c(f: MethodPtr, argc: c_int, this: Value, args: &[Value]) -> Valu
     }
     if argc == ARGC_VARIADIC {
         // SAFETY: the caller's contract.
-        let f: unsafe extern "C" fn(c_int, *const Value, Value) -> Value =
+        let f: unsafe extern "C-unwind" fn(c_int, *const Value, Value) -> Value =
             unsafe { std::mem::transmute(f) };
         return unsafe { f(args.len() as c_int, args.as_ptr(), this) };
     }
@@ -170,7 +170,7 @@ pub unsafe fn method_proc(f: MethodPtr, argc: c_int) -> Result<RProc, Signal> {
                 (argc, &fixed[..])
             };
 
-            let out = super::jmp::protect(|| {
+            let out = super::unwind::protect(|| {
                 // SAFETY: the caller of `method_proc` promised the shape, and
                 // every `VALUE` here was pinned two statements ago.
                 unsafe { call_c(addr as MethodPtr, argc, this, args) }
@@ -218,8 +218,8 @@ pub fn c_allocate(owner: ClassId) -> Option<RubyValue> {
     let this = to_value(&RubyValue::Class(owner)).ok()?;
     // SAFETY: the extension registered this function for exactly this call,
     // and it lives in the loaded image for the life of the process.
-    let out = super::jmp::protect(|| {
-        let f: unsafe extern "C" fn(Value) -> Value =
+    let out = super::unwind::protect(|| {
+        let f: unsafe extern "C-unwind" fn(Value) -> Value =
             unsafe { std::mem::transmute(addr as *const c_void) };
         unsafe { f(this) }
     });
@@ -460,7 +460,7 @@ crate::cext_fn! {
     /// allocator -- a plain object, which the very next `RTYPEDDATA_DATA`
     /// rejects. `dispatch::allocate_of` is the one funnel every path reaches,
     /// so that is where the answer belongs.
-    fn rb_define_alloc_func(klass: Value, f: unsafe extern "C" fn(Value) -> Value) -> () {
+    fn rb_define_alloc_func(klass: Value, f: unsafe extern "C-unwind" fn(Value) -> Value) -> () {
         let owner = unsafe { as_class(klass)? };
         remember_alloc_func(owner, f as usize);
         Ok(())
@@ -511,13 +511,13 @@ const _: () = assert!(value::Q_NIL == 0x04);
 mod tests {
     use super::*;
 
-    unsafe extern "C" fn zero_args(_self: Value) -> Value {
+    unsafe extern "C-unwind" fn zero_args(_self: Value) -> Value {
         value::fixnum(100)
     }
-    unsafe extern "C" fn two_args(_self: Value, a: Value, b: Value) -> Value {
+    unsafe extern "C-unwind" fn two_args(_self: Value, a: Value, b: Value) -> Value {
         value::fixnum(value::fixnum_value(a) + value::fixnum_value(b))
     }
-    unsafe extern "C" fn variadic(argc: c_int, argv: *const Value, _self: Value) -> Value {
+    unsafe extern "C-unwind" fn variadic(argc: c_int, argv: *const Value, _self: Value) -> Value {
         let mut sum = 0;
         for i in 0..argc {
             // SAFETY: the caller passed `argc` readable slots.
@@ -617,7 +617,7 @@ mod tests {
     /// here; the end-to-end half needs a loaded extension (task #79).
     #[test]
     fn a_c_method_frame_carries_its_receiver_for_rb_call_super() {
-        unsafe extern "C" fn seen(this: Value) -> Value {
+        unsafe extern "C-unwind" fn seen(this: Value) -> Value {
             SEEN.with_borrow_mut(|s| *s = super::super::call::current_receiver());
             this
         }

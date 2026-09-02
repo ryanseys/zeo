@@ -146,12 +146,15 @@ module RbConfig
     "LIBRUBYARG_STATIC" => "",
     "LIBS" => "-lm -lpthread",
     "SOLIBS" => "",
-    "cflags" => "$(optflags) $(debugflags) $(warnflags)",
-    "cxxflags" => "$(optflags) $(debugflags) $(warnflags)",
+    "cflags" => "$(optflags) $(debugflags) $(warnflags) $(unwindflags)",
+    "cxxflags" => "$(optflags) $(debugflags) $(warnflags) $(unwindflags)",
     "cppflags" => "",
     "optflags" => "-O2",
     "debugflags" => "-g",
     "warnflags" => "-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers",
+    # A raise is a Rust unwind through the extension's own frames, so its
+    # objects must carry unwind tables (docs/EXTENSIONS.md).
+    "unwindflags" => "-fexceptions -fasynchronous-unwind-tables",
     "CFLAGS" => "$(cflags) -fPIC",
     "CXXFLAGS" => "$(cxxflags) -fPIC",
     "CPPFLAGS" => "$(DEFS) $(cppflags)",
