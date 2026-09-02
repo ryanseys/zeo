@@ -1,0 +1,8 @@
+true
+Prism::ProgramNode
+Prism::CallNode
+[:IDENTIFIER, :EQUAL, :INTEGER, :EOF]
+["# hi"]
+false
+unexpected end-of-input; expected a method name
+1.9.0

@@ -1,0 +1,17 @@
+---
+a:
+- 1
+- 2.5
+-
+- true
+b:
+  c: d
+s: |-
+  multi
+  line
+{"a" => [1, 2.5, nil, true], "b" => {"c" => "d"}, "s" => "multi\nline"}
+[1, "two", 3.0]
+{"x" => [1], "y" => [1]}
+Psych::SyntaxError
+String
+3

@@ -1,0 +1,17 @@
+{"a":[1,2.5,null,true],"b":{"c":"dé"}}
+{"a" => [1, 2.5, nil, true], "b" => {"c" => "dé"}}
+[
+  1,
+  {
+    "x": 2
+  }
+]
+{a: 1, b: [true, nil]}
+1000.0
+"é"
+JSON::ParserError
+{"k":1}
+[1,"two"]
+"é\n"
+JSON::Ext::Parser
+JSON::Ext::Generator::State

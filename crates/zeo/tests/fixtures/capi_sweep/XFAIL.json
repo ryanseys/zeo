@@ -1,0 +1,14 @@
+{
+  "bigdecimal": "Init_bigdecimal: `rb_define_class(\"BigDecimal\", rb_cNumeric)` raises `wrong argument type FalseClass (expected Class)` -- the superclass global reads as false at Init",
+  "date": "`Date#>>` raises `undefined method 'ractor' for an instance of Integer`; `strftime` answers an empty string",
+  "debug": "dlopen fails: `rb_iseq_code_location` is an iseq internal zeo has no answer for (the C-level debugger family is architecturally closed)",
+  "digest": "after the C extension loads, `Digest::Base cannot be directly inherited in Ruby` (RuntimeError) -- the alloc-func precedence between zeo's Digest rows and the gem's `Init_digest`",
+  "erb": "the real `erb/escape` extension loads, then the process dies with SIGSEGV at the first `ERB::Escape.html_escape` call",
+  "fiddle": "`Init_fiddle` calls `rb_memory_view_register`, one of the 13 stubbed `rb_memory_view_*` entries (NotImplementedError)",
+  "openssl": "`Init_openssl` ends in `uninitialized constant Object::Digest` -- its `rb_require(\"digest\")` does not reach zeo's digest",
+  "psych": "the store gem's psych.rb dies in `Psych.config` with `uninitialized constant Psych::Config` -- a constant defined inside `class << self` behind `if defined?(Ractor)` on the store road (a loader/compiler defect, not the C-API); `Date::VERSION` is also initialized twice",
+  "rbs": "every answer matches ruby, then the process dies with SIGSEGV at exit -- teardown of the extension's TypedData objects",
+  "stringio": "`zeo cannot hand a Integer to a C extension yet: it has no established RUBY_T_* tag` (NotImplementedError) at the first StringIO call",
+  "strscan": "`rb_reg_onig_match is not implemented by zeo` -- the onig regex_t family is refused by decision (Part IV D3: pure strscan is the answer)",
+  "zlib": "`zeo cannot hand a Integer to a C extension yet: it has no established RUBY_T_* tag` (NotImplementedError) at the first Zlib call"
+}

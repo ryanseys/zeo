@@ -47,9 +47,30 @@ Real gaps with a named road; each closes when its road is walked.
   Every stdlib name is served by zeo's own Rust or Ruby; official C gems
   compile and load through the vendored-header C API as an explicit
   opt-in (a lockfile + store override, or `ZEO_DISABLE_BUILTIN`). The
-  18-gem sweep is the API's health gate; the remaining walls it shows
-  (the psych initialize-road ivar loss, zlib's panic reentry) are open
-  work, and families with no honest implementation stay loud stubs.
+  official C-gem sweep is the API's health gate: `make test-capi`
+  builds every locked gem that ships a C extension from its own source,
+  runs a smoke program against ruby's recorded answer, and holds the
+  rows below (`crates/zeo/tests/fixtures/capi_sweep/XFAIL.json` is the
+  ledger; a row that starts passing fails the test until it is
+  removed). Families with no honest implementation stay loud stubs.
+
+  | Gem | Through its C extension | Wall |
+  |---|---|---|
+  | json, nkf, io-console, prism, syslog | **passes** | -- |
+  | bigdecimal | fails at `Init` | `rb_define_class(.., rb_cNumeric)` sees `false` |
+  | date | loads; `>>` and `strftime` wrong | a stray `ractor` send; empty strftime |
+  | debug | does not load | `rb_iseq_code_location` (iseq internals; closed) |
+  | digest | loads; then raises | `Digest::Base cannot be directly inherited` |
+  | erb | loads; SIGSEGV | first `ERB::Escape.html_escape` |
+  | fiddle | fails at `Init` | `rb_memory_view_register` is a stub |
+  | openssl | fails at `Init` | `rb_require("digest")` leaves `Digest` undefined |
+  | psych | fails in its Ruby half | `Psych::Config` unresolved on the store road |
+  | rbs | every answer right; SIGSEGV at exit | TypedData teardown |
+  | stringio, zlib | fail at first call | an Integer the boundary refuses to hand over |
+  | strscan | fails at first scan | `rb_reg_onig_match` (refused by decision) |
+
+  racc is excluded (zeo declines its C accelerator by design) and resolv
+  (its only extension is Windows-only).
 - **A packaged frame's `__FILE__` and backtraces** show the virtual
   `/zeopkg/...` spelling, not the install path (revisits when binding
   virtual roots to store paths lands).
@@ -104,6 +125,6 @@ its answer.
   byte-exact `peek` (panicked mid-character).
 - `Regexp#match` honors its position argument; `\G` anchors correctly on
   all three engine routes.
-- The C-extension route itself: real gems (io-console, syslog, debug,
-  fiddle, date, prism, racc) build, load and run through the vendored
-  headers.
+- The C-extension route itself: a locked gem's C extension builds from
+  source, loads and runs through the vendored headers -- the sweep
+  table above says which gems make it all the way.

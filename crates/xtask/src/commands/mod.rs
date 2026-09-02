@@ -1,5 +1,6 @@
 pub mod bench;
 pub mod bless;
+pub mod capi_sweep;
 pub mod cext;
 pub mod diff;
 pub mod dist;

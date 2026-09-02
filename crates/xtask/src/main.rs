@@ -98,6 +98,7 @@ usage: cargo xtask <command> [options]
 commands:
   bench           the compiler-cost instrument (runtime suite: cargo bench)
   bless           re-record golden `.expected` files from the ruby oracle
+  capi-sweep      record ruby's answers for the C-gem sweep's smoke programs
   cext            the vendored MRI C API headers and the rb_* census
   diff            compare a snippet across ruby and zeo, and file a gap
   dist            assemble the relocatable distribution
@@ -123,6 +124,7 @@ fn main() -> std::process::ExitCode {
     let result = match command.as_str() {
         "bench" => commands::bench::run(rest),
         "bless" => commands::bless::run(rest),
+        "capi-sweep" => commands::capi_sweep::run(rest),
         "cext" => commands::cext::run(rest),
         "diff" => commands::diff::run(rest),
         "dist" => commands::dist::run(rest),

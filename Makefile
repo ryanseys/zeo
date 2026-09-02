@@ -25,7 +25,7 @@ BUNDLE ?= bundle
 # Every target here is a verb, not a file. One list, so a new target cannot
 # be half-declared: the old one omitted `ci-features` and `ci-size`, and a
 # file of either name would have turned that target into a silent no-op.
-.PHONY: all help deps test test-jit test-aot test-memcheck \
+.PHONY: all help deps test test-jit test-aot test-memcheck test-capi \
         test-typed test-packaged test-milestones test-config test-platform test-size build-pure \
         test-smoke test-all lint ratchet no-big-files hygiene check-generated tool-versions ci-local \
         check-batch gate bench pgo install linux clean
@@ -147,6 +147,14 @@ test-aot: all  ## the AOT smoke tier: goldens minus spinel, plus e2e, really lin
 	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --no-fail-fast -E 'binary(goldens) - test(spinel::)'
 	ZEO_E2E_BACKEND=aot $(NEXTEST) -p zeo --test e2e --no-fail-fast
 
+# The C-API's health gate: every locked gem with a C extension, built from
+# its own source through zeo's cext route and run against ruby's recorded
+# answer (`crates/zeo/tests/e2e/capi_sweep.rs`). Each row compiles a gem
+# and its extension, so this rides in `gate`, not the push tier. Record a
+# smoke's answer with `cargo xtask capi-sweep bless <gem>`.
+test-capi: all  ## the official C-gem sweep through the C-API route
+	$(NEXTEST) -p zeo --test e2e --no-fail-fast -E 'test(capi_sweep::)'
+
 # ONE instrumented corpus pass carrying both memory checks -- the
 # compiled-ownership ledger (a non-zero balance at exit is a leak or a
 # double-consume in the emitted lowering) AND the cycle census (gates
@@ -265,7 +273,7 @@ check-batch: test-jit test-aot test-memcheck  ## the mid-tier between batches (~
 # runs only the AOT smoke tier).
 # Bench is deliberately NOT here: perf numbers are recorded on their own
 # cadence (`make bench` after perf commits and at re-banks), never gated.
-gate: test-jit test-aot test-memcheck test-config test-milestones test-platform  ## the phase boundary: every leg, plus full-spinel AOT
+gate: test-jit test-aot test-memcheck test-config test-milestones test-platform test-capi  ## the phase boundary: every leg, plus full-spinel AOT and the C-gem sweep
 	ZEO_GOLDEN_BACKEND=aot $(NEXTEST) -p zeo --no-fail-fast -E 'binary(goldens) & test(spinel::)'
 	$(NEXTEST) -p zeo -P full -E 'test(every_bundled_gem_compiles)'
 

@@ -24,6 +24,7 @@ mod autopkg;
 mod blocks_procs;
 mod boxes;
 mod bundler_parity;
+mod capi_sweep;
 mod cext_build;
 mod classes;
 mod codegen;
