@@ -648,10 +648,13 @@ pub fn run_jit_with(
     backend::jit::run(ready, program_name, program_args)
 }
 
+pub use clif::emit::ClifText;
+
 /// The per-function CLIF text (`--emit-clif`, the snapshot tests): the
 /// same front end, the Cranelift lowering, and the pre-machine IR of
-/// every emitted function.
-pub fn compile_to_clif_text(source: &str, opts: &CompileOptions) -> Result<String, CompileError> {
+/// every emitted function -- with its `.zeodata` sidecar, where the
+/// program has one.
+pub fn compile_to_clif_text(source: &str, opts: &CompileOptions) -> Result<ClifText, CompileError> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("zeo-compile".into())
@@ -659,14 +662,14 @@ pub fn compile_to_clif_text(source: &str, opts: &CompileOptions) -> Result<Strin
             .spawn_scoped(scope, || {
                 let (analyzed, front, _auto) = analyze_on_this_thread(source, opts)?;
                 let t_emit = std::time::Instant::now();
-                let (_bytes, text) = clif::emit::compile_with_clif(&analyzed)
+                let (_bytes, clif) = clif::emit::compile_with_clif(&analyzed)
                     .map_err(|e| CompileError::from_codegen(e, &analyzed.compiler.hir.files))?;
                 front.report(
                     t_emit.elapsed(),
-                    text.len() as u64,
-                    text.lines().count() as u64,
+                    clif.text.len() as u64,
+                    clif.text.lines().count() as u64,
                 );
-                Ok(text)
+                Ok(clif)
             })
             .expect("spawning the compiler thread")
             .join()

@@ -616,7 +616,7 @@ pub(super) fn define_method_body(
     b.seal_all_blocks();
     b.finalize(cfg);
 
-    em.record_clif(&label, &func);
+    em.record_clif(def.func, &label, &func);
     em.define(def.func, func, &label, true)?;
     Ok(())
 }
@@ -835,7 +835,7 @@ pub(super) fn define_toplevel(
     b.seal_all_blocks();
     b.finalize(cfg);
 
-    em.record_clif(&sym, &func);
+    em.record_clif(func_id, &sym, &func);
     em.define(func_id, func, &sym, true)?;
     Ok(func_id)
 }

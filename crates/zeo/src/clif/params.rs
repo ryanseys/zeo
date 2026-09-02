@@ -465,7 +465,7 @@ fn define_bound_trampoline(
 
     b.seal_all_blocks();
     b.finalize(cfg);
-    em.record_clif("trampoline", &func);
+    em.record_clif(spec.tramp, "trampoline", &func);
     em.define(spec.tramp, func, "a trampoline", false)
 }
 
@@ -558,7 +558,7 @@ fn define_plain_trampoline(
 
     b.seal_all_blocks();
     b.finalize(cfg);
-    em.record_clif("trampoline", &func);
+    em.record_clif(tramp, "trampoline", &func);
     em.define(tramp, func, "a trampoline", false)
 }
 
@@ -693,6 +693,6 @@ pub(crate) fn define_accessor(
 
     b.seal_all_blocks();
     b.finalize(cfg);
-    em.record_clif("trampoline", &func);
+    em.record_clif(tramp, "trampoline", &func);
     em.define(tramp, func, "an accessor", false)
 }

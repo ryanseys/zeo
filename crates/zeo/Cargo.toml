@@ -44,6 +44,8 @@ gimli.workspace = true
 object.workspace = true
 cranelift-native.workspace = true
 cranelift-jit.workspace = true
+# `zeo backend`: CLIF text a front end other than this crate's wrote.
+cranelift-reader.workspace = true
 target-lexicon.workspace = true
 ruby-prism.workspace = true
 # Unicode XID tables: a Ruby name is far wider than any target identifier

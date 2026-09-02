@@ -211,7 +211,7 @@ fn define_entry(
     b.seal_all_blocks();
     b.finalize(cfg);
 
-    em.record_clif(ENTRY, &func);
+    em.record_clif(func_id, ENTRY, &func);
     em.define(func_id, func, ENTRY, false)?;
     Ok(func_id)
 }

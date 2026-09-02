@@ -319,8 +319,13 @@ pub(crate) struct Emitter {
     pub cov_active: bool,
     pub cov_lines: std::collections::BTreeMap<String, std::collections::BTreeSet<u32>>,
     /// When `Some`, every finished function's CLIF renders here (before
-    /// machine compilation -- the target-independent IR).
+    /// machine compilation -- the target-independent IR), with every
+    /// function and symbol under its linkage NAME rather than its module
+    /// index, so `zeo backend` can read the text back.
     pub clif_text: Option<String>,
+    /// The `.zeodata` twin of `clif_text`, drafted by `emit_program` once
+    /// the row tables exist: the sidecar, or why the program has none.
+    pub sidecar: Option<Result<crate::backend::sidecar::Sidecar, String>>,
     /// When `Some`, statements stamp a `SourceLoc` and the object carries
     /// DWARF built from them (`-g`).
     pub debug: Option<super::debuginfo::DebugInfo>,
@@ -549,6 +554,7 @@ impl Emitter {
             cov_active: false,
             cov_lines: std::collections::BTreeMap::new(),
             clif_text: None,
+            sidecar: None,
             debug: None,
         })
     }
@@ -657,6 +663,18 @@ impl Emitter {
         std::mem::take(&mut self.rodata)
     }
 
+    pub(crate) fn rodata(&self) -> &[u8] {
+        &self.rodata
+    }
+
+    /// Start the blob with bytes whose offsets code written elsewhere
+    /// already indexes (`zeo backend`). Later interning only appends, so
+    /// every offset that code carries stays true.
+    pub(crate) fn seed_rodata(&mut self, bytes: Vec<u8>) {
+        debug_assert!(self.rodata.is_empty(), "seeded after interning began");
+        self.rodata = bytes;
+    }
+
     pub(crate) fn syms_len(&self) -> u32 {
         self.syms_names().len() as u32
     }
@@ -684,13 +702,70 @@ impl Emitter {
         }
     }
 
-    /// Record `func`'s CLIF when `--emit-clif` asked for it, under its
-    /// exported symbol name.
-    pub(crate) fn record_clif(&mut self, name: &str, func: &ir::Function) {
-        if let Some(text) = &mut self.clif_text {
-            use std::fmt::Write as _;
-            let _ = writeln!(text, ";; {name}\n{}", func.display());
+    /// Record `func`'s CLIF when `--emit-clif` asked for it: `label` as a
+    /// comment, then the function under its symbol, with every callee and
+    /// data symbol named. Cranelift's own printer writes module indices
+    /// (`u0:3`, `userextname2`), which mean nothing outside this module;
+    /// the names are what `zeo backend` resolves.
+    pub(crate) fn record_clif(&mut self, id: FuncId, label: &str, func: &ir::Function) {
+        if self.clif_text.is_none() {
+            return;
         }
+        let rendered = self.symbolic_clif(id, func);
+        let text = self.clif_text.as_mut().expect("checked above");
+        text.push_str(&format!(";; {label}\n{rendered}\n"));
+    }
+
+    fn symbolic_clif(&self, id: FuncId, func: &ir::Function) -> String {
+        use cranelift_codegen::entity::EntityRef;
+        let decls = self.module.declarations();
+        let symbol = |ext: &ir::UserExternalName| -> String {
+            match ext.namespace {
+                0 => {
+                    let f = FuncId::from_u32(ext.index);
+                    format!("%{}", decls.get_function_decl(f).linkage_name(f))
+                }
+                _ => {
+                    let d = DataId::from_u32(ext.index);
+                    format!("%{}", decls.get_data_decl(d).linkage_name(d))
+                }
+            }
+        };
+        let named = func.params.user_named_funcs();
+        // A callee prints as `u<namespace>:<index>`, a data symbol as
+        // `userextname<ref>`; both resolve through the function's own
+        // name table.
+        let resolve = |token: &str| -> Option<String> {
+            if let Some(n) = token.strip_prefix("userextname") {
+                let r = ir::UserExternalNameRef::new(n.parse().ok()?);
+                return named.get(r).map(symbol);
+            }
+            let (ns, index) = token.strip_prefix('u')?.split_once(':')?;
+            let want = ir::UserExternalName::new(ns.parse().ok()?, index.parse().ok()?);
+            named.values().find(|n| **n == want).map(symbol)
+        };
+        let mut out = String::new();
+        for (i, line) in func.display().to_string().lines().enumerate() {
+            if i == 0 {
+                let rest = line.split_once('(').map_or("", |(_, rest)| rest);
+                out.push_str(&format!(
+                    "function %{}({rest}\n",
+                    decls.get_function_decl(id).linkage_name(id)
+                ));
+            } else if line.starts_with("    fn") || line.starts_with("    gv") {
+                let words: Vec<String> = line
+                    .split_whitespace()
+                    .map(|w| resolve(w).unwrap_or_else(|| w.to_string()))
+                    .collect();
+                out.push_str("    ");
+                out.push_str(&words.join(" "));
+                out.push('\n');
+            } else {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        out
     }
 
     /// Take one just-compiled function's line rows, the `record_clif`
@@ -807,18 +882,16 @@ impl Emitter {
                                 .compile(isa, &mut ctrl)
                                 .map(|code| code.buffer.alignment as u64)
                                 .map_err(|e| format!("compiling {}: {}", item.label, e.inner));
-                            done.lock()
-                                .expect("the result list is not poisoned")
-                                .push((
-                                    at,
-                                    PendingCode {
-                                        id: item.id,
-                                        label: item.label,
-                                        debug_rows: item.debug_rows,
-                                        alignment,
-                                        ctx,
-                                    },
-                                ));
+                            done.lock().expect("the result list is not poisoned").push((
+                                at,
+                                PendingCode {
+                                    id: item.id,
+                                    label: item.label,
+                                    debug_rows: item.debug_rows,
+                                    alignment,
+                                    ctx,
+                                },
+                            ));
                         }
                     });
                 }
@@ -841,9 +914,7 @@ impl Emitter {
                 .collect();
             self.module
                 .define_function_bytes(one.id, alignment, code.buffer.data(), &relocs)
-                .map_err(|e| {
-                    CodegenError::internal(format!("defining {}: {e}", one.label))
-                })?;
+                .map_err(|e| CodegenError::internal(format!("defining {}: {e}", one.label)))?;
             if one.debug_rows {
                 self.record_debug(&one.label, one.id, &one.ctx);
             }
@@ -859,12 +930,8 @@ impl Emitter {
         self.fn_index
     }
 
-    /// The import `FuncId` for capi symbol `name` (declared once).
-    pub(crate) fn import(&mut self, name: &'static str) -> FuncId {
-        if let Some(&id) = self.imports.get(name) {
-            return id;
-        }
-        let row = capi_names::sig(name);
+    /// The Cranelift signature of one runtime entry point.
+    pub(crate) fn capi_signature(&self, row: &capi_names::CapiSig) -> ir::Signature {
         let mut sig = self.module.make_signature();
         sig.params
             .extend(row.params.iter().map(|&t| self.abi_param(t)));
@@ -873,6 +940,15 @@ impl Emitter {
             // read, at the value's own width.
             sig.returns.push(AbiParam::new(self.ctype(ret)));
         }
+        sig
+    }
+
+    /// The import `FuncId` for capi symbol `name` (declared once).
+    pub(crate) fn import(&mut self, name: &'static str) -> FuncId {
+        if let Some(&id) = self.imports.get(name) {
+            return id;
+        }
+        let sig = self.capi_signature(capi_names::sig(name));
         let id = self
             .module
             .declare_function(name, Linkage::Import, &sig)

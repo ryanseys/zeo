@@ -485,7 +485,7 @@ pub(crate) fn define_unit_init(
     b.seal_all_blocks();
     b.finalize(cfg);
 
-    em.record_clif(&init_sym, &func);
+    em.record_clif(func_id, &init_sym, &func);
     em.define(func_id, func, &init_sym, false)?;
     Ok(Some(func_id))
 }
@@ -1319,7 +1319,7 @@ pub(crate) struct DescRows<'a> {
     pub unit: &'a [(String, FuncId)],
 }
 
-/// Everything [`define_desc`] serializes besides the `Analyzed` program.
+/// Everything [`define_desc`] serializes besides the program's own facts.
 pub(crate) struct DescSpec<'a> {
     pub toplevel: FuncId,
     pub unit_init: Option<FuncId>,
@@ -1327,11 +1327,85 @@ pub(crate) struct DescSpec<'a> {
     pub rows: DescRows<'a>,
 }
 
+/// One coverage row: `(file, total lines, statement lines, def lines)`.
+pub(crate) type CovRow = (String, u32, Vec<u32>, Vec<u32>);
+
+/// What `zeo_program_desc` records about the program beyond its row
+/// tables. Read off an `Analyzed` for a compile; built from a sidecar by
+/// `zeo backend`, which has no analysis behind it.
+pub(crate) struct DescProgram {
+    pub warnings: Vec<String>,
+    /// `$LOAD_PATH`, and how many leading entries a run-time `require`
+    /// may search (`ProgramDesc::n_load_path_search`).
+    pub load_path: Vec<String>,
+    pub n_load_path_search: usize,
+    pub embedded_sources: Vec<(String, String)>,
+    /// The builtin class tables the program keeps, by symbol.
+    pub class_tables: Vec<&'static str>,
+    /// `__END__`'s carrier file and byte offset.
+    pub data_section: Option<(String, u64)>,
+    pub coverage: Vec<CovRow>,
+}
+
+impl DescProgram {
+    pub(crate) fn from_analyzed(em: &mut Emitter, analyzed: &Analyzed) -> CResult<DescProgram> {
+        let hir = &analyzed.compiler.hir;
+        let coverage = if em.cov_active {
+            let mut files = cov_rows(em, analyzed);
+            // Merged packages contribute their own rows (string-keyed by
+            // file, so no id space to rebase). An artifact compiled WITHOUT
+            // the stamps can never report its lines here, so it is refused
+            // -- the `package '..'` spelling is what drops it to the source
+            // splice.
+            let mut seen: crate::compiler::FSet<String> =
+                files.iter().map(|(name, ..)| name.clone()).collect();
+            for m in &hir.pkg_merge {
+                if !m.cov_active {
+                    return Err(CodegenError::unsupported(
+                        format!(
+                            "this program measures coverage, but package '{}' was compiled \
+                             without coverage stamps",
+                            m.feature
+                        ),
+                        None,
+                    ));
+                }
+                for row in &m.cov {
+                    if !seen.insert(row.file.clone()) {
+                        continue;
+                    }
+                    files.push((
+                        row.file.clone(),
+                        row.total,
+                        row.stmt.clone(),
+                        row.def.clone(),
+                    ));
+                }
+            }
+            files
+        } else {
+            Vec::new()
+        };
+        Ok(DescProgram {
+            warnings: hir.warnings.iter().map(ToString::to_string).collect(),
+            load_path: hir.loader.search_roots.clone(),
+            n_load_path_search: hir.loader.search_root_count,
+            embedded_sources: hir.loader.embedded_sources.clone(),
+            class_tables: needed_class_tables(analyzed),
+            data_section: hir
+                .data_section
+                .as_ref()
+                .map(|d| (d.path.clone(), d.offset)),
+            coverage,
+        })
+    }
+}
+
 /// `zeo_program_desc` + the `Str` tables: the loaded-features seed
 /// and the parse warnings.
 pub(crate) fn define_desc(
     em: &mut Emitter,
-    analyzed: &Analyzed,
+    program: &DescProgram,
     spec: &DescSpec<'_>,
 ) -> CResult<DataId> {
     let &DescSpec {
@@ -1361,11 +1435,10 @@ pub(crate) fn define_desc(
     let foreign_table = define_foreign_rows(em, foreign_rows)?;
     let meta_table = define_meta_rows(em, meta_rows, "zeo_meta_rows")?;
     let redef_meta_table = define_meta_rows(em, redef_metas, "zeo_redef_metas")?;
-    let class_table_ptrs = define_class_tables(em, analyzed)?;
+    let class_table_ptrs = define_class_tables(em, &program.class_tables)?;
     let unit_table = define_unit_rows(em, unit_rows)?;
-    let source_table = define_source_rows(em, &analyzed.compiler.hir.loader.embedded_sources)?;
-    let (cov_table, n_cov) = define_cov_rows(em, analyzed)?;
-    let hir = &analyzed.compiler.hir;
+    let source_table = define_source_rows(em, &program.embedded_sources)?;
+    let (cov_table, n_cov) = define_cov_rows(em, &program.coverage)?;
     // Only what is loaded BEFORE the program's first line. Every feature the
     // program itself requires -- a spliced file and a statically linked
     // extension alike -- records itself at its own document position through
@@ -1382,10 +1455,10 @@ pub(crate) fn define_desc(
         .iter()
         .map(|f| format!("<zeo-builtin>/{f}.rb"))
         .collect();
-    let warnings: Vec<String> = hir.warnings.iter().map(ToString::to_string).collect();
+    let warnings = &program.warnings;
     // `$LOAD_PATH`: the `-I` roots, then the roots of every gem a require
     // actually activated. See `Loader::load_path`.
-    let load_path = &hir.loader.search_roots;
+    let load_path = &program.load_path;
 
     // One Str-array object: loaded features, then warnings, then `$LOAD_PATH`.
     let entries: Vec<(u32, usize)> = loaded
@@ -1451,7 +1524,7 @@ pub(crate) fn define_desc(
     put_u64(
         &mut buf,
         std::mem::offset_of!(ProgramDesc, n_load_path_search),
-        hir.loader.search_root_count as u64,
+        program.n_load_path_search as u64,
     );
     put_u64(
         &mut buf,
@@ -1501,7 +1574,7 @@ pub(crate) fn define_desc(
     put_u64(
         &mut buf,
         std::mem::offset_of!(ProgramDesc, n_class_tables),
-        needed_class_tables(analyzed).len() as u64,
+        program.class_tables.len() as u64,
     );
     put_u64(
         &mut buf,
@@ -1511,15 +1584,15 @@ pub(crate) fn define_desc(
     put_u64(
         &mut buf,
         std::mem::offset_of!(ProgramDesc, n_sources),
-        analyzed.compiler.hir.loader.embedded_sources.len() as u64,
+        program.embedded_sources.len() as u64,
     );
     put_u64(&mut buf, std::mem::offset_of!(ProgramDesc, n_cov), n_cov);
     // `DATA` -- only a script with an `__END__` carries the path, so every
     // other program neither holds it nor opens anything at startup.
-    let data_section = hir
+    let data_section = program
         .data_section
         .as_ref()
-        .map(|d| (em.intern_rodata(d.path.as_bytes()), d.path.len(), d.offset));
+        .map(|(path, offset)| (em.intern_rodata(path.as_bytes()), path.len(), *offset));
     if let Some((_, len, offset)) = data_section {
         put_u64(
             &mut buf,
@@ -1910,36 +1983,8 @@ pub(crate) fn define_ffi_call(em: &mut Emitter, spec: &super::ffi::CallSpec) -> 
 /// lines stamped during emission, and the `def` lines no statement stream
 /// ever passes. Empty (and so absent) in a program that never activated
 /// coverage.
-fn define_cov_rows(em: &mut Emitter, analyzed: &Analyzed) -> CResult<(Option<DataId>, u64)> {
+fn define_cov_rows(em: &mut Emitter, files: &[CovRow]) -> CResult<(Option<DataId>, u64)> {
     use zeo_abi::abi::CovFile;
-    if !em.cov_active {
-        return Ok((None, 0));
-    }
-    let mut files = cov_rows(em, analyzed);
-    // Merged packages contribute their own rows (string-keyed by file, so
-    // no id space to rebase). An artifact compiled WITHOUT the stamps can
-    // never report its lines here, so it is refused -- the `package '..'`
-    // spelling is what drops it to the source splice.
-    let mut seen: crate::compiler::FSet<String> =
-        files.iter().map(|(name, ..)| name.clone()).collect();
-    for m in &analyzed.compiler.hir.pkg_merge {
-        if !m.cov_active {
-            return Err(CodegenError::unsupported(
-                format!(
-                    "this program measures coverage, but package '{}' was compiled without \
-                     coverage stamps",
-                    m.feature
-                ),
-                None,
-            ));
-        }
-        for row in &m.cov {
-            if !seen.insert(row.file.clone()) {
-                continue;
-            }
-            files.push((row.file.clone(), row.total, row.stmt.clone(), row.def.clone()));
-        }
-    }
     if files.is_empty() {
         return Ok((None, 0));
     }
@@ -2007,10 +2052,7 @@ fn define_cov_rows(em: &mut Emitter, analyzed: &Analyzed) -> CResult<(Option<Dat
 /// def lines)` per source file with a coverable line. Drains the stamped
 /// lines out of the emitter, so it runs once -- `define_cov_rows` for a
 /// program, the manifest writer for a package build.
-pub(super) fn cov_rows(
-    em: &mut Emitter,
-    analyzed: &Analyzed,
-) -> Vec<(String, u32, Vec<u32>, Vec<u32>)> {
+pub(super) fn cov_rows(em: &mut Emitter, analyzed: &Analyzed) -> Vec<CovRow> {
     let defs = crate::analyze::coverage::def_lines(&analyzed.compiler);
     let stmts = std::mem::take(&mut em.cov_lines);
     let mut seen = crate::compiler::FSet::default();
@@ -2039,8 +2081,7 @@ pub(super) fn cov_rows(
 /// exports, so referencing one is what keeps that class's methods in the
 /// binary -- and not referencing one is what lets them strip. Every table is
 /// named today; narrowing the set is the size lever this exists for.
-fn define_class_tables(em: &mut Emitter, analyzed: &Analyzed) -> CResult<Option<DataId>> {
-    let symbols = needed_class_tables(analyzed);
+fn define_class_tables(em: &mut Emitter, symbols: &[&'static str]) -> CResult<Option<DataId>> {
     if symbols.is_empty() {
         return Ok(None);
     }
@@ -2115,9 +2156,7 @@ pub(crate) fn needed_class_tables(analyzed: &Analyzed) -> Vec<&'static str> {
         .flat_map(|m| m.class_tables.iter().map(String::as_str))
         .collect();
     all.iter()
-        .filter(|(id, sym)| {
-            analyzed.compiler.builtin_is_reachable(*id) || pkg_tables.contains(sym)
-        })
+        .filter(|(id, sym)| analyzed.compiler.builtin_is_reachable(*id) || pkg_tables.contains(sym))
         .map(|(_, sym)| *sym)
         .filter(keep)
         .collect()

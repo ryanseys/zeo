@@ -1100,7 +1100,7 @@ fn define_block_fn(
     let Fx { mut b, .. } = bfx;
     b.seal_all_blocks();
     b.finalize(cfg);
-    em.record_clif(&label, &func);
+    em.record_clif(f_id, &label, &func);
     em.define(f_id, func, &label, false)?;
     Ok(f_id)
 }

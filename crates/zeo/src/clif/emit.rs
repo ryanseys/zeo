@@ -8,6 +8,7 @@ use super::ctx::Fx;
 use super::module::{ClifModule, Emitter};
 use super::{statics, stmt};
 use crate::analyze::Analyzed;
+use crate::backend::sidecar::Sidecar;
 use crate::codegen_error::{CResult, CodegenError};
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, UserFuncName, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -20,16 +21,24 @@ pub fn compile(analyzed: &Analyzed, debuginfo: bool) -> CResult<Vec<u8>> {
     compile_inner(analyzed, false, debuginfo).map(|(bytes, _)| bytes)
 }
 
+/// `--emit-clif`'s two files: the CLIF text of every emitted function, and
+/// the `.zeodata` sidecar `zeo backend` reads beside it -- or why this
+/// program has none (`backend::sidecar`).
+pub struct ClifText {
+    pub text: String,
+    pub sidecar: Result<Sidecar, String>,
+}
+
 /// `compile` plus the per-function CLIF text (`--emit-clif`, snapshots).
-pub fn compile_with_clif(analyzed: &Analyzed) -> CResult<(Vec<u8>, String)> {
-    compile_inner(analyzed, true, false).map(|(bytes, text)| (bytes, text.expect("collected")))
+pub fn compile_with_clif(analyzed: &Analyzed) -> CResult<(Vec<u8>, ClifText)> {
+    compile_inner(analyzed, true, false).map(|(bytes, clif)| (bytes, clif.expect("collected")))
 }
 
 fn compile_inner(
     analyzed: &Analyzed,
     collect_clif: bool,
     debuginfo: bool,
-) -> CResult<(Vec<u8>, Option<String>)> {
+) -> CResult<(Vec<u8>, Option<ClifText>)> {
     let mut em = Emitter::new(false)?;
     em.clif_text = collect_clif.then(String::new);
     em.debug = debuginfo.then(super::debuginfo::DebugInfo::default);
@@ -37,7 +46,20 @@ fn compile_inner(
     emit_program(&mut em, analyzed)?;
     em.flush_pending()?;
     report_codegen_time(&em, started);
-    let clif = em.clif_text.take();
+    let clif = em.clif_text.take().map(|text| ClifText {
+        text,
+        sidecar: em
+            .sidecar
+            .take()
+            .unwrap_or_else(|| Err("a package build has no sidecar".to_string())),
+    });
+    Ok((finish_object(em)?, clif))
+}
+
+/// The object file: every queued function compiled, the module finished,
+/// and DWARF appended when `-g` asked for it.
+pub(crate) fn finish_object(mut em: Emitter) -> CResult<Vec<u8>> {
+    em.flush_pending()?;
     let debug = em.debug.take();
     let ClifModule::Object(module) = em.module else {
         unreachable!("Emitter::new(false) builds an object module")
@@ -46,10 +68,9 @@ fn compile_inner(
     if let Some(debug) = &debug {
         debug.emit(&mut product)?;
     }
-    let bytes = product
+    product
         .emit()
-        .map_err(|e| CodegenError::internal(format!("emitting the object file: {e}")))?;
-    Ok((bytes, clif))
+        .map_err(|e| CodegenError::internal(format!("emitting the object file: {e}")))
 }
 
 /// Split one emission into the two halves that cost anything: the lowering
@@ -556,6 +577,9 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
         .iter()
         .filter_map(|m| m.unit_init.clone())
         .collect();
+    // The bytes the CODE indexes, before the tables below intern their
+    // own: what a sidecar carries.
+    let code_rodata = em.clif_text.is_some().then(|| em.rodata().to_vec());
     let unit_init = statics::define_unit_init(em, &extra_inits)?;
     statics::define_syms(em)?;
     statics::define_callsites(em)?;
@@ -1048,30 +1072,148 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
     super::pkg::define_identity_cids(em, analyzed)?;
     let eval_install =
         matches!(em.module, ClifModule::Object(_)) && analyzed.compiler.compiles_at_runtime();
+    let program = statics::DescProgram::from_analyzed(em, analyzed)?;
+    let rows = statics::DescRows {
+        vm: &vm_rows,
+        vis: &vis_rows,
+        classes: &class_specs,
+        obj: &obj_rows,
+        cm: &cm_rows,
+        reg: &reg_rows,
+        foreign: &foreign,
+        meta: &meta_rows,
+        redef_metas: &redef_metas,
+        unit: &unit_rows,
+    };
+    if let Some(code_rodata) = &code_rodata {
+        em.sidecar = Some(draft_sidecar(
+            em,
+            &rows,
+            &program,
+            code_rodata,
+            eval_install,
+        ));
+    }
     let desc = statics::define_desc(
         em,
-        analyzed,
+        &program,
         &statics::DescSpec {
             toplevel: toplevel.expect("a non-package compile defines <main>"),
             unit_init,
             eval_install,
-            rows: statics::DescRows {
-                vm: &vm_rows,
-                vis: &vis_rows,
-                classes: &class_specs,
-                obj: &obj_rows,
-                cm: &cm_rows,
-                reg: &reg_rows,
-                foreign: &foreign,
-                meta: &meta_rows,
-                redef_metas: &redef_metas,
-                unit: &unit_rows,
-            },
+            rows,
         },
     )?;
     let main = define_main(em, desc)?;
     statics::define_rodata(em)?;
     Ok(main)
+}
+
+/// This program's `.zeodata`, when the sidecar can carry it. Every row the
+/// description registers has to be one the sidecar describes; the first
+/// shape it does not is the answer.
+fn draft_sidecar(
+    em: &Emitter,
+    rows: &statics::DescRows<'_>,
+    program: &statics::DescProgram,
+    code_rodata: &[u8],
+    eval_install: bool,
+) -> Result<Sidecar, String> {
+    use crate::backend::sidecar::{Def, PARAM_KINDS, RegEntry, RegRow, encode_hex};
+    let beyond = [
+        (
+            rows.vm.iter().any(|r| r.class != 0 || r.box_id != 0),
+            "a method on a module",
+        ),
+        (
+            rows.vis.iter().any(|r| r.class != 0),
+            "a visibility on a class",
+        ),
+        (!rows.classes.is_empty(), "a class"),
+        (!rows.obj.is_empty(), "a class's instance method rows"),
+        (!rows.cm.is_empty(), "class method rows"),
+        (!rows.foreign.is_empty(), "foreign method rows"),
+        (
+            rows.meta.iter().any(|r| r.class != 0 || r.singleton),
+            "a reflection row off Object",
+        ),
+        (!rows.redef_metas.is_empty(), "a redefined method"),
+        (!rows.unit.is_empty(), "a required file"),
+        (
+            em.cm_sites + em.const_sites + em.new_sites + em.dyn_sites > 0 || em.ffi_sites > 0,
+            "a class-method, constant, construction, dynamic-caller or FFI site",
+        ),
+        (!em.proc_shapes.is_empty(), "a block"),
+        (!em.reopen_flags.is_empty(), "a builtin reopen"),
+        (!program.embedded_sources.is_empty(), "embedded sources"),
+        (!program.coverage.is_empty(), "coverage"),
+        (program.data_section.is_some(), "an __END__ section"),
+    ];
+    if let Some((_, what)) = beyond.iter().find(|(hit, _)| *hit) {
+        return Err(format!(
+            "the program has {what}, which the sidecar does not describe"
+        ));
+    }
+    let decls = em.module.declarations();
+    let defs = rows
+        .vm
+        .iter()
+        .map(|r| {
+            let meta = rows
+                .meta
+                .iter()
+                .find(|m| m.name == r.name)
+                .ok_or_else(|| format!("`{}` has no reflection row", r.name))?;
+            let visibility = match rows.vis.iter().find(|v| v.name == r.name).map(|v| v.verb) {
+                Some(0) => "private",
+                Some(_) => "protected",
+                None => "public",
+            };
+            Ok(Def {
+                name: r.name.clone(),
+                tramp: decls.get_function_decl(r.f).linkage_name(r.f).into_owned(),
+                params: meta
+                    .params
+                    .iter()
+                    .map(|(kind, name)| (PARAM_KINDS[*kind as usize].to_string(), name.clone()))
+                    .collect(),
+                file: meta.file.clone(),
+                line: meta.line,
+                visibility: visibility.to_string(),
+                aliased_from: meta.aliased_from.clone(),
+            })
+        })
+        .collect::<Result<Vec<Def>, String>>()?;
+    let symbol = |f: FuncId| decls.get_function_decl(f).linkage_name(f).into_owned();
+    let reg = rows
+        .reg
+        .iter()
+        .map(|r| {
+            RegEntry::Row(RegRow {
+                kind: r.kind,
+                class: r.class,
+                a: r.a.clone(),
+                b: r.b.clone(),
+                f: r.f.map(symbol),
+                ids: r.ids.clone(),
+                flag: r.flag,
+            })
+        })
+        .collect();
+    Ok(Sidecar {
+        abi_version: zeo_abi::abi::ABI_VERSION,
+        rodata: encode_hex(code_rodata),
+        syms: em.syms_names().to_vec(),
+        callsites: em.callsites.clone(),
+        toplevel: super::names::TOPLEVEL.to_string(),
+        defs,
+        class_tables: program.class_tables.iter().map(|s| s.to_string()).collect(),
+        reg,
+        load_path: program.load_path.clone(),
+        n_load_path_search: program.n_load_path_search,
+        warnings: program.warnings.clone(),
+        eval_install,
+    })
 }
 
 /// The parameter eligibility shared by top-level and class methods:
@@ -1213,7 +1355,7 @@ pub(super) fn main_installs(
 
 /// The exported C `main(argc, argv)`: tail-calls `zeo_rt_main` with the
 /// program description.
-fn define_main(em: &mut Emitter, desc: DataId) -> CResult<FuncId> {
+pub(crate) fn define_main(em: &mut Emitter, desc: DataId) -> CResult<FuncId> {
     let mut sig = em.module.make_signature();
     sig.params.push(AbiParam::new(types::I32));
     sig.params.push(AbiParam::new(em.ptr));
@@ -1242,7 +1384,7 @@ fn define_main(em: &mut Emitter, desc: DataId) -> CResult<FuncId> {
     b.seal_all_blocks();
     b.finalize(cfg);
 
-    em.record_clif("main", &func);
+    em.record_clif(func_id, "main", &func);
     em.define(func_id, func, "main", true)?;
     Ok(func_id)
 }

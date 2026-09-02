@@ -5,10 +5,11 @@ use std::path::PathBuf;
 
 fn clif_of(source: &str) -> String {
     let opts = zeo::CompileOptions::default();
-    let text = zeo::compile_to_clif_text(source, &opts).expect("the slice program must lower");
+    let clif = zeo::compile_to_clif_text(source, &opts).expect("the slice program must lower");
     // The default calling convention names the host (`apple_aarch64`,
     // `system_v`); normalize so the snapshots hold on every platform.
-    text.replace("apple_aarch64", "ccall")
+    clif.text
+        .replace("apple_aarch64", "ccall")
         .replace("system_v", "ccall")
 }
 

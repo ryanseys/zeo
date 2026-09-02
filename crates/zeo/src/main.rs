@@ -88,6 +88,9 @@ struct Args {
     /// of building -- to the attached path or stdout when bare. Implies the
     /// aot pipeline.
     emit_clif: Option<EmitTarget>,
+    /// `--emit-zeodata=<path>`, with `--emit-clif`: write the `.zeodata`
+    /// sidecar `zeo backend` reads beside the text.
+    emit_zeodata: Option<PathBuf>,
     /// `--dump=syntax` (and `-c`): parse, print `Syntax OK`, and stop.
     check_syntax: bool,
     /// `--dump=units` / `--dump=classes[=<filter>]`: run the front end,
@@ -149,7 +152,6 @@ enum Source {
 /// this is the whole of it -- the same two lines irb's own binstub writes.
 const IRB_DRIVER: &str = "require \"irb\"\nIRB.start\n";
 
-
 /// Whether zeo was invoked from an interactive terminal, which is what makes
 /// a bare `zeo` a shell rather than an error. Both ends are asked: a piped
 /// stdin has a program to read, and a redirected stdout has nothing to draw a
@@ -176,6 +178,8 @@ enum Parsed {
     Install(InstallCmd),
     /// `zeo flags`: print the compile flags the project implies.
     Flags(FlagsCmd),
+    /// `zeo backend`: link a program from CLIF text another front end wrote.
+    Backend(BackendCmd),
     /// `zeo gem precompile`: build this gem's platform gem, artifact inside.
     GemPrecompile,
     /// `-h`/`--help` (exit 0).
@@ -208,6 +212,14 @@ struct FlagsCmd {
     gemfile: Option<PathBuf>,
     gem_paths: Vec<PathBuf>,
     json: bool,
+}
+
+/// `zeo backend <file.clif> [--data <file.zeodata>] -o <binary>`.
+#[derive(Debug, PartialEq)]
+struct BackendCmd {
+    clif: PathBuf,
+    data: Option<PathBuf>,
+    output: PathBuf,
 }
 
 /// The environment `parse_args_from` consults -- captured as a value so the
@@ -289,16 +301,23 @@ subcommands:
                         `$(zeo flags)` in a Makefile. --json prints the
                         structured form for tools instead. One producer with
                         the verbs above, so the handoff cannot drift
+  backend <f.clif> -o <bin>
+                        link a program from CLIF text another front end
+                        wrote (see ze0/). `--data <f.zeodata>` names the
+                        sidecar carrying what the text cannot; without it,
+                        the `.zeodata` beside the file, else an empty one
                         A script really named `build`, `gem`, `bundle`,
-                        `install` or `flags` still runs as `zeo ./build`; a
-                        verb never depends on what is in the current
-                        directory.
+                        `install`, `flags` or `backend` still runs as
+                        `zeo ./build`; a verb never depends on what is in
+                        the current directory.
 
 options:
   -o <output>           where to write the compiled binary
   --compile             write the default-named binary instead of running
   --emit-clif[=<path>]  emit the Cranelift IR (the aot backend's own
                         lowering) instead of building; bare prints to stdout
+  --emit-zeodata=<path> with --emit-clif: also write the sidecar that
+                        `zeo backend` reads beside the text
   --dump=<kind>         inspect instead of building. `clif` is --emit-clif
                         to stdout; `syntax` parses and prints `Syntax OK`
                         (`-c` is the short spelling); `units` prints the
@@ -447,6 +466,10 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     if !build_verb && argv.first().map(String::as_str) == Some("flags") {
         return parse_flags(&argv[1..]).map(Parsed::Flags);
     }
+    // `zeo backend`: CLIF text in, a binary out; no Ruby is read.
+    if !build_verb && argv.first().map(String::as_str) == Some("backend") {
+        return parse_backend(&argv[1..]).map(Parsed::Backend);
+    }
     // `zeo gem precompile` is zeo's, not a rubygems command: it is caught
     // here, before the `gem` rewrite hands everything to `Gem::GemRunner`.
     if !build_verb
@@ -476,6 +499,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     let mut eval: Option<String> = None;
     let mut output = None;
     let mut emit_clif: Option<EmitTarget> = None;
+    let mut emit_zeodata: Option<PathBuf> = None;
     let mut check_syntax = false;
     let mut dump_front_end: Option<FrontEndDump> = None;
     // The env spelling is read once here so the flag and the variable can
@@ -551,7 +575,10 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                 _ => name
                     .strip_prefix("enable-")
                     .map(|f| (f.to_string(), true))
-                    .or_else(|| name.strip_prefix("disable-").map(|f| (f.to_string(), false))),
+                    .or_else(|| {
+                        name.strip_prefix("disable-")
+                            .map(|f| (f.to_string(), false))
+                    }),
             };
             if let Some((list, on)) = feature_switch {
                 features.set(&list, on)?;
@@ -600,12 +627,21 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
                         None => EmitTarget::Stdout,
                     });
                 }
+                "emit-zeodata" => {
+                    emit_zeodata =
+                        Some(PathBuf::from(inline.ok_or(
+                            "--emit-zeodata takes an attached path (--emit-zeodata=<path>)",
+                        )?));
+                }
                 // ruby's own spelling for the same family. Where CRuby WARNS
                 // for a kind it cannot serve and keeps running, zeo errors:
                 // running while printing nothing is the silent drop the
                 // project forbids, and the CLI already refuses flags on
                 // purpose (`-S`, `--nowarn`).
-                "dump" => match inline.as_deref().map(|k| k.split_once('=').unwrap_or((k, ""))) {
+                "dump" => match inline
+                    .as_deref()
+                    .map(|k| k.split_once('=').unwrap_or((k, "")))
+                {
                     Some(("clif", "")) => emit_clif = Some(EmitTarget::Stdout),
                     Some(("syntax", "")) => check_syntax = true,
                     // zeo's own two, beside `clif`. `units` is the compiled-in
@@ -829,6 +865,11 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     {
         return Err("each --dump kind stops before the others run; ask for one".to_string());
     }
+    if emit_zeodata.is_some() && emit_clif.is_none() {
+        return Err(
+            "--emit-zeodata goes with --emit-clif, which writes the text it describes".into(),
+        );
+    }
     for (flag, set) in [
         ("-o", output.is_some()),
         ("--compile", compile),
@@ -857,8 +898,11 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
     }
     // Trailing args are ARGV, which only an immediately-run program has.
     // (Both dump kinds inspect instead of running, so neither has any.)
-    let runs_now =
-        output.is_none() && !compile && emit_clif.is_none() && !check_syntax && dump_front_end.is_none();
+    let runs_now = output.is_none()
+        && !compile
+        && emit_clif.is_none()
+        && !check_syntax
+        && dump_front_end.is_none();
     if !program_args.is_empty() && !runs_now {
         return Err(format!("unexpected argument `{}`", program_args[0]));
     }
@@ -929,6 +973,7 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
         lockfile: gemfile.map(zeo::project::derive_lockfile),
         program_args,
         emit_clif,
+        emit_zeodata,
         check_syntax,
         dump_front_end,
         debuginfo,
@@ -940,6 +985,46 @@ fn parse_args_from(argv: Vec<String>, env: &Env) -> Result<Parsed, String> {
 
 /// The install verb's own flags: a store, a Gemfile, gem names. `-h` gets
 /// the main help; anything else is refused by name.
+fn parse_backend(argv: &[String]) -> Result<BackendCmd, String> {
+    let (mut clif, mut data, mut output) = (None, None, None);
+    let mut iter = argv.iter();
+    while let Some(arg) = iter.next() {
+        let (name, inline) = match arg.split_once('=') {
+            Some((n, v)) => (n, Some(v.to_string())),
+            None => (arg.as_str(), None),
+        };
+        let mut value = |flag: &str| -> Result<String, String> {
+            match inline.clone() {
+                Some(v) => Ok(v),
+                None => iter
+                    .next()
+                    .cloned()
+                    .ok_or(format!("{flag} requires a value")),
+            }
+        };
+        match name {
+            "--data" => data = Some(PathBuf::from(value("--data")?)),
+            "-o" => output = Some(PathBuf::from(value("-o")?)),
+            _ if arg.starts_with('-') => {
+                return Err(format!(
+                    "invalid option for zeo backend: {arg} (it takes --data and -o)"
+                ));
+            }
+            _ if clif.is_none() => clif = Some(PathBuf::from(arg)),
+            _ => {
+                return Err(format!(
+                    "zeo backend takes one CLIF file; `{arg}` is a second"
+                ));
+            }
+        }
+    }
+    Ok(BackendCmd {
+        clif: clif.ok_or("zeo backend needs a CLIF file")?,
+        data,
+        output: output.ok_or("zeo backend needs -o <binary>")?,
+    })
+}
+
 fn parse_install(argv: &[String]) -> Result<InstallCmd, String> {
     let mut cmd = InstallCmd::default();
     let mut iter = argv.iter();
@@ -1069,6 +1154,7 @@ fn run() -> Result<(), MainError> {
         Parsed::Run(args) => args,
         Parsed::Install(cmd) => return run_install(cmd),
         Parsed::Flags(cmd) => return run_flags(cmd),
+        Parsed::Backend(cmd) => return run_backend(cmd),
         Parsed::GemPrecompile => return run_gem_precompile(),
         Parsed::Help => {
             print_help();
@@ -1215,7 +1301,8 @@ fn run() -> Result<(), MainError> {
             let manifest_path = obj.with_extension("zman");
             let manifest_text = std::fs::read_to_string(&manifest_path)
                 .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
-            let bytes = std::fs::read(obj).map_err(|e| format!("reading {}: {e}", obj.display()))?;
+            let bytes =
+                std::fs::read(obj).map_err(|e| format!("reading {}: {e}", obj.display()))?;
             Ok(zeo::package::UsePackage {
                 manifest_path,
                 manifest_text,
@@ -1278,11 +1365,16 @@ fn run() -> Result<(), MainError> {
         return Ok(());
     }
     if let Some(target) = &args.emit_clif {
-        let text = zeo::compile_to_clif_text(&source, &opts)?;
+        let clif = zeo::compile_to_clif_text(&source, &opts)?;
         match target {
-            EmitTarget::Stdout => print!("{text}"),
-            EmitTarget::File(path) => std::fs::write(path, &text)
+            EmitTarget::Stdout => print!("{}", clif.text),
+            EmitTarget::File(path) => std::fs::write(path, &clif.text)
                 .map_err(|e| format!("writing {}: {e}", path.display()))?,
+        }
+        if let Some(path) = &args.emit_zeodata {
+            clif.sidecar
+                .map_err(|why| format!("--emit-zeodata: {why}"))?
+                .write(path)?;
         }
         return Ok(());
     }
@@ -1418,11 +1510,7 @@ fn run_install(cmd: InstallCmd) -> Result<(), MainError> {
     let rows = zeo::project::survey(&project)?;
     for name in &cmd.names {
         if !rows.iter().any(|r| &r.name == name) {
-            return Err(format!(
-                "`{name}` is not a gem in {}",
-                project.lockfile.display()
-            )
-            .into());
+            return Err(format!("`{name}` is not a gem in {}", project.lockfile.display()).into());
         }
     }
     zeo::memguard::arm("install");
@@ -1444,7 +1532,10 @@ fn run_install(cmd: InstallCmd) -> Result<(), MainError> {
         // A platform gem SHIPPED its artifact: on an exact identity match
         // it is promoted into the store as-is, no compile. A mismatch is
         // not an error -- the compile below is the answer either way.
-        if let Some(shipped) = row.shipped.as_ref().filter(|s| zeo::project::artifact_matches(s))
+        if let Some(shipped) = row
+            .shipped
+            .as_ref()
+            .filter(|s| zeo::project::artifact_matches(s))
         {
             match zeo::package::store_install(home, shipped) {
                 Ok(true) => {
@@ -1492,6 +1583,12 @@ fn run_install(cmd: InstallCmd) -> Result<(), MainError> {
 /// stores, and one row per gem with its artifact path or the reason it
 /// has none. The producer is the same `zeo::project` survey the compile
 /// itself consults, so the handoff cannot drift.
+fn run_backend(cmd: BackendCmd) -> Result<(), MainError> {
+    init_tracing(None);
+    zeo::backend::clif_text::build(&cmd.clif, cmd.data.as_deref(), &cmd.output)?;
+    Ok(())
+}
+
 fn run_flags(cmd: FlagsCmd) -> Result<(), MainError> {
     init_tracing(None);
     let env = Env::from_process();
@@ -1665,7 +1762,13 @@ fn build_package(
     let compiled = zeo::compile_to_object_with(source, opts, false)?;
     let manifest_json = std::fs::read_to_string(&manifest_out)
         .map_err(|e| format!("reading {}: {e}", manifest_out.display()))?;
-    place_package(out, bundled, &manifest_json, &compiled.object, &manifest_out)?;
+    place_package(
+        out,
+        bundled,
+        &manifest_json,
+        &compiled.object,
+        &manifest_out,
+    )?;
     if zeo::progcache::enabled() {
         let cached: std::io::Result<()> = (|| {
             let slot = zeo::progcache::pkg_reserve(&key)?;
@@ -1924,15 +2027,27 @@ mod tests {
     fn package_flags_parse_with_a_default_artifact_name() {
         let a = ok(&["build", "--package", "rack", "entry.rb"]);
         assert_eq!(a.pkg_feature.as_deref(), Some("rack"));
-        assert_eq!(a.output.as_deref(), Some(std::path::Path::new("rack.zeopkg")));
+        assert_eq!(
+            a.output.as_deref(),
+            Some(std::path::Path::new("rack.zeopkg"))
+        );
 
         // A nested feature names the artifact by its basename.
         let a = ok(&["--package", "rack/utils", "-o", "x.zeopkg", "entry.rb"]);
         assert_eq!(a.output.as_deref(), Some(std::path::Path::new("x.zeopkg")));
         let a = ok(&["--package", "rack/utils", "entry.rb"]);
-        assert_eq!(a.output.as_deref(), Some(std::path::Path::new("utils.zeopkg")));
+        assert_eq!(
+            a.output.as_deref(),
+            Some(std::path::Path::new("utils.zeopkg"))
+        );
 
-        let a = ok(&["--with-package", "a.zeopkg", "--with-package", "b.zeopkg", "app.rb"]);
+        let a = ok(&[
+            "--with-package",
+            "a.zeopkg",
+            "--with-package",
+            "b.zeopkg",
+            "app.rb",
+        ]);
         assert_eq!(a.with_packages.len(), 2);
     }
 
@@ -1979,6 +2094,21 @@ mod tests {
             err(&["install", "--local"]).contains("invalid option for zeo install"),
             "a Bundler flag no longer reaches Bundler through this verb"
         );
+
+        // `zeo backend`: one CLIF file, an optional sidecar, an output.
+        match parse(&["backend", "p.clif", "--data", "p.zeodata", "-o", "p"]).expect("parses") {
+            Parsed::Backend(cmd) => {
+                assert_eq!(cmd.clif, PathBuf::from("p.clif"));
+                assert_eq!(cmd.data, Some(PathBuf::from("p.zeodata")));
+                assert_eq!(cmd.output, PathBuf::from("p"));
+            }
+            _ => panic!("expected Parsed::Backend"),
+        }
+        assert!(err(&["backend", "p.clif"]).contains("-o"));
+        assert!(err(&["backend", "-o", "p"]).contains("CLIF file"));
+        assert!(err(&["backend", "a.clif", "b.clif", "-o", "p"]).contains("a second"));
+        assert!(err(&["--emit-zeodata=p.zeodata", "t.rb"]).contains("--emit-clif"));
+        assert!(err(&["--emit-clif", "--emit-zeodata", "t.rb"]).contains("attached path"));
 
         // The verb is only a verb in FIRST position. A file really called
         // `gem` is reachable, and a file whose name merely contains it is
@@ -2209,15 +2339,24 @@ mod tests {
 
     #[test]
     fn log_level_takes_a_bare_level_or_a_directive() {
-        assert_eq!(ok(&["--log-level", "debug", "t.rb"]).log_level.as_deref(), Some("debug"));
-        assert_eq!(ok(&["--log-level=info", "t.rb"]).log_level.as_deref(), Some("info"));
+        assert_eq!(
+            ok(&["--log-level", "debug", "t.rb"]).log_level.as_deref(),
+            Some("debug")
+        );
+        assert_eq!(
+            ok(&["--log-level=info", "t.rb"]).log_level.as_deref(),
+            Some("info")
+        );
         assert_eq!(ok(&["t.rb"]).log_level, None);
         assert!(err(&["--log-level"]).contains("requires a value"));
         // A bare level widens to the whole compiler; a directive is passed
         // through, so one module can still be singled out.
         assert_eq!(widen_bare_level("debug"), "zeo=debug,zeo_rt=debug");
         assert_eq!(widen_bare_level("zeo::analyze=trace"), "zeo::analyze=trace");
-        assert_eq!(widen_bare_level("zeo=info,zeo_rt=warn"), "zeo=info,zeo_rt=warn");
+        assert_eq!(
+            widen_bare_level("zeo=info,zeo_rt=warn"),
+            "zeo=info,zeo_rt=warn"
+        );
     }
 
     #[test]

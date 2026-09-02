@@ -3,7 +3,7 @@ source: crates/zeo/tests/checks/clif.rs
 expression: "clif_of(\"x = ARGV[0]\\np x&.length\\n\")"
 ---
 ;; zeo_toplevel
-function u0:0(i64) -> i32 ccall {
+function %zeo_toplevel(i64) -> i32 ccall {
     ss0 = explicit_slot 24, align = 8
     ss1 = explicit_slot 24, align = 8
     ss2 = explicit_slot 0, align = 8
@@ -14,15 +14,15 @@ function u0:0(i64) -> i32 ccall {
     ss7 = explicit_slot 24, align = 8
     ss8 = explicit_slot 24, align = 8
     ss9 = explicit_slot 24, align = 8
-    gv0 = symbol colocated userextname0
-    gv1 = symbol colocated userextname1
-    gv2 = symbol userextname3
-    gv3 = symbol userextname6
-    gv4 = symbol colocated userextname13
-    gv5 = symbol userextname15
-    gv6 = symbol colocated userextname17
-    gv7 = symbol colocated userextname17
-    gv8 = symbol colocated userextname17
+    gv0 = symbol colocated %zeo_rodata
+    gv1 = symbol colocated %zeo_syms
+    gv2 = symbol %zeo_rt_gates
+    gv3 = symbol %zeo_rt_pending_interrupts
+    gv4 = symbol colocated %zeo_const_sites
+    gv5 = symbol %zeo_rt_patched_bits
+    gv6 = symbol colocated %zeo_callsites
+    gv7 = symbol colocated %zeo_callsites
+    gv8 = symbol colocated %zeo_callsites
     sig0 = () -> i64 ccall
     sig1 = (i64, i64, i64, i64, i32, i32) -> i32 ccall
     sig2 = (i64, i64, i64, i64, i32, i32) ccall
@@ -38,21 +38,21 @@ function u0:0(i64) -> i32 ccall {
     sig12 = (i64) ccall
     sig13 = (i64) ccall
     sig14 = () ccall
-    fn0 = colocated u0:1 sig0
-    fn1 = colocated u0:2 sig1
-    fn2 = colocated u0:3 sig2
-    fn3 = colocated u0:4 sig3
-    fn4 = colocated u0:5 sig4
-    fn5 = colocated u0:6 sig5
-    fn6 = colocated u0:7 sig6
-    fn7 = colocated u0:8 sig7
-    fn8 = colocated u0:9 sig8
-    fn9 = colocated u0:10 sig9
-    fn10 = colocated u0:11 sig10
-    fn11 = colocated u0:12 sig11
-    fn12 = colocated u0:13 sig12
-    fn13 = colocated u0:14 sig13
-    fn14 = colocated u0:15 sig14
+    fn0 = colocated %zeo_rt_frame_hot sig0
+    fn1 = colocated %zeo_rt_frame_enter sig1
+    fn2 = colocated %zeo_rt_frame_push sig2
+    fn3 = colocated %zeo_rt_check_ints sig3
+    fn4 = colocated %zeo_rt_main_object sig4
+    fn5 = colocated %zeo_rt_pool_push sig5
+    fn6 = colocated %zeo_rt_binding_new sig6
+    fn7 = colocated %zeo_rt_const_set_at sig7
+    fn8 = colocated %zeo_rt_set_line sig8
+    fn9 = colocated %zeo_rt_const_get_cref_cached sig9
+    fn10 = colocated %zeo_rt_array_aref_int sig10
+    fn11 = colocated %zeo_rt_send_value_cached sig11
+    fn12 = colocated %zeo_rt_release sig12
+    fn13 = colocated %zeo_rt_pool_reset sig13
+    fn14 = colocated %zeo_rt_frame_pop sig14
 
 block0(v0: i64):
     v217 = iconst.i64 0
@@ -490,27 +490,27 @@ block51:
 }
 
 ;; zeo_unit_init
-function u0:2() ccall {
-    gv0 = symbol colocated userextname2
-    gv1 = symbol colocated userextname3
-    gv2 = symbol colocated userextname4
-    gv3 = symbol colocated userextname5
-    gv4 = symbol colocated userextname6
-    gv5 = symbol colocated userextname8
-    gv6 = symbol colocated userextname10
-    gv7 = symbol colocated userextname12
+function %zeo_unit_init() ccall {
+    gv0 = symbol colocated %zeo_sym_rows
+    gv1 = symbol colocated %zeo_callsite_callers
+    gv2 = symbol colocated %zeo_syms
+    gv3 = symbol colocated %zeo_callsites
+    gv4 = symbol colocated %zeo_cm_sites
+    gv5 = symbol colocated %zeo_const_sites
+    gv6 = symbol colocated %zeo_new_sites
+    gv7 = symbol colocated %zeo_dyn_sites
     sig0 = (i64, i64, i64) ccall
     sig1 = (i64, i64, i64) ccall
     sig2 = (i64, i64) ccall
     sig3 = (i64, i64) ccall
     sig4 = (i64, i64) ccall
     sig5 = (i64, i64) ccall
-    fn0 = u0:17 sig0
-    fn1 = u0:18 sig1
-    fn2 = u0:19 sig2
-    fn3 = u0:20 sig3
-    fn4 = u0:21 sig4
-    fn5 = u0:22 sig5
+    fn0 = %zeo_rt_syms_init sig0
+    fn1 = %zeo_rt_callsites_init sig1
+    fn2 = %zeo_rt_cm_sites_init sig2
+    fn3 = %zeo_rt_const_sites_init sig3
+    fn4 = %zeo_rt_class_new_sites_init sig4
+    fn5 = %zeo_rt_dyncaller_sites_init sig5
 
 block0:
     v0 = symbol_value.i64 gv0
@@ -528,10 +528,10 @@ block0:
 }
 
 ;; main
-function u0:1(i32, i64) -> i32 ccall {
-    gv0 = symbol colocated userextname1
+function %main(i32, i64) -> i32 ccall {
+    gv0 = symbol colocated %zeo_program_desc
     sig0 = (i32, i64, i64) -> i32 ccall
-    fn0 = u0:24 sig0
+    fn0 = %zeo_rt_main sig0
 
 block0(v0: i32, v1: i64):
     v2 = symbol_value.i64 gv0

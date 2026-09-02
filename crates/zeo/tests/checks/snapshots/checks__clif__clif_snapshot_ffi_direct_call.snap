@@ -3,16 +3,16 @@ source: crates/zeo/tests/checks/clif.rs
 expression: "format!(\";; {}\", scrub_rodata_offsets(block))"
 ---
 ;; LibC.abs
-function u0:58(i64, i64, i64) -> i32 ccall {
+function %zeo_cm_LibC_abs(i64, i64, i64) -> i32 ccall {
     ss0 = explicit_slot 24, align = 8
     ss1 = explicit_slot 8, align = 8
     ss2 = explicit_slot 16, align = 8
     ss3 = explicit_slot 8, align = 8
-    gv0 = symbol colocated userextname0
-    gv1 = symbol colocated userextname1
-    gv2 = symbol userextname5
-    gv3 = symbol userextname8
-    gv4 = symbol colocated userextname11
+    gv0 = symbol colocated %zeo_rodata
+    gv1 = symbol colocated %zeo_syms
+    gv2 = symbol %zeo_rt_gates
+    gv3 = symbol %zeo_rt_pending_interrupts
+    gv4 = symbol colocated %zeo_ffi_sites
     sig0 = () -> i32 ccall
     sig1 = (i64) ccall
     sig2 = () -> i64 ccall
@@ -27,19 +27,19 @@ function u0:58(i64, i64, i64) -> i32 ccall {
     sig11 = (i64) ccall
     sig12 = () ccall
     sig13 = (i64) ccall
-    fn0 = colocated u0:204 sig0
-    fn1 = colocated u0:205 sig1
-    fn2 = colocated u0:206 sig2
-    fn3 = colocated u0:207 sig3
-    fn4 = colocated u0:208 sig4
-    fn5 = colocated u0:209 sig5
-    fn6 = colocated u0:211 sig6
-    fn7 = colocated u0:252 sig7
-    fn8 = colocated u0:253 sig8
-    fn9 = colocated u0:254 sig10
-    fn10 = colocated u0:210 sig11
-    fn11 = colocated u0:213 sig12
-    fn12 = colocated u0:214 sig13
+    fn0 = colocated %zeo_rt_stack_check sig0
+    fn1 = colocated %zeo_rt_retain sig1
+    fn2 = colocated %zeo_rt_frame_hot sig2
+    fn3 = colocated %zeo_rt_frame_enter sig3
+    fn4 = colocated %zeo_rt_frame_push sig4
+    fn5 = colocated %zeo_rt_check_ints sig5
+    fn6 = colocated %zeo_rt_set_line sig6
+    fn7 = colocated %zeo_rt_ffi_sym sig7
+    fn8 = colocated %zeo_rt_ffi_to_int sig8
+    fn9 = colocated %zeo_rt_ffi_after_call sig10
+    fn10 = colocated %zeo_rt_release sig11
+    fn11 = colocated %zeo_rt_frame_pop sig12
+    fn12 = colocated %zeo_rt_pool_reset sig13
 
 block0(v0: i64, v1: i64, v2: i64):
     v105 = iconst.i64 0

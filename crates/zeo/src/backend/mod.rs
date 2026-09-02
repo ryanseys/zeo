@@ -11,9 +11,11 @@
 //! release and the corpus agreed with CRuby on both. The branch
 //! `archive/rustc-backend` keeps it readable.
 
+pub mod clif_text;
 pub mod jit;
 pub mod link;
 pub mod object;
+pub mod sidecar;
 
 use std::path::Path;
 

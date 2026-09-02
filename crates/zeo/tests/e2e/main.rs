@@ -21,6 +21,7 @@ mod paths;
 mod zeo_bin;
 
 mod autopkg;
+mod backend_clif;
 mod blocks_procs;
 mod boxes;
 mod bundler_parity;
