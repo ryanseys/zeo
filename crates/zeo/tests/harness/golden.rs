@@ -382,6 +382,10 @@ struct Sidecars {
     /// A `.cext` sidecar's extension directory, resolved against the `.rb`'s
     /// own -- see [`cext_root`].
     cext: Option<PathBuf>,
+    /// A `.pkggap` sidecar (gaps only): the gap's divergence is between the
+    /// SPLICED and PACKAGED roads, not against ruby. The spliced run must
+    /// match ruby; the packaged leg must diverge from the spliced run.
+    pkggap: bool,
 }
 
 /// The tag a per-platform golden carries. Empty everywhere but linux, so the
@@ -441,6 +445,7 @@ fn sidecars(rb: &Path) -> std::io::Result<Sidecars> {
         expected_out,
         expected_err,
         cext,
+        pkggap: side(".pkggap").is_some(),
     })
 }
 
@@ -1044,20 +1049,32 @@ pub fn run_golden_env(
     // The first suite run seeds the cache; later goldens and later runs
     // link. A refused package drops to splice inside the child, so both
     // roads stay comparable corpus-wide.
+    // `Some(true)` = the packaged road agreed with the spliced one;
+    // `Some(false)` = it diverged (or could not compile where the spliced
+    // road ran); `None` = the leg is off or the spliced run itself failed.
+    // A `.pkggap` gap consumes this in the verdict below instead of erroring
+    // here: its divergence IS the recorded gap.
+    let mut packaged_agreed: Option<bool> = None;
     if std::env::var_os("ZEO_GOLDEN_DIFF_PACKAGED").is_some_and(|v| v == "1")
         && let Ok((on_out, on_err)) = &actual
     {
-        let (pk_out, pk_err) =
-            compile_and_run_packaged(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env)
-                .map_err(|e| {
-                    format!(
-                        "{}: the packaged compile/run failed where the plain one ran: {e}",
-                        rb.display()
-                    )
-                })?;
-        if norm(on_out, rb, run_cwd) != norm(&pk_out, rb, run_cwd)
-            || norm(on_err, rb, run_cwd) != norm(&pk_err, rb, run_cwd)
-        {
+        let packaged =
+            compile_and_run_packaged(rb, &source, &sc.args, sc.stdin.as_deref(), run_cwd, env);
+        let (pk_out, pk_err) = match packaged {
+            Ok(pair) => pair,
+            Err(_) if sc.pkggap => (Vec::new(), Vec::new()),
+            Err(e) => {
+                return Err(format!(
+                    "{}: the packaged compile/run failed where the plain one ran: {e}",
+                    rb.display()
+                )
+                .into());
+            }
+        };
+        let agreed = norm(on_out, rb, run_cwd) == norm(&pk_out, rb, run_cwd)
+            && norm(on_err, rb, run_cwd) == norm(&pk_err, rb, run_cwd);
+        packaged_agreed = Some(agreed);
+        if !agreed && !sc.pkggap {
             return Err(format!(
                 "{}: PACKAGED DIVERGENCE -- the same program answers \
                  differently spliced vs linked against packaged gems (a \
@@ -1135,6 +1152,23 @@ pub fn run_golden_env(
         Mode::Pass | Mode::Divergence => {
             Err(mismatch_message(rb, &actual, &expected_out, &expected_err, run_cwd).into())
         }
+        // A `.pkggap` gap: ruby-parity on the spliced road is REQUIRED (the
+        // recorded divergence is between zeo's own two roads), and the
+        // packaged leg is what must still diverge. A gap that also diverges
+        // from ruby is a different bug and must be filed as a plain gap.
+        Mode::Xfail if sc.pkggap => match (matched, packaged_agreed) {
+            (false, _) => {
+                Err(mismatch_message(rb, &actual, &expected_out, &expected_err, run_cwd).into())
+            }
+            (true, Some(true)) => Err(format!(
+                "PACKAGED GAP FIXED -- {stem}'s packaged road agrees with the \
+                 spliced one now. Promote it: move the .rb (+ .expected) into \
+                 tests/ and delete the .pkggap sidecar.",
+                stem = rb.file_stem().unwrap_or(rb.as_os_str()).to_string_lossy()
+            )
+            .into()),
+            (true, _) => Ok(()),
+        },
         Mode::Xfail if matched => Err(format!(
             "GAP FIXED -- {stem} now matches ruby. Promote it: \
              `cargo xtask promote-gap {stem}` (moves it + its sidecars into tests/, \
