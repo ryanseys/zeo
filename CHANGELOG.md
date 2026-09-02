@@ -33,7 +33,8 @@ The first public release, not yet cut.
   reconciliation over an allocation registry, which reclaims what refcounting
   cannot.
 - **C extensions from source.** A gem's `ext/**/*.c` compiles against MRI's
-  own headers, vendored verbatim from `ruby/ruby@v4.0.6` plus a patch series.
+  own headers, fetched from `ruby/ruby@v4.0.6` at first use with zeo's edits
+  applied.
   Prebuilt MRI binaries never load: zeo is source-compatible and
   ABI-incompatible by design.
 - **RubyGems and Bundler support.** `--gem-path` and `--bundle-gemfile` read

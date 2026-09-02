@@ -20,8 +20,6 @@ fn build_cext() {
         build.file(format!("csrc/{f}"));
     }
     build
-        .include("cext/include")
-        .include("cext/config")
         .flag("-fexceptions")
         .flag("-fasynchronous-unwind-tables")
         .flag_if_supported("-Wno-unused-parameter")

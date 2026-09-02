@@ -38,17 +38,17 @@ MIT.
 These gems are redistributed in the release tarballs and platform gems (under
 `share/zeo/gems/`), and embedded in the `zeo` crate published to crates.io.
 
-## MRI's C API headers (`crates/zeo-capi/cext/include/`)
+## MRI's C API headers (`share/zeo/ruby-headers/` in a release)
 
-`crates/zeo-capi/cext/include/` is `ruby/ruby@v4.0.6`'s `include/` tree, vendored
-verbatim plus the patch series in `crates/zeo-capi/cext/patches/`. A gem's C
-extension compiles against it, so these headers reach any program that loads
-one. Ruby is dual-licensed under the Ruby License and 2-clause BSD; upstream's
-texts sit beside the tree as
-[`crates/zeo-capi/cext/COPYING`](crates/zeo-capi/cext/COPYING) and
-[`crates/zeo-capi/cext/BSDL`](crates/zeo-capi/cext/BSDL) -- the same pair that
-ships beside every Ruby-licensed gem in `gems/`.
-`crates/zeo-capi/cext/README.md` records what the patches change and why.
+Nothing of MRI's header tree is in this repository. zeo fetches
+`ruby/ruby@v4.0.6`'s `include/` tree (the pin is
+`crates/zeo-capi/ruby-headers.lock`) the first time it builds a C extension,
+applies the edits `crates/zeo-capi/src/headers/hunks.rs` records, and a release
+tarball carries the finished tree pre-seeded so an install needs no fetch. A
+gem's C extension compiles against it, so these headers reach any program that
+loads one. Ruby is dual-licensed under the Ruby License and 2-clause BSD;
+upstream's `COPYING`, `BSDL` and `LEGAL` ride beside the fetched tree, the
+same pair that ships beside every Ruby-licensed gem in `gems/`.
 
 ## The conformance corpus (`tests/spinel/`)
 

@@ -31,6 +31,9 @@ zeo-rt.workspace = true
 # The C extension API, behind `capi`: the crate is linked (and so exported
 # from `libzeo.a`) only when the feature is on.
 zeo-capi = { workspace = true, optional = true }
+# The C API headers' archive is verified against the pin before it is unpacked
+# (`cext::headers`).
+sha2.workspace = true
 # The Cranelift backend: HIR -> CLIF -> object files (see `clif/`), linked
 # against `libzeo.a` by `backend/link.rs`.
 cranelift-codegen.workspace = true

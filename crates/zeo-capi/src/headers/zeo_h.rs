@@ -105,7 +105,7 @@ mod tests {
     fn every_entry_is_declared_once() {
         let h = render();
         for (_, name, _) in VIEW_ENTRIES {
-            assert_eq!(h.matches(&format!(" {name}(")).count(), 1, "{name}");
+            assert_eq!(h.matches(&format!("{name}(")).count(), 1, "{name}");
         }
         assert!(h.contains("struct RString *rb_zeo_rstring(VALUE obj);"));
         assert!(h.contains("VALUE rb_zeo_rbasic_class(VALUE obj);"));

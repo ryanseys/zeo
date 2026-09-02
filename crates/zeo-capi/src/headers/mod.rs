@@ -152,7 +152,10 @@ mod tests {
         assert_eq!(p.subdir, "include");
         assert_eq!(p.rev.len(), 40, "a full commit sha");
         assert_eq!(p.sha256.len(), 64);
-        assert_eq!(p.archive_url(), format!("https://github.com/ruby/ruby/archive/{}.tar.gz", p.rev));
+        assert_eq!(
+            p.archive_url(),
+            format!("https://github.com/ruby/ruby/archive/{}.tar.gz", p.rev)
+        );
         assert_eq!(p.archive_root(), format!("ruby-{}", p.rev));
     }
 

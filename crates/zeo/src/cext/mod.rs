@@ -14,38 +14,28 @@
 //! real `make` instead -- see [`build`] for why that is the right way round.
 
 pub mod build;
+#[cfg(feature = "capi")]
+pub mod headers;
 pub mod makefile;
 
 use crate::home::ZeoHome;
 use std::path::{Path, PathBuf};
 
-/// Where the vendored MRI headers landed, as `(include, config)`.
+/// MRI's headers, as `(include, config)`, fetched on the first call that
+/// needs them (see [`headers`]).
 ///
-/// This is a RUN-TIME fact. `crates/zeo/build.rs` bakes the dev tree's paths
-/// into the rbconfig shim as a fallback, and an installed zeo's are under its
-/// payload -- so a released binary that used the compile-time constant would
-/// point every extension build at the build machine's source tree.
+/// A zeo built without the C API has no use for them: an extension it built
+/// could never load.
 pub fn header_dirs() -> Result<(PathBuf, PathBuf), String> {
-    let root = match crate::home::zeo_home() {
-        ZeoHome::DevTree { root } => root.join("crates/zeo-capi/cext"),
-        ZeoHome::Installed { payload, .. } => payload.join("cext"),
-        // A `cargo install`ed zeo has no payload directory at all, so the
-        // headers ride nowhere it can reach. Saying so beats handing an
-        // extension an include path that does not exist.
-        ZeoHome::Registry { .. } => {
-            return Err("a cargo-installed zeo carries no C extension headers; \
-                        install the release tarball to build native gems"
-                .into());
-        }
-    };
-    let (include, config) = (root.join("include"), root.join("config"));
-    if !include.join("ruby.h").is_file() {
-        return Err(format!(
-            "the C extension headers are missing from {} -- this install is incomplete",
-            root.display()
-        ));
+    #[cfg(feature = "capi")]
+    {
+        let dirs = headers::ensure()?;
+        Ok((dirs.include, dirs.config))
     }
-    Ok((include, config))
+    #[cfg(not(feature = "capi"))]
+    {
+        Err("this zeo was built without C extension support".into())
+    }
 }
 
 /// Run `extconf.rb` in `dir` with `zeo`, so mkmf writes a Makefile.

@@ -1,8 +1,8 @@
 //! zeo-capi: MRI's C extension API over the zeo-rt runtime.
 //!
 //! zeo compiles a gem's `ext/**/*.c` from source against MRI's own headers
-//! (`cext/`, whose README states the stance) and never loads a prebuilt MRI
-//! `.so`. This crate is the other side of that boundary: the `VALUE`
+//! (fetched at first use; `headers` states the stance) and never loads a
+//! prebuilt MRI `.so`. This crate is the other side of that boundary: the `VALUE`
 //! encoding, the handles a heap `VALUE` points at, and the scope that
 //! decides how long one lives.
 //!
@@ -34,6 +34,7 @@ pub mod forward;
 pub mod gc;
 pub mod globals;
 pub mod handles;
+pub mod headers;
 pub mod io;
 pub mod layout;
 pub mod layout_facts;

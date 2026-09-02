@@ -594,3 +594,158 @@ void Init_latch_probe(void)
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Every accessor the header edits redirect answers through a view, end to
+/// end: a write through `RSTRING_PTR` reaches the String, `RARRAY_ASET`
+/// reaches the Array, `ROBJECT_FIELDS` reads the ivars, `RTYPEDDATA(o)->data`
+/// is the object's own slot, `RFILE(io)->fptr->fd` is the descriptor,
+/// `RMATCH_REGS` are the match's offsets, and the encoding index and
+/// coderange are the String's own.
+#[test]
+fn every_edited_accessor_answers_through_its_view() {
+    if !have("cc") {
+        eprintln!("skipping: this machine has no `cc`");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("zeo-cext-views-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(
+        dir.join("extconf.rb"),
+        "require \"mkmf\"\ncreate_makefile(\"view_probe\")\n",
+    )
+    .expect("write extconf.rb");
+    std::fs::write(
+        dir.join("view_probe.c"),
+        r#"#include <ruby.h>
+#include <ruby/encoding.h>
+#include <ruby/io.h>
+#include <ruby/re.h>
+
+struct cell { long n; };
+static void cell_free(void *p) { ruby_xfree(p); }
+static const rb_data_type_t cell_type = {
+    "zeo/view_probe/cell", { NULL, cell_free, NULL, NULL, { NULL } }, 0, 0, RUBY_TYPED_FREE_IMMEDIATELY,
+};
+
+static VALUE upcase_first(VALUE self, VALUE s)
+{
+    char *p = RSTRING_PTR(s);
+    if (RSTRING_LEN(s) > 0 && p[0] >= 'a' && p[0] <= 'z') p[0] -= 32;
+    return LONG2NUM(RSTRING_LEN(s));
+}
+
+static VALUE swap_ends(VALUE self, VALUE a)
+{
+    long n = RARRAY_LEN(a);
+    VALUE first = RARRAY_AREF(a, 0);
+    RARRAY_ASET(a, 0, RARRAY_AREF(a, n - 1));
+    RARRAY_ASET(a, n - 1, first);
+    return a;
+}
+
+static VALUE first_ivar(VALUE self, VALUE o)
+{
+    return ROBJECT_FIELDS(o)[0];
+}
+
+static VALUE cell_new(VALUE klass, VALUE n)
+{
+    struct cell *c = ruby_xmalloc(sizeof *c);
+    c->n = NUM2LONG(n);
+    VALUE o = TypedData_Wrap_Struct(klass, &cell_type, c);
+    struct cell *again = ruby_xmalloc(sizeof *c);
+    again->n = c->n * 2;
+    ruby_xfree(RTYPEDDATA(o)->data);
+    RTYPEDDATA(o)->data = again;
+    return o;
+}
+
+static VALUE cell_n(VALUE self)
+{
+    struct cell *c;
+    TypedData_Get_Struct(self, struct cell, &cell_type, c);
+    return LONG2NUM(c->n);
+}
+
+static VALUE fd_of(VALUE self, VALUE io)
+{
+    rb_io_t *fptr;
+    GetOpenFile(io, fptr);
+    return INT2NUM(RFILE(io)->fptr->fd == fptr->fd ? fptr->fd : -1);
+}
+
+static VALUE match_span(VALUE self, VALUE m)
+{
+    struct re_registers *regs = RMATCH_REGS(m);
+    return rb_ary_new_from_args(2, LONG2NUM(regs->beg[1]), LONG2NUM(regs->end[1]));
+}
+
+static VALUE enc_facts(VALUE self, VALUE s)
+{
+    int cr = RB_ENC_CODERANGE(s);
+    RB_ENC_CODERANGE_SET(s, RUBY_ENC_CODERANGE_7BIT);
+    return rb_ary_new_from_args(3,
+        INT2NUM(ENCODING_GET(s) == rb_utf8_encindex() ? 8 : ENCODING_GET(s) == rb_ascii8bit_encindex() ? 0 : -1),
+        INT2NUM(cr == RUBY_ENC_CODERANGE_7BIT ? 7 : cr == RUBY_ENC_CODERANGE_VALID ? 1 : 0),
+        INT2NUM(RB_ENC_CODERANGE(s) == cr));
+}
+
+void Init_view_probe(void)
+{
+    VALUE m = rb_define_module("ViewProbe");
+    rb_define_singleton_method(m, "upcase_first", upcase_first, 1);
+    rb_define_singleton_method(m, "swap_ends", swap_ends, 1);
+    rb_define_singleton_method(m, "first_ivar", first_ivar, 1);
+    rb_define_singleton_method(m, "fd_of", fd_of, 1);
+    rb_define_singleton_method(m, "match_span", match_span, 1);
+    rb_define_singleton_method(m, "enc_facts", enc_facts, 1);
+    VALUE c = rb_define_class_under(m, "Cell", rb_cObject);
+    rb_undef_alloc_func(c);
+    rb_define_singleton_method(c, "new", cell_new, 1);
+    rb_define_method(c, "n", cell_n, 0);
+}
+"#,
+    )
+    .expect("write view_probe.c");
+    zeo::cext::configure(&zeo_bin(), &dir, Path::new("extconf.rb"), &[])
+        .unwrap_or_else(|e| panic!("{e}"));
+    zeo::cext::build_extension(&dir, 4).unwrap_or_else(|e| panic!("{e}"));
+
+    let program = format!(
+        r#"$LOAD_PATH.unshift({dir:?})
+require "view_probe"
+s = +"hello"
+p [ViewProbe.upcase_first(s), s]
+p ViewProbe.swap_ends([1, 2, 3])
+class Box; def initialize; @first = :one; @second = :two; end; end
+p ViewProbe.first_ivar(Box.new)
+p ViewProbe::Cell.new(21).n
+File.open(File.join({dir:?}, "extconf.rb")) {{ |f| p ViewProbe.fd_of(f) == f.fileno }}
+p ViewProbe.match_span("xxabcxx".match(/x(abc)x/))
+p ViewProbe.enc_facts("plain")
+p ViewProbe.enc_facts("café")
+p ViewProbe.enc_facts("café".b)
+"#,
+        dir = dir.display().to_string(),
+    );
+    let out = Command::new(zeo_bin())
+        .arg("-e")
+        .arg(&program)
+        .env("ZEO_CACHE", "0")
+        .output()
+        .expect("zeo runs");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "[5, \"Hello\"]\n[3, 2, 1]\n:one\n42\ntrue\n[2, 5]
+[8, 7, 1]
+\
+         [8, 1, 1]
+[0, 1, 1]
+",
+        "stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -700,7 +700,7 @@ fn suite_pkg_cache() -> Result<(PathBuf, PathBuf), String> {
 /// runtime, so each engine needs its own: the oracle cannot load a bundle
 /// linked against zeo's runtime, and zeo cannot load one built for MRI's ABI.
 /// Pointing both at one build would prove nothing, and that is why the twelve
-/// `crates/zeo-capi/cext/README.md` divergences had no instrument until now.
+/// documented C-API divergences had no instrument until now.
 ///
 /// This side is here; the ORACLE side is built by `cargo xtask bless`, which
 /// is the only thing that ever runs ruby (recording moved out of the test

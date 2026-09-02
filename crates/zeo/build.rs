@@ -238,27 +238,12 @@ fn render_rbconfig(manifest_dir: &Path, out_dir: &Path) {
         .replace("@SOEXT@", soext)
         .replace("@OS_VERSION@", &darwin_major())
         .replace("@LDSHARED@", ldshared)
-        .replace("@UNDEFINED_FLAG@", undefined)
-        // Where `crates/zeo-capi/cext/` sits in the DEV tree. An installed zeo
-        // exports `ZEO_CEXT_HDRDIR` instead, because the install path is a
-        // run-time fact and this is a compile-time constant.
-        .replace("@CEXT_HDRDIR@", &cext_dir("include"))
-        .replace("@CEXT_ARCHHDRDIR@", &cext_dir("config"));
+        .replace("@UNDEFINED_FLAG@", undefined);
     assert!(
         !rendered.contains('@') || !rendered.contains("@RUBY"),
         "rbconfig.rb.in has an unsubstituted placeholder"
     );
     write_if_changed(&out_dir.join("rbconfig.rb"), &rendered);
-}
-
-/// One of `crates/zeo-capi/cext/`'s two include roots, absolute, in the dev
-/// tree. `CARGO_MANIFEST_DIR` is `crates/zeo`.
-fn cext_dir(leaf: &str) -> String {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../zeo-capi/cext")
-        .join(leaf)
-        .to_string_lossy()
-        .into_owned()
 }
 
 fn target_os() -> String {

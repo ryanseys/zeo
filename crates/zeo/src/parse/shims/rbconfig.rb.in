@@ -29,8 +29,9 @@ module RbConfig
   # names no GEM_HOME. See `zeo::home::ruby_prefix`.
   prefix = ENV["ZEO_PREFIX"] || "@ZEO_PREFIX@"
 
-  # Where `crates/zeo-capi/cext/` landed. `zeo` exports these before it runs an
-  # `extconf.rb`; the fallbacks are the dev tree.
+  # Where MRI's headers live once zeo has fetched them (`zeo::cext::headers`).
+  # `zeo` exports these before it runs an `extconf.rb`; the fallbacks name the
+  # same cache, filled in when the shim is loaded.
   hdrdir = ENV["ZEO_CEXT_HDRDIR"] || "@CEXT_HDRDIR@"
   archhdrdir = ENV["ZEO_CEXT_ARCHHDRDIR"] || "@CEXT_ARCHHDRDIR@"
 

@@ -6,8 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::Error;
 use crate::exec::{self, Capture};
-use crate::{Error, root, root_join};
 
 /// One pinned upstream tree.
 pub struct Pin {
@@ -19,37 +19,15 @@ pub struct Pin {
 }
 
 impl Pin {
-    /// The MRI C API headers, from `ruby-headers.lock`.
-    ///
-    /// A `key = value` file rather than a lockfile format: there is exactly
-    /// one pin in it, and a parser for one record should be readable in one
-    /// screen.
+    /// The MRI C API headers, from the C-API crate's own `ruby-headers.lock`.
     pub fn ruby_headers() -> Result<Pin, Error> {
-        let path = root_join("ruby-headers.lock");
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| Error::new(format!("reading {}: {e}", path.display())))?;
-        let mut fields = std::collections::HashMap::new();
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let (key, value) = line
-                .split_once('=')
-                .ok_or_else(|| Error::new(format!("{}: {line:?} is not `key = value`", path.display())))?;
-            fields.insert(key.trim().to_string(), value.trim().to_string());
-        }
-        let mut take = |key: &str| {
-            fields
-                .remove(key)
-                .ok_or_else(|| Error::new(format!("{} names no {key}", path.display())))
-        };
+        let p = zeo_capi::headers::pin();
         Ok(Pin {
             name: "ruby".into(),
-            repo: take("repo")?,
-            tag: take("tag")?,
-            rev: take("rev")?,
-            subdir: fields.remove("subdir"),
+            repo: p.repo,
+            tag: p.tag,
+            rev: p.rev,
+            subdir: Some(p.subdir),
         })
     }
 
@@ -74,7 +52,13 @@ pub fn fetch_checkout(pin: &Pin) -> Result<PathBuf, Error> {
         .map_err(|e| Error::new(format!("creating {}: {e}", cache.display())))?;
     git(&["init", "--quiet"], &cache)?;
     git(
-        &["fetch", "--depth", "1", &pin.repo, &format!("refs/tags/{}", pin.tag)],
+        &[
+            "fetch",
+            "--depth",
+            "1",
+            &pin.repo,
+            &format!("refs/tags/{}", pin.tag),
+        ],
         &cache,
     )?;
     git(&["checkout", "--quiet", "--detach", "FETCH_HEAD"], &cache)?;
@@ -128,54 +112,15 @@ pub fn copy_tree(src: &Path, dest: &Path) -> Result<(), Error> {
             copy_tree(&from, &to)?;
         } else {
             std::fs::copy(&from, &to).map_err(|e| {
-                Error::new(format!("copying {} to {}: {e}", from.display(), to.display()))
+                Error::new(format!(
+                    "copying {} to {}: {e}",
+                    from.display(),
+                    to.display()
+                ))
             })?;
         }
     }
     Ok(())
-}
-
-/// Relative paths of every file under `dir`, sorted, dotfiles included.
-/// Empty when there is no such directory.
-pub fn list_files(dir: &Path) -> Result<Vec<String>, Error> {
-    let mut out = Vec::new();
-    let mut stack = vec![(dir.to_path_buf(), String::new())];
-    while let Some((at, prefix)) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&at) else {
-            continue;
-        };
-        for entry in entries {
-            let entry = entry.map_err(|e| Error::new(format!("reading {}: {e}", at.display())))?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let rel = if prefix.is_empty() {
-                name
-            } else {
-                format!("{prefix}/{name}")
-            };
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push((path, rel));
-            } else {
-                out.push(rel);
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
-/// Recursive byte-for-byte comparison: same file set, same contents.
-pub fn dirs_equal(a: &Path, b: &Path) -> Result<bool, Error> {
-    let files = list_files(a)?;
-    if files != list_files(b)? {
-        return Ok(false);
-    }
-    for rel in &files {
-        if std::fs::read(a.join(rel)).ok() != std::fs::read(b.join(rel)).ok() {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
 
 pub fn remove_dir_all(dir: &Path) -> Result<(), Error> {
@@ -184,32 +129,4 @@ pub fn remove_dir_all(dir: &Path) -> Result<(), Error> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(Error::new(format!("removing {}: {e}", dir.display()))),
     }
-}
-
-/// `git diff --no-index` between two trees, as a patch. It exits nonzero when
-/// the trees differ, which is the whole reason it was run, so the exit code
-/// says nothing and the empty output is what a failure looks like.
-pub fn diff_trees(a: &Path, b: &Path) -> Result<String, Error> {
-    let out = exec::run(
-        &[
-            Path::new("git"),
-            Path::new("diff"),
-            Path::new("--no-index"),
-            Path::new("--src-prefix=a/"),
-            Path::new("--dst-prefix=b/"),
-            a,
-            b,
-        ],
-        root(),
-        &[],
-        Capture::Both,
-    )?;
-    let text = out.stdout_text().into_owned();
-    if text.is_empty() {
-        return Err(Error::new(format!(
-            "git diff --no-index produced nothing: {}",
-            out.stderr_text().trim()
-        )));
-    }
-    Ok(text)
 }

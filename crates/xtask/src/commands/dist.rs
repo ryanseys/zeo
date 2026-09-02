@@ -74,6 +74,21 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     for (rel, src) in payload::files()? {
         copy(&src, &payload_dir.join("lib/ruby").join(rel))?;
     }
+    // MRI's headers, finished, so an install builds a native gem without a
+    // fetch. `cext::headers` finds this tree by its rev.
+    let headers = zeo::cext::headers::ensure().map_err(Error::new)?;
+    let rev = zeo_capi::headers::pin().rev;
+    let seeded = payload_dir.join("ruby-headers").join(&rev);
+    for root in [&headers.include, &headers.config] {
+        let leaf = root.file_name().unwrap_or_default();
+        crate::vendor::copy_tree(root, &seeded.join(leaf))?;
+    }
+    for name in [".complete", "BSDL", "COPYING", "LEGAL"] {
+        let src = headers.include.with_file_name(name);
+        if src.is_file() {
+            copy(&src, &seeded.join(name))?;
+        }
+    }
     write(
         &payload_dir.join("dist-manifest.json"),
         format!(
@@ -193,12 +208,7 @@ fn stage_binary(opts: &Opts, stage: &Path, payload_dir: &Path, triple: &str) -> 
     stage_built(stage, payload_dir, triple, &built)
 }
 
-fn stage_built(
-    stage: &Path,
-    payload_dir: &Path,
-    triple: &str,
-    built: &Path,
-) -> Result<(), Error> {
+fn stage_built(stage: &Path, payload_dir: &Path, triple: &str, built: &Path) -> Result<(), Error> {
     copy(&built.join("zeo"), &stage.join("bin/zeo"))?;
     let archive = built.join("libzeo.a");
     if !archive.is_file() {
@@ -242,7 +252,15 @@ fn stage_binary_pgo(
         .map_err(|e| Error::new(format!("creating {}: {e}", prof_dir.display())))?;
 
     let built = cargo_target_root().join(triple).join("dist");
-    let build = ["build", "--profile", "dist", "-p", "zeo", "--target", triple];
+    let build = [
+        "build",
+        "--profile",
+        "dist",
+        "-p",
+        "zeo",
+        "--target",
+        triple,
+    ];
 
     println!("dist: pgo phase 1 -- instrumented build");
     let generate = format!("-Cprofile-generate={}", prof_dir.display());
@@ -297,7 +315,8 @@ fn train_pgo(zeo: &Path, prof_dir: &Path) -> Result<(), Error> {
         if !out.success() {
             return Err(Error::new(format!(
                 "pgo training: {name} exited {:?}:\n{}",
-                out.code, out.stderr_text()
+                out.code,
+                out.stderr_text()
             )));
         }
         let expected = rb.with_extension("rb.expected");
@@ -345,11 +364,7 @@ fn inject_profiler_runtime(built: &Path) -> Result<(), Error> {
     if objs.is_empty() {
         return Err(Error::new(format!("{} held no objects", rlib.display())));
     }
-    let mut argv = vec![
-        PathBuf::from("ar"),
-        PathBuf::from("qs"),
-        archive.clone(),
-    ];
+    let mut argv = vec![PathBuf::from("ar"), PathBuf::from("qs"), archive.clone()];
     argv.extend(objs);
     let out = exec::run(&argv, work.path(), &[], Capture::Both)?;
     if !out.success() {
@@ -375,7 +390,12 @@ fn merge_profiles(prof_dir: &Path, merged: &Path) -> Result<(), Error> {
     if raws.is_empty() {
         return Err(Error::new("training produced no .profraw files"));
     }
-    let mut argv = vec![tool, PathBuf::from("merge"), PathBuf::from("-o"), merged.to_path_buf()];
+    let mut argv = vec![
+        tool,
+        PathBuf::from("merge"),
+        PathBuf::from("-o"),
+        merged.to_path_buf(),
+    ];
     argv.extend(raws);
     let out = exec::run(&argv, root(), &[], Capture::Both)?;
     if !out.success() {
@@ -444,7 +464,10 @@ fn smoke_test(stage: &Path) -> Result<(), Error> {
     let cache = work.path().join("cache");
     let src = work.path().join("smoke.rb");
     let bin = work.path().join("smoke");
-    write(&src, b"require \"json\"\nputs JSON.generate({smoke: \"ok\"})\n")?;
+    write(
+        &src,
+        b"require \"json\"\nputs JSON.generate({smoke: \"ok\"})\n",
+    )?;
     println!("dist: smoke test (compile and run)...");
     let cache = cache.to_string_lossy().into_owned();
     let env = [
@@ -507,8 +530,8 @@ fn tarball(out_dir: &Path, dist_name: &str) -> Result<(), Error> {
         .and_then(|gz| gz.finish())
         .map_err(|e| Error::new(format!("writing {}: {e}", path.display())))?;
 
-    let bytes = std::fs::read(&path)
-        .map_err(|e| Error::new(format!("reading {}: {e}", path.display())))?;
+    let bytes =
+        std::fs::read(&path).map_err(|e| Error::new(format!("reading {}: {e}", path.display())))?;
     let digest = format!("{:x}", Sha256::digest(&bytes));
     write(
         &path.with_extension("gz.sha256"),

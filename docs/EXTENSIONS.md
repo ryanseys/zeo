@@ -76,9 +76,21 @@ limitation is a synthesized FHS install prefix, not a real install layout.
 
 A gem that ships its C as SOURCE is compiled from it. zeo is
 **source-compatible with CRuby and ABI-incompatible**: a gem's `ext/**/*.c`
-builds against MRI's own headers (`crates/zeo-capi/cext/include/`, vendored
-verbatim from `ruby/ruby` at the pinned tag plus one patch), and a prebuilt
-MRI `.so` never loads.
+builds against MRI's own headers, and a prebuilt MRI `.so` never loads.
+
+Nothing of that header tree is in the repository. The first extension build
+fetches upstream's `include/` at the rev `crates/zeo-capi/ruby-headers.lock`
+pins (the GitHub archive, verified by sha256; `git` when `curl` cannot),
+applies the edits `zeo-capi/src/headers/hunks.rs` holds -- every macro that
+reads object layout becomes a call, because a zeo object is an opaque handle
+-- and writes the two files zeo adds, `ruby/internal/zeo.h` and a
+`ruby/config.h` rendered for the host. The finished tree lives under the
+build root (`target/ruby-headers/<rev>/` in the dev tree, the per-user cache
+for an install), a release tarball carries it pre-seeded, and `cargo xtask
+cext hunks --check` proves every edit still applies to the pin. Without the
+network, `ZEO_RUBY_HEADERS_TARBALL` names a local copy of the archive and
+`ZEO_RUBY_HEADERS_DIR` names the `include/` directory of a `ruby/ruby`
+checkout at that rev.
 
 The whole path, per gem:
 

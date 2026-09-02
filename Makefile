@@ -107,8 +107,8 @@ hygiene: ratchet no-big-files  ## deny, machete, the ratchet and the size guard
 # (needs ruby 4.0.6, so not here). Stale either way means a gem fails to LINK
 # with a symbol name and no file or line, so the committed and generated halves
 # are checked against each other.
-check-generated:  ## the vendored cext headers and their generated tables agree
-	$(CARGO) xtask cext sync --check
+check-generated:  ## the C API header edits, the generated tables and the object layout agree
+	$(CARGO) xtask cext hunks --check
 	$(CARGO) xtask cext api --check
 	$(CARGO) xtask cext forward --check
 	$(CARGO) xtask cext layout --check

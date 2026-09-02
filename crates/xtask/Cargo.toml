@@ -15,3 +15,5 @@ tar.workspace = true
 # For `zeo::bundled` alone: the one place that decides which libraries ship,
 # so `dist` and a compile can never disagree about the set.
 zeo = { path = "../zeo" }
+# The C API headers' pin and edits, which `cext` checks.
+zeo-capi = { path = "../zeo-capi" }

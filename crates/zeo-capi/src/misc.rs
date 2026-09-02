@@ -11,7 +11,7 @@
 //! So a `rb_encoding *` is `EncodingId + 1` cast to a pointer -- `+ 1` so
 //! that `ASCII-8BIT`, which is id 0, is not NULL. An extension that
 //! DEREFERENCES one gets a fault at the read rather than a wrong byte, which
-//! is the loud direction. Recorded in `cext/README.md`.
+//! is the loud direction.
 
 use super::convert::{to_value, value_of};
 use super::data::{CData, DataFunc, DataType};

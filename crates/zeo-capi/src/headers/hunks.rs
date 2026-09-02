@@ -53,10 +53,6 @@ pub struct Hunk {
     pub new: &'static str,
 }
 
-/// The include line every edited core header gains, placed after the
-/// `value_type.h` include (or the last one, where there is none).
-const ZEO_INCLUDE: &str = "#include \"ruby/internal/zeo.h\"\n";
-
 macro_rules! include_after {
     ($file:literal, $line:literal) => {
         Hunk {
@@ -69,7 +65,10 @@ macro_rules! include_after {
 
 pub const HUNKS: &[Hunk] = &[
     // -- 1. the cast macros ------------------------------------------------
-    include_after!("ruby/internal/core/rstring.h", "#include \"ruby/internal/value_type.h\""),
+    include_after!(
+        "ruby/internal/core/rstring.h",
+        "#include \"ruby/internal/value_type.h\""
+    ),
     Hunk {
         file: "ruby/internal/core/rstring.h",
         old: "#define RSTRING(obj)            RBIMPL_CAST((struct RString *)(obj))\n",
@@ -80,7 +79,10 @@ pub const HUNKS: &[Hunk] = &[
               \x20* view. See `ruby/internal/zeo.h`. */\n\
               #define RSTRING(obj)            rb_zeo_rstring(RBIMPL_CAST((VALUE)(obj)))\n",
     },
-    include_after!("ruby/internal/core/rarray.h", "#include \"ruby/internal/value_type.h\""),
+    include_after!(
+        "ruby/internal/core/rarray.h",
+        "#include \"ruby/internal/value_type.h\""
+    ),
     Hunk {
         file: "ruby/internal/core/rarray.h",
         old: "#define RARRAY(obj)            RBIMPL_CAST((struct RArray *)(obj))\n",
@@ -98,7 +100,10 @@ pub const HUNKS: &[Hunk] = &[
               \x20    * projection. This one reaches the Array. */\n\
               \x20   rb_zeo_ary_aset(ary, i, v);\n",
     },
-    include_after!("ruby/internal/core/robject.h", "#include \"ruby/internal/value_type.h\""),
+    include_after!(
+        "ruby/internal/core/robject.h",
+        "#include \"ruby/internal/value_type.h\""
+    ),
     Hunk {
         file: "ruby/internal/core/robject.h",
         old: "#define ROBJECT(obj)          RBIMPL_CAST((struct RObject *)(obj))\n",
@@ -108,7 +113,10 @@ pub const HUNKS: &[Hunk] = &[
               \x20* does not reach the object. See `ruby/internal/zeo.h`. */\n\
               #define ROBJECT(obj)          rb_zeo_robject(RBIMPL_CAST((VALUE)(obj)))\n",
     },
-    include_after!("ruby/internal/core/rregexp.h", "#include \"ruby/internal/value_type.h\""),
+    include_after!(
+        "ruby/internal/core/rregexp.h",
+        "#include \"ruby/internal/value_type.h\""
+    ),
     Hunk {
         file: "ruby/internal/core/rregexp.h",
         old: "#define RREGEXP(obj)     RBIMPL_CAST((struct RRegexp *)(obj))\n",
@@ -127,7 +135,10 @@ pub const HUNKS: &[Hunk] = &[
               #define RREGEXP_PTR(obj) \\\n\
               \x20   RBIMPL_CAST((struct re_pattern_buffer *)rb_zeo_no_field(\"RREGEXP_PTR\"))\n",
     },
-    include_after!("ruby/internal/core/rmatch.h", "#include \"ruby/internal/value_type.h\""),
+    include_after!(
+        "ruby/internal/core/rmatch.h",
+        "#include \"ruby/internal/value_type.h\""
+    ),
     Hunk {
         file: "ruby/internal/core/rmatch.h",
         old: "#define RMATCH(obj) RBIMPL_CAST((struct RMatch *)(obj))\n",
@@ -146,7 +157,10 @@ pub const HUNKS: &[Hunk] = &[
               \x20* onto. */\n\
               #define RMATCH_EXT(m) ((rb_matchext_t *)((char *)RMATCH(m) + sizeof(struct RMatch)))\n",
     },
-    include_after!("ruby/internal/core/rfile.h", "#include \"ruby/internal/cast.h\""),
+    include_after!(
+        "ruby/internal/core/rfile.h",
+        "#include \"ruby/internal/cast.h\""
+    ),
     Hunk {
         file: "ruby/internal/core/rfile.h",
         old: "#define RFILE(obj) RBIMPL_CAST((struct RFile *)(obj))\n",
@@ -158,7 +172,10 @@ pub const HUNKS: &[Hunk] = &[
               \x20* `ruby/internal/zeo.h`. */\n\
               #define RFILE(obj) rb_zeo_rfile(RBIMPL_CAST((VALUE)(obj)))\n",
     },
-    include_after!("ruby/internal/core/rdata.h", "#include \"ruby/internal/value_type.h\""),
+    include_after!(
+        "ruby/internal/core/rdata.h",
+        "#include \"ruby/internal/value_type.h\""
+    ),
     Hunk {
         file: "ruby/internal/core/rdata.h",
         old: "#define RDATA(obj)                RBIMPL_CAST((struct RData *)(obj))\n",
@@ -167,7 +184,10 @@ pub const HUNKS: &[Hunk] = &[
               \x20* `ruby/internal/zeo.h`. */\n\
               #define RDATA(obj)                rb_zeo_rdata(RBIMPL_CAST((VALUE)(obj)))\n",
     },
-    include_after!("ruby/internal/core/rtypeddata.h", "#include \"ruby/internal/value_type.h\""),
+    include_after!(
+        "ruby/internal/core/rtypeddata.h",
+        "#include \"ruby/internal/value_type.h\""
+    ),
     Hunk {
         file: "ruby/internal/core/rtypeddata.h",
         old: "#define RTYPEDDATA(obj)              RBIMPL_CAST((struct RTypedData *)(obj))\n",
@@ -264,7 +284,10 @@ pub const HUNKS: &[Hunk] = &[
               }\n",
     },
     // -- 3. RBASIC_CLASS ---------------------------------------------------
-    include_after!("ruby/internal/core/rbasic.h", "#include \"ruby/internal/value.h\""),
+    include_after!(
+        "ruby/internal/core/rbasic.h",
+        "#include \"ruby/internal/value.h\""
+    ),
     Hunk {
         file: "ruby/internal/core/rbasic.h",
         old: "    RBIMPL_ASSERT_OR_ASSUME(! RB_SPECIAL_CONST_P(obj));\n\
@@ -283,8 +306,12 @@ pub const HUNKS: &[Hunk] = &[
 pub fn apply_all(include: &Path) -> Result<(), String> {
     for hunk in HUNKS {
         let path = include.join(hunk.file);
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("{}: {e} (is this upstream's include/ tree?)", path.display()))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| {
+            format!(
+                "{}: {e} (is this upstream's include/ tree?)",
+                path.display()
+            )
+        })?;
         let edited = apply(&text, hunk)?;
         std::fs::write(&path, edited).map_err(|e| format!("writing {}: {e}", path.display()))?;
     }
@@ -334,16 +361,19 @@ mod tests {
                 .find(|h| h.file == file && h.old.contains(&format!("(struct {name} *)(obj)")))
                 .unwrap_or_else(|| panic!("no hunk turns {name}(obj) into a call"));
             assert!(
-                cast.new.contains(&format!("rb_zeo_{entry}(RBIMPL_CAST((VALUE)(obj)))")),
+                cast.new
+                    .contains(&format!("rb_zeo_{entry}(RBIMPL_CAST((VALUE)(obj)))")),
                 "{file} does not reach its view through rb_zeo_{entry}"
             );
             assert!(
-                HUNKS.iter().any(|h| h.file == file && h.new.contains(ZEO_INCLUDE)),
+                HUNKS.iter().any(|h| h.file == file && h.new.contains("#include \"ruby/internal/zeo.h\"\n")),
                 "{file} does not include zeo.h"
             );
         }
         assert!(
-            HUNKS.iter().all(|h| !h.old.contains("struct ") || !h.old.contains(" {")),
+            HUNKS
+                .iter()
+                .all(|h| !h.old.contains("struct ") || !h.old.contains(" {")),
             "a hunk edits a struct body"
         );
     }
@@ -355,7 +385,10 @@ mod tests {
         for hunk in HUNKS {
             for word in hunk.new.split(|c: char| !c.is_alphanumeric() && c != '_') {
                 if word.starts_with("rb_zeo_") {
-                    assert!(declared.contains(&format!(" {word}(")), "{word} is not in zeo.h");
+                    assert!(
+                        declared.contains(&format!("{word}(")),
+                        "{word} is not in zeo.h"
+                    );
                 }
             }
         }

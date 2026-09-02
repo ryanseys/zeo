@@ -132,3 +132,12 @@ module MakeMakefile
   end
   prepend ZeoUnwindTables
 end
+
+# zeo fetches MRI's headers before an `extconf.rb` runs (`zeo::cext::headers`,
+# when this file is loaded). No tree here means that fetch failed, and the
+# line it printed says why. Say so now, rather than let every probe below
+# fail as "cannot compile".
+unless File.exist?(File.join(RbConfig::CONFIG["rubyhdrdir"], "ruby.h"))
+  abort "zeo: MRI's C API headers are not at #{RbConfig::CONFIG["rubyhdrdir"]}: " \
+        "the fetch failed (see above), or set ZEO_RUBY_HEADERS_TARBALL or ZEO_RUBY_HEADERS_DIR"
+end

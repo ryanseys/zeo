@@ -1,25 +1,25 @@
-//! Manage the vendored MRI C API headers under `crates/zeo-capi/cext/`.
+//! The MRI C API headers: the checks that hold the pin, the edits, the
+//! generated tables and the object layout together.
 //!
 //! ```text
-//! cext sync [--check]
-//! cext patch <name>
+//! cext hunks [--check]
 //! cext api [--check]
 //! cext forward [--check|--reverify]
+//! cext layout [--check]
 //! ```
 //!
 //! zeo is source-compatible with MRI and ABI-incompatible with it: a gem's
 //! `ext/**/*.c` compiles against MRI's own headers, and a prebuilt MRI `.so`
-//! never loads. The headers are therefore upstream verbatim plus a patch
-//! series that turns every layout-reading macro into a call, because a zeo
-//! heap object is an opaque handle and has no `struct RString` behind it.
-//!
-//! `sync` rebuilds the tree from that sum, so the vendored bytes are always
-//! exactly `upstream(rev) + patches/`. `--check` proves it without writing,
-//! which is what CI runs -- a hand-edit to a vendored header is drift, and
-//! the way to keep one is `cext patch`.
+//! never loads. Nothing is vendored. `zeo_capi::headers` pins upstream's
+//! `include/` tree and holds the edits zeo makes to it (every layout-reading
+//! macro becomes a call, because a zeo heap object is an opaque handle with
+//! no `struct RString` behind it); the compiler fetches and finishes the
+//! tree on the first extension build. Every verb here materializes the same
+//! tree from a checkout of the pin and works on that.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use regex::Regex;
 
@@ -31,55 +31,21 @@ const USAGE: &str = "\
 usage: cargo xtask cext <subcommand> [options]
 
 subcommands:
-  sync [--check]      rebuild the headers from upstream + patches/
-  patch <name>        record the working tree's deviation as a patch
+  hunks [--check]     every header edit applies to the pinned rev, and mkmf.rb is upstream's
   api [--check]       re-record the rb_* census and regenerate stubs
   forward [--check|--reverify]
                       the rb_* -> Class#method forwarding table
   layout [--check]    measure the object layout and record layout_facts.rs
-|--reverify]
-                      the rb_* -> Class#method forwarding table
 ";
 
-const CEXT: &str = "crates/zeo-capi/cext";
 const CEXT_SRC: &str = "crates/zeo-capi/src";
 const API_RS: &str = "crates/zeo-capi/src/api.rs";
 const STUBS_RS: &str = "crates/zeo-capi/src/stubs.rs";
 const FORWARD_RS: &str = "crates/zeo-capi/src/forward.rs";
 const MKMF_RB: &str = "crates/zeo/tools-lib/mkmf.rb";
 
-fn include_dir() -> PathBuf {
-    root_join(CEXT).join("include")
-}
-
-fn config_dir() -> PathBuf {
-    root_join(CEXT).join("config")
-}
-
-fn patch_dir() -> PathBuf {
-    root_join(CEXT).join("patches")
-}
-
-fn patches() -> Result<Vec<PathBuf>, Error> {
-    let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(patch_dir()) else {
-        return Ok(out);
-    };
-    for entry in entries {
-        let path = entry
-            .map_err(|e| Error::new(format!("reading {}: {e}", patch_dir().display())))?
-            .path();
-        if path.extension().is_some_and(|e| e == "patch") {
-            out.push(path);
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
 pub fn run(args: &[String]) -> Result<(), Error> {
     let mut sub = None;
-    let mut name = None;
     let mut check = false;
     let mut reverify = false;
     for arg in args {
@@ -94,88 +60,61 @@ pub fn run(args: &[String]) -> Result<(), Error> {
                 return Err(Error::new(format!("unknown option {other:?}\n\n{USAGE}")));
             }
             other if sub.is_none() => sub = Some(other.to_string()),
-            other => name = Some(other.to_string()),
+            other => return Err(Error::new(format!("unexpected {other:?}\n\n{USAGE}"))),
         }
     }
     match sub.as_deref() {
-        Some("sync") => cmd_sync(check),
-        Some("patch") => cmd_patch(name),
+        Some("hunks") => cmd_hunks(check),
         Some("api") => cmd_api(check),
         Some("forward") => cmd_forward(check, reverify),
-        Some("layout") => super::cext_layout::run(check, &include_dir(), &config_dir()),
+        Some("layout") => {
+            let t = tree()?;
+            super::cext_layout::run(check, &t.include, &t.config)
+        }
         _ => Err(Error::new(USAGE.to_string())),
     }
 }
 
-// ---------------------------------------------------------------- sync/patch
+// --------------------------------------------------------------- the tree
 
-/// Upstream's `include/` at the pinned rev, with the patch series applied on
-/// top, materialized in a scratch directory.
-fn build_expected(dest: &Path) -> Result<(), Error> {
+/// The finished header tree -- upstream's `include/` at the pinned rev with
+/// zeo's edits applied and its two files added -- materialized once per
+/// process from a git checkout of the pin, exactly as the compiler does it
+/// from the archive. Materializing IS the hunks check: an edit that no
+/// longer applies fails here by file and macro.
+fn tree() -> Result<&'static zeo::cext::headers::HeaderDirs, Error> {
+    static TREE: OnceLock<zeo::cext::headers::HeaderDirs> = OnceLock::new();
+    if let Some(t) = TREE.get() {
+        return Ok(t);
+    }
     let pin = vendor::Pin::ruby_headers()?;
     let checkout = vendor::fetch_checkout(&pin)?;
-    vendor::remove_dir_all(dest)?;
-    vendor::copy_tree(&pin.source_root(&checkout), dest)?;
-    for patch in patches()? {
-        let out = exec::run(
-            &[
-                Path::new("git"),
-                Path::new("apply"),
-                Path::new("--whitespace=nowarn"),
-                &patch,
-            ],
-            dest,
-            &[],
-            Capture::Both,
-        )?;
-        if !out.success() {
-            return Err(Error::new(format!(
-                "{} does not apply to upstream {}",
-                patch.file_name().unwrap_or_default().to_string_lossy(),
-                pin.tag
-            )));
-        }
-    }
-    Ok(())
+    let dirs =
+        zeo::cext::headers::materialize_from(&pin.source_root(&checkout)).map_err(Error::new)?;
+    Ok(TREE.get_or_init(|| dirs))
 }
 
-fn cmd_sync(check: bool) -> Result<(), Error> {
+fn cmd_hunks(check: bool) -> Result<(), Error> {
     let pin = vendor::Pin::ruby_headers()?;
-    let tmp = Scratch::new("cext")?;
-    let want = tmp.path().join("include");
-    build_expected(&want)?;
-    let include = include_dir();
-
-    if check {
-        if !vendor::dirs_equal(&want, &include)? {
-            return Err(report_drift(&want, &include, &pin.tag)?);
-        }
-        let mkmf = root_join(MKMF_RB);
-        if std::fs::read_to_string(&mkmf).ok().as_deref() != Some(&upstream_mkmf(&pin)?) {
+    let dirs = tree()?;
+    let mkmf = root_join(MKMF_RB);
+    let upstream = upstream_mkmf(&pin)?;
+    if std::fs::read_to_string(&mkmf).ok().as_deref() != Some(&upstream) {
+        if check {
             return Err(Error::new(format!(
-                "{MKMF_RB} is not upstream {}'s lib/mkmf.rb",
+                "{MKMF_RB} is not upstream {}'s lib/mkmf.rb -- run `cargo xtask cext hunks`",
                 pin.tag
             )));
         }
-        println!(
-            "cext: {} headers match upstream {} + {} patch(es), and mkmf.rb matches",
-            vendor::list_files(&want)?.len(),
-            pin.tag,
-            patches()?.len()
-        );
-        return Ok(());
+        std::fs::write(&mkmf, upstream)
+            .map_err(|e| Error::new(format!("writing {MKMF_RB}: {e}")))?;
+        println!("cext: wrote {MKMF_RB} from upstream {}", pin.tag);
     }
-
-    vendor::remove_dir_all(&include)?;
-    vendor::copy_tree(&want, &include)?;
-    std::fs::write(root_join(MKMF_RB), upstream_mkmf(&pin)?)
-        .map_err(|e| Error::new(format!("writing {MKMF_RB}: {e}")))?;
     println!(
-        "cext: vendored {} headers from {} @ {} + {} patch(es)",
-        vendor::list_files(&include)?.len(),
-        pin.repo,
+        "cext: {} edits apply to upstream {} ({}), and mkmf.rb matches",
+        zeo_capi::headers::hunks::HUNKS.len(),
         pin.tag,
-        patches()?.len()
+        dirs.include.display()
     );
     Ok(())
 }
@@ -188,74 +127,6 @@ fn upstream_mkmf(pin: &vendor::Pin) -> Result<String, Error> {
     let path = checkout.join("lib/mkmf.rb");
     std::fs::read_to_string(&path)
         .map_err(|e| Error::new(format!("reading {}: {e}", path.display())))
-}
-
-/// Name every file that differs, not just the count: a header tree is too big
-/// for a bare "drift" to be actionable.
-fn report_drift(want: &Path, include: &Path, tag: &str) -> Result<Error, Error> {
-    let expected = vendor::list_files(want)?;
-    let have = vendor::list_files(include)?;
-    for rel in expected.iter().filter(|r| !have.contains(r)) {
-        eprintln!("  missing: {rel}");
-    }
-    for rel in have.iter().filter(|r| !expected.contains(r)) {
-        eprintln!("  extra:   {rel}");
-    }
-    for rel in expected.iter().filter(|r| have.contains(r)) {
-        if std::fs::read(want.join(rel)).ok() != std::fs::read(include.join(rel)).ok() {
-            eprintln!("  changed: {rel}");
-        }
-    }
-    Ok(Error::new(format!(
-        "the vendored headers are not upstream {tag} + patches/ -- run \
-         `cargo xtask cext patch <name>` to keep an edit, or `cext sync` to discard it"
-    )))
-}
-
-/// Fold the working tree's whole deviation into one new patch. The series is
-/// applied in name order, so a later patch may depend on an earlier one;
-/// recording the deviation as a single hunk set keeps that honest.
-fn cmd_patch(name: Option<String>) -> Result<(), Error> {
-    let name =
-        name.ok_or_else(|| Error::new("cext patch needs a name, e.g. `rstring-is-opaque`"))?;
-    let tmp = Scratch::new("cext")?;
-    let want = tmp.path().join("include");
-    build_expected(&want)?;
-    let include = include_dir();
-    if vendor::dirs_equal(&want, &include)? {
-        println!("cext: nothing to record -- the tree already matches upstream + patches/");
-        return Ok(());
-    }
-    let diff = vendor::diff_trees(&want, &include)?;
-    let out = patch_dir().join(format!("{:04}-{name}.patch", patches()?.len() + 1));
-    std::fs::create_dir_all(patch_dir())
-        .map_err(|e| Error::new(format!("creating {}: {e}", patch_dir().display())))?;
-    // `git apply` ignores anything before the first `diff --git`, so the patch
-    // carries its own reason. A headerless one says nothing about WHY a
-    // vendored header reads the way it does.
-    let header = format!(
-        "Subject: {}\n\nTODO: say what this changes and why.\n\n",
-        name.replace('-', " ")
-    );
-    std::fs::write(&out, header + &rewrite_prefixes(&diff, &want, &include))
-        .map_err(|e| Error::new(format!("writing {}: {e}", out.display())))?;
-    println!(
-        "cext: wrote {}",
-        out.strip_prefix(root()).unwrap_or(&out).display()
-    );
-    Ok(())
-}
-
-/// `--no-index` writes absolute scratch paths into the header lines. A patch
-/// that names a tmpdir cannot be re-applied, so rewrite both sides to the
-/// plain relative paths `git apply` expects inside the tree.
-fn rewrite_prefixes(text: &str, want: &Path, include: &Path) -> String {
-    let want = want.display().to_string();
-    let include = include.display().to_string();
-    text.replace(&format!("a{want}/"), "a/")
-        .replace(&format!("b{include}/"), "b/")
-        .replace(&format!("{want}/"), "")
-        .replace(&format!("{include}/"), "")
 }
 
 // ----------------------------------------------------------------------- api
@@ -284,7 +155,7 @@ struct Decl {
 const SKIP_HEADERS: &[&str] = &["win32.h", "onigmo.h", "oniguruma.h", "regex.h"];
 
 fn public_headers() -> Result<Vec<String>, Error> {
-    let dir = include_dir().join("ruby");
+    let dir = tree()?.include.join("ruby");
     let entries = std::fs::read_dir(&dir)
         .map_err(|e| Error::new(format!("reading {}: {e}", dir.display())))?;
     let mut out = Vec::new();
@@ -326,9 +197,9 @@ fn scan_api() -> Result<Vec<Decl>, Error> {
             Path::new("-ast-dump"),
             Path::new("-fno-color-diagnostics"),
             Path::new("-I"),
-            &root_join(CEXT).join("config"),
+            &tree()?.config,
             Path::new("-I"),
-            &include_dir(),
+            &tree()?.include,
             &tu,
         ],
         root(),

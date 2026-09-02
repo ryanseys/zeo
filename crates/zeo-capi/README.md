@@ -13,5 +13,7 @@ element (`zeo_rt::capi_hooks::CAPI_HOOKS`). A `zeo` built without it still
 compiles every program; a `require` of a compiled extension then answers
 `LoadError` naming the missing support.
 
-`cext/` carries the vendored header tree and `csrc/` the few entries that
-still need C; both are on their way out (see `docs/LIMITATIONS.md`).
+`src/headers/` is what MRI's header tree IS to zeo: the pin
+(`ruby-headers.lock`), the edits applied to upstream's `include/` when the
+compiler fetches it, and the two files zeo adds. `csrc/` holds the few
+entries that still need C until Rust 1.99 (see `docs/LIMITATIONS.md`).
