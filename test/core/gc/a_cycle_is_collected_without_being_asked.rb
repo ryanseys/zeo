@@ -8,7 +8,6 @@
 # 
 # The golden's whole subject: it allocates rings until the trigger fires. The residue is the last generation, still live at exit.
 #@ zeo-env: ZEO_GC=1
-#@ gccheck: cycle leak: 1002 objects (Node x1002)
 # The collector runs on its own once the live registry has grown enough --
 # nothing here calls `GC.start`. Before this, a program that never asked
 # collected nothing, however much garbage it built.
@@ -50,6 +49,14 @@ before = GC.count
 # The count moved without the program asking, and the watched cycle is gone.
 p GC.count > before
 p watch.size == 0
+
+# The exit census is what `ZEO_RT_GCCHECK=1` writes, and it has to be the same
+# every run or it gates nothing. What the automatic trigger leaves behind is
+# the LAST generation, and how big that is depends on exactly where the
+# trigger fired -- it moved between 1002 and 1010 objects under load. One
+# explicit pass at the end reclaims all of it, so the census is empty and
+# stable. The two answers above are the subject; the residue never was.
+GC.start
 __END__
 true
 true

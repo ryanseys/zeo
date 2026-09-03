@@ -10,7 +10,13 @@
 # against the LOCK alone, so it touches no network and reads nothing from the
 # machine's own gem store -- see this directory's README.
 #
-# Shapes, never versions.
+# Shapes, never versions -- and the RESOLVED SET is a version, not a shape.
+# The oracle runs with `-rbundler/setup`, which has already resolved THIS
+# repo's Gemfile before the program starts; that state survives `Bundler.
+# reset!` and makes the resolve below expand transitive dependencies that the
+# same ruby, run without the flag, does not. So the set is what the harness
+# loaded rather than what the program asked for, and this pins that a resolve
+# HAPPENED and answered real objects.
 
 # The locked rake, so the program resolves against what the oracle store
 # holds rather than a version that goes stale with the next bump.
@@ -61,7 +67,7 @@ Dir.mktmpdir do |dir|
 
   # The resolve itself, off the lock rather than the network.
   resolved = definition.resolve
-  p resolved.map(&:name).sort
+  p resolved.map(&:name).include?("minitest")
   p resolved.map { |s| s.version.is_a?(Gem::Version) }.uniq
 
   # The Gemfile DSL round-trips the requirement it was given.
@@ -76,7 +82,7 @@ true
 true
 ["minitest", "rake"]
 true
-["drb", "minitest", "prism", "rake"]
+true
 [true]
 true
 [:default]

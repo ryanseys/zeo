@@ -22,8 +22,10 @@ p Gem::VERSION.is_a?(String)
 p Gem::Requirement.default.to_s
 p Gem::Version.new("1.2.3").to_s
 
-# The impostor stayed where it belongs: nothing pulled bundler in here.
-p defined?(Bundler)
+# NOT `defined?(Bundler)`: the oracle runs with `-rbundler/setup`, so bundler
+# is loaded before any program it records starts. The question cannot be asked
+# neutrally under it, and the answer recorded here would be the harness's
+# rather than the program's.
 
 # ...and a second require answers false, having really loaded the first time.
 p require("rubygems")
@@ -32,5 +34,4 @@ __END__
 true
 ">= 0"
 "1.2.3"
-"constant"
 false
