@@ -949,7 +949,8 @@ CRuby does when `MT_HELL` is unset.
 A file loaded this way runs its top level at program START, not on the call, so
 a lazily-required file that only means to *warn and bail* on a missing optional
 dependency does both at startup instead. `irb/ext/tracer.rb` is one; see
-`lib/ruby/UPSTREAM.md` for where the bundled libraries come from.
+`crates/zeo/src/bundled.rs` for where the bundled libraries come from,
+and `cargo xtask deps` for how they get there.
 
 ## A class written in a `class << self` body
 

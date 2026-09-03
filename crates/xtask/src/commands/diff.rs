@@ -60,7 +60,7 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     print!("{source}");
     println!();
 
-    let oracle = Oracle::find();
+    let oracle = Oracle::find()?;
     let ruby = exec::run_with_stdin(
         &oracle.argv(&["-"]),
         root(),

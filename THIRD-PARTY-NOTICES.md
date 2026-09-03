@@ -22,13 +22,14 @@ allowlists MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, Unicode-3.0, and
 CDLA-Permissive-2.0, and `cargo deny check` enforces it. For the full
 resolved list of Rust crates and their licenses, run `cargo deny list`.
 
-## The bundled Ruby standard library (`gems/`)
+## The bundled Ruby standard library
 
 zeo ships ~70 pure-Ruby libraries -- the standard library it compiles
-against, plus rubygems and bundler. `Gemfile.lock` names every one and the
-release it comes from; the tiers, and which are third-party versus
-zeo-authored, are documented in
-[`lib/ruby/UPSTREAM.md`](lib/ruby/UPSTREAM.md) and
+against, plus rubygems and bundler. Nothing is committed: `cargo xtask deps`
+fetches every one at the release `Gemfile.lock` names, and the
+rubygems/bundler pair at the tag `crates/xtask/rubygems.lock` pins. The
+tiers, and which are third-party versus zeo-authored, are documented in
+`crates/zeo/src/bundled.rs` and
 [`crates/zeo-rt/ext/UPSTREAM.md`](crates/zeo-rt/ext/UPSTREAM.md). Each
 third-party gem keeps its
 upstream license file in its own directory: Ruby's `COPYING` + `BSDL` pair

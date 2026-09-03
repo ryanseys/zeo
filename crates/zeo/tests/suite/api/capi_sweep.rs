@@ -86,8 +86,7 @@ fn sweep(gem: &str) {
             dir.display()
         )
     });
-    let store = zeo::bundled::store_dir(&root())
-        .expect("vendor/bundle holds the lock's gems (run `make deps`)");
+    let store = root().join(zeo::bundled::RESOLVED_TIER);
     let out = Command::new(crate::zeo_bin::zeo_cli().unwrap_or_else(|e| panic!("{e}")))
         .arg("--bundle-gemfile")
         .arg(root().join("Gemfile"))
@@ -190,8 +189,7 @@ fn the_xfail_ledger_names_only_swept_gems() {
 /// rather than a gap.
 #[test]
 fn every_locked_c_gem_is_swept_or_excluded() {
-    let store = zeo::bundled::store_dir(&root())
-        .expect("vendor/bundle holds the lock's gems (run `make deps`)");
+    let store = root().join(zeo::bundled::RESOLVED_TIER);
     let mut missing = Vec::new();
     for lib in zeo::bundled::resolved_libraries(&root()) {
         if !lib.dir.starts_with(&store) || !lib.dir.join("ext").is_dir() {

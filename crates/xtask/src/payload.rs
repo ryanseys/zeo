@@ -2,15 +2,15 @@
 //! directory every install channel carries.
 //!
 //! The dev tree keeps them in three tiers -- zeo's own halves under
-//! `crates/zeo-rt/ext/`, the committed rubygems/bundler bootstrap under
-//! `lib/ruby/`, and everything else resolved out of `vendor/bundle` from
+//! `crates/zeo-rt/ext/`, the rubygems/bundler bootstrap under `vendor/ruby/`,
+//! and everything else in the gem store under `vendor/gems/` from
 //! `Gemfile.lock`. `zeo::bundled` decides that list, and both `dist` and
 //! `stage-publish` read it from there, so neither they nor the compiler can
 //! disagree about what ships.
 //!
-//! That makes `bundle install` a prerequisite of building a distribution.
-//! It already is one for the ruby oracle, and the alternative -- vendoring
-//! the trees again -- is the drift this replaced.
+//! That makes `cargo xtask deps` a prerequisite of building a distribution.
+//! It needs no ruby, and the alternative -- vendoring the trees again -- is
+//! the drift this replaced.
 
 use std::path::{Path, PathBuf};
 
@@ -54,7 +54,7 @@ pub fn files() -> Result<Vec<(String, PathBuf)>, Error> {
 /// it does in a compile.
 ///
 /// Refuses rather than shipping a short set: a locked library whose directory
-/// is missing means `vendor/bundle` is behind `Gemfile.lock`, and a payload
+/// is missing means the gem store is behind `Gemfile.lock`, and a payload
 /// assembled from that is not the locked set. Every path is
 /// `<name>-<version>` read out of the lock, so this is the whole of the
 /// reproducibility question -- there is no way for a stale disk to
@@ -68,9 +68,9 @@ fn libraries() -> Result<Vec<zeo::bundled::Library>, Error> {
         .collect();
     if !missing.is_empty() {
         return Err(Error::new(format!(
-            "{} locked librar{} are not unpacked under vendor/bundle, so a \
+            "{} locked librar{} are not unpacked in the gem store, so a \
              distribution built now would silently ship without them. Run \
-             `make deps`.\n  {}",
+             `cargo xtask deps`.\n  {}",
             missing.len(),
             if missing.len() == 1 { "y" } else { "ies" },
             missing.join(" ")

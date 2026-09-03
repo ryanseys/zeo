@@ -71,8 +71,8 @@ fn every_bundled_gem_compiles() {
     let gems = bundled_gems();
     assert!(
         gems.len() > 40,
-        "expected the full bundled stdlib, found {} gems -- has `bundle \
-         install` run? (`make deps`)",
+        "expected the full bundled stdlib, found {} gems -- has `cargo xtask \
+         deps` run?",
         gems.len()
     );
 

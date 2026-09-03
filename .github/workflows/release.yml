@@ -43,22 +43,22 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
 
-      # zeo-rt's C dependencies, plus the two libraries `bundle install`
-      # builds extensions against (psych wants libyaml, openssl wants its
-      # headers). macOS gets all of these from the SDK and Homebrew already.
+      # zeo-rt's C dependencies. macOS gets these from the SDK already.
       - name: Linux build deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev libyaml-dev libssl-dev
+          sudo apt-get install -y libclang-dev
 
-      # The bundled stdlib is resolved out of `vendor/bundle`, so the payload
-      # cannot be staged without it. No `ruby-version`: the action reads
-      # `.ruby-version`, the ruby the lock was resolved with -- `.bundle/config`
-      # sets frozen, and another bundler may refuse the lock.
+      # The bundled stdlib comes out of the gem store, so the payload cannot
+      # be staged without it. No ruby is involved: `deps` fetches the `.gem`
+      # files the lock names and verifies each against the lock's checksum.
+      - uses: ./.github/actions/deps
+
+      # Ruby is needed for exactly one step below: `cargo xtask gem` runs
+      # `gem build`, RubyGems' own packager, so the published gem is not
+      # built by zeo. The action reads `.ruby-version`.
       - uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
 
       # Builds the tree and stages the payload, then proves the staged binary
       # works: it resolves its payload relative to bin/, links against the

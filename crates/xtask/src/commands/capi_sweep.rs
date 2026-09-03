@@ -40,7 +40,7 @@ fn fixtures() -> PathBuf {
 }
 
 fn bless(gem: Option<&str>) -> Result<(), Error> {
-    let oracle = Oracle::find();
+    let oracle = Oracle::find()?;
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(fixtures())
         .map_err(|e| Error::new(format!("{}: {e}", fixtures().display())))?
         .flatten()

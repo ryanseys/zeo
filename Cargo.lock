@@ -2182,6 +2182,7 @@ dependencies = [
  "tar",
  "zeo",
  "zeo-capi",
+ "zeo-gem",
 ]
 
 [[package]]

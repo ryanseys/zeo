@@ -120,6 +120,7 @@ commands:
   capi-sweep      record ruby's answers for the C-gem sweep's smoke programs
   cext            the vendored MRI C API headers and the rb_* census
   ci              every non-test check CI runs, in order
+  deps            fetch the libraries Gemfile.lock names (no ruby needed)
   diff            compare a snippet across ruby and zeo, and file a gap
   dist            assemble the relocatable distribution
   gem             build the platform gem from a dist staging
@@ -146,6 +147,7 @@ fn main() -> std::process::ExitCode {
         "capi-sweep" => commands::capi_sweep::run(rest),
         "cext" => commands::cext::run(rest),
         "ci" => commands::ci::run(rest),
+        "deps" => commands::deps::run(rest),
         "diff" => commands::diff::run(rest),
         "dist" => commands::dist::run(rest),
         "gem" => commands::gem::run(rest),

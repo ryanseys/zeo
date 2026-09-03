@@ -11,7 +11,7 @@
 - Network access on a fresh clone, once, to resolve the gems.
 
 ```console
-$ bundle install      # Gemfile.lock -> vendor/bundle
+$ cargo xtask deps    # Gemfile.lock -> vendor/, no ruby needed
 $ cargo build         # the zeo binary and libzeo.a
 ```
 

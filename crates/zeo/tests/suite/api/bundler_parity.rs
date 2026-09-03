@@ -9,7 +9,7 @@
 //! Three things make the comparison mean something.
 //!
 //! **The same library on both sides.** CRuby runs with `--disable-gems` and
-//! `lib/ruby/{rubygems,bundler}/lib` on `-I`, so both engines execute the
+//! `vendor/ruby/{rubygems,bundler}/lib` on `-I`, so both engines execute the
 //! RubyGems and Bundler that zeo vendors. Without that, the machine's own
 //! RubyGems would join in and a difference in the answer could mean a
 //! difference in the *libraries* rather than in the engines -- which is the
@@ -52,7 +52,7 @@ fn oracle_ruby() -> Option<PathBuf> {
 
 /// The two vendored trees both engines run: RubyGems' `lib/` and Bundler's.
 fn vendored_libs() -> [PathBuf; 2] {
-    let root = crate::paths::workspace_root().join("lib/ruby");
+    let root = crate::paths::workspace_root().join("vendor/ruby");
     [root.join("rubygems/lib"), root.join("bundler/lib")]
 }
 

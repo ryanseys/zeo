@@ -805,7 +805,7 @@ puts JSON.generate(out)
     // whatever ARGV names, and a file is one less pipe to keep draining.
     std::fs::write(&rows, input)
         .map_err(|e| Error::new(format!("writing {}: {e}", rows.display())))?;
-    let oracle = crate::ruby::Oracle::find();
+    let oracle = crate::ruby::Oracle::find()?;
     let argv = oracle.argv(&[
         "-rset",
         &script.display().to_string(),

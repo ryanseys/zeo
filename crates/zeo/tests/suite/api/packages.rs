@@ -1552,11 +1552,11 @@ fn a_precompiled_platform_gem_ships_its_artifact_to_a_consumer() {
 #[test]
 fn a_packaged_builtin_feature_defers_to_the_merged_unit() {
     let root = crate::paths::workspace_root();
-    let store = root.join("vendor/bundle/ruby/4.0.0");
+    let store = root.join(zeo::bundled::RESOLVED_TIER);
     let tmpdir_rb = store.join("gems/tmpdir-0.3.1/lib/tmpdir.rb");
     let fileutils_rb = store.join("gems/fileutils-1.8.0/lib/fileutils.rb");
     if !tmpdir_rb.is_file() || !fileutils_rb.is_file() {
-        eprintln!("skipping: the resolved store has no tmpdir/fileutils (run `make deps`)");
+        eprintln!("skipping: the resolved store has no tmpdir/fileutils (run `cargo xtask deps`)");
         return;
     }
     let dir = scratch("packaged-builtin");
@@ -1593,9 +1593,11 @@ fn a_packaged_builtin_feature_defers_to_the_merged_unit() {
 #[test]
 fn a_packaged_timeout_times_out() {
     let root = crate::paths::workspace_root();
-    let timeout_rb = root.join("vendor/bundle/ruby/4.0.0/gems/timeout-0.6.1/lib/timeout.rb");
+    let timeout_rb = root
+        .join(zeo::bundled::RESOLVED_TIER)
+        .join("gems/timeout-0.6.1/lib/timeout.rb");
     if !timeout_rb.is_file() {
-        eprintln!("skipping: the resolved store has no timeout 0.6.1 (run `make deps`)");
+        eprintln!("skipping: the resolved store has no timeout 0.6.1 (run `cargo xtask deps`)");
         return;
     }
     let dir = scratch("packaged-timeout");

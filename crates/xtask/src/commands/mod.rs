@@ -4,6 +4,7 @@ pub mod capi_sweep;
 pub mod cext;
 pub mod cext_layout;
 pub mod ci;
+pub mod deps;
 pub mod diff;
 pub mod dist;
 pub mod gem;

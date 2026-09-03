@@ -1,13 +1,13 @@
-//! `Gemfile.lock` and the committed library trees describe the same gems and
+//! `Gemfile.lock` and the library trees beside it describe the same gems and
 //! must agree about their versions. Two formats for one fact, and a fact
 //! written twice drifts.
 //!
 //! Most of that drift is gone by construction now: 52 vendored trees left the
-//! repo and are resolved out of `vendor/bundle` at the version the lock
-//! states, so there is no second number to disagree with. What is left is the
-//! committed tiers -- rubygems/bundler under `lib/ruby/`, and zeo's own halves
-//! under `crates/zeo-rt/ext/` -- plus the store itself, which is a directory
-//! that can quietly fall behind the lock that named it.
+//! repo, and every library is fetched at the version the lock states, so
+//! there is no second number to disagree with. What is left is zeo's own
+//! halves under `crates/zeo-rt/ext/`, which are authored rather than fetched,
+//! plus the store itself, which is a directory that can quietly fall behind
+//! the lock that named it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -57,9 +57,9 @@ fn locked_versions() -> BTreeMap<String, Vec<String>> {
     out
 }
 
-/// Every library the repo COMMITS and the version its gemspec claims, or
-/// `None` where it has no gemspec. Two tiers: zeo's own Ruby halves beside
-/// the Rust that implements them, and the rubygems/bundler bootstrap.
+/// Every library with a gemspec of its own and the version it claims, or
+/// `None` where it has none. Two tiers: zeo's own Ruby halves beside the Rust
+/// that implements them, and the rubygems/bundler bootstrap.
 ///
 /// The resolved tier is deliberately absent -- its version comes from the
 /// lock and is written nowhere else, which is the whole point.
@@ -96,7 +96,7 @@ fn locked_name(dir: &str) -> Option<&'static str> {
 }
 
 #[test]
-fn every_committed_gem_matches_the_locked_version() {
+fn every_gem_with_its_own_gemspec_matches_the_locked_version() {
     let locked = locked_versions();
     let mismatched: Vec<String> = committed_versions()
         .into_iter()
@@ -126,17 +126,16 @@ fn every_committed_gem_matches_the_locked_version() {
         .collect();
     assert!(
         mismatched.is_empty(),
-        "the lock and the committed trees disagree; re-run `bundle lock` or \
-         re-vendor:\n{}",
+        "the lock and the library trees disagree; re-resolve the lock or \
+         run `cargo xtask deps --refresh`:\n{}",
         mismatched.join("\n")
     );
 }
 
-/// The store `bundle install` wrote holds every library the lock says zeo
-/// ships. A stale `vendor/bundle` is otherwise silent: the loader skips a
-/// library whose directory is missing, so a compile just fails to find a
-/// feature it should have, and a golden with a committed `.expected` never
-/// even asks the oracle.
+/// The store `cargo xtask deps` wrote holds every library the lock says zeo
+/// ships. A stale store is otherwise silent: the loader skips a library whose
+/// directory is missing, so a compile just fails to find a feature it should
+/// have, and a program with a recorded trailer never even asks the oracle.
 #[test]
 fn every_resolved_gem_is_unpacked_in_the_store() {
     let root = repo_root();
@@ -148,7 +147,7 @@ fn every_resolved_gem_is_unpacked_in_the_store() {
         .collect();
     assert!(
         missing.is_empty(),
-        "vendor/bundle is behind Gemfile.lock -- run `make deps`. \
+        "the gem store is behind Gemfile.lock -- run `cargo xtask deps`. \
          Missing: {missing:?}"
     );
 }
@@ -179,7 +178,7 @@ fn every_withheld_library_is_still_locked() {
 }
 
 #[test]
-fn every_exemption_still_names_a_committed_library() {
+fn every_exemption_still_names_a_library_with_a_gemspec() {
     // An exemption that outlives the directory it excuses is how a real
     // mismatch goes unnoticed, so each table entry has to still apply.
     let committed = committed_versions();

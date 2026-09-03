@@ -3786,7 +3786,7 @@ mod tests {
 
     /// The whole tree, in the shape `tests/rubyvm_ast.rb` prints: kind, span,
     /// then children. Every expectation below is a byte-for-byte copy of what
-    /// `mise exec ruby@4.0.6 -- ruby` answers for the same source.
+    /// `ruby` at the version `.ruby-version` pins answers for the same source.
     fn dump(v: &RubyValue) -> String {
         let RubyValue::Object(o) = v else {
             return match v {

@@ -1,0 +1,16 @@
+# The bootstrap tier's source: rubygems and bundler, at the release
+# `Gemfile.lock` names under `rubygems-update`.
+#
+# These two cannot come out of the resolved store, because it is zeo's own
+# bundler that fills it. `cargo xtask deps` fetches this tag into
+# `vendor/ruby/` instead, and checks the VERSION each tree states against the
+# lock, so the two files cannot drift apart without saying so.
+#
+# `rev` is what the tag resolved to when it was recorded. A fetch that lands
+# on a different commit is refused, so a moved tag cannot slip in. Bump this
+# together with the `rubygems-update` line in `Gemfile.lock`.
+
+repo = https://github.com/rubygems/rubygems
+tag = v4.0.19
+rev = 2d0e3df43a2fa92ea654fdfacef51c295dbde937
+version = 4.0.19

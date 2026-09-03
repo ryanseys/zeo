@@ -58,7 +58,7 @@ Build and run:
 
 ```console
 $ git clone https://github.com/ryanseys/zeo && cd zeo
-$ bundle install             # Gemfile.lock -> vendor/bundle
+$ cargo xtask deps           # Gemfile.lock -> vendor/, no ruby needed
 $ cargo build                # the zeo binary and libzeo.a
 $ target/debug/zeo -e 'puts "hello"'
 hello
@@ -137,7 +137,8 @@ Zeo ships a bundled stdlib — `bundler` and `rubygems` included. A program that
 requires `csv` gets the copy zeo ships, with no `Gemfile` of its own at all.
 Every version comes from this repository's [`Gemfile.lock`](Gemfile.lock),
 which is also what the ruby oracle resolves, so the two can never name
-different releases. `lib/ruby/UPSTREAM.md` describes the tiers.
+different releases. `crates/zeo/src/bundled.rs` describes the tiers, and
+`cargo xtask deps` fetches them.
 
 To compile against your own locked dependencies instead:
 
@@ -627,14 +628,14 @@ structurally impossible.
 ### Project layout
 
 ```
-crates/      the six workspace crates (above)
+crates/      the seven workspace crates (above)
 docs/        BINARY_SIZE, CLIF, COMPATIBILITY, EVAL, EXTENSIONS,
              ROADMAP
 test/        the corpus: one .rb per program, its answer under __END__
              (test/bench/ is the criterion input)
-lib/ruby/    rubygems and bundler, the one tier that must be committed
-Gemfile      every other bundled library, pinned
-vendor/      the resolved gems and fetched test trees (gitignored)
+Gemfile      every bundled library, pinned; the lock is the only writer
+vendor/      what `cargo xtask deps` fetches: the gem store, the
+             rubygems/bundler pair, the oracle's store (all gitignored)
 gem/         the RubyGems packaging: the launcher and the gemspec
 Dockerfile   the linux verification image (`cargo xtask linux`)
 ```

@@ -143,10 +143,11 @@ fn script_for(name: &str) -> Result<String, Error> {
     let profile = cargo_profile();
     let threads = threads();
     Ok(match name {
-        // `bundle install` first, and it is not optional: the oracle resolves
-        // `Gemfile.lock`, so a golden with no committed `.expected` needs the
-        // linux store present before any suite runs.
-        "build" => format!("bundle install --quiet && cargo build --workspace {profile}"),
+        // `deps` first: the gem store the compiler resolves its bundled
+        // libraries out of. It is the same store on either platform -- source
+        // gems, nothing built -- so the mounted `/src/vendor` the host filled
+        // is already complete and this says nothing.
+        "build" => format!("cargo xtask deps && cargo build --workspace {profile}"),
         // The default nextest profile: every corpus suite on the JIT, plus
         // the AOT smoke tier really linked. Each case spawns a child zeo and
         // the harness caps its memory.
@@ -268,15 +269,6 @@ fn run_in_container(script: &str, tag: &str) -> Result<i32, Error> {
             &format!("{}:/src", root().display()),
             "-v",
             &format!("{}:/target", env_or("ZEO_LINUX_VOLUME", "zeo-linux-target")),
-            // The oracle's gems, resolved for linux. Never `/src/vendor/bundle`
-            // -- those are the host's macOS builds, and bundler answers every
-            // one of them with "ignoring ... because it is missing extensions"
-            // on stderr, which would land in a live-oracle golden.
-            "-v",
-            &format!(
-                "{}:/bundle",
-                env_or("ZEO_LINUX_BUNDLE_VOLUME", "zeo-linux-bundle")
-            ),
             "-v",
             &format!("{}:/logs", logs.display()),
             "-w",

@@ -24,25 +24,26 @@
 # Moving the set forward is a deliberate act: re-resolve, read the lock
 # diff, run the golden suite. Nothing floats on its own.
 #
-# No `ruby` directive. The oracle's ruby is pinned in `mise.toml` (4.0.6);
-# the Linux container deliberately runs the distro's ruby for `tools/zeo-dev`
-# and would refuse a lock that named a version it does not have.
+# No `ruby` directive. The oracle's ruby is pinned in `.ruby-version`, and a
+# `ruby` line here would additionally refuse the lock on any machine running
+# a different one -- including every machine that never needs ruby at all,
+# which is now all of them but a bless.
 
 source "https://rubygems.org"
 
 # --- What zeo ships -------------------------------------------------------
 #
-# One line per bundled library. zeo resolves these out of `vendor/bundle`, so
+# One line per bundled library. zeo resolves these out of `vendor/gems`, so
 # this list IS its payload. Four names need saying:
 #
 #   rubygems     `rubygems-update` is the only published gem carrying the
-#                `lib/rubygems/**` tree. zeo COMMITS that tree under
-#                `lib/ruby/`, because `bundle install` cannot supply the
-#                bundler that runs it, so the line here states the version
-#                rather than the source of the files. `rubygems-update`'s own
-#                require_paths deliberately is not `lib` -- that is what
-#                stops it shadowing the running RubyGems -- so a store copy
-#                could not be loaded anyway.
+#                `lib/rubygems/**` tree. `cargo xtask deps` fetches that tree
+#                from the git tag instead, because the gem store cannot
+#                supply the bundler that fills it, so the line here states
+#                the version rather than the source of the files.
+#                `rubygems-update`'s own require_paths deliberately is not
+#                `lib` -- that is what stops it shadowing the running
+#                RubyGems -- so a store copy could not be loaded anyway.
 #   bundler      no line of its own. `rubygems-update` ships the whole
 #                `bundler/` subtree at the same version. A `gem "bundler"`
 #                line would additionally force every contributor to run

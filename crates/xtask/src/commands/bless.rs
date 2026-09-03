@@ -80,7 +80,14 @@ pub fn bless(filters: &[&str], all: bool) -> Result<(), Error> {
     }
     let needs_oracle = cases.iter().any(|(_, s)| s.recorder == Recorder::Ruby);
     let oracle = match needs_oracle {
-        true => Some(oracle::find(root()).map_err(Error::new)?),
+        true => {
+            // The oracle reads `Gemfile.lock` through `bundler/setup`, so its
+            // own store has to hold the lock's gems before a recording means
+            // anything. `deps --oracle` is idempotent and says nothing when
+            // the store is already complete.
+            crate::commands::deps::run(&["--oracle".to_string()])?;
+            Some(oracle::find(root()).map_err(Error::new)?)
+        }
         false => None,
     };
     let needs_zeo = cases.iter().any(|(_, s)| s.recorder == Recorder::Zeo);

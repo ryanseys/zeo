@@ -5,8 +5,8 @@
 //! | Tier | Dev tree | What it holds |
 //! |---|---|---|
 //! | zeo's own | `crates/zeo-rt/ext/<name>/` | a Ruby half beside the Rust that implements it |
-//! | bootstrap | `lib/ruby/<name>/` | rubygems and bundler, committed |
-//! | resolved | `vendor/bundle/ruby/<abi>/gems/<name>-<version>/` | every other library, from `Gemfile.lock` |
+//! | bootstrap | `vendor/ruby/<name>/` | rubygems and bundler, at the pinned tag |
+//! | resolved | `vendor/gems/gems/<name>-<version>/` | every other library, from `Gemfile.lock` |
 //!
 //! The third tier is why this module exists. zeo used to commit 52 vendored
 //! upstream trees under `gems/`, which meant a gem's version was written in
@@ -15,11 +15,13 @@
 //! golden can no longer record a difference between two library versions and
 //! call it a zeo bug.
 //!
-//! The bootstrap tier stays committed because nothing else can populate the
-//! third: `vendor/bundle` is what `bundle install` writes, and it is zeo's
-//! own bundler that runs the install. A machine with no ruby on it must still
-//! reach a working `zeo bundle install`, so rubygems and bundler cannot come
-//! from the thing they produce.
+//! Neither of the two lower tiers is committed. `cargo xtask deps` writes
+//! both, and it needs no ruby to do it: the bootstrap pair comes from the
+//! rubygems repo at the tag `crates/xtask/rubygems.lock` pins, and every
+//! other library from the `.gem` the lock names, verified against the lock's
+//! own checksum. That is what lets a machine with no ruby on it still reach a
+//! working `zeo bundle install` -- the pair cannot come out of the store that
+//! zeo's own bundler fills.
 //!
 //! An installed or `cargo install`ed zeo has ONE directory, because `dist`
 //! and `stage-publish` flatten all three into `share/zeo/lib/ruby/`.
@@ -51,10 +53,14 @@ pub const EXT_TIER: &str = "crates/zeo-rt/ext";
 /// from the build -- the dual-build switch's other half. Only for ports
 /// whose content matches NO published release (a StringScanner port over
 /// zeo's regex engine); a verbatim official pure gem (`base64`) rides the
-/// lock instead and resolves from `vendor/bundle` like any bundled gem.
+/// lock instead and resolves from the store like any bundled gem.
 pub const PURE_TIER: &str = "crates/zeo-rt/gems";
-/// The committed bootstrap tier, relative to the repo root.
-pub const BOOTSTRAP_TIER: &str = "lib/ruby";
+/// rubygems and bundler, written by `cargo xtask deps`.
+pub const BOOTSTRAP_TIER: &str = "vendor/ruby";
+/// The RubyGems store `cargo xtask deps` unpacks the lock into. Flat: one
+/// store for one lock, with no ruby ABI level, because nothing here is
+/// installed for a ruby.
+pub const RESOLVED_TIER: &str = "vendor/gems";
 
 /// A bootstrap directory and the `Gemfile.lock` entry that states its
 /// version. One release ships both: `rubygems-update` is the only published
@@ -90,10 +96,10 @@ pub const NOT_SHIPPED: &[(&str, &str)] = &[(
 /// a name both tiers carry resolves to zeo's implementation.
 ///
 /// A resolved-tier gem whose directory is missing is SKIPPED rather than
-/// fatal -- a fresh clone has no `vendor/bundle` until `make deps`
-/// runs, and a compile that needs none of those libraries should still work.
-/// `crates/zeo/tests/checks/gem_versions.rs` asserts the set is complete, so
-/// a stale install is loud in the suite rather than silent in a compile.
+/// fatal -- a fresh clone has no store until `cargo xtask deps` runs, and a
+/// compile that needs none of those libraries should still work.
+/// `checks::gem_versions` asserts the set is complete, so a stale store is
+/// loud in the suite rather than silent in a compile.
 pub fn dev_tree_libraries(root: &Path) -> Vec<Library> {
     let mut out = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -163,12 +169,10 @@ pub fn libraries_in(dir: &Path) -> Vec<Library> {
 }
 
 /// The resolved tier: every gem [`vendored_names`] names, at the version the
-/// lock states, under the `bundle install` store. Missing directories are
-/// dropped (see [`dev_tree_libraries`]).
+/// lock states, in the store `cargo xtask deps` unpacked. Missing directories
+/// are dropped (see [`dev_tree_libraries`]).
 pub fn resolved_libraries(root: &Path) -> Vec<Library> {
-    let Some(store) = store_dir(root) else {
-        return Vec::new();
-    };
+    let store = root.join(RESOLVED_TIER);
     let gems = store.join("gems");
     let specs = store.join("specifications");
     vendored_names(root)
@@ -184,11 +188,14 @@ pub fn resolved_libraries(root: &Path) -> Vec<Library> {
         .collect()
 }
 
-/// `vendor/bundle/ruby/<abi>`, the one store `bundle install` writes here.
+/// `<root>/vendor/bundle/ruby/<abi>`: a BUNDLER-shaped store, which is what a
+/// user's project has and what `cargo xtask deps --oracle` writes for the
+/// ruby oracle. zeo's own resolved tier is [`RESOLVED_TIER`] and does not go
+/// through here.
 ///
-/// The ABI directory is named for the ruby that resolved the lock, and there
-/// is exactly one; it is discovered rather than spelled out so a pinned-ruby
-/// bump does not need an edit here as well.
+/// The ABI directory is named for the ruby that installed it, and there is
+/// exactly one; it is discovered rather than spelled out so a ruby bump does
+/// not need an edit here as well.
 pub fn store_dir(root: &Path) -> Option<PathBuf> {
     let mut abis: Vec<PathBuf> = std::fs::read_dir(root.join("vendor/bundle/ruby"))
         .ok()?

@@ -1,17 +1,15 @@
-//! Locating and running the pinned CRuby oracle.
+//! Running the pinned CRuby oracle from a chore that wants an argv.
 //!
-//! A bare `ruby` off PATH is whatever version the shell happens to offer, and
-//! a ledger recorded against a different ruby than the goldens came from is a
-//! fiction. Everything here resolves through `mise`, the same way the golden
-//! harness does.
+//! Which ruby it is, and the version check, are the corpus harness's answer
+//! (`crate::oracle`): `ZEO_RUBY` names it, else the `ruby` on PATH, and its
+//! version has to be the one `.ruby-version` pins. A bare `ruby` off PATH is
+//! whatever the shell happens to offer, and a ledger recorded against a
+//! different ruby than the goldens came from is a fiction.
+//!
+//! What this adds is the shape `exec::run` wants: an argv and an environment
+//! list, rather than the `Command` the harness builds.
 
-use crate::exec::{self, Capture};
-use crate::{root, root_join};
-
-/// The oracle's own flags. `error_highlight` and `did_you_mean` rewrite an
-/// exception message and zeo implements neither, so every comparison runs
-/// without them.
-const FLAGS: &[&str] = &["--disable-error_highlight", "--disable-did_you_mean"];
+use crate::{Error, root, root_join};
 
 pub struct Oracle {
     bin: String,
@@ -19,34 +17,28 @@ pub struct Oracle {
 }
 
 impl Oracle {
-    /// `mise which ruby`, falling back to a bare `ruby`.
-    pub fn find() -> Oracle {
-        let bin = exec::run(&["mise", "which", "ruby"], root(), &[], Capture::Both)
-            .ok()
-            .filter(|out| out.success())
-            .map(|out| out.stdout_text().trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "ruby".into());
-        Oracle {
-            bin,
+    pub fn find() -> Result<Oracle, Error> {
+        let found = crate::oracle::find(root()).map_err(Error::new)?;
+        Ok(Oracle {
+            bin: found.bin.display().to_string(),
             gemfile: root_join("Gemfile").display().to_string(),
-        }
+        })
     }
 
     pub fn argv(&self, args: &[&str]) -> Vec<String> {
         let mut argv = vec![self.bin.clone()];
-        argv.extend(FLAGS.iter().map(|f| f.to_string()));
+        argv.extend(crate::oracle::FLAGS.iter().map(|f| f.to_string()));
         argv.extend(args.iter().map(|a| a.to_string()));
         argv
     }
 
     /// The oracle resolves `Gemfile.lock` -- the same set the compiler
-    /// vendors, so neither side can answer a `require` with a version the
-    /// other does not have. `-rbundler/setup` is what `bundle exec` does, one
+    /// ships, so neither side can answer a `require` with a version the other
+    /// does not have. `-rbundler/setup` is what `bundle exec` does, one
     /// process cheaper. The `None`s unset: whatever anybody has `gem
     /// install`ed, or points RUBYLIB at, must not reach a comparison.
     ///
-    /// Needs `make deps` to have run.
+    /// Needs `cargo xtask deps --oracle` to have run.
     pub fn env(&self) -> Vec<(&'static str, Option<&str>)> {
         vec![
             ("BUNDLE_GEMFILE", Some(self.gemfile.as_str())),
