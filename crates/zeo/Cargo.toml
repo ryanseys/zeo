@@ -237,9 +237,13 @@ path = "src/lib.rs"
 # half dead-strips out of eval-free binaries). See `backend/link.rs`.
 crate-type = ["rlib", "staticlib"]
 
+# `src/main.rs` calls `zeo::cli::main()` and holds no tests of its own -- the
+# api suite drives the same verbs in process. Without this, cargo links a
+# whole second copy of the compiler as a unit-test binary for it.
 [[bin]]
 name = "zeo"
 path = "src/main.rs"
+test = false
 
 [lints]
 workspace = true
