@@ -1,5 +1,5 @@
 ---
-source: crates/zeo/tests/checks/clif.rs
+source: crates/zeo/tests/suite/checks/clif.rs
 expression: rendered
 ---
 zeo_rt_alias_in_default_definee ([Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
@@ -41,7 +41,7 @@ zeo_rt_complex_lit ([Ptr, Ptr]) -> None
 zeo_rt_conceal_class ([U32]) -> None
 zeo_rt_conditional_class_ref ([U32, Ptr, Usize, U32, Ptr]) -> Some(I32)
 zeo_rt_const_get_at ([U32, Ptr, Usize, Ptr]) -> Some(I32)
-zeo_rt_const_get_cref ([Ptr, Usize, Ptr, Usize, Ptr, Usize, U8, Ptr]) -> Some(I32)
+zeo_rt_const_get_cref ([Ptr, Usize, Ptr, Usize, Ptr, Usize, U8, U32, Ptr]) -> Some(I32)
 zeo_rt_const_get_cref_cached ([Ptr, Ptr, Usize, Ptr, Usize, Ptr, Usize, U8, U32, Ptr]) -> Some(I32)
 zeo_rt_const_get_on_value ([Ptr, Ptr, Usize, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_const_get_or_nil ([U32, Ptr, Usize, Ptr]) -> None
