@@ -1,7 +1,0 @@
-[:a, :b, :deep, :i, :names, :rest, :seen, :vals]
-[:deep, :inner, :names, :rest, :seen, :vals, :x, :y]
-[3, 4, 5]
-[:deep, :names, :p1, :p2, :p3, :q, :rest, :seen, :vals]
-[[:deep, :first, :names, :others, :rest, :seen, :vals], [1, 2, 3], []]
-[[:opt], [:opt, :c]]
-[[:req], [:req, :c]]

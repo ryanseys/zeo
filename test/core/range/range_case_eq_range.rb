@@ -1,0 +1,17 @@
+p((1..5) === (2..4))
+p((1..5) === (1..5))
+p((1..5) === 3)
+p((1...5) === (2..5))
+p (1..5).cover?(2..4)
+p (1..5).cover?(0..4)
+p (1..5).include?(2..4)
+p (1..5).member?(2..4)
+__END__
+false
+false
+true
+false
+true
+false
+false
+false

@@ -1,8 +1,0 @@
-[[:opt, :x]]
-[[:req, :x]]
-[[:opt, :a], [:opt, :b], [:rest, :rest], [:opt, :last], [:keyreq, :key], [:key, :opt], [:keyrest, :kw], [:block, :blk]]
-[[:req, :a], [:opt, :b], [:rest, :rest], [:req, :last], [:keyreq, :key], [:key, :opt], [:keyrest, :kw], [:block, :blk]]
-[[:rest, :*]]
-[[:keyrest, :**]]
-[[:req, :n]]
-[2, 4, 6]

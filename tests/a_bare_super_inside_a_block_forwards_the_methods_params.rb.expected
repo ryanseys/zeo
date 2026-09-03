@@ -1,6 +1,0 @@
-"base:x:1|after:x:1"
-"base:Y:2|still:Y"
-[[1, :two, [3, 4], :kay, :em, {z: 9}], 1, :two, [3, 4], :kay, :em, {z: 9}]
-"z!"
-"base:outer:3|inner|outer"
-"base:deep:4|deep"

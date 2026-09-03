@@ -1,8 +1,0 @@
-[:@x, :@y]
-3
-30
-nil
-[]
-5
-1
-'x' is not allowed as an instance variable name

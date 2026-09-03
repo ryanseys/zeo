@@ -1,9 +1,0 @@
-["kernel_conversion_backtrace_frame.rb:6:in 'Kernel#Integer'", "kernel_conversion_backtrace_frame.rb:6:in '<main>'"]
-["kernel_conversion_backtrace_frame.rb:12:in 'Kernel#Hash'", "kernel_conversion_backtrace_frame.rb:12:in '<main>'"]
-"kernel_conversion_backtrace_frame.rb:18:in 'Kernel#Float'"
-"kernel_conversion_backtrace_frame.rb:24:in 'Kernel#Rational'"
-"kernel_conversion_backtrace_frame.rb:30:in 'Kernel#Integer'"
-["kernel_conversion_backtrace_frame.rb:38:in 'Kernel#Integer'", "kernel_conversion_backtrace_frame.rb:38:in '<main>'"]
-"kernel_conversion_backtrace_frame.rb:44:in 'Kernel#Integer'"
-["kernel_conversion_backtrace_frame.rb:49:in 'Kernel#Integer'", "kernel_conversion_backtrace_frame.rb:49:in 'Object#wrapped'"]
-[nil, nil]

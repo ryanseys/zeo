@@ -1,3 +1,0 @@
-data:  "ab" reused_outbuf=false
-eof:   nil
-raise: EOFError

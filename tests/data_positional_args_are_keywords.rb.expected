@@ -1,6 +1,0 @@
-ArgumentError: missing keyword: :lng
-ArgumentError: wrong number of arguments (given 3, expected 0..2)
-ArgumentError: missing keyword: :lng
-#<data Empty>
-"#<data Empty>"
-#<struct Pair a=1, b=nil>

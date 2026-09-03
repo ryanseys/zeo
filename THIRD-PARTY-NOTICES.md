@@ -1,8 +1,9 @@
 # Third-party notices
 
 zeo itself is licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE).
-It redistributes third-party code in four places, each keeping its own
-license. This file is a map; the authoritative texts live beside the code.
+It redistributes third-party code in five places, each keeping its own
+license. This file is a map; the authoritative texts live beside the code,
+except the test corpus's, which is reproduced here.
 
 ## Libraries compiled into every binary zeo produces
 
@@ -60,3 +61,33 @@ documented in [`tests/spinel/UPSTREAM.md`](tests/spinel/UPSTREAM.md).
 
 This corpus is test data. It is not part of any distributed artifact -- not
 the release tarballs, not the gems, not the published crates.
+
+## The test corpus (`test/`)
+
+About 3,100 of the programs under `test/` were ported from the `test/` suite
+of [spinel](https://github.com/matz/spinel), zeo's C-emitting predecessor,
+and re-recorded against ruby 4.0.6. They sit in the topic directories beside
+zeo's own programs; a program's header comment names its origin where it
+matters. Spinel's license, reproduced as it requires:
+
+```
+Copyright (c) 2024- Yukihiro Matsumoto (matz@ruby.or.jp)
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```

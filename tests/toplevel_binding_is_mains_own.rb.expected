@@ -1,9 +1,0 @@
-Binding
-true
-main
-[:top_a, :top_b]
-1
-"1two"
-42
-[false, true]
-true

@@ -1,7 +1,0 @@
-"AF_UNIX"
-true
-"unix-hello"
-"reply!"
-"AF_UNIX"
-false
-:done

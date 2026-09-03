@@ -1,5 +1,0 @@
-[:refused, "can not move IO object."]
-:got
-"a".."z"
-Range
-[:endpoint_poisoned, Ractor::MovedError]

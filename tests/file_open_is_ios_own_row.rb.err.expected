@@ -1,1 +1,0 @@
-file_open_is_ios_own_row.rb:65: warning: File::new() does not take block; use File::open() instead

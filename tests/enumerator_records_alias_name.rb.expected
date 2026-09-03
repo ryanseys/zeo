@@ -1,5 +1,0 @@
-"#<Enumerator: [1, 2]:collect>"
-"#<Enumerator: [1, 2]:filter>"
-"#<Enumerator: [1, 2]:find_all>"
-"#<Enumerator: {a: 1}:each_pair>"
-"#<Enumerator: {a: 1}:keep_if>"

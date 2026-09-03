@@ -1,2 +1,0 @@
-spinel/sp_net_write_partial.rb:9:in '<module:Net>': undefined method 'ffi_func' for module Net (NoMethodError)
-	from spinel/sp_net_write_partial.rb:8:in '<main>'

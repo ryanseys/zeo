@@ -1,2 +1,0 @@
-gaps/regexp_unsupported_escapes.rb:11: warning: invalid Unicode Property \p: /\p/
-gaps/regexp_unsupported_escapes.rb:12: warning: invalid Unicode Property \p: /\pL/

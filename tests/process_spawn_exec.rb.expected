@@ -1,8 +1,0 @@
-pid?=true
-true=0
-false=1
-sh=5
-env=9
-unsetenv=3
-exec=4
-enoent=yes

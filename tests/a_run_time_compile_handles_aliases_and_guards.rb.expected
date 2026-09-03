@@ -1,7 +1,0 @@
-["a@UsesAliasedExtend", "b@UsesAliasedExtend", "c@UsesAliasedExtend"]
-:else_branch
-:else_branch
-:else_branch
-true
-true
-AliasedExtend

@@ -1,3 +1,0 @@
-[".", "..", ".hidden", "a.txt", "b.txt"]
-[".hidden", "a.txt", "b.txt"]
-raised: No such file or directory @ dir_initialize - /tmp/spinel_dir_entries_t/nope

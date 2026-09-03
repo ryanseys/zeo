@@ -1,4 +1,0 @@
-spinel/constant_path_write_undeclared.rb:12: warning: already initialized constant M::S
-spinel/constant_path_write_undeclared.rb:11: warning: previous definition of S was here
-spinel/constant_path_write_undeclared.rb:32: warning: already initialized constant M::C
-spinel/constant_path_write_undeclared.rb:31: warning: previous definition of C was here

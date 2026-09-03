@@ -1,3 +1,0 @@
-eval:1:in '<compiled>': uninitialized constant K (NameError)
-	from a_box_snippet_names_itself_in_a_backtrace.rb:22:in 'Ruby::Box#eval'
-	from a_box_snippet_names_itself_in_a_backtrace.rb:22:in '<main>'

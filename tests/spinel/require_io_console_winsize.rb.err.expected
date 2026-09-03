@@ -1,2 +1,0 @@
-spinel/require_io_console_winsize.rb:11:in 'IO#winsize': Inappropriate ioctl for device - <STDOUT> (Errno::ENOTTY)
-	from spinel/require_io_console_winsize.rb:11:in '<main>'

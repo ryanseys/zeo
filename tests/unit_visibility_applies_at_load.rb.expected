@@ -1,8 +1,0 @@
-"poked"
-"fabricated"
-"prodded"
-"assembled"
-prod after load: NoMethodError
-assemble after load: NoMethodError
-"prodded"
-"assembled"

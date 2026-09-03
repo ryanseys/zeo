@@ -1,6 +1,0 @@
-hello world
-[boxed]
-no block
-done
-[1, 2]
-LocalJumpError: no block given (yield)

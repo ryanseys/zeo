@@ -1,8 +1,0 @@
-["Dog", "Object", "Kernel", "BasicObject"]
-"woof"
-["Loud", "Dog", "Object", "Kernel", "BasicObject"]
-"LOUD(woof)"
-["A", "B", "Multi", "Object", "Kernel", "BasicObject"]
-"A[B[Multi]]"
-["B", "A", "Sep", "Object", "Kernel", "BasicObject"]
-"B[A[Sep]]"

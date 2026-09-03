@@ -1,0 +1,17 @@
+# `require "zlib"` brings up the whole module: the 38 constants, the six
+# stream classes, and the thirteen exception classes the gem's Ruby half
+# defines. This is the shape check -- behaviour is in zlib_classes.rb.
+require "zlib"
+p Zlib.const_defined?(:Deflate)
+p Zlib.constants.sort
+p Zlib::GzipFile.constants.sort
+p [Zlib::Deflate.superclass, Zlib::Inflate.superclass, Zlib::GzipReader.superclass]
+p Zlib::GzipReader.ancestors.include?(Enumerable)
+p [Zlib::BufError.superclass, Zlib::Error.superclass, Zlib::GzipFile::CRCError.superclass]
+__END__
+true
+[:ASCII, :BEST_COMPRESSION, :BEST_SPEED, :BINARY, :BufError, :DEFAULT_COMPRESSION, :DEFAULT_STRATEGY, :DEF_MEM_LEVEL, :DataError, :Deflate, :Error, :FILTERED, :FINISH, :FIXED, :FULL_FLUSH, :GzipFile, :GzipReader, :GzipWriter, :HUFFMAN_ONLY, :InProgressError, :Inflate, :MAX_MEM_LEVEL, :MAX_WBITS, :MemError, :NO_COMPRESSION, :NO_FLUSH, :NeedDict, :OS_AMIGA, :OS_ATARI, :OS_CODE, :OS_CPM, :OS_MACOS, :OS_MSDOS, :OS_OS2, :OS_QDOS, :OS_RISCOS, :OS_TOPS20, :OS_UNIX, :OS_UNKNOWN, :OS_VMCMS, :OS_VMS, :OS_WIN32, :OS_ZSYSTEM, :RLE, :SYNC_FLUSH, :StreamEnd, :StreamError, :TEXT, :UNKNOWN, :VERSION, :VersionError, :ZLIB_VERSION, :ZStream]
+[:CRCError, :Error, :LengthError, :NoFooter]
+[Zlib::ZStream, Zlib::ZStream, Zlib::GzipFile]
+true
+[Zlib::Error, StandardError, Zlib::GzipFile::Error]

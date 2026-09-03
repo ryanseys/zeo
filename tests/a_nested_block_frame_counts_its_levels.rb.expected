@@ -1,9 +1,0 @@
-"block in <main>"
-"block (2 levels) in <main>"
-"block (3 levels) in <main>"
-[["block (2 levels) in Deep#run"]]
-[["block (2 levels) in <class:Body>"]]
-[["block (2 levels) in singleton class"]]
-["block in Object#restarted"]
-"block in <class:Installed>"
-["block (2 levels) in <class:Installed>"]

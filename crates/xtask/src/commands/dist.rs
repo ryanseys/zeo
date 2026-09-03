@@ -282,12 +282,12 @@ fn stage_binary_pgo(
 /// compiled programs link the instrumented libzeo.a, so their runs are what
 /// teaches the profile the runtime's hot paths -- the compiler's own profile
 /// falls out of the compiles for free. Output is checked against each
-/// program's .expected: training on a wrong answer would bake a miscompile's
+/// program's recorded answer: training on a wrong answer would bake a miscompile's
 /// shape into the shipped profile.
 fn train_pgo(zeo: &Path, prof_dir: &Path) -> Result<(), Error> {
-    let benches = entries_matching(&root_join("bench"), "bm_", ".rb")?;
+    let benches = entries_matching(&root_join("test/bench"), "bm_", ".rb")?;
     if benches.is_empty() {
-        return Err(Error::new("no bench corpus at bench/bm_*.rb"));
+        return Err(Error::new("no bench corpus at test/bench/bm_*.rb"));
     }
     let raw = prof_dir.join("train-%p.profraw").display().to_string();
     let profile_env = [("LLVM_PROFILE_FILE", Some(raw.as_str()))];
@@ -319,16 +319,14 @@ fn train_pgo(zeo: &Path, prof_dir: &Path) -> Result<(), Error> {
                 out.stderr_text()
             )));
         }
-        let expected = rb.with_extension("rb.expected");
-        if expected.is_file() {
-            let want = std::fs::read(&expected)
-                .map_err(|e| Error::new(format!("reading {}: {e}", expected.display())))?;
-            if out.stdout != want {
-                return Err(Error::new(format!(
-                    "pgo training: {name} diverged from its .expected -- \
-                     refusing to train on a wrong answer"
-                )));
-            }
+        let case = crate::case::Case::read(&rb).map_err(Error::new)?;
+        if let Some(trailer) = case.trailer
+            && out.stdout != trailer.answer.stdout
+        {
+            return Err(Error::new(format!(
+                "pgo training: {name} diverged from its recorded answer -- \
+                 refusing to train on a wrong answer"
+            )));
         }
         println!("dist: pgo trained on {name}");
     }

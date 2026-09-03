@@ -1,7 +1,0 @@
-true
-false
-true
-[:size, :to_a]
-false
-false
-undefined method 'greet' for an instance of Quiet

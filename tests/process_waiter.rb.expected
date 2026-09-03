@@ -1,9 +1,0 @@
-Process::Waiter
-Thread
-true
-true
-Process::Status
-[true, true]
-[:pid]
-true
-NoMethodError

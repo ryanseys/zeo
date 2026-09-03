@@ -1,5 +1,0 @@
-[:TYPE_BOOL, :TYPE_BUFFER_IN, :TYPE_BUFFER_INOUT]
-FFI::LibraryPath
-"m"
-"/usr/lib/libm.dylib"
-"z"

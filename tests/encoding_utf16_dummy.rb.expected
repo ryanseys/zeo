@@ -1,8 +1,0 @@
-"\xFE\xFF\x00\x68\x00\x65\x00\x6C\x00\x6C\x00\x6F"
-[#<Encoding:UTF-16 (dummy)>, "feff3042", true]
-"あ"
-"0000feff00003042"
-"あ"
-[Encoding::InvalidByteSequenceError, "\"a\\x00\" on UTF-16"]
-["UTF-16"]
-[true, false]

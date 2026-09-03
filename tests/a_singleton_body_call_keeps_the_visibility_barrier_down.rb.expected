@@ -1,8 +1,0 @@
-a: true
-b: 1
-c: "c1"
-d: "d1"
-e: NoMethodError: private method 'public' called for class #<Class:E>
-f: ["inst", true]
-g: ["inst", true]
-h: true

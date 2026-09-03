@@ -1,7 +1,0 @@
-[Method, :raised, RuntimeError, "cannot get AST for ISEQ compiled by prism"]
-[Proc, :raised, RuntimeError, "cannot get AST for ISEQ compiled by prism"]
-[Proc, :raised, RuntimeError, "cannot get AST for ISEQ compiled by prism"]
-[UnboundMethod, nil]
-[Integer, :raised, TypeError, "wrong argument type Integer (expected method)"]
-[String, :raised, TypeError, "wrong argument type String (expected method)"]
-[Thread::Backtrace::Location, :raised, RuntimeError, "cannot get AST for ISEQ compiled by prism"]

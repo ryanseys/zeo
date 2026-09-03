@@ -1,8 +1,0 @@
-# The cycle this program builds on purpose, and the census the
-# `ZEO_RT_GCCHECK=1` leg gates against. A cycle alive at exit is not a
-# defect: it is a ring the program never broke. What the leg gates is a
-# CHANGE to the line below.
-#
-# A self-containing array, which is what `flatten` is supposed to refuse.
-
-cycle leak: 1 objects (Array x1)

@@ -1,8 +1,0 @@
-HTTPX::Error
-HTTPX::Connection::HTTP2::Error
-"h2"
-43
-42
-"HTTPX::Connection::HTTP2"
-NameError
-:top

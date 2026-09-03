@@ -1,8 +1,0 @@
-"sub(has)"
-"none"
-"none"
-[["NoMethodError", "super: no superclass method 'outside' for main"], ["NoMethodError", "super: no superclass method 'outside' for main"], "nil"]
-["NoMethodError", "nil"]
-["base2"]
-"s3(base2)"
-["RuntimeError", "implicit argument passing of super from method defined by define_method() is not supported. Specify all arguments explicitly."]

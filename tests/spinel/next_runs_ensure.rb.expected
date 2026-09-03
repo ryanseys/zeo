@@ -1,3 +1,0 @@
-[:begin, :ensure]
-[:outer_begin, :inner_begin, :inner_ensure, :outer_ensure, :outer_begin, :inner_begin, :inner_ensure, :after, :outer_ensure]
-[:in, :out, :ens]

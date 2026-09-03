@@ -1,4 +1,0 @@
-[true, true, true]
-[false, false]
-false
-[IOError, "closed stream"]

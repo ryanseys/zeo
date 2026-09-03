@@ -1,5 +1,0 @@
-#<struct Pair a=1, b=nil>
-#<struct Pair a=1, b=2>
-#<struct Pair a={a: 1}, b=nil>
-#<struct a=1, b=nil>
-ArgumentError: wrong number of arguments (given 1, expected 0)

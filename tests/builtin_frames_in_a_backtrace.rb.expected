@@ -1,7 +1,0 @@
-builtin_frames_in_a_backtrace.rb:N:in 'Object#inner'
-builtin_frames_in_a_backtrace.rb:N:in 'block in <main>'
-builtin_frames_in_a_backtrace.rb:N:in 'Kernel#then'
-builtin_frames_in_a_backtrace.rb:N:in '<main>'
-"Object#direct"
-"block in <main>"
-"block in <main>"

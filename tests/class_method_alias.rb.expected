@@ -1,8 +1,0 @@
-Request
-{"PATH_INFO" => "/"}
-true
-false
-JsonRequest
-"explicit 3"
-"built x"
-9

@@ -1,9 +1,10 @@
 //! The runtime performance bank.
 //!
-//! Every `bench/bm_*.rb` is compiled with the release `zeo` (`-o`, the
+//! Every `test/bench/bm_*.rb` is compiled with the release `zeo` (`-o`, the
 //! shipped configuration) and the resulting NATIVE BINARY is timed
 //! end-to-end -- one subprocess execution per iteration. The first run of
-//! each program is a correctness gate against its committed `.expected`:
+//! each program is a correctness gate against the answer recorded under its
+//! `__END__`:
 //! timing a wrong answer is meaningless, so a mismatch fails the bank.
 //!
 //! Two benchmark groups share the corpus:
@@ -35,6 +36,11 @@
 //! dir (`target/bench/`), snapshotted once at bench start -- so editing
 //! code, running tests, or `cargo build` in the ordinary target dir while
 //! a bank runs cannot touch what is being timed.
+
+// The corpus file format: the recorded answer under `__END__`.
+#[path = "../tests/corpus/case.rs"]
+#[allow(dead_code)]
+mod case;
 
 use std::cell::OnceCell;
 use std::collections::HashMap;
@@ -95,7 +101,7 @@ fn build_snapshot(root: &Path) -> PathBuf {
 /// The `ZEO_BENCH_DIST=pgo` snapshot: `cargo xtask dist --pgo` staged into
 /// the isolated bench target dir, so its builds and training profiles
 /// never touch the ordinary target dir either. `--no-smoke` because the
-/// bank's own `.expected` gate is the stronger check.
+/// bank's own recorded-answer gate is the stronger check.
 fn build_dist_snapshot(root: &Path, bench_target: &Path) -> PathBuf {
     let stage = bench_target.join("dist-stage");
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
@@ -120,12 +126,12 @@ fn build_dist_snapshot(root: &Path, bench_target: &Path) -> PathBuf {
     zeo
 }
 
-/// The corpus: every `.rb` directly under `bench/`, sorted by name.
+/// The corpus: every `.rb` directly under `test/bench/`, sorted by name.
 fn programs(root: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(root.join("bench"))
-        .expect("bench/ exists")
+    let mut v: Vec<PathBuf> = std::fs::read_dir(root.join("test/bench"))
+        .expect("test/bench/ exists")
         .filter_map(|e| {
-            let p = e.expect("readable bench/ entry").path();
+            let p = e.expect("readable test/bench/ entry").path();
             (p.extension().is_some_and(|x| x == "rb")).then_some(p)
         })
         .collect();
@@ -230,12 +236,16 @@ fn compile(rb: &Path, name: &str) -> PathBuf {
     bin
 }
 
-/// One gated run: stdout must match the committed `.expected` BYTES (some
+/// One gated run: stdout must match the recorded answer's BYTES (some
 /// benchmarks print binary output, e.g. bm_ao_render's PPM image).
 /// Answers the run's wall time, the eager path's target-time estimate.
 fn gate(cmd: &mut Command, rb: &Path, what: &str) -> Duration {
-    let expected = std::fs::read(rb.with_extension("rb.expected"))
-        .unwrap_or_else(|e| panic!("{}.expected: {e}", rb.display()));
+    let expected = case::Case::read(rb)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .trailer
+        .unwrap_or_else(|| panic!("{}: no recorded answer under __END__", rb.display()))
+        .answer
+        .stdout;
     let t = Instant::now();
     let out = cmd
         .stderr(Stdio::null())
@@ -250,7 +260,7 @@ fn gate(cmd: &mut Command, rb: &Path, what: &str) -> Duration {
     );
     assert!(
         out.stdout == expected,
-        "{what} output mismatch vs .expected on {}",
+        "{what} output mismatch vs the recorded answer on {}",
         rb.display()
     );
     took

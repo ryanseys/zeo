@@ -1,6 +1,0 @@
-# `exit` raises SystemExit, so the buffer is written on the way out and the
-# `at_exit` handler runs first -- the same return-to-C-`main` path as
-# falling off the end, reached through the exception.
-at_exit { $stderr.print "[at_exit ran]" }
-print "A" * 300
-exit 0

@@ -1,4 +1,0 @@
-ActiveRecord::RecordNotFound
-ActiveRecord::RecordInvalid
-Outer::Inner::DeepError
-My_Class

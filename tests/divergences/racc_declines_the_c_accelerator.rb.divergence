@@ -1,8 +1,0 @@
-racc's C extension is a pure accelerator: the same gem carries a complete
-Ruby runtime behind `rescue LoadError`. Loading any C extension arms the
-GVL process-wide (attr_accessor +68%, getivar +65% on the release bank),
-so zeo declines the cparse build and the gem's own rescue takes the Ruby
-runtime, which zeo compiles to native code. The oracle, with the built
-extension in its store, answers "c"; zeo answers "ruby". Every parse
-answers the same either way -- a_racc_parser_answers_the_same_off_either
-_runtime.rb is the parity half of this pair.

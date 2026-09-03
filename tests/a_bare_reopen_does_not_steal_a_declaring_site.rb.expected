@@ -1,8 +1,0 @@
-Store::Item
-Store::Base
-"base"
-"own"
-"aitem"
-true
-"constant"
-["Store::Item", "Store::Base"]

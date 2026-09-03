@@ -1,5 +1,0 @@
-This golden is ABOUT the compiled-ownership ledger, so it runs under it.
-Every send here prints the same answer whether or not the proc leaks; the
-exit balance is the measurement. Before the fix the ledger reported
-`tag 24: +15` -- one Proc per raising send, five of them plus the ten
-loop iterations.

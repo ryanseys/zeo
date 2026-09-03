@@ -222,7 +222,7 @@ pub struct ClassInfo {
     ///
     /// A member costs exactly what an ivar costs to reach, but CRuby answers
     /// `nil` to `S.new(1).instance_variable_get(:@x)` and `[]` to
-    /// `instance_variables` (pinned by `tests/spinel/data_struct_ivar_get_nil.rb`),
+    /// `instance_variables` (pinned by `test/core/struct/data_struct_ivar_get_nil.rb`),
     /// so it is absent from every by-NAME path. `ruby_class!`'s `hidden` block
     /// is what enforces that. DISJOINT from `ivars`, which `mro::materialize`
     /// guarantees. Empty for every class that is not a compiled `Struct`.

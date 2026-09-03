@@ -1,8 +1,0 @@
-["frozen_error_backtrace_extra_frame.rb:7:in '<main>'"]
-["frozen_error_backtrace_extra_frame.rb:13:in '<main>'"]
-["frozen_error_backtrace_extra_frame.rb:19:in '<main>'"]
-["frozen_error_backtrace_extra_frame.rb:25:in '<main>'"]
-"frozen_error_backtrace_extra_frame.rb:32:in 'String#[]='"
-"frozen_error_backtrace_extra_frame.rb:38:in 'String#concat'"
-"frozen_error_backtrace_extra_frame.rb:44:in 'Array#sort!'"
-"frozen_error_backtrace_extra_frame.rb:51:in 'Sink#<<'"

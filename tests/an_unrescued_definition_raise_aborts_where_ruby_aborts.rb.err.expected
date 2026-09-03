@@ -1,1 +1,0 @@
-an_unrescued_definition_raise_aborts_where_ruby_aborts.rb:11:in '<main>': superclass mismatch for class Sub (TypeError)

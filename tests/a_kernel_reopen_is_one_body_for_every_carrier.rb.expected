@@ -1,7 +1,0 @@
-["Widget:1", "Integer:2", "String:3", "Array:4", "Symbol:5", "NilClass:6"]
-["top-level", "top-level"]
-["ArgumentError:7", "top-level"]
-[false, false, false]
-["quiet", "quiet"]
-[true, true, true]
-[true, true]

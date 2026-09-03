@@ -1,0 +1,23 @@
+p((1..5).all?)
+p((1..5).any?)
+p((1..5).none?)
+p((1..5).one?)
+p((1..1).one?)
+p((1..5).sum)
+p((1..5).count)
+p((1..5).all? { |x| x > 0 })
+p((1..5).all?(Integer))
+p((1..5).any?(String))
+p((1..5).none?(String))
+__END__
+true
+true
+false
+false
+true
+15
+5
+true
+true
+false
+true

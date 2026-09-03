@@ -1,6 +1,0 @@
-ArgumentError: exceed depth limit
-"{\"a\":1}"
-nil
-["Array", "Hash", "Integer", "String"]
-[true, 1]
-true

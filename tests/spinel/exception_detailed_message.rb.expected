@@ -1,5 +1,0 @@
-"boom (RuntimeError)"
-"bad state (StandardError)"
-"RuntimeError (RuntimeError)"
-"oops (MyError)"
-["x", "x (RuntimeError)"]

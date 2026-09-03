@@ -1,7 +1,0 @@
-GLOBAL Module#method_added
-GLOBAL Q#qq
-GLOBAL R#rr
-GLOBAL BasicObject#singleton_method_added
-GLOBAL s sm
-GLOBAL #<Class:0xADDR>#runtime_one
-GLOBAL s runtime_two

@@ -1,8 +1,0 @@
-[:from_widget, "toplevel-const", "Widget", "kernel-Widget", 1, "widget-const"]
-[:from_gadget, 1, 2, "toplevel-const"]
-[[:@own, :@stashed], [:@extra, :@own, :@stashed]]
-[false, true]
-["toplevel-const", "toplevel-const", "toplevel-const"]
-[Object, Object]
-[true, true]
-["kernel-Widget", "kernel-Gadget", "kernel-Integer"]

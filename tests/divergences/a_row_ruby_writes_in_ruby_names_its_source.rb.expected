@@ -1,8 +1,0 @@
-NilClass#to_i: nil
-NilClass#to_f: nil
-NilClass#to_r: nil
-NilClass#to_c: nil
-NilClass#rationalize: nil
-Pathname#basename: nil
-Method#inspect: #<UnboundMethod: NilClass#to_i()>
-String#upcase: nil

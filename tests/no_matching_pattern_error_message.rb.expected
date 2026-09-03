@@ -1,4 +1,0 @@
-NoMatchingPatternError: 1: String === 1 does not return true
-NoMatchingPatternError: {a: 1}: String === 1 does not return true
-NoMatchingPatternError: [1, 2]: String === 2 does not return true
-NoMatchingPatternKeyError: key=:b matchee={a: 1}

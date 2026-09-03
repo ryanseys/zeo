@@ -1,3 +1,0 @@
-This golden is ABOUT the compiled-ownership ledger, so it runs under it.
-Without `ZEO_RT_LEAKCHECK=1` the program prints the right answer whether or
-not the emitter hands over a dead slot, which is what let the bug live.

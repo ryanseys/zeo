@@ -1,5 +1,0 @@
-Errno::EINTR
-"Interrupted system call"
-[RuntimeError, "boom"]
-true
-true

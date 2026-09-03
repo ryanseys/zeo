@@ -1,5 +1,0 @@
-p(::Integer === 7)
-p(::Integer === "x")
-p(::String === "a")
-p(::Float === 1.5)
-p(::Symbol === :s)

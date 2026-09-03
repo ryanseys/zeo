@@ -1,6 +1,0 @@
-[[:x], :ab, [:y]]
-[[], :ab, []]
-[:p, :q]
-:scalar
-:nomatch
-:nomatch

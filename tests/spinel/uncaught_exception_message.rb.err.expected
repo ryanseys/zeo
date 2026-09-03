@@ -1,2 +1,0 @@
-spinel/uncaught_exception_message.rb:5:in 'Object#boom': undefined method 'length' for nil (NoMethodError)
-	from spinel/uncaught_exception_message.rb:15:in '<main>'

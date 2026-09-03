@@ -1,5 +1,0 @@
-literal assign taken
-unless:
-idiom ok: value
-call ok: 1
-done

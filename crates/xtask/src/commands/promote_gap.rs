@@ -1,83 +1,66 @@
-//! Promote a FIXED gap out of `tests/gaps/` into the passing suite.
+//! Promote a FIXED gap out of `test/gaps/` into the topic directory it
+//! belongs to.
 //!
-//! When a gap starts matching ruby, the gaps harness fails it with "GAP FIXED
-//! -- promote". This moves the gap's `.rb` and every sidecar into `tests/` --
-//! the zeo-authored golden suite, the `examples` target -- and confirms it
-//! passes there.
-//!
-//! `tests/spinel/` is NOT a promotion target: it mirrors a vendored corpus,
-//! and a spinel-origin gap belongs in `tests/` like any other.
+//! When a gap starts matching ruby, the harness fails it with "GAP FIXED --
+//! promote". A gap has no topic of its own, so the caller names one:
+//! `cargo xtask promote-gap <stem> core/string`. The program, its recorded
+//! answer and its fixture directory move together, a `#@ pkggap` line is
+//! dropped, and the promoted case is run once to confirm it passes.
 
 use crate::exec::{self, Capture};
+use crate::suites::Suite;
 use crate::{Error, root, root_join};
 
-/// EVERY suffix the harness recognizes (golden.rs is the reference).
-///
-/// This list once knew only five of them, and promoting a gap that carried a
-/// `.gccheck`, `.gc` or `.leakcheck` silently left the sidecar behind in
-/// tests/gaps/ -- changing the promoted test's behavior and orphaning a file.
-///
-/// What a golden IS -- a divergence, macOS-only, JIT-only -- is its DIRECTORY,
-/// not a suffix, so a promotion that changes the kind is a move to a different
-/// directory and nothing here has to know about it.
-const SIDECARS: &[&str] = &[
-    "rb",
-    "rb.expected",
-    "rb.err.expected",
-    "rb.linux.expected",
-    "rb.linux.err.expected",
-    "rb.args",
-    "rb.stdin",
-    "rb.gc",
-    "rb.leakcheck",
-    "rb.gccheck",
-];
-
-const USAGE: &str = "usage: cargo xtask promote-gap <gap-stem>";
+const USAGE: &str = "usage: cargo xtask promote-gap <gap-stem> <topic/area>   (e.g. core/string)";
 
 pub fn run(args: &[String]) -> Result<(), Error> {
-    let Some(stem) = args.first() else {
-        return Err(Error::new(USAGE.to_string()));
-    };
-    if stem == "--help" || stem == "-h" {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("{USAGE}");
         return Ok(());
     }
+    let (Some(stem), Some(area)) = (args.first(), args.get(1)) else {
+        return Err(Error::new(USAGE.to_string()));
+    };
     let stem = stem.trim_end_matches(".rb");
-    let gaps = root_join("tests/gaps");
-    let dest = root_join("tests");
-    if !gaps.join(format!("{stem}.rb")).is_file() {
-        return Err(Error::new(format!("no such gap: tests/gaps/{stem}.rb")));
-    }
-
-    let mut moved = Vec::new();
-    for suffix in SIDECARS {
-        let from = gaps.join(format!("{stem}.{suffix}"));
-        if !from.is_file() {
-            continue;
-        }
-        let to = dest.join(format!("{stem}.{suffix}"));
-        std::fs::rename(&from, &to).map_err(|e| {
+    let (topic, sub) = area
+        .trim_matches('/')
+        .split_once('/')
+        .ok_or_else(|| Error::new(format!("{area:?} is not <topic>/<area>\n{USAGE}")))?;
+    let suite = Suite::by_name(topic)
+        .filter(|s| s.depth == crate::suites::Depth::Two)
+        .ok_or_else(|| {
             Error::new(format!(
-                "moving {} to {}: {e}",
-                from.display(),
-                to.display()
+                "{topic:?} is not a topic (lang, core, stdlib, compiler)"
             ))
         })?;
-        moved.push(format!("{stem}.{suffix}"));
+    let gaps = root_join("test/gaps");
+    let from = gaps.join(format!("{stem}.rb"));
+    if !from.is_file() {
+        return Err(Error::new(format!("no such gap: test/gaps/{stem}.rb")));
     }
-    println!(
-        "promoted tests/gaps/{stem}.rb -> tests/ ({} files: {})",
-        moved.len(),
-        moved.join(" ")
-    );
+    let dest_dir = root_join(suite.root).join(sub);
+    std::fs::create_dir_all(&dest_dir)
+        .map_err(|e| Error::new(format!("{}: {e}", dest_dir.display())))?;
+    let to = dest_dir.join(format!("{stem}.rb"));
+    if to.exists() {
+        return Err(Error::new(format!("{} already exists", to.display())));
+    }
+    let text = std::fs::read(&from).map_err(|e| Error::new(format!("{}: {e}", from.display())))?;
+    let kept: Vec<&[u8]> = text
+        .split_inclusive(|&b| b == b'\n')
+        .filter(|l| l.strip_suffix(b"\n").unwrap_or(l) != b"#@ pkggap")
+        .collect();
+    std::fs::write(&to, kept.concat()).map_err(|e| Error::new(format!("{}: {e}", to.display())))?;
+    std::fs::remove_file(&from).map_err(|e| Error::new(format!("{}: {e}", from.display())))?;
+    let fixture = gaps.join(stem);
+    if fixture.is_dir() {
+        std::fs::rename(&fixture, dest_dir.join(stem))
+            .map_err(|e| Error::new(format!("moving {}: {e}", fixture.display())))?;
+    }
+    let rel = format!("{sub}/{stem}.rb");
+    println!("promoted test/gaps/{stem}.rb -> {}/{rel}", suite.root);
 
-    // `--test goldens`, which is the ONE test target: every suite the harness
-    // declares -- example, gap, spinel and the rest -- is a case inside it.
-    // This named `--test examples` for as long as a separate binary by that
-    // name existed, and went on naming it after the suites were merged, so
-    // the verification step failed to build rather than failing to pass.
-    println!("verifying it passes in the examples suite ...");
+    println!("verifying it passes as {}::{rel} ...", suite.name);
     let out = exec::run(
         &[
             "cargo",
@@ -86,9 +69,9 @@ pub fn run(args: &[String]) -> Result<(), Error> {
             "-p",
             "zeo",
             "--test",
-            "goldens",
+            "corpus",
             "-E",
-            &format!("test(example::{stem})"),
+            &format!("test({}::{rel})", suite.name),
         ],
         root(),
         &[],
@@ -96,7 +79,8 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     )?;
     if !out.success() {
         return Err(Error::new(format!(
-            "{stem} does not pass in the examples suite -- it is still a gap"
+            "{stem} does not pass in {} -- it is still a gap",
+            suite.root
         )));
     }
     Ok(())

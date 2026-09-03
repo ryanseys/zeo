@@ -1,7 +1,0 @@
-[:foo, :bar]
-nil
-[:foo, :bar]
-"a"
-"c"
-2
-["a", "c", 2]

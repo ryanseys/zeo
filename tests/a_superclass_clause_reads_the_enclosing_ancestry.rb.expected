@@ -1,7 +1,0 @@
-Base::Inner
-"Mid::Leaf"
-"leaf"
-["Mid::Leaf", "Base::Inner", "Object"]
-"Shadow::Inner"
-"shadowed"
-superclass must be an instance of Class (given an instance of Module)

@@ -1,7 +1,0 @@
-Errno::EISDIR: Is a directory @ io_fread - /tmp
-Errno::ENOENT: No such file or directory @ dir_chdir0 - /nonexistent_zeo_probe_xyz
-Errno::ENOENT: No such file or directory @ rb_check_realpath_internal - /nonexistent_zeo_probe_xyz
-Errno::ENOENT: No such file or directory @ rb_file_s_stat - /nonexistent_zeo_probe_xyz
-Errno::ENOENT: No such file or directory @ apply2files - /nonexistent_zeo_probe_xyz
-Errno::ENOENT: No such file or directory @ rb_file_s_rename - (/nonexistent_zeo_probe_xyz, /tmp/zzz)
-ArgumentError: user xyz_no_such_user_probe doesn't exist

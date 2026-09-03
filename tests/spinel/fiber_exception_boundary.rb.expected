@@ -1,3 +1,0 @@
-b:enter b:before-raise b:OUTER(b-main)
-a:caught(a-fiber)
-c:main-begin c:fiber-rescue(c-x)

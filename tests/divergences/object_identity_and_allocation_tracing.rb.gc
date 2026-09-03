@@ -1,3 +1,0 @@
-The registry-backed rows here need the allocation registry, which only
-`ZEO_GC=1` arms. Running under it isolates the three surfaces that are
-absent for their OWN reasons rather than for the gate.

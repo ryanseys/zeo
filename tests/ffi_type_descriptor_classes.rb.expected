@@ -1,4 +1,0 @@
-[true, true, true, true]
-["FFI::ArrayType", "FFI::FunctionType", "FFI::StructByValue", "FFI::Type::Mapped"]
-true
-[FFI::Type::Mapped, FFI::Type, Object]

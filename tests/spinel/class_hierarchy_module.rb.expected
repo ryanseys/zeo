@@ -1,6 +1,0 @@
-Greeting
-Polite,Politeness,Greeting,Base,Object,Kernel,BasicObject
-polite<=Greeting
-polite<=Politeness
-base!<=Greeting
-neq

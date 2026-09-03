@@ -1082,7 +1082,7 @@ pub(super) fn map_class_self_items(
             // SOURCE order, and `singleton_method_added` fires for a
             // `define_method`'d name exactly as for a `def` -- so the
             // interleaving is observable, not cosmetic. Oracle-pinned in
-            // `tests/gaps/a_singleton_body_statement_that_defines_methods_at_runtime.rb`.
+            // `test/gaps/a_singleton_body_statement_that_defines_methods_at_runtime.rb`.
             Item::SingletonBody => {
                 // Carry the statement's own span onto the reopen: a class body
                 // takes its backtrace frame from its definition node's

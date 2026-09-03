@@ -1,9 +1,0 @@
-"fake.rb"
-100
-"fake.rb:10:in '<main>'"
-["f.rb:1:in '<main>'", "eval_file_and_line_arguments.rb:17:in 'Binding#eval'", "eval_file_and_line_arguments.rb:17:in '<main>'"]
-["(eval at eval_file_and_line_arguments.rb:18):1:in '<main>'", "eval_file_and_line_arguments.rb:18:in 'BasicObject#instance_eval'", "eval_file_and_line_arguments.rb:18:in '<main>'"]
-["(eval at eval_file_and_line_arguments.rb:19):1:in '<main>'", "eval_file_and_line_arguments.rb:19:in 'Module#class_eval'", "eval_file_and_line_arguments.rb:19:in '<main>'"]
-"multi.rb:7:in '<main>'"
-["f1.rb:1:in 'Object#outer'", "eval_file_and_line_arguments.rb:31:in 'Kernel#eval'"]
-["deffile.rb:4:in 'Object#m_in_eval'", "deffile.rb:6:in '<main>'", "eval_file_and_line_arguments.rb:40:in 'Kernel#eval'"]

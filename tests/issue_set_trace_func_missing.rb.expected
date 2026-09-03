@@ -1,5 +1,0 @@
-defined?: "method"
-private_method_defined?: true
-clearing with nil: nil
-installing a Proc: :installed
-the hook fired: true

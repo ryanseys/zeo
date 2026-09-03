@@ -1,9 +1,0 @@
-direct block_given?: true
-send block_given?: true
-send iterator?: false
-send binding: Binding
-send local_variables: true
-respond_to? block_given?: true
-method(:binding): Method
-direct binding: Binding
-direct local_variables: true

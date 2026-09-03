@@ -1,0 +1,13 @@
+p(Regexp.linear_time?(/(a)\1/))
+a001 = /(a)\1/; p(Regexp.linear_time?(a001))
+p(Regexp.linear_time?("(a)\\1"))
+p(Regexp.linear_time?(/abc/))
+b1 = /abc/; p(Regexp.linear_time?(b1))
+p(Regexp.linear_time?("abc"))
+__END__
+false
+false
+false
+true
+true
+true

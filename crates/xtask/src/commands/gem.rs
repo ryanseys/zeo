@@ -243,7 +243,9 @@ fn parse(args: &[String]) -> Result<Option<Opts>, Error> {
 }
 
 fn refuse_to_delete_our_own_cwd(stage: &Path) -> Result<(), Error> {
-    let cwd = std::env::current_dir().ok().and_then(|p| p.canonicalize().ok());
+    let cwd = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.canonicalize().ok());
     let target = stage.canonicalize().ok();
     if let (Some(cwd), Some(target)) = (cwd, target)
         && cwd.starts_with(&target)
@@ -326,8 +328,7 @@ mod tests {
             "expected the four release targets, found {targets:?}"
         );
         for target in targets {
-            gem_platform(target)
-                .unwrap_or_else(|e| panic!("{target}: {e}"));
+            gem_platform(target).unwrap_or_else(|e| panic!("{target}: {e}"));
         }
     }
 
@@ -336,8 +337,7 @@ mod tests {
     /// dies inside `load`.
     #[test]
     fn the_gem_executable_is_ruby_that_execs_the_binary() {
-        let launcher = std::fs::read_to_string(root_join("exe/zeo"))
-            .expect("exe/zeo is committed");
+        let launcher = std::fs::read_to_string(root_join("exe/zeo")).expect("exe/zeo is committed");
         assert!(launcher.starts_with("#!"), "exe/zeo has no shebang");
         assert!(
             launcher.contains("libexec/zeo"),

@@ -1,76 +1,59 @@
 # zeo-rt's unit tests require nextest's process-per-test execution model
 # (the default): they mutate process-global state (the GATES word, the
 # REGISTRY OnceLock, other set-once statics), and a fresh process per test
-# is the isolation. Do not add a shared-process runner for them -- a stale
-# gate from one test would make the next test's assertion a false pass.
+# is the isolation. Do not add a shared-process runner for them.
 #
-# Every suite here compiles its `.rb` files and runs the result: CRANELIFT
-# in-process for a JIT golden, plus one `cc` link for an AOT or e2e case. No
-# `rustc` runs anywhere in the suite.
+# Every corpus case spawns a child `zeo` holding a compile arena, and a
+# runaway one can reach gigabytes in seconds; the harness caps a child's RSS
+# (crates/zeo/tests/corpus/run.rs) and this group bounds how many are alive
+# at once. ONE group across every binary that spawns a compile: the bound
+# that matters is the whole run's children, not one binary's.
 #
-# The group therefore bounds MEMORY, not toolchain processes. Each golden
-# spawns a child `zeo` holding a compile arena, and a runaway one can reach
-# gigabytes in seconds, so the harness caps a child at 512 MiB of RSS
-# (`run_bounded` in crates/zeo/tests/harness/golden.rs). ONE group across all
-# the suites, not one per suite: the bound that matters is how many children
-# are alive in the whole run, and two groups of eight is sixteen.
-#
-# The width is MEASURED (2026-08-24, spinel x2 per width, aarch64-darwin
-# 16GB, on the single-compile harness):
+# The width is MEASURED (2026-08-24, aarch64-darwin 16GB):
 #
 #   width   6      10     14     20
 #   secs    39.5   28.1   23.6   27.8   (20's second run hit 31.8: pressure)
 #
 # 14 is the knee: past it the extra children fight the machine instead of
-# filling it. Re-measure after any change to what a golden child costs.
+# filling it. Re-measure after any change to what a child costs.
 [test-groups]
 golden = { max-threads = 14 }
 
-# The default run is the DEV loop and stays fast: everything that compiles a
-# whole gem's require graph is opted out here and runs only under `-P full`
-# -- `cargo nextest run -p zeo -P full` is the full gate's spelling.
-# The gem probe owns broad whole-gem compile coverage; these two are the
-# survivors with assertions the probe can't make.
+# The default run is the DEV loop: every unit test, the in-process checks,
+# the api tests, and every corpus suite on the JIT plus the curated AOT set
+# (`aot_link::`). The legs that re-run the whole corpus -- AOT, memcheck, the
+# differentials -- and the whole-graph milestones run only under `-P full`.
 [profile.default]
-default-filter = "not (test(milestone::) | test(gemtest::) | test(every_bundled_gem_compiles))"
+default-filter = "not (test(/^aot_lang::/) | test(/^aot_core::/) | test(/^aot_stdlib::/) | test(/^aot_compiler::/) | test(/^memcheck_/) | test(/^diff_/) | test(/^milestones::/) | test(/^binary_size::/) | test(/^platform::/) | test(every_bundled_gem_compiles))"
 
-# Per-binary wall-clock lands in target/nextest/<profile>/junit.xml, for
-# reading by hand after a slow run. Nothing folds it into a ledger any more.
+# Per-binary wall-clock lands in target/nextest/<profile>/junit.xml.
 [profile.default.junit]
 path = "junit.xml"
 
-# The full gate: everything, including the whole-gem cases above.
+# The gate: everything.
 [profile.full]
 default-filter = "all()"
 
+[profile.full.junit]
+path = "junit.xml"
+
 # nextest takes the first matching override, so the specific ones come first.
 
-# Every case splices a whole require graph: minutes, and slow is not stuck.
-# Sits above the suite's own ZEO_GOLDEN_RUN_DEADLINE=300.
+# Every milestone splices a whole require graph: minutes, and slow is not
+# stuck. Sits above the harness's own 300s deadline.
 [[profile.default.overrides]]
-filter = "test(milestone::) | test(gemtest::)"
+filter = "test(milestones::)"
 test-group = "golden"
 slow-timeout = { period = "360s", terminate-after = 2 }
 
 # Backstop under the harness's per-child cap: a hung case cannot wedge the run.
 [[profile.default.overrides]]
-filter = "binary(goldens)"
+filter = "binary(corpus)"
 test-group = "golden"
 slow-timeout = { period = "60s", terminate-after = 3 }
 
-# These spawn the real `zeo` binary and compile like a golden. No terminate:
-# the minitest case legitimately compiles a whole require graph. The rest of
-# `checks` is in-process and stays out of the group.
+# These spawn the real `zeo` binary and compile like a corpus case. No
+# terminate: some legitimately compile a whole require graph.
 [[profile.default.overrides]]
-filter = "binary(checks) & test(cli::)"
-test-group = "golden"
-
-# `e2e` joins the group but keeps the default deadline. Its default tier
-# spawns a JIT `zeo` child per case; under `ZEO_E2E_BACKEND=aot` (the CI AOT
-# leg) it compiles AND LINKS whole programs, shelling `cc` per test. Some
-# cases legitimately run past the goldens' 60s, so bounding its CONCURRENCY
-# is the fix here; borrowing their timeout as well would convert machine
-# pressure into spurious failures.
-[[profile.default.overrides]]
-filter = "binary(e2e)"
+filter = "(binary(checks) & test(cli::)) | binary(e2e)"
 test-group = "golden"

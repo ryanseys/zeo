@@ -1,8 +1,0 @@
-literal kw: ArgumentError: no keywords accepted
-literal, rest: ArgumentError: no keywords accepted
-splat kw: ArgumentError: no keywords accepted
-splat kw, rest: ArgumentError: no keywords accepted
-send kw: ArgumentError: no keywords accepted
-positional hash: {b: 2}
-rest positional hash: [1, {b: 2}]
-empty splat: 1

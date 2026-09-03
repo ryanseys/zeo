@@ -1,9 +1,0 @@
-[1, 2]
-true
-true
-{x: 1, y: 2}
-{x: 1, y: 9}
-ArgumentError
-ArgumentError
-ArgumentError
-ArgumentError

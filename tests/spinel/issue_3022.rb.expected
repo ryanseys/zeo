@@ -1,4 +1,0 @@
-SignalException
-[Interrupt, SignalException, Exception, Object, Kernel, BasicObject]
-StandardError
-[RuntimeError, StandardError, Exception, Object, Kernel, BasicObject]

@@ -1,4 +1,0 @@
-["CM", "#<Class:P1>", "CM", "#<Class:Object>", "#<Class:BasicObject>", "Class", "Module", "Object", "Kernel", "BasicObject"]
-"cm(own(cm(top)))"
-["CM", "#<Class:P2>", "CM", "#<Class:Object>", "#<Class:BasicObject>", "Class", "Module", "Object", "Kernel", "BasicObject"]
-"cm(cm(top))"

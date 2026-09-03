@@ -1,7 +1,0 @@
-help
-usage
-other
-none
-true
-App::BadUsage
-["help"]

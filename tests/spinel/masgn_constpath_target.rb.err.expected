@@ -1,4 +1,0 @@
-spinel/masgn_constpath_target.rb:8: warning: already initialized constant M::X
-spinel/masgn_constpath_target.rb:5: warning: previous definition of X was here
-spinel/masgn_constpath_target.rb:10: warning: already initialized constant M::Y
-spinel/masgn_constpath_target.rb:6: warning: previous definition of Y was here

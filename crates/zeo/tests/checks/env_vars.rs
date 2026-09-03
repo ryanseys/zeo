@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 /// Spellings the docs mention only to say they are retired. A variable named
 /// to say it does NOT work is not a broken instruction.
-const HISTORICAL: &[&str] = &["ZEO_BLESS"];
+const HISTORICAL: &[&str] = &["ZEO_BLESS", "ZEO_BLESS_FROM_TOOL", "ZEO_GOLDEN_DIFF_TYPED"];
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -86,7 +86,7 @@ fn every_documented_env_var_has_a_reader() {
 
     let documented: BTreeSet<String> = collect(
         &root,
-        &["docs", "tests"],
+        &["docs", "test"],
         &["README.md", "CONTRIBUTING.md"],
         &["md", "tsv"],
     )

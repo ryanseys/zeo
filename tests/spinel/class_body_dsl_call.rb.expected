@@ -1,8 +1,0 @@
-:a
-:b
-nil
-:own
-[[:id, :int], [:name, :string]]
-[[:title, :string]]
-[]
-["from the module body"]

@@ -1,7 +1,0 @@
-TypeError: can't convert LiarInt to Integer (LiarInt#to_int gives String)
-TypeError: can't convert LiarInt to Integer (LiarInt#to_int gives String)
-TypeError: can't convert LiarStr to String (LiarStr#to_str gives Integer)
-TypeError: can't convert LiarStr to String (LiarStr#to_str gives Integer)
-TypeError: can't convert LiarAry to Array (LiarAry#to_ary gives String)
-TypeError: can't convert LiarAry to Array (LiarAry#to_ary gives String)
-TypeError: can't convert LiarInt to Integer (LiarInt#to_int gives String)

@@ -1,4 +1,0 @@
-#<Thread:0xADDR run> terminated with exception (report_on_exception is true):
-a_ractor_reports_its_uncaught_exception.rb:17:in 'block in <main>': boom (RuntimeError)
-#<Thread:0xADDR run> terminated with exception (report_on_exception is true):
-a_ractor_reports_its_uncaught_exception.rb:34:in 'block in <main>': unattended (NotImplementedError)

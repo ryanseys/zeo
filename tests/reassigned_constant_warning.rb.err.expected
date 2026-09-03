@@ -1,6 +1,0 @@
-reassigned_constant_warning.rb:17: warning: already initialized constant D
-reassigned_constant_warning.rb:16: warning: previous definition of D was here
-reassigned_constant_warning.rb:22: warning: already initialized constant M::E
-reassigned_constant_warning.rb:21: warning: previous definition of E was here
-reassigned_constant_warning.rb:33: warning: already initialized constant G
-reassigned_constant_warning.rb:32: warning: previous definition of G was here

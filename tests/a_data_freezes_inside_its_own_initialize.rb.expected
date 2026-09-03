@@ -1,8 +1,0 @@
-FrozenError
-"can't modify frozen AfterSuper: #<data AfterSuper m=1>"
-[false, [:@z], nil]
-[2, [:@z], true]
-true
-"#<data D m=3>"
-[1, [:@z], false]
-"#<struct S a=1>"

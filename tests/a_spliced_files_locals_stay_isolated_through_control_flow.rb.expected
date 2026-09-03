@@ -1,3 +1,0 @@
-["inner", 202, "two-oh-two", ["x"], "inner-202-two-oh-two", ["inner", "202", "two-oh-two"]]
-["outer", 3, "three", ["a", "b"], "outer-3-three", ["outer", "3", "three"]]
-:inner_ran

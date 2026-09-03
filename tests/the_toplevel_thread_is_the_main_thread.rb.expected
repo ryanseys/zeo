@@ -1,7 +1,0 @@
-same object: true
-one native id: true
-native id: true
-status: run
-worker: [false, false]
-from a fiber: true
-at_exit: true

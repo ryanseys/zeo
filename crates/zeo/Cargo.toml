@@ -89,14 +89,14 @@ miette.workspace = true
 # plotters/HTML -- saved baselines + `critcmp` are the comparison story.
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 
-# One nextest case per `.rb`, diffed against the committed ruby-oracle
-# `.expected` (tests/harness/golden.rs). `harness = false` hands the target
-# to datatest-stable, whose case names are `<fn>::<path>` -- so one binary
-# carries every corpus and a `test(<fn>::)` filter still names exactly one.
-# `tests/checks/` and `tests/e2e/` are autodiscovered.
+# One nextest case per `.rb` under `test/` per leg, held to the answer
+# recorded under its `__END__` (tests/corpus/). `harness = false` hands the
+# target to datatest-stable, whose case names are `<fn>::<path>`, so one
+# binary carries every suite and every leg and a `test(core::)` filter still
+# names exactly one. `tests/checks/` and `tests/api/` are autodiscovered.
 [[test]]
-name = "goldens"
-path = "tests/goldens.rs"
+name = "corpus"
+path = "tests/corpus/main.rs"
 harness = false
 
 # The runtime performance bank: every `bench/bm_*.rb` compiled with the

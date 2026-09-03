@@ -1,9 +1,0 @@
-Integer
-Float
-String
-Symbol
-NilClass
-TrueClass
-FalseClass
-Array
-Hash

@@ -1,4 +1,0 @@
-#<Thread:0xADDR thread_report_on_exception.rb:7 run> terminated with exception (report_on_exception is true):
-thread_report_on_exception.rb:7:in 'block in <main>': reported (RuntimeError)
-#<Thread:0xADDR thread_report_on_exception.rb:45 run> terminated with exception (report_on_exception is true):
-thread_report_on_exception.rb:45:in 'block in <main>': loud again (RuntimeError)

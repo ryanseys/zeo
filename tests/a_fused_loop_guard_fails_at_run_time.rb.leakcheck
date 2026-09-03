@@ -1,3 +1,0 @@
-The point of this golden is the FALLBACK arm's slot initialization, which is
-invisible in the output -- both arms print a correct answer either way. The
-ledger is what makes the difference observable.

@@ -1,1 +1,0 @@
-a packaged tempfile raises uninitialized constant ::Dir::Tmpname at Tempfile#initialize (#177)

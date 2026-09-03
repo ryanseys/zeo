@@ -1,8 +1,0 @@
-["https", "example.com", 8443, "user", "/a/b", "q=1", "frag"]
-URI::HTTPS
-"/x"
-"http://example.com/a/b"
-"a=1&b=x+y"
-[["a", "1"], ["b", "x y"]]
-URI::RFC3986_Parser
-"constant"

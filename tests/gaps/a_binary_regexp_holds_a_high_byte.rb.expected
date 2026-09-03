@@ -1,6 +1,0 @@
-M-a in binary            0
-M-a binary enc           "ASCII-8BIT"
-M-a binary source        [92, 77, 45, 97]
-a raw high byte          0
-raw byte enc             "ASCII-8BIT"
-n flag                   "US-ASCII"

@@ -1,6 +1,0 @@
-["made", "made hi made", Module]
-[["made", 1], :d, "made"]
-[:Deep, :INNER, :WHO]
-[2, [:Deep, :INNER, :SECOND, :WHO]]
-[3, 3]
-"derived (base)"

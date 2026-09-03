@@ -1,4 +1,0 @@
-ArgumentError: struct size differs
-ArgumentError: struct size differs
-[#<struct Pair a=1, b=nil>, #<struct Pair a=nil, b=nil>, #<struct Pair a=1, b=2>]
-[1, 2]

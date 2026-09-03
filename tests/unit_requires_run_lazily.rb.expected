@@ -1,4 +1,0 @@
-before load
-b body runs
-a body runs
-a sees b loaded

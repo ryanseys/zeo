@@ -1,8 +1,0 @@
-exit-status=5
-exit-success=false
-continued
-abort-status=1
-abort-msg=boom-message
-ensure ran
-guarded-status=0
-done

@@ -69,7 +69,7 @@ pub const RUBY_VERSION: &str = "4.0.6";
 /// of that answer live in different crates: `zeo-rt`'s `bootstrap` sets the
 /// values, and the compiler needs only to know the names exist.
 ///
-/// `tests/a_defined_guard_asks_about_this_moment.rb` reads every name on both
+/// `test/compiler/guards/a_defined_guard_asks_about_this_moment.rb` reads every name on both
 /// sides, so a name added here and not seeded (or seeded and not added) shows
 /// up as a divergence from the oracle rather than as a quiet nil.
 pub const SEEDED_OBJECT_CONSTANTS: &[&str] = &[

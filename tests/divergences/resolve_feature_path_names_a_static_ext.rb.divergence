@@ -1,7 +1,0 @@
-zeo is a ruby built --with-static-linked-ext, so a compiled-in library has no
-file for resolve_feature_path to name and it answers [:so, <feature>] -- which
-is CRuby's own answer for a statically linked extension. The oracle is a
-shared-library build and names a real file, splitting :rb from :so by how each
-library happens to ship there.
-
-Bless must NOT record the oracle over this: zeo's answers are the point.

@@ -1,2 +1,0 @@
-spinel/bundle_misc_c_09.rb:30:in 'Object#t_fiber_storage_current_alias': undefined method '[]=' for an instance of Fiber (NoMethodError)
-	from spinel/bundle_misc_c_09.rb:36:in '<main>'

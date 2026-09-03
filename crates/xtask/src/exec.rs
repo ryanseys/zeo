@@ -36,6 +36,8 @@ impl Capture {
 /// tool's own report, where the output is ASCII by construction.
 pub struct Output {
     pub code: Option<i32>,
+    /// The signal that killed the child, when `code` is `None`.
+    pub signal: Option<i32>,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
 }
@@ -43,6 +45,15 @@ pub struct Output {
 impl Output {
     pub fn success(&self) -> bool {
         self.code == Some(0)
+    }
+
+    /// How the child ended, in the corpus's own spelling.
+    pub fn exit(&self) -> crate::case::Exit {
+        match (self.code, self.signal) {
+            (Some(code), _) => crate::case::Exit::Code(code),
+            (None, Some(sig)) => crate::case::Exit::Signal(sig),
+            (None, None) => crate::case::Exit::Code(-1),
+        }
     }
 
     pub fn stdout_text(&self) -> std::borrow::Cow<'_, str> {
@@ -96,18 +107,26 @@ pub fn run_with_stdin<S: AsRef<OsStr>>(
             None => cmd.env_remove(key),
         };
     }
+    run_command(&mut cmd, capture, stdin)
+}
+
+/// Run a `Command` the caller built, capturing per `capture` and feeding
+/// `stdin` from its own thread.
+pub fn run_command(
+    cmd: &mut Command,
+    capture: Capture,
+    stdin: Option<&[u8]>,
+) -> Result<Output, Error> {
+    let program = cmd.get_program().to_string_lossy().into_owned();
     let pipe = |on: bool| if on { Stdio::piped() } else { Stdio::inherit() };
     cmd.stdout(pipe(capture.stdout()));
     cmd.stderr(pipe(capture.stderr()));
     if stdin.is_some() {
         cmd.stdin(Stdio::piped());
     }
-    let mut child = cmd.spawn().map_err(|e| {
-        Error::new(format!(
-            "spawning {}: {e}",
-            program.as_ref().to_string_lossy()
-        ))
-    })?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Error::new(format!("spawning {program}: {e}")))?;
     let writer = stdin.map(|bytes| {
         let bytes = bytes.to_vec();
         let mut pipe = child.stdin.take().expect("stdin was piped");
@@ -116,17 +135,22 @@ pub fn run_with_stdin<S: AsRef<OsStr>>(
             let _ = std::io::Write::write_all(&mut pipe, &bytes);
         })
     });
-    let out = child.wait_with_output().map_err(|e| {
-        Error::new(format!(
-            "waiting for {}: {e}",
-            program.as_ref().to_string_lossy()
-        ))
-    })?;
+    let out = child
+        .wait_with_output()
+        .map_err(|e| Error::new(format!("waiting for {program}: {e}")))?;
     if let Some(writer) = writer {
         let _ = writer.join();
     }
+    #[cfg(unix)]
+    let signal = {
+        use std::os::unix::process::ExitStatusExt as _;
+        out.status.signal()
+    };
+    #[cfg(not(unix))]
+    let signal = None;
     Ok(Output {
         code: out.status.code(),
+        signal,
         stdout: out.stdout,
         stderr: out.stderr,
     })

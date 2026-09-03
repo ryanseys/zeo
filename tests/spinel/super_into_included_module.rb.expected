@@ -1,5 +1,0 @@
-[hi]
-<YO>
-hi
-F[M2(M1)]
-NoMethodError: super: no superclass method 'orphan' for an instance of E

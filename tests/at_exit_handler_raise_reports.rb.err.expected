@@ -1,1 +1,0 @@
-at_exit_handler_raise_reports.rb:4:in 'block in <main>': handler boom (RuntimeError)

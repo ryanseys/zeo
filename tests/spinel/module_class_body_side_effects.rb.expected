@@ -1,7 +1,0 @@
-before module
-in module body
-version is 1.0
-after module
-in class body
-deep body ran
-hi

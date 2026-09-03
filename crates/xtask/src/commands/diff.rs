@@ -1,6 +1,6 @@
 //! Run a ruby snippet through BOTH engines, show each side, and say whether
 //! they agree. On a DIVERGENCE it captures the snippet as an XFAIL gap under
-//! `tests/gaps/`, blessed from ruby; on a MATCH it writes nothing.
+//! `test/gaps/`, blessed from ruby; on a MATCH it writes nothing.
 //!
 //! This is the long-tail loop in one command: find a divergence, file it with
 //! its golden, confirm the harness agrees it is real.
@@ -8,7 +8,7 @@
 //! The gaps harness is the ARBITER of whether a divergence is a real gap. It
 //! normalizes source paths, so two outputs that differ here can still match
 //! there -- after writing and blessing, the gap is run, and a "GAP FIXED"
-//! verdict means the file is removed and the snippet belongs in `tests/`
+//! verdict means the file is removed and the snippet belongs in a topic dir
 //! instead.
 
 use std::io::Read;
@@ -90,12 +90,18 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     // A quick verdict on stdout plus exit; the harness reconciles the fine
     // print.
     if ruby.stdout == zeo.stdout && ruby.code == zeo.code {
-        println!("MATCH (stdout + exit). Not a gap -- belongs in tests/ if you want to keep it.");
+        println!(
+            "MATCH (stdout + exit). Not a gap -- belongs in a test/ topic dir if you want to keep it."
+        );
         return Ok(());
     }
     println!("DIVERGE:");
     if ruby.code != zeo.code {
-        println!("  ruby exit {}, zeo exit {}", ruby.code_text(), zeo.code_text());
+        println!(
+            "  ruby exit {}, zeo exit {}",
+            ruby.code_text(),
+            zeo.code_text()
+        );
     }
     show_stdout_diff(&ruby.stdout_text(), &zeo.stdout_text());
     println!();
@@ -151,10 +157,10 @@ fn show_stdout_diff(a: &str, b: &str) {
 
 fn write_gap(name: &str, source: &str) -> Result<(), Error> {
     let name = name.trim_end_matches(".rb");
-    let dest = root_join("tests/gaps").join(format!("{name}.rb"));
+    let dest = root_join("test/gaps").join(format!("{name}.rb"));
     if dest.exists() {
         return Err(Error::new(format!(
-            "refusing to overwrite tests/gaps/{name}.rb (use --name)"
+            "refusing to overwrite test/gaps/{name}.rb (use --name)"
         )));
     }
     std::fs::write(&dest, source)
@@ -164,8 +170,8 @@ fn write_gap(name: &str, source: &str) -> Result<(), Error> {
     // relativization, address scrubbing). A hand-rolled oracle capture here
     // once skipped the address scrub, so a snippet printing `#<Object:0x...>`
     // recorded a raw process-random address into its golden.
-    super::bless::bless(name)?;
-    println!("wrote tests/gaps/{name}.rb (+ blessed golden from ruby)");
+    super::bless::bless(&[&format!("gaps::{name}.rb")], false)?;
+    println!("wrote test/gaps/{name}.rb (+ recorded ruby's answer under __END__)");
 
     println!("confirming the XFAIL holds via the gaps harness ...");
     let out = exec::run(
@@ -176,9 +182,9 @@ fn write_gap(name: &str, source: &str) -> Result<(), Error> {
             "-p",
             "zeo",
             "--test",
-            "goldens",
+            "corpus",
             "-E",
-            &format!("test({name})"),
+            &format!("test(gaps::{name})"),
         ],
         root(),
         &[],
@@ -187,18 +193,17 @@ fn write_gap(name: &str, source: &str) -> Result<(), Error> {
     if format!("{}{}", out.stdout_text(), out.stderr_text()).contains("GAP FIXED") {
         println!();
         println!("the gaps harness says zeo actually MATCHES ruby (under source-path");
-        println!("normalization) -- this is NOT a gap. Removing it; promote to tests/ instead.");
-        for suffix in ["rb", "rb.expected", "rb.err.expected"] {
-            let path = root_join("tests/gaps").join(format!("{name}.{suffix}"));
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(Error::new(format!("removing {}: {e}", path.display()))),
-            }
+        println!(
+            "normalization) -- this is NOT a gap. Removing it; put it in a topic dir instead."
+        );
+        match std::fs::remove_file(&dest) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(Error::new(format!("removing {}: {e}", dest.display()))),
         }
         return Err(Error::reported());
     }
-    println!("gap tests/gaps/{name}.rb is a valid XFAIL (zeo diverges). Grind it down, then:");
-    println!("  cargo xtask promote-gap {name}");
+    println!("gap test/gaps/{name}.rb is a valid XFAIL (zeo diverges). Grind it down, then:");
+    println!("  cargo xtask promote-gap {name} <topic/area>");
     Ok(())
 }

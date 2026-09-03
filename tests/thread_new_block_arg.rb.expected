@@ -1,6 +1,0 @@
-worker 3
-proc 12
-:from_lambda
-"SHOUT"
-must be called with a block
-must be called with a block

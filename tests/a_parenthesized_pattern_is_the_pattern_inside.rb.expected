@@ -1,3 +1,0 @@
-expires: 300
-anchored, rest=["name", "first"]
-numeric

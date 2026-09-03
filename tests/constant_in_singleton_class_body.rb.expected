@@ -1,8 +1,0 @@
-:in_singleton
-["#<Class:SingConst>", "SingConst"]
-false
-true
-[:SC]
-:cls_singleton
-[false, true]
-[true, false]

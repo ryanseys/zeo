@@ -1,9 +1,0 @@
-[NameError, "wrong constant name Bad.Name"]
-[NameError, "wrong constant name Bad Name", :"Bad Name", "Object"]
-"wrong constant name bad"
-[RuntimeError, "boom"]
-"wrong constant name 1A"
-"in a hash"
-"wrong constant name also bad"
-String
-"Integer"

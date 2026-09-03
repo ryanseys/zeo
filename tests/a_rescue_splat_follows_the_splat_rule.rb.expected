@@ -1,9 +1,0 @@
-NilClass	KeyError: k
-Array	KeyError: k
-Array	caught KeyError
-Class	caught KeyError
-Splattable	KeyError: k
-FalseClass	TypeError: class or module required for rescue clause
-splat matched ArgumentError
-guard matched ArgumentError
-guard absent, propagated ArgumentError

@@ -1,6 +1,0 @@
-true
-"#<Plain:0xADDR @a=1>"
-"#<Filtered:0xADDR @a=1, @b=2>"
-"#<Hidden:0xADDR>"
-"#<Strings:0xADDR>"
-Expected #instance_variables_to_inspect to return an Array or nil, but it returned Integer

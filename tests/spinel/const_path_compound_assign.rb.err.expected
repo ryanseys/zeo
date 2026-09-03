@@ -1,6 +1,0 @@
-spinel/const_path_compound_assign.rb:8: warning: already initialized constant M::X
-spinel/const_path_compound_assign.rb:4: warning: previous definition of X was here
-spinel/const_path_compound_assign.rb:10: warning: already initialized constant M::Y
-spinel/const_path_compound_assign.rb:5: warning: previous definition of Y was here
-spinel/const_path_compound_assign.rb:14: warning: already initialized constant M::Z
-spinel/const_path_compound_assign.rb:6: warning: previous definition of Z was here

@@ -1,2 +1,0 @@
-a_constant_path_may_be_rooted_at_a_value.rb:69: warning: already initialized constant Counter::START
-a_constant_path_may_be_rooted_at_a_value.rb:65: warning: previous definition of START was here

@@ -1,9 +1,0 @@
-RuntimeError: boom
-ArgumentError: bad
-ArgumentError: ArgumentError
-TypeError: exception class/object expected
-TypeError: exception class/object expected
-TypeError: exception class/object expected
-TypeError: exception class/object expected
-RuntimeError: late
-TypeError: exception class/object expected

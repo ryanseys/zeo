@@ -1,5 +1,0 @@
-[Wrap, Bar, Object, Kernel, BasicObject]
-[hi]
-LOUD
-trace:job
-[SubJob, Outer::Trace, Job, Object]

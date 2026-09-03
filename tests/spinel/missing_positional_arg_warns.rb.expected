@@ -1,3 +1,0 @@
-ArgumentError: wrong number of arguments (given 3, expected 4)
-a=10 b=20 c=true d=30
-done

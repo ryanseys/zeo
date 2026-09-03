@@ -1,6 +1,0 @@
-App::Failed|App::Failed|true
-App::Failed|true
-App::Refused|true
-ArgumentError|false
-caught App::Refused
-TypeError

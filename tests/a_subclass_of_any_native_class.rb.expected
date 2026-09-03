@@ -1,9 +1,0 @@
-["cert", OpenSSL::X509::Certificate, true]
-["md5", true]
-["deflate", Zlib::Deflate]
-["hmac", true, 64]
-["HI", "loud", 2, Loud, true]
-[1, Struct]
-Integer
-[TypeError, "can't make subclass of Class"]
-[TypeError, "superclass must be an instance of Class (given an instance of Module)"]

@@ -1,7 +1,0 @@
-[3, [99]]
-[[1, 2], [:patched]]
-[[[:x, 1]], [[:hpatched, nil]]]
-[[1, 2, 3], [:rpatched]]
-[[:patched], [:singleton]]
-[99]
-15

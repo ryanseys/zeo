@@ -1,6 +1,0 @@
-StandardError
-SocketError
-true
-Socket::ResolutionError
-"getaddrinfo: nodename nor servname provided, or not known"
-true

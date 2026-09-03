@@ -1,8 +1,0 @@
-[:alias_public, :raised, "NoMethodError"]
-[:alias_send, :a]
-[:singles, []]
-[:respond, false]
-[:pub_alias, :c]
-[:pub_singles, [:c, :d]]
-[:kw_alias, :raised, "NoMethodError"]
-[:kw_send, :e]

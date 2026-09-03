@@ -10,6 +10,24 @@
 
 use std::path::{Path, PathBuf};
 
+// The corpus file format and suite table, shared with the harness so the
+// contract is written once (`crates/zeo/tests/corpus/`).
+#[path = "../../zeo/tests/corpus/case.rs"]
+#[allow(dead_code)]
+mod case;
+#[path = "../../zeo/tests/corpus/compare.rs"]
+#[allow(dead_code)]
+mod compare;
+#[path = "../../zeo/tests/corpus/normalize.rs"]
+#[allow(dead_code)]
+mod normalize;
+#[path = "../../zeo/tests/corpus/oracle.rs"]
+#[allow(dead_code)]
+mod oracle;
+#[path = "../../zeo/tests/corpus/suites.rs"]
+#[allow(dead_code)]
+mod suites;
+
 mod commands;
 mod exec;
 mod payload;
@@ -89,7 +107,8 @@ pub fn write_if_changed(path: &Path, content: &[u8]) -> Result<(), Error> {
     if std::fs::read(path).is_ok_and(|old| old == content) {
         return Ok(());
     }
-    std::fs::write(path, content).map_err(|e| Error::new(format!("writing {}: {e}", path.display())))
+    std::fs::write(path, content)
+        .map_err(|e| Error::new(format!("writing {}: {e}", path.display())))
 }
 
 const USAGE: &str = "\
@@ -97,7 +116,7 @@ usage: cargo xtask <command> [options]
 
 commands:
   bench           the compiler-cost instrument (runtime suite: cargo bench)
-  bless           re-record golden `.expected` files from the ruby oracle
+  bless           record a program's answer under its `__END__` from the oracle
   capi-sweep      record ruby's answers for the C-gem sweep's smoke programs
   cext            the vendored MRI C API headers and the rb_* census
   diff            compare a snippet across ruby and zeo, and file a gap
@@ -130,11 +149,10 @@ fn main() -> std::process::ExitCode {
         "dist" => commands::dist::run(rest),
         "gem" => commands::gem::run(rest),
         "linux" => commands::linux::run(rest),
+        "migrate-corpus" => commands::migrate_corpus::run(rest),
         "promote-gap" => commands::promote_gap::run(rest),
         "stage-publish" => commands::stage_publish::run(rest),
-        other => Err(Error::new(format!(
-            "unknown command {other:?}\n\n{USAGE}"
-        ))),
+        other => Err(Error::new(format!("unknown command {other:?}\n\n{USAGE}"))),
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

@@ -1,6 +1,0 @@
-[Outer::Model, Outer]
-Outer::Element
-:outer_element
-[Outer::Model, Outer::Deep, Outer]
-true
-[Outer::Model, Outer::Deep, Outer]

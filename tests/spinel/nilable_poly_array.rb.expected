@@ -1,4 +1,0 @@
-[:begin, :a, :b]
-[:a, :b]
-["begin", "a", "b"]
-"begin-a-b"

@@ -1,7 +1,0 @@
-via the alias
-[:ruby_load, :ruby_require, :say]
-false
-true
-Own
-"own"
-undefined method 'no_such_method_anywhere' for module '<anon>'

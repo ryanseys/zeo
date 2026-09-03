@@ -1197,7 +1197,7 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
 /// in the enclosing body: it writes the method-frame's `vis`, and for a
 /// rebound `class << self` body with no frame, the surrogate's overlay
 /// default. Pinned by
-/// `tests/a_runtime_directive_without_arguments_takes_effect.rb`.
+/// `test/lang/methods/a_runtime_directive_without_arguments_takes_effect.rb`.
 pub fn runtime_set_visibility(
     id: ClassId,
     args: &[RubyValue],

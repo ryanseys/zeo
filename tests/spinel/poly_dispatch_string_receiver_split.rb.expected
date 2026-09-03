@@ -1,6 +1,0 @@
-"Usage: slap [options]"
-"some help"
-4
-["a", "b"]
-["a", "b"]
-"NoMethodError"

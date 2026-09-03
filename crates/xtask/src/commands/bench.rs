@@ -23,18 +23,18 @@ use crate::{Error, root, root_join, write_if_changed};
 /// possible program is always in the record.
 const PROGRAMS: &[(&str, Option<&str>)] = &[
     ("hello", None),
-    ("bm_fib", Some("bench/bm_fib.rb")),
-    ("bm_template", Some("bench/bm_template.rb")),
-    ("bm_json_parse", Some("bench/bm_json_parse.rb")),
-    ("bm_micro_lisp", Some("bench/bm_micro_lisp.rb")),
-    ("core_classes", Some("tests/core_classes.rb")),
-    ("uri_parse_and_build", Some("tests/uri_parse_and_build.rb")),
-    ("optparse_subset", Some("tests/optparse_subset.rb")),
-    ("gem_rubygems", Some("tests/bench/rubygems.rb")),
-    ("gem_bundler", Some("tests/bench/bundler.rb")),
+    ("bm_fib", Some("test/bench/bm_fib.rb")),
+    ("bm_template", Some("test/bench/bm_template.rb")),
+    ("bm_json_parse", Some("test/bench/bm_json_parse.rb")),
+    ("bm_micro_lisp", Some("test/bench/bm_micro_lisp.rb")),
+    ("core_classes", Some("test/lang/classes/core_classes.rb")),
+    ("uri_parse_and_build", Some("test/stdlib/uri/uri_parse_and_build.rb")),
+    ("optparse_subset", Some("test/stdlib/optparse/optparse_subset.rb")),
+    ("gem_rubygems", Some("test/bench/compile/rubygems.rb")),
+    ("gem_bundler", Some("test/bench/compile/bundler.rb")),
 ];
 
-const BASELINE: &str = "bench/compile-baseline.tsv";
+const BASELINE: &str = "test/bench/compile-baseline.tsv";
 
 const USAGE: &str =
     "usage: cargo xtask bench --compile [--filter <substr>] [--runs N] [--update-baseline]";
@@ -145,13 +145,7 @@ fn write_hello(work: &Path) -> Result<PathBuf, Error> {
 /// best-of-N because the fastest run is the least disturbed, but memory is a
 /// ceiling question, and the most a compile ever held is the number that
 /// decides whether it fits.
-fn compile_one(
-    zeo: &Path,
-    name: &str,
-    rb: &Path,
-    runs: usize,
-    work: &Path,
-) -> Result<Row, Error> {
+fn compile_one(zeo: &Path, name: &str, rb: &Path, runs: usize, work: &Path) -> Result<Row, Error> {
     let emitted = work.join(format!("{name}.clif"));
     let mut best_ms = None;
     let mut lines = 0;
