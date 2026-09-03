@@ -9,3 +9,4 @@ pub mod gem;
 pub mod linux;
 pub mod promote_gap;
 pub mod stage_crate;
+pub mod timings;
