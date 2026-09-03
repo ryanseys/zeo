@@ -25,7 +25,7 @@ recorded; the rest is in [the roadmap](../explanation/roadmap.md).
   all answer — and it isolates constants and globals. It does not yet
   isolate a monkeypatch of a shared builtin (which reaches main), and a box
   cannot require a feature the whole-program compile already spliced. Both
-  are tracked in [`todo/`](../../todo).
+  are tracked in [`test/gaps/`](../../test/gaps).
 - **Four extensions are partial** — `coverage`, `nkf`, `openssl`,
   `TracePoint`. See [Add an extension](../how-to/add-an-extension.md).
 - **The Cranelift backend's performance pass is not finished.** Correctness
@@ -85,7 +85,7 @@ Real gaps with a named road; each closes when its road is walked.
   compile and load through the C API (`zeo-capi`, Rust over the runtime,
   with MRI's headers fetched at the first build) as an explicit
   opt-in (a lockfile + store override, or `ZEO_DISABLE_BUILTIN`). The
-  official C-gem sweep is the API's health gate: `make test-capi`
+  official C-gem sweep is the API's health gate: `api::capi_sweep`
   builds every locked gem that ships a C extension from its own source,
   runs a smoke program against ruby's recorded answer, and holds the
   rows below (`crates/zeo/tests/fixtures/capi_sweep/XFAIL.json` is the

@@ -43,16 +43,20 @@ Every corpus child compiles in memory with the program cache off. Adding
 tests costs time, not space. That is a deliberate constraint: a suite that
 grows a gigabyte per run is a suite people stop running.
 
-## No second verdict
+## One inverted directory
 
-There is no XFAIL mechanism in the corpus. A program either matches its
-recording or the suite is red.
+A program either matches its recording or the suite is red — everywhere but
+one directory.
 
-Programs zeo does not get right yet live in `todo/`, with ruby's answer
-recorded, and **nothing runs them**. The trade is real and written down: one
-of them can start working without anyone noticing. The alternative — a
-harness that knows some programs must fail — buys that notification with a
-second verdict on every case, and it is not worth it.
+Programs zeo does not get right yet live in `test/gaps/`, with ruby's answer
+recorded. They run like any other case, and the verdict is turned around: a
+gap that still differs is green, and a gap that **matches** fails with "GAP
+FIXED, promote it".
+
+The directory decides this, not a per-file marker, so a case still asks
+exactly one question — it is only the sign of the answer that the directory
+sets. The alternative, keeping gaps as notes nothing runs, was tried: the
+first run after turning them back on found two that had been quietly fixed.
 
 Programs that differ **on purpose** are different again. Those record zeo's
 own answer under `test/divergences/`, each saying why in its header, so the

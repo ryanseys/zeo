@@ -56,5 +56,5 @@ recording reads `core/string/upcase.rb`.
 - [Add a test](../docs/how-to/add-a-test.md) — including the three
   directories that record zeo's answer instead of ruby's.
 - [Testing](../docs/explanation/testing.md) — why it is built this way.
-- [`todo/`](../todo) — programs zeo does not get right yet. Nothing runs
-  those.
+- [`gaps/`](gaps) — programs zeo does not get right yet. These run, and
+  the suite goes red the day one starts matching ruby.

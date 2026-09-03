@@ -78,7 +78,7 @@ matching `^##+@`. So any output round-trips.
 | `test/milestones/` | whole require graphs; the `full` profile only | ruby |
 | `test/ze0/` | the Ruby front end's subset, three roads | ruby |
 | `test/bench/` | the benchmark bank's inputs | ruby |
-| `todo/` | programs zeo does not get right yet; nothing runs these | ruby |
+| `test/gaps/` | programs zeo does not get right yet; the verdict is inverted | ruby |
 
 The four topic roots are exactly two levels deep: `<topic>/<area>/<name>.rb`.
 Anything deeper is a fixture, not a case. A directory named `<name>/` beside

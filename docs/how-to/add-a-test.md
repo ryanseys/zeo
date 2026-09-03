@@ -57,11 +57,15 @@ These need a built `target/release/zeo` (or `ZEO_BIN`) rather than ruby.
 
 ## Programs zeo does not get right yet
 
-They go in `todo/`, with ruby's answer recorded, and **nothing runs them**.
-The suite has one question — does this program match its recording — and no
-second verdict for programs expected to fail. The trade is written down in
-[`todo/README.md`](../../todo/README.md): a program there can start working
-without anyone noticing.
+They go in `test/gaps/`, with ruby's answer recorded. They run like any other
+case, but the verdict is inverted: still differing is green, and matching
+fails with "GAP FIXED, promote it", so the day a gap starts working the suite
+says so.
 
-When one starts matching, move it into the topic directory it belongs to and
-it becomes a test like any other.
+When one starts matching, promote it — the program, its recorded answer and
+its fixture directory move together, and the promoted case is run once to
+confirm:
+
+```console
+$ cargo xtask promote-gap <name> core/string
+```

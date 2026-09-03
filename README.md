@@ -36,7 +36,7 @@ behavioural, not missing surface.
 Every known difference is recorded: in
 [Compatibility](docs/reference/compatibility.md) when a user can see it, in
 [`test/divergences/`](test/divergences) when it is deliberate, and in
-[`todo/`](todo) when it is not fixed yet.
+[`test/gaps/`](test/gaps) when it is not fixed yet.
 
 ## Install
 
@@ -87,7 +87,7 @@ difference from Ruby visible.**
 2. Leave a comment at the site of any difference you accept.
 3. If a user can observe it, add a row to
    [Compatibility](docs/reference/compatibility.md) and a note under
-   [`todo/`](todo).
+   [`test/gaps/`](test/gaps).
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the conventions.
 

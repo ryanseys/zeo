@@ -16,7 +16,7 @@ The house style is *approximation is fine, silent wrongness is not.*
    differs and why.
 3. A divergence a user can observe also gets a row in
    [Compatibility](docs/reference/compatibility.md) and, when it is not
-   deliberate, a note under [`todo/`](todo).
+   deliberate, a program under [`test/gaps/`](test/gaps).
 
 ## The loop
 
