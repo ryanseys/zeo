@@ -1,6 +1,6 @@
 name: CI
 
-# Every commit gets the WHOLE answer: `cargo xtask ci` for the shape checks
+# Every commit gets the WHOLE answer: `cargo xtask check` for the shape checks
 # and the full nextest profile for the tests, split four ways so a job stays
 # near a quarter of an hour. One tier, so a red board never means "and the
 # rest runs tonight".
@@ -42,7 +42,7 @@ jobs:
       # No `cargo fmt --check` gate, deliberately: holding the tree
       # rustfmt-clean is not worth failing a build over -- style drift is a
       # review comment, not a red X. See CONTRIBUTING.md.
-      - run: cargo xtask ci
+      - run: cargo xtask check
 
   test:
     name: test ${{ matrix.partition }}/4

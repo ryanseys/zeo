@@ -75,7 +75,7 @@ programs that link a real binary do it under `target/`, and on Linux under
 ## Everything else CI runs
 
 ```console
-$ cargo xtask ci
+$ cargo xtask check
 ```
 
 Clippy, `cargo deny`, `cargo machete`, the four C-header checks, the

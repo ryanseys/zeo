@@ -22,7 +22,7 @@ $ cargo build -p zeo --no-default-features --features pure-stdlib
 ```
 
 `pure-stdlib` is the named subtraction set: the gems that have a pure-Ruby
-lane. `cargo xtask ci` builds it, so the C-extension-free build cannot rot.
+lane. `cargo xtask check` builds it, so the C-extension-free build cannot rot.
 
 ## `capi`
 
@@ -54,9 +54,9 @@ dropped one.
 ## Checking a set still builds
 
 ```console
-$ cargo xtask ci --only features-bare
-$ cargo xtask ci --only pure-stdlib
+$ cargo xtask check --only features-bare
+$ cargo xtask check --only pure-stdlib
 ```
 
-`cargo xtask ci` runs the whole matrix: every optional feature off, the C API
+`cargo xtask check` runs the whole matrix: every optional feature off, the C API
 alone, the compiler with nothing on, the docs.rs set, and `pure-stdlib`.

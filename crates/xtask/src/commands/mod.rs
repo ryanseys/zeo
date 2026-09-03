@@ -1,8 +1,8 @@
 pub mod bless;
 pub mod capi_sweep;
 pub mod cext_layout;
+pub mod check;
 pub mod check_c_headers;
-pub mod ci;
 pub mod deps;
 pub mod dist;
 pub mod gem;

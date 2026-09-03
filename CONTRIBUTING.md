@@ -23,7 +23,7 @@ The house style is *approximation is fine, silent wrongness is not.*
 ```console
 $ cargo nextest run          # the dev loop and the corpus gate
 $ cargo nextest run -P full  # adds the tests that are slow one at a time
-$ cargo xtask ci             # every check that is not a test
+$ cargo xtask check             # every check that is not a test
 $ cargo xtask linux          # the container verification loop (needs podman)
 ```
 
@@ -36,7 +36,7 @@ Two things worth knowing before your first run:
 - **Do not edit a runtime source while a suite is running.** The rebuild
   re-keys the scratch root under the run, and the failures that follow point
   everywhere except at the cause.
-- **`cargo xtask ci` builds zeo with five other feature sets.** They go to
+- **`cargo xtask check` builds zeo with five other feature sets.** They go to
   `target/ci-features` so they cannot leave the wrong binary where the suites
   look, but a `cargo build` afterwards is still the safe habit.
 

@@ -18,7 +18,7 @@ use crate::{Error, root};
 const FEATURE_TARGET_DIR: (&str, &str) = ("--target-dir", "target/ci-features");
 
 const USAGE: &str = "\
-usage: cargo xtask ci [--list] [--only <step>]...
+usage: cargo xtask check [--list] [--only <step>]...
 
 Every non-test check CI runs, in order, none of them stopping the rest.
 
@@ -236,7 +236,7 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     for name in &only {
         if !all.iter().any(|s| s.name == *name) {
             return Err(Error::new(format!(
-                "no such step: {name:?}\n\nrun `cargo xtask ci --list` for the names"
+                "no such step: {name:?}\n\nrun `cargo xtask check --list` for the names"
             )));
         }
     }

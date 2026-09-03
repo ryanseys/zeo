@@ -117,8 +117,8 @@ usage: cargo xtask <command> [options]
 commands:
   bless           record a program's answer under its `__END__` from the oracle
   capi-sweep      record ruby's answers for the C-gem sweep's smoke programs
+  check           every non-test check CI runs, in order
   check-c-headers regenerate and check what MRI's C headers pin
-  ci              every non-test check CI runs, in order
   deps            fetch the libraries Gemfile.lock names (no ruby needed)
   dist            assemble the relocatable distribution
   gem             build the platform gem from a dist staging
@@ -145,8 +145,8 @@ fn main() -> std::process::ExitCode {
     let result = match command.as_str() {
         "bless" => commands::bless::run(rest),
         "capi-sweep" => commands::capi_sweep::run(rest),
+        "check" => commands::check::run(rest),
         "check-c-headers" => commands::check_c_headers::run(rest),
-        "ci" => commands::ci::run(rest),
         "deps" => commands::deps::run(rest),
         "dist" => commands::dist::run(rest),
         "gem" => commands::gem::run(rest),
