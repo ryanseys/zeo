@@ -34,6 +34,28 @@ Two test binaries carry everything: `corpus` runs the `.rb` programs, and
 class surface) and `api::` (the tests that drive the CLI or the library in
 more than one step).
 
+## The tests that build a real gem
+
+Three tiers of test build a real third-party gem from its own source: the
+C-gem sweep, the bundler-parity pair, and the packaged-gem shipping test.
+They are `#[ignore]`d out of both profiles, and one verb runs them:
+
+```console
+$ cargo nextest run --run-ignored all -E 'test(api::capi_sweep::)'
+$ cargo nextest run --run-ignored all -E 'test(=api::capi_sweep::prism)'
+```
+
+**Nothing runs it for you.** They cost more than half the suite's wall clock
+and hold its critical path, and what they prove -- that a gem still builds --
+does not change between edits to the compiler the way a corpus program's
+answer does. The trade is the one `test/gaps/README.md` also records: a gem
+that stops building is found when someone next runs this, not the day it
+breaks.
+
+The cheap half stays in the ordinary suite: that `XFAIL.json` names only
+swept gems, and that every locked C gem is swept or excluded with a reason.
+Those are file reads, and a ledger nothing checks is worse than no ledger.
+
 ## What a run costs
 
 Nothing on disk. Every corpus child compiles in memory (`ZEO_CACHE=0`) and

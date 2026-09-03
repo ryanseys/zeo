@@ -141,6 +141,7 @@ macro_rules! swept {
     ($($name:ident => $gem:literal),* $(,)?) => {
         $(
             #[test]
+            #[ignore = "builds a real gem from source; run it with --run-ignored"]
             fn $name() {
                 sweep($gem)
             }

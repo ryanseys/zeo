@@ -89,8 +89,11 @@ Real gaps with a named road; each closes when its road is walked.
   builds every locked gem that ships a C extension from its own source,
   runs a smoke program against ruby's recorded answer, and holds the
   rows below (`crates/zeo/tests/fixtures/capi_sweep/XFAIL.json` is the
-  ledger; a row that starts passing fails the test until it is
-  removed). Families with no honest implementation stay loud stubs.
+  ledger; a row that starts passing fails the run until it is
+  removed). Nothing runs the sweep for you -- see
+  [Run the tests](../how-to/run-the-tests.md#the-tests-that-build-a-real-gem).
+  For a gem OUTSIDE the lock, `cargo xtask test-gem <gem>` asks the narrower
+  question of whether zeo can compile it at all. Families with no honest implementation stay loud stubs.
 
   | Gem | Through its C extension | Wall |
   |---|---|---|

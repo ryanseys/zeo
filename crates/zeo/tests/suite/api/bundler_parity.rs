@@ -326,6 +326,7 @@ fn differences<'a>(
 /// The two engines install one Gemfile identically, or this says exactly
 /// where they parted.
 #[test]
+#[ignore = "builds a real gem from source; run it with --run-ignored"]
 fn one_gemfile_installs_the_same_way_under_both_engines() {
     let Some(ruby) = oracle_ruby() else {
         eprintln!("skipping: this machine has no ruby to be the other engine");
@@ -388,6 +389,7 @@ fn one_gemfile_installs_the_same_way_under_both_engines() {
 /// Gemfile, because a binary that links and then cannot find its own library
 /// would pass a "did it build" check and nothing else.
 #[test]
+#[ignore = "builds a real gem from source; run it with --run-ignored"]
 fn the_bundler_driver_compiles_to_a_standalone_artifact() {
     let zeo = crate::zeo_bin::zeo_cli().unwrap_or_else(|e| panic!("{e}"));
     let dir = scratch("standalone");

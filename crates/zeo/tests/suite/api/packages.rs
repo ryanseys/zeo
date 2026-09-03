@@ -1425,6 +1425,7 @@ fn walk_files(root: &Path) -> Vec<PathBuf> {
 /// links it. The greeting names the artifact so a source splice cannot
 /// fake the answer once the tree is poisoned.
 #[test]
+#[ignore = "builds a real gem from source; run it with --run-ignored"]
 fn a_precompiled_platform_gem_ships_its_artifact_to_a_consumer() {
     let dir = scratch("shipping");
     let gem_dir = dir.join("shipgem");
