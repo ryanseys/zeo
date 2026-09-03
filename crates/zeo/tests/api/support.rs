@@ -154,31 +154,11 @@ pub fn run_ruby(source: &str) -> RunResult {
     run_ruby_configured(source, &[], &[])
 }
 
-/// [`run_ruby`] under CRuby's own box gate. `RUBY_BOX=1` is a RUN-TIME
-/// flag both ruby and zeo read, so a program that allocates a box is run
-/// under it -- and one that pins the DISABLED shape deliberately is not.
-pub fn run_ruby_boxed(source: &str) -> RunResult {
-    run_ruby_configured(source, &[("RUBY_BOX", "1")], &[])
-}
-
-/// [`run_ruby_project`] under the box gate -- see [`run_ruby_boxed`].
-pub fn run_ruby_project_boxed(files: &[(&str, &str)], entry: &str, roots: &[&str]) -> RunResult {
-    let (_dir, source, opts) = write_project(files, entry, roots, &[]);
-    compile_link_run(&source, &opts, &[("RUBY_BOX", "1")], &[])
-}
-
-/// Multi-file harness for compile-time `require` resolution:
-/// writes `files` (relative path -> source) into a fresh per-test temp
-/// project directory, compiles `entry` (a key in `files`) with the project
-/// dir itself as the requiring-file base and `roots` (relative to the
-/// project dir) as `-I` search roots, then builds and runs it like
-/// `run_ruby`. The temp tree is removed afterwards.
-pub fn run_ruby_project(files: &[(&str, &str)], entry: &str, roots: &[&str]) -> RunResult {
-    run_ruby_packages(files, entry, roots, &[])
-}
-
-/// `run_ruby_project` plus `.gemspec` gem directories,
-/// also relative to the temp project dir.
+/// Multi-file harness for compile-time `require` resolution: writes `files`
+/// (relative path -> source) into a fresh project directory under the scratch
+/// root, compiles `entry` with that directory as the requiring-file base,
+/// `roots` as `-I` search roots and `package_dirs` as `.gemspec` gem
+/// directories, then builds and runs it like `run_ruby`.
 pub fn run_ruby_packages(
     files: &[(&str, &str)],
     entry: &str,
@@ -187,20 +167,6 @@ pub fn run_ruby_packages(
 ) -> RunResult {
     let (_dir, source, opts) = write_project(files, entry, roots, package_dirs);
     compile_link_run(&source, &opts, &[], &[])
-}
-
-/// `run_ruby_project` with `--embed-sources` roots -- the ruby source that
-/// travels INSIDE the program, for a require only the run time can resolve.
-pub fn run_ruby_project_embedded(
-    files: &[(&str, &str)],
-    entry: &str,
-    roots: &[&str],
-    embed: &[&str],
-    env: &[(&str, &str)],
-) -> RunResult {
-    let (dir, source, mut opts) = write_project(files, entry, roots, &[]);
-    opts.embed_sources = embed.iter().map(|r| dir.join(r)).collect();
-    compile_link_run(&source, &opts, env, &[])
 }
 
 /// `compile_project` under `--strict-static-require`.

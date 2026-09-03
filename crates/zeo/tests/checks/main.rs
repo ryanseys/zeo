@@ -31,6 +31,7 @@ mod normalize;
 mod normalize_tests;
 
 #[path = "../common/mod.rs"]
+#[allow(dead_code)]
 mod common;
 /// The names the modules grew up with.
 mod paths {

@@ -8,6 +8,7 @@
 //! found beside its neighbours.
 
 #[path = "../common/mod.rs"]
+#[allow(dead_code)]
 mod common;
 mod support;
 

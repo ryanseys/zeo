@@ -12,10 +12,6 @@ regex.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tar.workspace = true
-# The one-off e2e migration reads the Rust tests it converts.
-syn = { workspace = true, features = ["visit"] }
-quote.workspace = true
-proc-macro2 = { workspace = true, features = ["span-locations"] }
 # For `zeo::bundled` alone: the one place that decides which libraries ship,
 # so `dist` and a compile can never disagree about the set.
 zeo = { path = "../zeo" }

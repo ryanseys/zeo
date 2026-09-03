@@ -149,8 +149,6 @@ fn main() -> std::process::ExitCode {
         "dist" => commands::dist::run(rest),
         "gem" => commands::gem::run(rest),
         "linux" => commands::linux::run(rest),
-        "migrate-corpus" => commands::migrate_corpus::run(rest),
-        "migrate-e2e" => commands::migrate_e2e::run(rest),
         "promote-gap" => commands::promote_gap::run(rest),
         "stage-publish" => commands::stage_publish::run(rest),
         other => Err(Error::new(format!("unknown command {other:?}\n\n{USAGE}"))),
