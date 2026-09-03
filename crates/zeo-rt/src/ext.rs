@@ -52,7 +52,7 @@
 //!
 //! Every method here is real and oracle-matched -- no `todo!()` scaffolds. A
 //! few extensions ship a deliberate SUBSET of their upstream surface and raise
-//! `NoMethodError` at the edges rather than pretending; `docs/EXTENSIONS.md`
+//! `NoMethodError` at the edges rather than pretending; `docs/how-to/add-an-extension.md`
 //! names which, and what each leaves out.
 //!
 //! # Adding an extension (checklist)

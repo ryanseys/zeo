@@ -19,7 +19,7 @@ do not open public issues for suspected vulnerabilities.
   trust store. As in CRuby, a bare `SSLContext.new` starts at `VERIFY_NONE`
   -- net/http raises it to `VERIFY_PEER`, but code that builds its own
   context must set it. PKey generation, X509 issuance, PKCS#7, ASN1 and
-  `SSLServer` are declined; see docs/EXTENSIONS.md and docs/COMPATIBILITY.md.
+  `SSLServer` are declined; see docs/how-to/add-an-extension.md and docs/reference/compatibility.md.
 - **OpenSSL links statically into every compiled binary.** An OpenSSL
   security fix reaches a program only when you rebuild it with an updated
   Zeo. Programs already shipped keep the version they were compiled with.

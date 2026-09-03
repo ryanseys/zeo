@@ -13,7 +13,7 @@
 //! ```
 //!
 //! Server-side TLS (`SSLServer`, `accept`) is declined -- see
-//! docs/COMPATIBILITY.md. The shared state and helpers live here; each
+//! docs/reference/compatibility.md. The shared state and helpers live here; each
 //! class is its own file because the DSL allows one `ruby_class!` per
 //! module.
 //!

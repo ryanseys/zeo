@@ -304,20 +304,20 @@ pub fn ext_feature_names() -> impl Iterator<Item = &'static str> {
 /// two wordings cannot drift.
 ///
 /// See "Declined (a CRuby internal, not a missing binding)" in
-/// `docs/COMPATIBILITY.md`.
+/// `docs/reference/compatibility.md`.
 pub fn declined_feature_reason(name: &str) -> Option<&'static str> {
     match name {
         "ripper" => Some(
             "declined. ripper exposes the reduction event stream of CRuby's parse.y, \
              and zeo's front end embeds prism -- a different parser with a different \
              event model, so there is nothing to bind. Use `require \"prism\"` for a \
-             Ruby-level syntax tree. See docs/COMPATIBILITY.md.",
+             Ruby-level syntax tree. See docs/reference/compatibility.md.",
         ),
         "continuation" => Some(
             "declined. callcc captures and restores the machine stack, and a \
              native-compiled program has no stack-copying runtime; an escape-only \
              callcc would silently break re-entering callers. Use Fiber instead. \
-             See docs/COMPATIBILITY.md.",
+             See docs/reference/compatibility.md.",
         ),
         _ => None,
     }
@@ -473,7 +473,7 @@ pub const DIGEST_BASE_CLASS: ClassId = ClassId(178);
 /// sees a site.
 pub const ZEO_MODULE: ClassId = ClassId(179);
 pub const ZEO_EVAL_MODULE: ClassId = ClassId(180);
-/// `json`: the `JSON` module (parser/generator). Scaffolded (see docs/EXTENSIONS.md).
+/// `json`: the `JSON` module (parser/generator). Scaffolded (see docs/how-to/add-an-extension.md).
 pub const JSON_MODULE: ClassId = ClassId(55);
 /// `date`: `Date`/`DateTime`. Scaffolded.
 pub const DATE_CLASS: ClassId = ClassId(56);

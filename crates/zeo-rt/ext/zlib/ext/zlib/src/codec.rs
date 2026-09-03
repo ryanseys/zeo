@@ -20,7 +20,7 @@
 //!
 //! zlib overloads `window_bits` to select the container as well as the window
 //! size, and that is the ONE part of the argument zeo acts on -- the pure-Rust
-//! backend has a fixed 32KB window (see docs/COMPATIBILITY.md).
+//! backend has a fixed 32KB window (see docs/reference/compatibility.md).
 
 use super::frame::{self, Corrupt, Header};
 use super::{bin_str, crc32};
@@ -308,7 +308,7 @@ pub(super) fn ready(recv: &RubyValue) -> Result<parking_lot::MutexGuard<'_, Stat
 /// else `Zlib::BINARY`. zlib decides this from the literal/length histogram it
 /// builds while compressing, which the pure-Rust backend does not expose; the
 /// classification agrees with zlib's on ordinary text and ordinary binary and
-/// can differ on a mixture (see docs/COMPATIBILITY.md).
+/// can differ on a mixture (see docs/reference/compatibility.md).
 pub(super) fn classify(data: &[u8]) -> i64 {
     let textual = data
         .iter()
@@ -534,7 +534,7 @@ pub(super) fn check_zlib_header(bytes: &[u8]) -> Result<(), Signal> {
 /// flate2's decompression failures. Its pure-Rust backend carries no message
 /// (`DecompressError::message` is `None` there), so the wording is zlib's
 /// generic one rather than the specific "invalid distance too far back"
-/// family CRuby can report -- see docs/COMPATIBILITY.md.
+/// family CRuby can report -- see docs/reference/compatibility.md.
 fn decompress_error(e: &flate2::DecompressError) -> Signal {
     match e.message() {
         Some(msg) => data_error(msg),

@@ -5,7 +5,7 @@
 //! blocking. The `ChildExited` exception is the gem's Ruby half
 //! (`ext/pty/lib/pty.rb`) and the native raise reaches it by name -- minus
 //! the `#status` detail CRuby's C constructor attaches, since a by-name raise
-//! carries only a message (see `docs/EXTENSIONS.md`).
+//! carries only a message (see `docs/how-to/add-an-extension.md`).
 
 use crate::builtins::convert;
 use crate::dispatch::raise_error;

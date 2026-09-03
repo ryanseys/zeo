@@ -18,7 +18,7 @@
 //! a `RubyException` type is deferred to the phase that actually needs
 //! exception-class/backtrace machinery. `Raise` is also already the intended
 //! vehicle for a *future* dynamic (runtime-string) `eval`'s parse/syntax
-//! errors -- see `docs/EVAL.md` -- so no `Signal` change is anticipated
+//! errors -- see `docs/explanation/eval.md` -- so no `Signal` change is anticipated
 //! for that either, once it's built.
 
 use crate::RubyValue;

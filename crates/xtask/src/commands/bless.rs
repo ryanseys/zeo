@@ -31,7 +31,6 @@ nextest reports -- or a path under test/. Examples:
   cargo xtask bless forward_args
   cargo xtask bless core::string/
   cargo xtask bless test/lang/blocks/a_lambda_takes_a_literal_block.rb
-  cargo xtask bless gaps::
 
 `errors/`, `features/` and `divergences/` record ZEO's own answer and need a built
 `target/release/zeo` (or `ZEO_BIN`). Everything else records the pinned

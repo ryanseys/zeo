@@ -2,7 +2,7 @@
 //! extension is built FROM ITS OWN SOURCE through zeo's C-API route and run
 //! against the answer ruby 4.0.6 recorded for the same program.
 //!
-//! This is the C-API's health gate. `docs/LIMITATIONS.md` names it; until
+//! This is the C-API's health gate. `docs/reference/limitations.md` names it; until
 //! this file existed nothing performed it, and the API's only runtime
 //! evidence was 69 lines of purpose-built test C.
 //!

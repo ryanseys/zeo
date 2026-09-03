@@ -11,7 +11,7 @@
 //! else the real nkf option grammar accepts is deliberately NOT pretended
 //! at: unknown flags are ignored the way nkf itself ignores them, and the
 //! divergences (MIME encoding `-M`, fold/`-f`, the `guess` heuristic's
-//! exact answers on junk bytes) are catalogued in `docs/COMPATIBILITY.md`.
+//! exact answers on junk bytes) are catalogued in `docs/reference/compatibility.md`.
 //!
 //! The `Kconv` wrapper module and the `String#tojis`/`#toeuc`/... patches
 //! are the gem's Ruby half (`ext/nkf/lib/kconv.rb`, vendored upstream).

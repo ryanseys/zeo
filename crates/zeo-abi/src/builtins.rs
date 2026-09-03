@@ -483,7 +483,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     // by a per-extension cargo feature on `zeo-rt` (see that crate's
     // `[features]` and `ext/mod.rs`). Some carry real implementations, others
     // are scaffolded (a couple methods, the rest `todo!`) -- see
-    // `docs/EXTENSIONS.md` for the per-extension status.
+    // `docs/how-to/add-an-extension.md` for the per-extension status.
     BuiltinClass {
         id: STRINGIO_CLASS,
         name: "StringIO",
@@ -818,7 +818,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         // Ungated: CRuby 4.0 has `Random::Formatter` in core, holding `#rand`
         // and `#random_number`, and `require "random/formatter"` only REOPENS
         // it to add the `hex`/`uuid`/`base64` family. zeo carries the whole
-        // module either way -- see docs/COMPATIBILITY.md.
+        // module either way -- see docs/reference/compatibility.md.
         id: RANDOM_FORMATTER_MODULE,
         name: "Random::Formatter",
         is_module: true,
@@ -931,7 +931,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         feature: Some("fcntl"),
     },
     // Ungated: `io/console`'s methods are unconditional rows on the IO table
-    // (see `docs/EXTENSIONS.md`), so the mode object they hand back has to
+    // (see `docs/how-to/add-an-extension.md`), so the mode object they hand back has to
     // resolve without a require too.
     BuiltinClass {
         id: CONSOLE_MODE_CLASS,

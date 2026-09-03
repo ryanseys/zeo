@@ -97,7 +97,7 @@ ruby_module! {
 
     // Compression strategies. Accepted and reported back by `params`, but not
     // acted on: the pure-Rust deflate backend has no strategy knob (see
-    // docs/COMPATIBILITY.md).
+    // docs/reference/compatibility.md).
     const DEFAULT_STRATEGY = RubyValue::Int(0);
     const FILTERED = RubyValue::Int(1);
     const HUFFMAN_ONLY = RubyValue::Int(2);
@@ -136,7 +136,7 @@ ruby_module! {
 
     // `VERSION` is the bundled gem's, as CRuby's is. `ZLIB_VERSION` names the
     // zlib API level this implements, not a linked libz -- there isn't one
-    // (see docs/COMPATIBILITY.md).
+    // (see docs/reference/compatibility.md).
     const VERSION = RubyValue::Str(crate::string_new("3.2.3".to_string()));
     const ZLIB_VERSION = RubyValue::Str(crate::string_new("1.3.1".to_string()));
 

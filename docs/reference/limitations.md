@@ -1,13 +1,49 @@
 # Limitations
 
+What zeo does not do, and why. Everything here is deliberate and
+recorded; the rest is in [the roadmap](../explanation/roadmap.md).
+
+- **The cycle collector is opt-in.** Memory is reference-counted, so a
+  reference cycle leaks unless `ZEO_GC=1` arms the collector. It is off by
+  default because the allocation registry it needs costs about 1.5% over the
+  benchmark bank. Armed, it runs on its own once the live registry has grown
+  enough — nothing has to call `GC.start`. There is no tracing collector:
+  the pass reconciles reference counts, because zeo's lowering declares no
+  stack maps for Cranelift to build root sets from.
+- **C extensions are source-only.** A gem that ships its C source compiles
+  and loads — `fast_blank`, `bcrypt`, and `msgpack` all build and answer,
+  and bcrypt reproduces a published OpenBSD test vector byte for byte. All
+  but 33 of the `rb_*` entry points a gem can link against are answered, and
+  each of those 33 raises with its reason (they boot an interpreter, or
+  expose a representation Zeo does not have). A gem shipping a *precompiled*
+  `.so` never loads: that object is CRuby's ABI. Autotools and
+  `mini_portile` builds of a vendored C library are out of scope;
+  `have_library` works. A C extension together with a second Ruby thread
+  arms the GVL; a single-threaded program keeps the lock-free path.
+- **`Ruby::Box` isolation is partial.** A box works at compile time and at
+  run time — `Ruby::Box.new`, `box.eval`, `box.require`, and `Box.current`
+  all answer — and it isolates constants and globals. It does not yet
+  isolate a monkeypatch of a shared builtin (which reaches main), and a box
+  cannot require a feature the whole-program compile already spliced. Both
+  are tracked in [`todo/`](../../todo).
+- **Four extensions are partial** — `coverage`, `nkf`, `openssl`,
+  `TracePoint`. See [Add an extension](../how-to/add-an-extension.md).
+- **The Cranelift backend's performance pass is not finished.** Correctness
+  is complete; code quality is not. On compute-bound work it currently runs
+  at **0.71× of CRuby** — see [Performance](../explanation/performance.md).
+
+[The roadmap](../explanation/roadmap.md) tracks the rest.
+
+---
+
 zeo holds every library name it implements under three **mirror
 conditions**, and this file is the ledger those conditions require:
 
 1. **Divergences are ledgered.** Anything zeo answers differently from
    CRuby is written down -- here, in
-   [`docs/COMPATIBILITY.md`](COMPATIBILITY.md), or as a committed
+   [`docs/reference/compatibility.md`](COMPATIBILITY.md), or as a committed
    divergence golden under
-   [`test/divergences/`](../test/divergences) whose
+   [`test/divergences/`](../../test/divergences) whose
    `.expected` records ZEO's answer on purpose.
 2. **The real thing is the oracle.** Every golden's recorded output comes
    from ruby 4.0.6 resolving the same `Gemfile.lock`, and the pure-Ruby
@@ -88,7 +124,7 @@ Deliberate answers, each with its reasoning ledgered where it lives.
 - **Ruby regular expressions compile and match under Oniguruma** -- the
   one engine, the one CRuby's own Onigmo forked from -- and a pattern it
   refuses is refused. The handful of rows where the two forks answer
-  differently are ledgered in `docs/COMPATIBILITY.md` (`### Regexp`).
+  differently are ledgered in `docs/reference/compatibility.md` (`### Regexp`).
 - **`racc` runs its own pure-Ruby runtime**: the C accelerator is a pure
   speed-up with a complete in-gem fallback, so zeo declines the build
   and `Racc_Runtime_Type` answers `"ruby"`
@@ -112,7 +148,7 @@ Deliberate answers, each with its reasoning ledgered where it lives.
   CRuby's `initialize`-chain contract on every including class; CRuby
   itself uses the lazy shape in `new_cond`.
 - **Shift_JIS maps through CP932**, and the other encoding-table
-  divergences -- see the encoding section of `docs/COMPATIBILITY.md`.
+  divergences -- see the encoding section of `docs/reference/compatibility.md`.
 
 ## Now supported
 

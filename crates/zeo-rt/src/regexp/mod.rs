@@ -8,7 +8,7 @@
 //! ruby's own `re.c` preprocessing -- `\u` escapes and the `\M-`/`\C-`/`\c`
 //! byte escapes -- and the CRuby-shaped compile-error text; see
 //! `translate.rs`. The handful of rows where Oniguruma and Onigmo answer
-//! differently are ledgered in `docs/COMPATIBILITY.md`.
+//! differently are ledgered in `docs/reference/compatibility.md`.
 //!
 //! `RegexpData`/`MatchDataInner` need no `Mutex` at all (unlike
 //! `RArray`/`RHash`/`RStr`): both are immutable after construction, and

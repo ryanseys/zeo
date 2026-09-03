@@ -591,7 +591,7 @@ fn build_and_run(
 /// `--link=<arg>` spellings) and reached from Ruby through
 /// `FFI::CURRENT_PROCESS` -- once its symbol is exported. Without the export
 /// the same link succeeds and the call cannot find the symbol, which is the
-/// rule `docs/CLIF.md` writes down.
+/// rule `docs/explanation/backend.md` writes down.
 #[test]
 fn a_carried_object_is_reached_through_ffi_when_its_symbol_is_exported() {
     let dir = std::env::temp_dir().join(format!("zeo-linkobj-{}", std::process::id()));

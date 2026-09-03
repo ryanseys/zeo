@@ -16,71 +16,20 @@ pub struct RunResult {
     pub status: std::process::ExitStatus,
 }
 
-/// `ZEO_E2E_BACKEND`: which tier runs the e2e programs. Unset or
-/// `jit-child` spawns the built `zeo` CLI on the JIT (a ~20ms spawn);
-/// `aot` restores the link-a-binary path -- the one tier that shells `cc`
-/// per test, which is what made the suite cost minutes. CI's AOT leg runs
-/// the suite under `aot` so both tiers stay covered.
-fn e2e_backend() -> &'static str {
-    static B: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    B.get_or_init(|| match std::env::var("ZEO_E2E_BACKEND") {
-        Ok(v) if !v.is_empty() => v,
-        _ => "jit-child".to_string(),
-    })
-}
-
 /// Compile `source` with `opts` and run it with `env`/`args`, handing back
-/// what it printed. The one place the e2e tier builds a program; the
-/// backend is [`e2e_backend`]'s.
+/// what it printed. The one place these tests build a program.
+///
+/// A child on the JIT, always. A real link costs a `cc` per test and asks
+/// nothing these tests are about: `test/aot/` is where the link line is held
+/// to account, and `linkage.rs` and `debuginfo.rs` build their own binaries when
+/// they want one.
 pub fn compile_link_run(
     source: &str,
     opts: &zeo::CompileOptions,
     env: &[(&str, &str)],
     args: &[&str],
 ) -> RunResult {
-    match e2e_backend() {
-        "aot" => compile_link_run_aot(source, opts, env, args),
-        "jit-child" => run_jit_child(source, opts, env, args),
-        other => panic!("unknown ZEO_E2E_BACKEND '{other}' (jit-child or aot)"),
-    }
-}
-
-/// The AOT tier: object-compile in process, link a throwaway binary, run
-/// it. What ships, and what the artifact-shape tests (`linkage.rs`,
-/// `debuginfo.rs`) reason about -- they build their own artifacts and never
-/// come through here, but the whole suite re-runs on this tier under CI's
-/// AOT leg.
-pub fn compile_link_run_aot(
-    source: &str,
-    opts: &zeo::CompileOptions,
-    env: &[(&str, &str)],
-    args: &[&str],
-) -> RunResult {
-    // The link needs the archive, which a test run does not build.
-    crate::paths::runtime_archive().unwrap_or_else(|e| panic!("{e}"));
-    let compiled = zeo::compile_to_object_with(source, opts, false)
-        .unwrap_or_else(|e| panic!("compile_to_object_with failed: {e}"));
-    let bin = std::env::temp_dir().join(format!(
-        "zeo-test-bin-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    zeo::backend::build_artifact(&zeo::backend::CompiledProgram::Aot(&compiled), &bin)
-        .unwrap_or_else(|e| panic!("linking the test binary failed: {e}"));
-    let mut cmd = std::process::Command::new(&bin);
-    cmd.args(args);
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    let out = cmd
-        .output()
-        .unwrap_or_else(|e| panic!("running compiled binary: {e}"));
-    let _ = std::fs::remove_file(&bin);
-    RunResult {
-        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-        status: out.status,
-    }
+    run_jit_child(source, opts, env, args)
 }
 
 /// The JIT tier: spawn the built `zeo` CLI on the in-process JIT. The

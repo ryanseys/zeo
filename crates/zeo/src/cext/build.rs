@@ -136,7 +136,7 @@ impl Plan {
         if let Some(flag) = unwind_tables_off(&mk) {
             return Err(std::io::Error::other(format!(
                 "the Makefile turns unwind tables off with `{flag}`; a raise is an unwind \
-                 through the extension's own frames (docs/EXTENSIONS.md)"
+                 through the extension's own frames (docs/how-to/add-an-extension.md)"
             )));
         }
         Ok(Self::from_makefile(dir, &mk))

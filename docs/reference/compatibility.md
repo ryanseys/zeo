@@ -519,7 +519,7 @@ left-most-label wildcards), independent of the connection's verify mode.
 `#source_location`, `#local_variables`, `#local_variable_get`/`_set`/
 `_defined?`, `#eval`, `#dup`/`#clone` and `TOPLEVEL_BINDING` all behave as
 CRuby's, sharing the compiled frame's own slots so writes flow both ways
-(`docs/EVAL.md` explains how codegen gives just those frames cell
+(`docs/explanation/eval.md` explains how codegen gives just those frames cell
 storage). The bounds:
 
 - **A Binding taken inside an INLINE-SPLICED iterator block** (`n.times { |i|
@@ -551,7 +551,7 @@ shared by reference), never the block's own locals. A proc with no Ruby scope
 behind it — `Symbol#to_proc` and the other runtime-internal ones — raises
 CRuby's `ArgumentError: Can't create Binding from C level Proc`, and so does any
 proc in a program the compiler never saw ask for a `Proc#binding` (the capture
-is pay-per-use; see `docs/EVAL.md`).
+is pay-per-use; see `docs/explanation/eval.md`).
 
 ### `Hash.ruby2_keywords_hash`
 
@@ -827,7 +827,7 @@ No substitution is involved — it is the real stdlib source.
 A gem whose real implementation is a C extension Zeo has no built-in for
 cannot be compiled. The `require` fails with a message that **names the gem**
 rather than looking like an unsupported language feature, and points here and
-at the FFI path (see `docs/EXTENSIONS.md`), Zeo's intended escape hatch.
+at the FFI path (see `docs/how-to/add-an-extension.md`), Zeo's intended escape hatch.
 Examples that trigger the named error today: `sqlite3`, `nokogiri`, `pg`,
 `mysql2`, `bcrypt`, `nio4r`, `grpc`, `msgpack`, and similar.
 

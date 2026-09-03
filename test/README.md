@@ -1,0 +1,60 @@
+# The corpus
+
+One `.rb` file is one test. The program is the file; the answer is recorded
+under `__END__` at the bottom of it, by real ruby.
+
+```ruby
+# `upcase` on an ASCII string, and on one that is not.
+puts "ab".upcase
+puts "ä".upcase
+__END__
+AB
+Ä
+```
+
+Run it:
+
+```console
+$ cargo nextest run
+$ cargo nextest run -E 'test(core::string/upcase.rb)'
+```
+
+Record an answer:
+
+```console
+$ cargo xtask bless core::string/upcase.rb
+```
+
+## Where a program goes
+
+| Directory | What lives there |
+|---|---|
+| `lang/<area>/` | language semantics |
+| `core/<class>/` | core classes |
+| `stdlib/<lib>/` | bundled libraries |
+| `compiler/<area>/` | behaviour only zeo has |
+| `aot/` | programs that also run through a real link |
+| `errors/` | programs zeo must reject |
+| `features/` | what a build of zeo answers about itself |
+| `divergences/` | programs zeo answers differently on purpose |
+| `milestones/` | whole require graphs (the `full` profile) |
+| `ze0/` | the Ruby front end's subset, three roads |
+| `bench/` | the benchmark bank's inputs |
+| `fixtures/` | files several programs share |
+
+The four topic roots are exactly two levels deep. Anything deeper is a
+fixture. A directory named `<name>/` beside `<name>.rb` holds that program's
+own files.
+
+Programs run with `test/` as their working directory, so a path in a
+recording reads `core/string/upcase.rb`.
+
+## The rest
+
+- [The test format](../docs/reference/test-format.md) — directives, the
+  trailer, and the escaping rules.
+- [Add a test](../docs/how-to/add-a-test.md) — including the three
+  directories that record zeo's answer instead of ruby's.
+- [Testing](../docs/explanation/testing.md) — why it is built this way.
+- [`todo/`](../todo) — programs zeo does not get right yet. Nothing runs
+  those.

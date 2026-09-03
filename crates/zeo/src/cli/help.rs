@@ -39,7 +39,7 @@ subcommands:
                         `bundle exec` and `bundler/setup` do not work yet:
                         both ask rubygems for an INSTALLED bundler gem,
                         and zeo carries bundler as a library. See
-                        docs/COMPATIBILITY.md.
+                        docs/reference/compatibility.md.
   install [names...]    precompile the project's locked gems into the gem
                         store, so later compiles link them instead of
                         recompiling them (bare names narrow it). Reads

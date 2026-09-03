@@ -13,7 +13,7 @@
 //!
 //! `rb_eval_string` runs zeo's own compiler, exactly as `Kernel#eval` does.
 //! There is no interpreter and no literal splice; the seam is the same one
-//! documented in `docs/EVAL.md`.
+//! documented in `docs/explanation/eval.md`.
 //!
 //! # What the frame entries can and cannot answer
 //!

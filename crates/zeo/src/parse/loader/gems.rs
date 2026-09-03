@@ -342,7 +342,7 @@ pub(super) fn cannot_load(name: &str) -> String {
     if is_known_native_gem(name) {
         return format!(
             "cannot load such file -- {name}: this gem has a native (C) extension \
-             zeo does not provide a built-in for. See docs/EXTENSIONS.md; the FFI \
+             zeo does not provide a built-in for. See docs/how-to/add-an-extension.md; the FFI \
              path is the intended escape hatch."
         );
     }

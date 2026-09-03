@@ -45,7 +45,7 @@ them from this tree, so adding a library is adding a directory. See
 Most Ruby halves are zeo-authored: they exist to declare the exception
 classes a feature-gated native class cannot register, and little else. They
 are intended to match upstream behaviour, and divergences are documented in
-`docs/COMPATIBILITY.md`.
+`docs/reference/compatibility.md`.
 
 These files are faithful vendored copies rather than zeo-authored:
 
@@ -84,7 +84,7 @@ gem, and `ffi_backend.rb` — the gem's own pure-Ruby Fiddle over the ffi API,
 its JRuby/TruffleRuby path — is vendored with `zeo:`-tagged deviations
 (mechanical AOT rewrites, plus aligning the backend's observable messages and
 return shapes with the C extension the oracle runs; the list is in
-`docs/COMPATIBILITY.md` `### fiddle`). `lib/fiddle.rb` and the gemspec are
+`docs/reference/compatibility.md` `### fiddle`). `lib/fiddle.rb` and the gemspec are
 zeo-authored, because upstream's branches on RUBY_ENGINE and builds its
 `TYPE_*` constants with a `const_set` loop. The `Importer` DSL files
 (`import`/`struct`/`types`/`pack`/`value`/`cparser`) are not vendored —

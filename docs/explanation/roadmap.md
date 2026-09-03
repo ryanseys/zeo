@@ -4,7 +4,7 @@ Everything Zeo still owes, in one file.
 
 The rule this file lives by: a **divergence** — a program where Zeo answers
 differently from ruby — does not belong here. It belongs in
-[`todo/`](../todo) as an executable XFAIL, so the suite fails the
+[`todo/`](../../todo) as an executable XFAIL, so the suite fails the
 day someone fixes it. This file holds only **work**: things to build, measure,
 or decide.
 
@@ -22,13 +22,13 @@ writing the fix.
 oracle's tree, add one match arm, extend the fixture); an iterator kind in
 [Performance](#performance) (`arr.each` proved the shape; each remaining kind
 is the same guard with a different accumulator); a row for `irb`, `minitest`
-or `openssl` in [`crates/zeo-rt/ext/UPSTREAM.md`](../crates/zeo-rt/ext/UPSTREAM.md).
-[`CONTRIBUTING.md`](../CONTRIBUTING.md) gives the house rule for all of them:
+or `openssl` in [`crates/zeo-rt/ext/UPSTREAM.md`](../../crates/zeo-rt/ext/UPSTREAM.md).
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md) gives the house rule for all of them:
 oracle-verified, divergence-documented.
 
 ## Divergences (tracked as executable gaps)
 
-[`todo/`](../todo) is the real tracker, and the suite fails the
+[`todo/`](../../todo) is the real tracker, and the suite fails the
 day a gap starts matching ruby. This file does not mirror the directory's
 contents — a table here rotted once already (it kept naming gaps that had
 long been promoted). `ls todo/*.rb` is the current list.
@@ -78,7 +78,7 @@ ractor), so detection is a wait-for graph over the port tables. Unmeasured:
 whether CRuby's message (`No live threads left. Deadlock?`-family) is
 reachable byte-for-byte from Zeo's model. Related and larger: globals and cvars are process-shared across ractors
 where CRuby raises `Ractor::IsolationError` on non-main access. That one is
-owned by the box-keyed runtime overlay; see [`todo/`](../todo) for the
+owned by the box-keyed runtime overlay; see [`todo/`](../../todo) for the
 programs that still record the difference.
 
 ## Gem corpus

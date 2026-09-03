@@ -8,7 +8,7 @@
 //! `random_iv` (upstream's `cipher.rb` Ruby) are native here so that half
 //! stays declaration-only. The `Cipher::AES`/`AES256` shorthand subclasses
 //! (upstream `const_set` metaprogramming) are NOT provided -- spell the
-//! algorithm out (`Cipher.new("aes-256-cbc")`); see docs/COMPATIBILITY.md.
+//! algorithm out (`Cipher.new("aes-256-cbc")`); see docs/reference/compatibility.md.
 
 use super::{bin_str, fill_random, md_from_value, str, str_bytes};
 use crate::builtins::{arg_error, convert};

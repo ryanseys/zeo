@@ -734,7 +734,7 @@ ruby_module! {
         // No `setresuid`/`setresgid` here. CRuby installs its
         // not-implemented stub on any platform that lacks them -- and that
         // stub reports arity 0, not 3, so the real three-argument form
-        // cannot share a declaration with it (see docs/COMPATIBILITY.md).
+        // cannot share a declaration with it (see docs/reference/compatibility.md).
         // The stub takes ANY arguments while reporting arity 0, which is
         // exactly what a `rb_f_notimplement` registration does -- so the
         // parameter list and the declared arity have to disagree here.

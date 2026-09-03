@@ -918,7 +918,7 @@ ruby_class! {
             enc_name(e.dst),
             bytes(&e.error_bytes),
             // zeo's decoders consume an offending sequence whole, so there
-            // are never bytes to read again -- see docs/COMPATIBILITY.md.
+            // are never bytes to read again -- see docs/reference/compatibility.md.
             if e.result.is_some() {
                 RubyValue::Str(crate::string_from_bytes(Vec::new(), encoding::ASCII_8BIT))
             } else {

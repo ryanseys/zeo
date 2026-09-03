@@ -6,7 +6,7 @@
 //! subset of a module's methods appear on require -- the ABI's `feature` field
 //! gates a whole class -- so every row here is always present and
 //! `require "objspace"` is recognized ceremony, the same shape `io/wait` and
-//! `io/console` already have (`docs/EXTENSIONS.md`).
+//! `io/console` already have (`docs/how-to/add-an-extension.md`).
 //!
 //! What each answer is worth:
 //!

@@ -5,7 +5,7 @@
 //!
 //! CRuby parents this class under the `digest` framework's `Digest::Class`;
 //! zeo's digest classes are native tables with no shared Ruby superclass, so
-//! it sits under `Object` (documented in docs/COMPATIBILITY.md). The
+//! it sits under `Object` (documented in docs/reference/compatibility.md). The
 //! instance surface implemented here IS the `Digest::Instance` contract the
 //! framework would supply: `hexdigest(data)` hashes accumulated+data then
 //! resets, `hexdigest` alone peeks without resetting.

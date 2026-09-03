@@ -9,6 +9,7 @@ mod cli;
 mod clif;
 mod corpus_hygiene;
 mod diagnostics;
+mod docs;
 mod env_vars;
 mod gem_versions;
 mod hygiene;

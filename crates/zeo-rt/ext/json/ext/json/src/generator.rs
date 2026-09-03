@@ -18,7 +18,7 @@
 //!   * `1e100.to_json` is `1e+100`, not `1.0e+100`. The placement rule is in
 //!     [`float_text`].
 //!
-//! A residual divergence, accepted and recorded in `docs/COMPATIBILITY.md`:
+//! A residual divergence, accepted and recorded in `docs/reference/compatibility.md`:
 //! the gem uses grisu2, which is not always shortest, so about 0.9% of
 //! doubles get a seventeenth digit under CRuby that Rust's shortest
 //! formatting does not print. Both parse back to the same double.

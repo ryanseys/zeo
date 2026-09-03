@@ -43,7 +43,7 @@ pub enum TranscodeError {
     /// content is not pure ASCII, so this runtime has no mapping to apply.
     /// CRuby raises this class when its own registry holds no converter for
     /// a pair; it never reaches it for these encodings, which is the
-    /// divergence `docs/COMPATIBILITY.md` records.
+    /// divergence `docs/reference/compatibility.md` records.
     NoConverter(String),
 }
 

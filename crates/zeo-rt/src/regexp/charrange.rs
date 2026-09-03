@@ -15,7 +15,7 @@
 //!   (`/\w/i` does not match `ſ`), so the rewritten class is wrapped in
 //!   `(?-i:...)` outside a bracket. Inside one Oniguruma folds the whole
 //!   class, which reaches `ſ` and `K` through `s` and `k`; that is the one
-//!   residue, ledgered in docs/COMPATIBILITY.md.
+//!   residue, ledgered in docs/reference/compatibility.md.
 //!
 //! `Regexp#source` and every error message keep the text as written; only
 //! what the engine compiles changes.

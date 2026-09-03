@@ -329,7 +329,7 @@ pub(super) fn resolve(stores: &[PathBuf], locked_gems: &[LockedGem]) -> PResult<
                     format!(
                         "only a precompiled binary of `{name}` is installed; zeo forces the \
                          ruby platform and cannot load a `.bundle`. Reinstall with \
-                         `--platform ruby`, or see the FFI path in docs/EXTENSIONS.md."
+                         `--platform ruby`, or see the FFI path in docs/how-to/add-an-extension.md."
                     ),
                 ));
                 continue;
