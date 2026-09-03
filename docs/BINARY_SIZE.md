@@ -226,7 +226,7 @@ against a whole library since:
   only and answers in under a second.
 
 The whole ladder, hello-world to bundler, is banked in
-[`bench/compile-baseline.tsv`](../bench/compile-baseline.tsv) and refreshed
+[`test/bench/compile-baseline.tsv`](../test/bench/compile-baseline.tsv) and refreshed
 with `cargo xtask bench --compile --update-baseline`. Its `frontend_ms` and
 `peak_rss` columns time `--emit-clif`, which renders the CLIF as text, so
 they are larger than the `-o` wall times above and are not the same

@@ -28,7 +28,7 @@ Every test compares Zeo's output with real Ruby 4.0.6, byte for byte.
 
 Zeo is **experimental** and moving fast. The corpus ([`test/`](test)) runs
 green in CI, each program comparing stdout, stderr, and the exit status with
-real Ruby, byte for byte. [`test/gaps/`](test/gaps) holds the programs that still
+real Ruby, byte for byte. [`todo/`](todo) holds the programs that still
 diverge. Each one **must** fail until it is fixed.
 
 Every module, method, constant, and visibility that Ruby 4.0.6 reaches has a
@@ -37,7 +37,7 @@ What remains is behavioral, not missing surface.
 
 Every known difference is recorded: in
 [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) when a user can see it, and
-as a failing test in `tests/gaps/`.
+as a note under `todo/`.
 
 Read [Limits](#limits) before you depend on Zeo for anything.
 
@@ -350,7 +350,7 @@ output before it times anything.
 
 Measured 2026-08-25 on one machine, against CRuby 4.0.6 (the Zeo rows from
 that day's full run; the CRuby rows from a combined Zeo + Ruby run earlier
-the same day — the committed [`bench/results.tsv`](bench/results.tsv) is
+the same day — the committed [`test/bench/results.tsv`](test/bench/results.tsv) is
 the record):
 
 | | geomean |
@@ -374,7 +374,7 @@ cannot statically type (`tree_walker` 0.07×, `linked_list` 0.38×,
 inference: the typed direct call that took `send_rubyfunc_block` from
 0.30× to 1.2× only fires where the receiver's class is proven at
 compile time. And `getivar_module` (0.39×) waits on a class-level ivar
-cache the emitter does not yet emit. [`bench/README.md`](bench/README.md)
+cache the emitter does not yet emit. [`test/bench/`](test/bench)
 has the method; [`docs/ROADMAP.md`](docs/ROADMAP.md) has the levers.
 
 ### The full table
@@ -668,7 +668,7 @@ Zeo is experimental. The known limits, all deliberate and recorded:
   all answer — and it isolates constants and globals. It does not yet
   isolate a monkeypatch of a shared builtin (which reaches main), and a box
   cannot require a feature the whole-program compile already spliced. Both
-  are tracked in [`tests/gaps/`](tests/gaps).
+  are tracked in [`todo/`](todo).
 - **Four extensions are partial** — `coverage`, `nkf`, `openssl`,
   `TracePoint`. See [`docs/EXTENSIONS.md`](docs/EXTENSIONS.md).
 - **The Cranelift backend's performance pass is not finished.** Correctness
@@ -687,7 +687,7 @@ every difference from Ruby visible.**
 1. Check each new behavior against real Ruby.
 2. Leave a comment at the site of any difference you accept.
 3. If a user can observe it, add a row to `docs/COMPATIBILITY.md` and a
-   failing test in `tests/gaps/`.
+   note under `todo/`.
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md).
 

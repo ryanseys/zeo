@@ -50,18 +50,7 @@ tarball carries the finished tree pre-seeded so an install needs no fetch. A
 gem's C extension compiles against it, so these headers reach any program that
 loads one. Ruby is dual-licensed under the Ruby License and 2-clause BSD;
 upstream's `COPYING`, `BSDL` and `LEGAL` ride beside the fetched tree, the
-same pair that ships beside every Ruby-licensed gem in `gems/`.
-
-## The conformance corpus (`tests/spinel/`)
-
-`tests/spinel/` is vendored from the test suite of
-[spinel](https://github.com/matz/spinel), MIT licensed, Copyright (c) 2024-
-Yukihiro Matsumoto. Upstream's license text is reproduced verbatim at
-[`tests/spinel/LICENSE`](tests/spinel/LICENSE), and the vendoring is
-documented in [`tests/spinel/UPSTREAM.md`](tests/spinel/UPSTREAM.md).
-
-This corpus is test data. It is not part of any distributed artifact -- not
-the release tarballs, not the gems, not the published crates.
+same pair that ships beside every Ruby-licensed gem in the store.
 
 ## The test corpus (`test/`)
 

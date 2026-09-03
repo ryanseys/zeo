@@ -4,7 +4,7 @@ Everything Zeo still owes, in one file.
 
 The rule this file lives by: a **divergence** — a program where Zeo answers
 differently from ruby — does not belong here. It belongs in
-[`tests/gaps/`](../tests/gaps) as an executable XFAIL, so the suite fails the
+[`todo/`](../todo) as an executable XFAIL, so the suite fails the
 day someone fixes it. This file holds only **work**: things to build, measure,
 or decide.
 
@@ -28,10 +28,10 @@ oracle-verified, divergence-documented.
 
 ## Divergences (tracked as executable gaps)
 
-[`tests/gaps/`](../tests/gaps) is the real tracker, and the suite fails the
+[`todo/`](../todo) is the real tracker, and the suite fails the
 day a gap starts matching ruby. This file does not mirror the directory's
 contents — a table here rotted once already (it kept naming gaps that had
-long been promoted). `ls tests/gaps/*.rb` is the current list.
+long been promoted). `ls todo/*.rb` is the current list.
 
 **A gap file is the diverging program and nothing else — no comments.**
 Headers used to carry a diagnosis, and a diagnosis written at the moment of
@@ -78,8 +78,8 @@ ractor), so detection is a wait-for graph over the port tables. Unmeasured:
 whether CRuby's message (`No live threads left. Deadlock?`-family) is
 reachable byte-for-byte from Zeo's model. Related and larger: globals and cvars are process-shared across ractors
 where CRuby raises `Ractor::IsolationError` on non-main access. That one is
-owned by the box-keyed runtime overlay, tracked as
-[`tests/gaps/a_box_write_on_a_shared_class_reaches_main.rb`](../tests/gaps/a_box_write_on_a_shared_class_reaches_main.rb).
+owned by the box-keyed runtime overlay; see [`todo/`](../todo) for the
+programs that still record the difference.
 
 ## Gem corpus
 

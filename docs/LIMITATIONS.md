@@ -7,7 +7,7 @@ conditions**, and this file is the ledger those conditions require:
    CRuby is written down -- here, in
    [`docs/COMPATIBILITY.md`](COMPATIBILITY.md), or as a committed
    divergence golden under
-   [`tests/divergences/`](../tests/divergences/README.md) whose
+   [`test/divergences/`](../test/divergences) whose
    `.expected` records ZEO's answer on purpose.
 2. **The real thing is the oracle.** Every golden's recorded output comes
    from ruby 4.0.6 resolving the same `Gemfile.lock`, and the pure-Ruby
@@ -26,7 +26,7 @@ Differences the architecture chooses; they will not close.
 
 - **Ahead-of-time compilation is the execution model.** There is no
   `RubyVM::InstructionSequence` bytecode to serialize
-  (`tests/divergences/rubyvm_iseq_serialization.rb`), `ripper` is
+  (`test/divergences/rubyvm_iseq_serialization.rb`), `ripper` is
   declined (zeo's front end embeds prism), and `continuation` is
   declined.
 - **Threads run in parallel without a global VM lock.** The GVL exists
@@ -38,7 +38,7 @@ Differences the architecture chooses; they will not close.
   restores CRuby's handoff for differential debugging.
 - **Object identity is not an address.** Allocation tracing and
   `object_id` patterns that decode addresses differ
-  (`tests/divergences/object_identity_and_allocation_tracing.rb`).
+  (`test/divergences/object_identity_and_allocation_tracing.rb`).
 
 ## Partial, relaxable
 
@@ -92,18 +92,18 @@ Deliberate answers, each with its reasoning ledgered where it lives.
 - **`racc` runs its own pure-Ruby runtime**: the C accelerator is a pure
   speed-up with a complete in-gem fallback, so zeo declines the build
   and `Racc_Runtime_Type` answers `"ruby"`
-  (`tests/divergences/racc_declines_the_c_accelerator.rb`).
+  (`test/divergences/racc_declines_the_c_accelerator.rb`).
 - **`Readline` IS `Reline`** -- ruby's own arrangement since 3.3, stated
   directly instead of probing for a C readline that cannot exist here.
 - **`nkf` implements the kconv subset** over the runtime's own encoding
   engine, not all of NKF's option surface.
 - **The YAML emitter wraps long lines differently from libyaml**
-  (`tests/divergences/yaml_a_narrow_line_width_folds_differently.rb`);
+  (`test/divergences/yaml_a_narrow_line_width_folds_differently.rb`);
   the parsed VALUES round-trip identically.
 - **JSON error messages are lossy about invalid bytes**
-  (`tests/divergences/json_message_bytes_are_lossy.rb`), and parser
+  (`test/divergences/json_message_bytes_are_lossy.rb`), and parser
   nesting is bounded by an explicit limit rather than the machine stack
-  (`tests/divergences/json_nesting_is_bounded_by_the_stack.rb`).
+  (`test/divergences/json_nesting_is_bounded_by_the_stack.rb`).
 - **The native StringIO copies its buffer** (a `Vec`, not the caller's
   String), so mutating the original after `StringIO.new(s)` is invisible
   to it; the pure-Ruby port (`crates/zeo-rt/gems/stringio/`) shares the
