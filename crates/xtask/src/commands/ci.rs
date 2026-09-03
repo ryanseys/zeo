@@ -13,6 +13,10 @@ use std::path::Path;
 use crate::exec::{self, Capture};
 use crate::{Error, root};
 
+/// Where the feature-set checks build, so they never overwrite the `zeo` and
+/// `libzeo.a` the test suites spawn and link against.
+const FEATURE_TARGET_DIR: (&str, &str) = ("--target-dir", "target/ci-features");
+
 const USAGE: &str = "\
 usage: cargo xtask ci [--list] [--only <step>]...
 
@@ -127,20 +131,27 @@ fn steps() -> Result<Vec<Step>, Error> {
         // `check`, not `build`: the question is whether the cfgs are right,
         // not whether an artifact comes out. The empty set is the strictest
         // configuration and the docs.rs set is the one that ships.
+        //
+        // Each of these builds a DIFFERENT `zeo` and `libzeo.a` from the same
+        // sources, so they get a target directory of their own. Sharing the
+        // default one leaves the last feature set's binary sitting where the
+        // suites spawn `target/debug/zeo`, and a corpus run right after this
+        // command then measures a compiler nobody asked for. That cost three
+        // hours once: the ze0 roads timed out against a `pure-stdlib` zeo.
         step(
             "features-bare",
             "zeo-rt compiles with every optional feature off",
-            &["cargo", "check", "-p", "zeo-rt", "--no-default-features"],
+            &["cargo", "check", "-p", "zeo-rt", "--no-default-features", FEATURE_TARGET_DIR.0, FEATURE_TARGET_DIR.1],
         ),
         step(
             "features-capi",
             "the C API compiles on its own",
-            &["cargo", "check", "-p", "zeo-capi"],
+            &["cargo", "check", "-p", "zeo-capi", FEATURE_TARGET_DIR.0, FEATURE_TARGET_DIR.1],
         ),
         step(
             "features-compiler",
             "the compiler compiles with every optional feature off",
-            &["cargo", "check", "-p", "zeo", "--no-default-features"],
+            &["cargo", "check", "-p", "zeo", "--no-default-features", FEATURE_TARGET_DIR.0, FEATURE_TARGET_DIR.1],
         ),
         step(
             "features-docsrs",
@@ -153,6 +164,8 @@ fn steps() -> Result<Vec<Step>, Error> {
                 "--no-default-features",
                 "--features",
                 &docs_rs,
+                FEATURE_TARGET_DIR.0,
+                FEATURE_TARGET_DIR.1,
             ],
         ),
         step(
@@ -166,6 +179,8 @@ fn steps() -> Result<Vec<Step>, Error> {
                 "--no-default-features",
                 "--features",
                 "pure-stdlib",
+                FEATURE_TARGET_DIR.0,
+                FEATURE_TARGET_DIR.1,
             ],
         ),
     ])
