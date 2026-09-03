@@ -1,5 +1,9 @@
 # readline -- line input off a redirected source (the deterministic leg: no
 # terminal, no rendering), the HISTORY object, and the attribute surface.
+#
+# reline's dialog scope holds the line editor that holds the scope. Loading
+# readline builds that ring, and nothing here breaks it.
+#@ gccheck: cycle leak: 9 objects (Reline::CursorPos x3, Reline::LineEditor::Dialog x3, Reline::LineEditor::DialogProcScope x3)
 require "readline"
 require "tmpdir"
 

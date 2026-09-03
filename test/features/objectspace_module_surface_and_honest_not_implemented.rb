@@ -1,3 +1,7 @@
+# The collector is OFF here on purpose: `each_object` over instances is
+# declined only because the allocation registry is not armed, and `ZEO_GC=1`
+# -- which the harness sets on every other program -- arms it.
+#@ zeo-env: ZEO_GC=0
 p ObjectSpace.count_objects.class
 p ObjectSpace.garbage_collect
 begin

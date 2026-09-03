@@ -88,6 +88,11 @@ pub fn split_gccheck(err: &[u8]) -> (Vec<u8>, String) {
     for line in text.split_inclusive('\n') {
         if line.starts_with("cycle leak: ") {
             census = line.trim_end().to_string();
+        } else if line.starts_with("ZEO_RT_GCCHECK: ") {
+            // The census channel's other line: the collector was off, so
+            // there was nothing to count. A program turns it off with
+            // `#@ zeo-env: ZEO_GC=0` when the collector would change what it
+            // is testing. No census is the same answer as no cycle.
         } else {
             kept.push_str(line);
         }

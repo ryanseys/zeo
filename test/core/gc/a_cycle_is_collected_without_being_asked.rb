@@ -8,7 +8,7 @@
 # 
 # The golden's whole subject: it allocates rings until the trigger fires. The residue is the last generation, still live at exit.
 #@ zeo-env: ZEO_GC=1
-#@ gccheck: cycle leak: 21474 objects (Node x21474)
+#@ gccheck: cycle leak: 1002 objects (Node x1002)
 # The collector runs on its own once the live registry has grown enough --
 # nothing here calls `GC.start`. Before this, a program that never asked
 # collected nothing, however much garbage it built.

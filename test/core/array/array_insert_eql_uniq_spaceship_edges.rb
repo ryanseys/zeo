@@ -1,5 +1,9 @@
 # insert past the end pads with nil; eql?/uniq are class-strict (1 != 1.0);
 # <=> of an array with itself (incl. a cycle) is 0 without deadlock.
+#
+# The self-comparison needs a self-referential array, and it is still one
+# at exit -- the program never breaks the ring.
+#@ gccheck: cycle leak: 1 objects (Array x1)
 
 b = [1, 2, 3]
 b.insert(5, 8)

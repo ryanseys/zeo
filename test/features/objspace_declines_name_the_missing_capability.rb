@@ -1,6 +1,14 @@
 # The introspection half that zeo declines: each error names the capability
 # it would need, so a caller learns why rather than reading a fabricated
-# zero. `tests/objspace_introspection.rb` covers the half that does answer.
+# zero. `objectspace_module_surface_and_honest_not_implemented.rb` covers the
+# half that does answer.
+#
+# The collector is OFF here on purpose. Two of these calls are declined only
+# because the allocation registry is not armed, and the registry is what
+# `ZEO_GC=1` arms -- which the harness sets on every other program. Without
+# this line the two would answer, and the program would stop testing what its
+# name says.
+#@ zeo-env: ZEO_GC=0
 
 require "objspace"
 # Each call carries the arguments CRuby's own signature accepts, so

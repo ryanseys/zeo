@@ -1,6 +1,9 @@
 # Marshal round-trips the value tower (primitives, bignum, array, hash,
 # Rational, shared refs and cycles) and writes CRuby's exact wire bytes for
 # symbols (with ;-symlinks) and floats.
+#
+# The cycle it round-trips, and the copy that came back: both alive at exit.
+#@ gccheck: cycle leak: 2 objects (Array x2)
 
 def rt(x) = Marshal.load(Marshal.dump(x))
 p rt(42)

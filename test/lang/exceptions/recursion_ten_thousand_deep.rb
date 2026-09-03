@@ -4,6 +4,9 @@
 # (`zeo_rt::exec::MAIN_STACK_SIZE`), which the darwin link line sizes and a
 # spawned thread carries elsewhere. `infinite_recursion_aborts.rb` pins the
 # other side: past the stack, `SystemStackError` is rescuable.
+#
+# The lambda recurses by naming itself, so it holds the cell that holds it.
+#@ gccheck: cycle leak: 2 objects (Proc x1, cell x1)
 
 def down(n) = n.zero? ? 0 : 1 + down(n - 1)
 p down(10_000)
