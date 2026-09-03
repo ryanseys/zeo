@@ -39,6 +39,13 @@ impl Bounds {
         deadline: Duration::from_secs(300),
         max_rss: 4096 << 20,
     };
+    /// A gap is green when it does NOT match, so a hang answers the question
+    /// as well as a crash does -- and the whole suite waits for it. Half a
+    /// minute is long enough for the slowest gap to reach its wrong answer.
+    pub const GAP: Bounds = Bounds {
+        deadline: Duration::from_secs(30),
+        ..Bounds::ORDINARY
+    };
 }
 
 /// The address-space ceiling, a DIFFERENT quantity from the RSS cap: Darwin

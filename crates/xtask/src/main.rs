@@ -123,6 +123,7 @@ commands:
   dist            assemble the relocatable distribution
   gem             build the platform gem from a dist staging
   linux           run the suites in the linux container
+  promote-gap     move a gap that started matching ruby into a topic directory
   stage-crate     stage the artifacts the published crate ships
 
 `cargo xtask <command> --help` describes one command.
@@ -148,6 +149,7 @@ fn main() -> std::process::ExitCode {
         "dist" => commands::dist::run(rest),
         "gem" => commands::gem::run(rest),
         "linux" => commands::linux::run(rest),
+        "promote-gap" => commands::promote_gap::run(rest),
         "stage-crate" => commands::stage_crate::run(rest),
         other => Err(Error::new(format!("unknown command {other:?}\n\n{USAGE}"))),
     };

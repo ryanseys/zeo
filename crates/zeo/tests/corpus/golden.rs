@@ -10,7 +10,7 @@ use crate::case::{Answer, Case, Platform};
 use crate::compare::{mismatch, norm_answer, split_gccheck};
 use crate::legs::{Leg, zeo_command};
 use crate::run::{Bounds, run_bounded};
-use crate::suites::{RUN_CWD, Suite};
+use crate::suites::{RUN_CWD, Suite, Verdict};
 
 pub fn run_cwd() -> PathBuf {
     crate::common::workspace_root().join(RUN_CWD)
@@ -41,10 +41,10 @@ fn run_once(
         crate::common::runtime_archive()?;
     }
     let mut cmd = zeo_command(leg, case, rb, suite, cwd)?;
-    let bounds = if suite.whole_graph {
-        Bounds::WHOLE_GRAPH
-    } else {
-        Bounds::ORDINARY
+    let bounds = match (suite.whole_graph, suite.verdict) {
+        (true, _) => Bounds::WHOLE_GRAPH,
+        (false, Verdict::Xfail) => Bounds::GAP,
+        (false, Verdict::Match) => Bounds::ORDINARY,
     };
     let stdin = stdin_of(case, rb)?;
     run_bounded(&mut cmd, stdin.as_deref(), "zeo", bounds)
@@ -91,21 +91,21 @@ pub fn run(rb: &Path, suite: &Suite, leg: Leg) -> datatest_stable::Result<()> {
     // ordinary comparison and hold it to the `#@ gccheck` directive on its
     // own: a cycle alive at exit is not a defect (`a << a` is supposed to
     // build one), so this gates CHANGE, never zero.
+    let mut census_changed = None;
     let actual = match actual {
         Ok(mut a) => {
             let (err, census) = split_gccheck(&a.stderr);
             a.stderr = err;
             let want = case.directives.gccheck.as_deref().unwrap_or("").trim_end();
             if census != want {
-                return Err(format!(
+                census_changed = Some(format!(
                     "{}: the exit cycle census changed.\n  expected: {}\n  actual:   {}\n\
                      Record it as `#@ gccheck: <line>` at the top of the program (say which cycle it builds), \
                      or find what stopped the collector seeing it.",
                     rb.display(),
                     if want.is_empty() { "<no cycle>" } else { want },
                     if census.is_empty() { "<no cycle>" } else { &census },
-                )
-                .into());
+                ));
             }
             Ok(a)
         }
@@ -113,15 +113,31 @@ pub fn run(rb: &Path, suite: &Suite, leg: Leg) -> datatest_stable::Result<()> {
     };
 
     let expected = norm_answer(expected, rb, &cwd);
-    match &actual {
-        Ok(a) if norm_answer(a, rb, &cwd) == expected => Ok(()),
-        Ok(a) => Err(mismatch(
-            rb,
-            "output differs from the recording",
-            &expected,
-            &norm_answer(a, rb, &cwd),
-        )
+    let agrees = census_changed.is_none()
+        && matches!(&actual, Ok(a) if norm_answer(a, rb, &cwd) == expected);
+
+    // A gap's verdict is inverted: it is filed BECAUSE it differs, so the
+    // failure worth reporting is that it stopped differing.
+    match (suite.verdict, agrees) {
+        (Verdict::Match, true) | (Verdict::Xfail, false) => Ok(()),
+        (Verdict::Match, false) => Err(match (census_changed, &actual) {
+            (Some(census), _) => census,
+            (None, Ok(a)) => mismatch(
+                rb,
+                "output differs from the recording",
+                &expected,
+                &norm_answer(a, rb, &cwd),
+            ),
+            (None, Err(e)) => format!("{}: zeo failed to run it: {e}", rb.display()),
+        }
         .into()),
-        Err(e) => Err(format!("{}: zeo failed to run it: {e}", rb.display()).into()),
+        (Verdict::Xfail, true) => {
+            let stem = rb.file_stem().unwrap_or_default().to_string_lossy();
+            Err(format!(
+                "GAP FIXED: {stem} now matches ruby. \
+                 Promote it: `cargo xtask promote-gap {stem} <topic/area>`"
+            )
+            .into())
+        }
     }
 }

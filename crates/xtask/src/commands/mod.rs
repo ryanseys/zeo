@@ -7,4 +7,5 @@ pub mod deps;
 pub mod dist;
 pub mod gem;
 pub mod linux;
+pub mod promote_gap;
 pub mod stage_crate;

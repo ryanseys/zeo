@@ -6,7 +6,7 @@
   "erb": "the real `erb/escape` extension loads, then the process dies with SIGSEGV at the first `ERB::Escape.html_escape` call",
   "fiddle": "`Init_fiddle` calls `rb_memory_view_register`, one of the 13 stubbed `rb_memory_view_*` entries (NotImplementedError)",
   "openssl": "`Init_openssl` ends in `uninitialized constant Object::Digest` -- its `rb_require(\"digest\")` does not reach zeo's digest",
-  "prism": "the gem's Ruby half reaches prism/ffi.rb and raises `uninitialized constant Prism::LibRubyParser::PrismString`, though zeo builds and loads the C extension (todo/a_store_prism_gem_takes_the_ffi_road.rb)",
+  "prism": "the gem's Ruby half reaches prism/ffi.rb and raises `uninitialized constant Prism::LibRubyParser::PrismString`, though zeo builds and loads the C extension (test/gaps/a_store_prism_gem_takes_the_ffi_road.rb)",
   "psych": "the store gem's psych.rb dies in `Psych.config` with `uninitialized constant Psych::Config` -- a constant defined inside `class << self` behind `if defined?(Ractor)` on the store road (a loader/compiler defect, not the C-API); `Date::VERSION` is also initialized twice",
   "rbs": "every answer matches ruby, then the process dies with SIGSEGV at exit -- teardown of the extension's TypedData objects",
   "stringio": "`zeo cannot hand a Integer to a C extension yet: it has no established RUBY_T_* tag` (NotImplementedError) at the first StringIO call",

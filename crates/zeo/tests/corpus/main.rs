@@ -4,9 +4,8 @@
 //!
 //! ONE nextest case per program, and one compile. The corpus is not re-run
 //! under variations: the ownership ledger and the cycle census ride on that
-//! single run (`legs.rs`), and the two roads that need a second process are
-//! narrow -- `test/aot/` takes a real link, and a `#@ pkggap` program takes
-//! the packaged road.
+//! single run (`legs.rs`), and the one road that needs a second process is
+//! narrow -- `test/aot/` takes a real link.
 //!
 //! A program's contract is its DIRECTORY (`suites.rs`): `test/lang`,
 //! `test/core`, `test/stdlib` and `test/compiler` must match ruby; `errors`,
@@ -14,7 +13,8 @@
 //! `milestones` splice whole require graphs; `ze0` takes three roads.
 //! Anything deeper than a suite's depth is a fixture, not a test.
 //!
-//! A program zeo does NOT get right lives in `todo/`, which nothing runs.
+//! A program zeo does NOT get right lives in `test/gaps/`, whose verdict is
+//! inverted: it must differ from ruby, and a match is the failure.
 //!
 //! Case names are `<suite>::<path>`. The one exception is `aot_link::`, the
 //! curated link tier over the same `test/aot/` files.
@@ -85,6 +85,10 @@ fn ze0(rb: &Path) -> datatest_stable::Result<()> {
     ze0::run(rb)
 }
 
+fn gaps(rb: &Path) -> datatest_stable::Result<()> {
+    golden::run(rb, &suites::GAPS, Leg::Jit)
+}
+
 datatest_stable::harness! {
     { test = lang, root = "../../test/lang", pattern = r"^[^/]+/[^/]+\.rb$" },
     { test = core, root = "../../test/core", pattern = r"^[^/]+/[^/]+\.rb$" },
@@ -97,4 +101,5 @@ datatest_stable::harness! {
     { test = divergences, root = "../../test/divergences", pattern = r"^[^/]+\.rb$" },
     { test = milestones, root = "../../test/milestones", pattern = r"^[^/]+\.rb$" },
     { test = ze0, root = "../../test/ze0", pattern = r"^[^/]+\.rb$" },
+    { test = gaps, root = "../../test/gaps", pattern = r"^[^/]+\.rb$" },
 }

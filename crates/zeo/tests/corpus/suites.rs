@@ -18,6 +18,14 @@ pub enum Recorder {
     Zeo,
 }
 
+/// What a run of the program must do against its trailer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    Match,
+    /// A gap: the run must NOT match yet, and a match fails with "promote".
+    Xfail,
+}
+
 /// How far below the root a program sits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Depth {
@@ -35,6 +43,7 @@ pub struct Suite {
     pub root: &'static str,
     pub depth: Depth,
     pub recorder: Recorder,
+    pub verdict: Verdict,
     /// Every case splices a whole require graph: minutes and gigabytes, so
     /// the bounds are raised and the zeo side gets the oracle store's rspec
     /// on its load path.
@@ -47,6 +56,7 @@ const fn suite(name: &'static str, root: &'static str, depth: Depth) -> Suite {
         root,
         depth,
         recorder: Recorder::Ruby,
+        verdict: Verdict::Match,
         whole_graph: false,
     }
 }
@@ -79,12 +89,14 @@ pub const MILESTONES: Suite = Suite {
     ..suite("milestones", "test/milestones", Depth::One)
 };
 pub const ZE0: Suite = suite("ze0", "test/ze0", Depth::One);
-/// Programs zeo does not get right yet. NOTHING runs these -- the harness
-/// has no entry for the suite. It is in this table so `cargo xtask bless`
-/// can record ruby's answer for one and so corpus hygiene still reads them,
-/// which is what makes a file here ready to move into a topic directory the
-/// day it starts matching.
-pub const TODO: Suite = suite("todo", "todo", Depth::One);
+/// Programs zeo does not get right yet. These run like any other case, but
+/// the verdict is inverted: a gap that still differs from ruby is green, and
+/// one that MATCHES is red, so the day a gap starts working the suite says
+/// so and `cargo xtask promote-gap` moves it to a topic directory.
+pub const GAPS: Suite = Suite {
+    verdict: Verdict::Xfail,
+    ..suite("gaps", "test/gaps", Depth::One)
+};
 
 pub const SUITES: &[Suite] = &[
     LANG,
@@ -98,7 +110,7 @@ pub const SUITES: &[Suite] = &[
     DIVERGENCES,
     MILESTONES,
     ZE0,
-    TODO,
+    GAPS,
 ];
 
 /// The directory every program runs in, relative to the repo root. A
