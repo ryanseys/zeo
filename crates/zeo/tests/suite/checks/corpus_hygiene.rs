@@ -57,7 +57,7 @@ fn no_program_reads_its_own_data_section() {
             program_text(p)
                 .lines()
                 .filter(|l| !l.trim_start().starts_with('#'))
-                .any(|l| names_data(l))
+                .any(names_data)
         })
         .map(|(p, _)| p.display().to_string())
         .collect();

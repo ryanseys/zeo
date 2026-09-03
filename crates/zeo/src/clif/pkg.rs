@@ -378,6 +378,17 @@ pub(crate) fn finish_package(
         })
 }
 
+/// A method as the merged program names it: `(final class, name, class side)`.
+type MethodKey = (u32, String, bool);
+
+/// Per `(package, unit)`, the methods that unit installs when it runs:
+/// `(final class, name, class side, dispatch symbol)`.
+type UnitInstalls = std::collections::HashMap<(u32, u32), Vec<(u32, String, bool, String)>>;
+
+/// Per method, every `(package, local class, dispatch symbol)` that defines
+/// it statically -- more than one is the clash this pass resolves.
+type StaticDefiners = std::collections::HashMap<MethodKey, Vec<(u32, u32, String)>>;
+
 fn m_meta_row(r: &MetaRowSpec) -> MMetaRow {
     MMetaRow {
         class: r.class,
@@ -470,9 +481,8 @@ pub(crate) fn merge_rows(
     // decides, exactly ruby's install-where-it-stands. The registration
     // pass already made every such name runtime-patched, so no host site
     // folds against either body.
-    let mut clash: std::collections::HashMap<(u32, String, bool), u32> = Default::default();
-    let mut unit_installs: std::collections::HashMap<(u32, u32), Vec<(u32, String, bool, String)>> =
-        Default::default();
+    let mut clash: std::collections::HashMap<MethodKey, u32> = Default::default();
+    let mut unit_installs: UnitInstalls = Default::default();
     {
         let mapped = |pi: usize, m: &Manifest, id: u32| -> Option<u32> {
             if id < m.first_class_id {
@@ -487,8 +497,7 @@ pub(crate) fn merge_rows(
         };
         // (final class, name, class side) -> every (package, local class,
         // dispatch symbol) that statically defines it.
-        let mut seen: std::collections::HashMap<(u32, String, bool), Vec<(u32, u32, String)>> =
-            Default::default();
+        let mut seen: StaticDefiners = Default::default();
         for (pi, m) in manifests.iter().enumerate() {
             for r in &m.vm {
                 if let Some(fc) = mapped(pi, m, r.class) {

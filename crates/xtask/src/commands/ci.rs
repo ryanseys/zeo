@@ -89,10 +89,15 @@ fn steps() -> Result<Vec<Step>, Error> {
             "permissive licenses only, and no yanked or advisory-flagged crate",
             &["cargo", "deny", "check"],
         ),
+        // `cargo-machete`, not `cargo machete`: spawned rather than run from
+        // a shell, the subcommand form reaches the tool with "machete" as an
+        // argument, which it reads as a DIRECTORY to analyze. It then reports
+        // success over a directory that does not exist. The binary is on PATH
+        // wherever the subcommand is.
         step(
             "machete",
             "no unused dependency ships in a .crate",
-            &["cargo", "machete"],
+            &["cargo-machete"],
         ),
         step(
             "cext-hunks",
@@ -237,7 +242,7 @@ fn tools(dir: &Path) {
         vec!["cargo", "clippy", "--version"],
         vec!["cargo", "nextest", "--version"],
         vec!["cargo", "deny", "--version"],
-        vec!["cargo", "machete", "--version"],
+        vec!["cargo-machete", "--version"],
     ] {
         let name = argv.join(" ");
         match exec::run(&argv, dir, &[], Capture::Both) {

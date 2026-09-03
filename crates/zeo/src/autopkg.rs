@@ -211,6 +211,11 @@ pub(crate) fn candidates(hir: &crate::hir::Hir) -> Vec<(Candidate, Vec<String>, 
 }
 
 /// One consult of the machine cache for `cand`.
+///
+/// `Hit` is much the larger variant, and that is fine here: a `Consult` is
+/// produced, matched and dropped one at a time -- none is ever stored or
+/// collected, so the unused bytes of a `Miss` never accumulate.
+#[allow(clippy::large_enum_variant)]
 enum Consult {
     /// A valid artifact, its parsed manifest, and the source files its
     /// cache entry vouches for (re-read, for the program manifest).
@@ -368,8 +373,7 @@ pub(crate) fn consult_new(
     // dependency the cache cannot answer drops the hit; the drop shrinks
     // the covered set, so this runs to a fixpoint.
     let mut chased: std::collections::HashSet<String> = std::collections::HashSet::new();
-    loop {
-        let Some((i, f)) = hits.iter().enumerate().find_map(|(i, h)| {
+    while let Some((i, f)) = hits.iter().enumerate().find_map(|(i, h)| {
             h.required
                 .iter()
                 .chain(&h.host_features)
@@ -377,9 +381,7 @@ pub(crate) fn consult_new(
                 // host binary itself; its gem never packages (`ext_backed`).
                 .find(|f| !covered.contains(*f) && !crate::lower::features::zeo_provides(f))
                 .map(|f| (i, f.clone()))
-        }) else {
-            break;
-        };
+    }) {
         if chased.insert(f.clone())
             && let Some(cand) = bundled_provider(&f)
             && let Consult::Hit {

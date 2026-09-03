@@ -9,12 +9,12 @@
 //!   bin/zeo                    ->   libexec/zeo
 //!   share/zeo/**               ->   share/zeo/**        (verbatim)
 //!   share/doc/zeo/README.md    ->   README.md
-//!   --                         ->   exe/zeo             (the Ruby launcher)
-//!   --                         ->   zeo.gemspec
+//!   gem/exe/zeo                ->   exe/zeo             (the Ruby launcher)
+//!   gem/zeo.gemspec            ->   zeo.gemspec
 //! ```
 //!
 //! `bin/` becomes `libexec/` because RubyGems binstubs an executable by
-//! `load`ing it as Ruby, and zeo is a native binary. `exe/zeo` is the Ruby
+//! `load`ing it as Ruby, and zeo is a native binary. `gem/exe/zeo` is the Ruby
 //! that gets loaded, and it `exec`s the real one. Both sit two levels above
 //! `share/zeo`, so `zeo::home`'s executable-relative probe finds the payload
 //! in the gem exactly as it does in the tarball -- no gem-aware code in the
@@ -68,8 +68,8 @@ pub fn run(args: &[String]) -> Result<(), Error> {
 
     copy_tree(&dist.join("share/zeo"), &stage.join("share/zeo"))?;
     copy(&dist.join("bin/zeo"), &stage.join("libexec/zeo"))?;
-    copy(&root_join("exe/zeo"), &stage.join("exe/zeo"))?;
-    copy(&root_join("zeo.gemspec"), &stage.join("zeo.gemspec"))?;
+    copy(&root_join("gem/exe/zeo"), &stage.join("exe/zeo"))?;
+    copy(&root_join("gem/zeo.gemspec"), &stage.join("zeo.gemspec"))?;
     for name in DOCS {
         let staged = dist.join("share/doc/zeo").join(name);
         let src = if staged.is_file() {

@@ -26,6 +26,10 @@ fn checked(call: &str, err: c_int) {
     }
 }
 
+/// # Safety
+///
+/// `lock` must point to a `pthread_mutex_t` the caller owns and has not
+/// yet initialised.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_native_mutex_initialize(lock: *mut pthread_mutex_t) {
     checked("pthread_mutex_init", unsafe {
@@ -33,6 +37,10 @@ pub unsafe extern "C-unwind" fn rb_native_mutex_initialize(lock: *mut pthread_mu
     });
 }
 
+/// # Safety
+///
+/// `lock` must point to a `pthread_mutex_t` the caller owns, initialised and
+/// unlocked, and does not use again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_native_mutex_destroy(lock: *mut pthread_mutex_t) {
     checked("pthread_mutex_destroy", unsafe {
@@ -40,6 +48,9 @@ pub unsafe extern "C-unwind" fn rb_native_mutex_destroy(lock: *mut pthread_mutex
     });
 }
 
+/// # Safety
+///
+/// `lock` must point to a `pthread_mutex_t` the caller owns and has initialised.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_native_mutex_lock(lock: *mut pthread_mutex_t) {
     checked("pthread_mutex_lock", unsafe {
@@ -47,6 +58,10 @@ pub unsafe extern "C-unwind" fn rb_native_mutex_lock(lock: *mut pthread_mutex_t)
     });
 }
 
+/// # Safety
+///
+/// `lock` must point to a `pthread_mutex_t` the caller owns, has initialised, and
+/// currently holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_native_mutex_unlock(lock: *mut pthread_mutex_t) {
     checked("pthread_mutex_unlock", unsafe {
@@ -55,6 +70,9 @@ pub unsafe extern "C-unwind" fn rb_native_mutex_unlock(lock: *mut pthread_mutex_
 }
 
 /// `EBUSY` is the answer "held by someone else", not a failure.
+/// # Safety
+///
+/// `lock` must point to a `pthread_mutex_t` the caller owns and has initialised.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_native_mutex_trylock(lock: *mut pthread_mutex_t) -> c_int {
     let err = unsafe { libc::pthread_mutex_trylock(lock) };
@@ -64,21 +82,36 @@ pub unsafe extern "C-unwind" fn rb_native_mutex_trylock(lock: *mut pthread_mutex
     err
 }
 
+/// # Safety
+///
+/// `lock` must point to a `pthread_mutex_t` the caller owns and has not
+/// yet initialised.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_nativethread_lock_initialize(lock: *mut pthread_mutex_t) {
     unsafe { rb_native_mutex_initialize(lock) }
 }
 
+/// # Safety
+///
+/// `lock` must point to a `pthread_mutex_t` the caller owns, initialised and
+/// unlocked, and does not use again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_nativethread_lock_destroy(lock: *mut pthread_mutex_t) {
     unsafe { rb_native_mutex_destroy(lock) }
 }
 
+/// # Safety
+///
+/// `lock` must point to a `pthread_mutex_t` the caller owns and has initialised.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_nativethread_lock_lock(lock: *mut pthread_mutex_t) {
     unsafe { rb_native_mutex_lock(lock) }
 }
 
+/// # Safety
+///
+/// `lock` must point to a `pthread_mutex_t` the caller owns, has initialised, and
+/// currently holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_nativethread_lock_unlock(lock: *mut pthread_mutex_t) {
     unsafe { rb_native_mutex_unlock(lock) }
@@ -87,6 +120,10 @@ pub unsafe extern "C-unwind" fn rb_nativethread_lock_unlock(lock: *mut pthread_m
 /// On Linux the condition variable is bound to `CLOCK_MONOTONIC`, so a
 /// timed wait is not moved by a wall-clock step; Darwin has a relative-time
 /// wait instead ([`rb_native_cond_timedwait`]).
+/// # Safety
+///
+/// `cond` must point to a `pthread_cond_t` the caller owns and has not
+/// yet initialised.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_native_cond_initialize(cond: *mut pthread_cond_t) {
     #[cfg(target_os = "linux")]
@@ -107,6 +144,10 @@ pub unsafe extern "C-unwind" fn rb_native_cond_initialize(cond: *mut pthread_con
     checked("pthread_cond_init", err);
 }
 
+/// # Safety
+///
+/// `cond` must point to a `pthread_cond_t` the caller owns, initialised and with no
+/// thread waiting on it, and does not use again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_native_cond_destroy(cond: *mut pthread_cond_t) {
     checked("pthread_cond_destroy", unsafe {
@@ -114,6 +155,9 @@ pub unsafe extern "C-unwind" fn rb_native_cond_destroy(cond: *mut pthread_cond_t
     });
 }
 
+/// # Safety
+///
+/// `cond` must point to a `pthread_cond_t` the caller owns and has initialised.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_native_cond_signal(cond: *mut pthread_cond_t) {
     checked("pthread_cond_signal", unsafe {
@@ -121,6 +165,9 @@ pub unsafe extern "C-unwind" fn rb_native_cond_signal(cond: *mut pthread_cond_t)
     });
 }
 
+/// # Safety
+///
+/// `cond` must point to a `pthread_cond_t` the caller owns and has initialised.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_native_cond_broadcast(cond: *mut pthread_cond_t) {
     checked("pthread_cond_broadcast", unsafe {
@@ -128,6 +175,10 @@ pub unsafe extern "C-unwind" fn rb_native_cond_broadcast(cond: *mut pthread_cond
     });
 }
 
+/// # Safety
+///
+/// `cond` must point to a `pthread_cond_t` the caller owns and has initialised, and
+/// `lock` to a `pthread_mutex_t` the calling thread currently holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_native_cond_wait(
     cond: *mut pthread_cond_t,
@@ -142,6 +193,10 @@ pub unsafe extern "C-unwind" fn rb_native_cond_wait(
 /// Wait at most `msec` milliseconds. A timeout is the requested outcome,
 /// not an error, and the return type has no room to report it -- MRI's
 /// callers re-check their condition.
+/// # Safety
+///
+/// `cond` must point to a `pthread_cond_t` the caller owns and has initialised, and
+/// `lock` to a `pthread_mutex_t` the calling thread currently holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_native_cond_timedwait(
     cond: *mut pthread_cond_t,
@@ -193,6 +248,10 @@ unsafe fn timedwait(
     unsafe { libc::pthread_cond_timedwait(cond, mutex, &deadline) }
 }
 
+/// # Safety
+///
+/// Takes no pointer and is safe to call from any thread; it is `unsafe`
+/// only because it is a C ABI entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn rb_nativethread_self() -> pthread_t {
     unsafe { libc::pthread_self() }
