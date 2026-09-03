@@ -122,7 +122,7 @@ GEM
     rss (0.3.3)
       rexml
     ruby2_keywords (0.0.5)
-    rubygems-update (4.0.19)
+    rubygems-update (4.0.20)
     securerandom (0.4.1)
     shellwords (0.2.2)
     singleton (0.3.0)
@@ -227,7 +227,7 @@ DEPENDENCIES
   rspec (= 3.13.2)
   rss (= 0.3.3)
   ruby2_keywords (= 0.0.5)
-  rubygems-update (= 4.0.19)
+  rubygems-update (= 4.0.20)
   securerandom (= 0.4.1)
   shellwords (= 0.2.2)
   singleton (= 0.3.0)
@@ -323,7 +323,7 @@ CHECKSUMS
   rspec-support (3.13.7) sha256=0640e5570872aafefd79867901deeeeb40b0c9875a36b983d85f54fb7381c47c
   rss (0.3.3) sha256=37ef1ec4d691d67edbe92159079a4e89a0965e6a6b32246009ae3d734d12d1ab
   ruby2_keywords (0.0.5) sha256=ffd13740c573b7301cf7a2e61fc857b2a8e3d3aff32545d6f8300d8bae10e3ef
-  rubygems-update (4.0.19) sha256=750c931f8113e459f93ba7b29574593a29fc5350f12048df7a5ca83a512d5326
+  rubygems-update (4.0.20) sha256=829da7b735d04b2125ec86700134f1b035e0df888512e1513fadfa703519f7d5
   securerandom (0.4.1) sha256=cc5193d414a4341b6e225f0cb4446aceca8e50d5e1888743fac16987638ea0b1
   shellwords (0.2.2) sha256=b8695a791de2f71472de5abdc3f4332f6535a4177f55d8f99e7e44266cd32f94
   singleton (0.3.0) sha256=83ea1bca5f4aa34d00305ab842a7862ea5a8a11c73d362cb52379d94e9615778
@@ -344,4 +344,4 @@ CHECKSUMS
   zlib (3.2.3) sha256=5bd316698b32f31a64ab910a8b6c282442ca1626a81bbd6a1674e8522e319c20
 
 BUNDLED WITH
-  4.0.16
+  4.0.20

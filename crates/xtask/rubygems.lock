@@ -11,6 +11,6 @@
 # together with the `rubygems-update` line in `Gemfile.lock`.
 
 repo = https://github.com/rubygems/rubygems
-tag = v4.0.19
-rev = 2d0e3df43a2fa92ea654fdfacef51c295dbde937
-version = 4.0.19
+tag = v4.0.20
+rev = 7f2502dc32b4e10a099c398ad93d2d2534873205
+version = 4.0.20
