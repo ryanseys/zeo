@@ -2,10 +2,10 @@
 //! generated tables and the object layout together.
 //!
 //! ```text
-//! cext hunks [--check]
-//! cext api [--check]
-//! cext forward [--check|--reverify]
-//! cext layout [--check]
+//! check-c-headers hunks [--check]
+//! check-c-headers api [--check]
+//! check-c-headers forward [--check|--reverify]
+//! check-c-headers layout [--check]
 //! ```
 //!
 //! zeo is source-compatible with MRI and ABI-incompatible with it: a gem's

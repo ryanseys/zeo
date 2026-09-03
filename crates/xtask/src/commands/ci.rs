@@ -106,22 +106,22 @@ fn steps() -> Result<Vec<Step>, Error> {
         step(
             "cext-hunks",
             "zeo's edits still apply to the pinned MRI headers",
-            &["cargo", "xtask", "cext", "hunks", "--check"],
+            &["cargo", "xtask", "check-c-headers", "hunks", "--check"],
         ),
         step(
             "cext-api",
             "the generated C API table matches those headers",
-            &["cargo", "xtask", "cext", "api", "--check"],
+            &["cargo", "xtask", "check-c-headers", "api", "--check"],
         ),
         step(
             "cext-forward",
             "the forwarding shims match those headers",
-            &["cargo", "xtask", "cext", "forward", "--check"],
+            &["cargo", "xtask", "check-c-headers", "forward", "--check"],
         ),
         step(
             "cext-layout",
             "the measured object layout matches those headers",
-            &["cargo", "xtask", "cext", "layout", "--check"],
+            &["cargo", "xtask", "check-c-headers", "layout", "--check"],
         ),
         step(
             "doctests",
