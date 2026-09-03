@@ -270,6 +270,7 @@ pub(super) fn parse_manifest(
         roots,
         version: spec.version,
         provenance,
+        gemspec: Some(manifest_path),
     })
 }
 
@@ -290,6 +291,7 @@ fn bundled_library(pkg_dir: &Path, provenance: GemProvenance) -> PResult<Gem> {
         roots: vec![lib],
         version: None,
         provenance,
+        gemspec: None,
     })
 }
 

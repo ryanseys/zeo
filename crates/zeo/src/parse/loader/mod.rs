@@ -96,6 +96,14 @@ pub(super) struct Gem {
     /// Where this gem came from -- what an ambiguity warning names, and what
     /// separates zeo's own stdlib tier from caller-supplied code.
     provenance: GemProvenance,
+    /// Where this gem's own gemspec is, when it has one.
+    ///
+    /// Kept for one consumer: the default-gem store zeo materializes needs
+    /// the RUNTIME dependency edges, and those live in the gemspec's BODY --
+    /// a `# stub:` line has no room for them. Reading the body is a prism
+    /// parse, so it happens once, when the store is built, rather than for
+    /// every gem on every compile.
+    gemspec: Option<PathBuf>,
 }
 
 /// Which tier provided a gem. Precedence between tiers is positional (the
@@ -120,7 +128,28 @@ impl Gem {
             roots,
             version,
             provenance: GemProvenance::Store,
+            // An external store gem keeps its OWN gemspec, which already
+            // states its edges; only the bundled tier is republished.
+            gemspec: None,
         }
+    }
+
+    /// The RUNTIME dependency edges this gem declares, `(name, requirement)`.
+    /// Reads the gemspec body, so call it once per gem.
+    ///
+    /// A gemspec that will not parse yields NO edges rather than failing the
+    /// compile: the store is a convenience for RubyGems, and a program that
+    /// never loads it should not be refused over one.
+    pub(super) fn dependencies(&self) -> Vec<(String, String)> {
+        let Some(path) = &self.gemspec else {
+            return Vec::new();
+        };
+        zeo_gem::Gemspec::dependencies_of_file(path)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| d.kind == zeo_gem::gemspec::DependencyKind::Runtime)
+            .map(|d| (d.name, d.requirement.to_string()))
+            .collect()
     }
 
     /// How an ambiguity warning names this gem -- `hashie 5.0.0`,

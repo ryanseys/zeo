@@ -464,6 +464,7 @@ impl Loader {
                 name: &pkg.name,
                 version,
                 dir,
+                dependencies: pkg.dependencies(),
                 require_paths: paths,
             });
         }

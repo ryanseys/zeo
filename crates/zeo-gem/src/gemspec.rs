@@ -114,6 +114,21 @@ impl Gemspec {
         parse_body(text)
     }
 
+    /// The `add_*_dependency` calls, which a `# stub:` line cannot carry.
+    ///
+    /// [`Gemspec::parse_file`] stops at the stub header when there is one --
+    /// that is the whole point of a stub, and why RubyGems does not `eval`
+    /// every installed spec at boot. A caller that needs the dependency
+    /// EDGES has to read the body, so it asks for them separately rather
+    /// than making every reader pay for a parse it does not use.
+    pub fn dependencies_of_file(path: &Path) -> Result<Vec<Dependency>> {
+        let bytes = read(path)?;
+        let text = String::from_utf8_lossy(&bytes);
+        parse_body(&text)
+            .map(|spec| spec.dependencies)
+            .map_err(|e| Error::format(format!("{}: {e}", path.display())))
+    }
+
     /// `nokogiri-1.19.4-arm64-darwin`: the name RubyGems gives the gem's own
     /// directory and its `.gemspec` file.
     pub fn full_name(&self) -> String {

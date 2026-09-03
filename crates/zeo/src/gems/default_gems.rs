@@ -37,6 +37,11 @@ pub struct DefaultGem<'a> {
     pub version: &'a str,
     /// The library's own directory, which the store symlinks to.
     pub dir: &'a Path,
+    /// The library's RUNTIME dependencies, `(name, requirement)`. Written
+    /// into the generated gemspec so Bundler's resolver can walk them; a
+    /// store whose specs declare none answers a Gemfile with the direct
+    /// gems alone and no transitive ones.
+    pub dependencies: Vec<(String, String)>,
     /// `require_paths`, relative to `dir`.
     pub require_paths: Vec<String>,
 }
@@ -111,11 +116,37 @@ fn gemspec(gem: &DefaultGem<'_>) -> String {
         \x20 s.require_paths = [{require_paths}]\n\
         \x20 s.summary = \"{name}, bundled with zeo\"\n\
         \x20 s.authors = []\n\
+         {dependencies}\
          end\n",
         name = gem.name,
         version = gem.version,
         require_paths = literals.join(", "),
+        dependencies = dependency_lines(&gem.dependencies),
     )
+}
+
+/// `s.add_runtime_dependency` per edge, in the shape `Gem::Specification`'s
+/// own serializer writes.
+fn dependency_lines(deps: &[(String, String)]) -> String {
+    deps.iter()
+        .map(|(name, requirement)| {
+            let reqs: Vec<String> = requirement
+                .split(", ")
+                .filter(|r| !r.is_empty())
+                .map(|r| format!("{r:?}"))
+                .collect();
+            let reqs = if reqs.is_empty() {
+                vec![format!("{:?}", ">= 0")]
+            } else {
+                reqs
+            };
+            format!(
+                "  s.add_runtime_dependency({:?}, [{}])\n",
+                name,
+                reqs.join(", ")
+            )
+        })
+        .collect()
 }
 
 /// Point `dest` at `src`. A symlink, so the store never duplicates a payload
@@ -148,6 +179,10 @@ fn content_key(store: &Path, gems: &[DefaultGem<'_>]) -> String {
         eat(gem.name.as_bytes());
         eat(gem.version.as_bytes());
         eat(gem.dir.as_os_str().as_encoded_bytes());
+        for (dep, requirement) in &gem.dependencies {
+            eat(dep.as_bytes());
+            eat(requirement.as_bytes());
+        }
         for path in &gem.require_paths {
             eat(path.as_bytes());
         }
@@ -164,8 +199,53 @@ mod tests {
             name,
             version,
             dir,
+            dependencies: Vec::new(),
             require_paths: vec!["lib".to_string()],
         }
+    }
+
+    /// A library's dependency edges reach the generated gemspec. Without
+    /// them RubyGems is told this library depends on nothing, which is what
+    /// made Bundler answer a Gemfile with the direct gems alone.
+    #[test]
+    fn the_generated_gemspec_states_the_runtime_dependencies() {
+        let dir = Path::new("/nowhere");
+        let spec = gemspec(&DefaultGem {
+            name: "minitest",
+            version: "6.0.6",
+            dir,
+            dependencies: vec![
+                ("prism".to_string(), "~> 1.5".to_string()),
+                ("drb".to_string(), ">= 2.0, < 3".to_string()),
+            ],
+            require_paths: vec!["lib".to_string()],
+        });
+        assert!(
+            spec.contains(r#"s.add_runtime_dependency("prism", ["~> 1.5"])"#),
+            "{spec}"
+        );
+        // A multi-clause requirement is one call with two strings, the shape
+        // `Gem::Specification#to_ruby` writes.
+        assert!(
+            spec.contains(r#"s.add_runtime_dependency("drb", [">= 2.0", "< 3"])"#),
+            "{spec}"
+        );
+        // And a library with none says nothing rather than `[]`.
+        assert!(!gemspec(&gem("rake", "13.4.2", dir)).contains("add_runtime_dependency"));
+    }
+
+    /// The store key has to move when an edge does, or a bumped lock reuses
+    /// a store whose specs state the old dependencies.
+    #[test]
+    fn the_store_key_sees_a_changed_dependency() {
+        let dir = Path::new("/nowhere");
+        let plain = gem("minitest", "6.0.6", dir);
+        let mut with_dep = gem("minitest", "6.0.6", dir);
+        with_dep.dependencies = vec![("prism".to_string(), "~> 1.5".to_string())];
+        assert_ne!(
+            content_key(dir, std::slice::from_ref(&plain)),
+            content_key(dir, std::slice::from_ref(&with_dep))
+        );
     }
 
     /// The store directory name and the shim's `ruby_version` are one fact
