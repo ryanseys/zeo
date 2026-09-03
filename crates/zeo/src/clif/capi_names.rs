@@ -234,7 +234,7 @@ pub const CAPI: &[CapiSig] = &[
     },
     CapiSig {
         name: "zeo_rt_const_get_cref",
-        params: &[Ptr, Usize, Ptr, Usize, Ptr, Usize, U8, Ptr],
+        params: &[Ptr, Usize, Ptr, Usize, Ptr, Usize, U8, U32, Ptr],
         ret: Some(I32),
     },
     CapiSig {
