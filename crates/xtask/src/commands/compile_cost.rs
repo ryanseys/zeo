@@ -8,7 +8,8 @@
 //! cargo bench -p zeo --bench programs
 //! ```
 //!
-//! (see bench/README.md for baselines, comparisons, and profiling).
+//! The two are told apart by name: this one is `cargo xtask compile-cost`,
+//! so nothing reads as a second spelling of `cargo bench`.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -43,7 +44,7 @@ const PROGRAMS: &[(&str, Option<&str>)] = &[
 const BASELINE: &str = "test/bench/compile-baseline.tsv";
 
 const USAGE: &str =
-    "usage: cargo xtask bench --compile [--filter <substr>] [--runs N] [--update-baseline]";
+    "usage: cargo xtask compile-cost [--filter <substr>] [--runs N] [--update-baseline]";
 
 struct Row {
     frontend_ms: u128,
@@ -232,7 +233,7 @@ fn write_baseline(rows: &[(&str, Row)]) -> Result<(), Error> {
     let mut sorted: Vec<&(&str, Row)> = rows.iter().collect();
     sorted.sort_by_key(|(name, _)| *name);
     let mut out = String::from(
-        "# bench/compile-baseline.tsv -- cargo xtask bench --compile --update-baseline\n\
+        "# test/bench/compile-baseline.tsv -- cargo xtask compile-cost --update-baseline\n\
          # name\tfrontend_ms\tlines\tpeak_rss\tbin_bytes\n",
     );
     for (name, r) in sorted {

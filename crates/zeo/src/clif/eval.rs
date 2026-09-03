@@ -19,7 +19,7 @@ use super::module::{ClifModule, Emitter};
 use super::ownership;
 use super::{statics, verify};
 use crate::analyze::Analyzed;
-use crate::codegen_error::{CResult, CodegenError};
+use crate::diagnostics::clif::{CResult, CodegenError};
 use crate::hir::{HirNode, NodeId};
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, UserFuncName, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -438,7 +438,11 @@ fn eval_body_source(fx: &Fx, stmt: NodeId, body: &[NodeId]) -> CResult<(String, 
         return Ok((String::new(), file, line));
     };
     let (Some(a), Some(b)) = (hir.span(*first), hir.span(*last)) else {
-        let blame = if hir.span(*first).is_none() { first } else { last };
+        let blame = if hir.span(*first).is_none() {
+            first
+        } else {
+            last
+        };
         return Err(named(&format!(
             "a span-less {} in a `class`",
             node_kind(&hir[*blame])

@@ -4,7 +4,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::NodeId;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};

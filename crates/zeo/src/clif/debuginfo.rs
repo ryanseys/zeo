@@ -17,7 +17,7 @@
 //! section-to-section offsets DWARF is full of (`DW_AT_stmt_list` and
 //! friends).
 
-use crate::codegen_error::{CResult, CodegenError};
+use crate::diagnostics::clif::{CResult, CodegenError};
 use cranelift_codegen::CompiledCode;
 use cranelift_module::FuncId;
 use cranelift_object::ObjectProduct;

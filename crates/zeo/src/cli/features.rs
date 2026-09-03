@@ -122,17 +122,17 @@ impl RubyFeatures {
                 continue;
             }
             if let (Kind::Absent(why), true) = (row.kind, on) {
-                return Err(format!("--{verb}={} has nothing to turn on: {why}", row.name));
+                return Err(format!(
+                    "--{verb}={} has nothing to turn on: {why}",
+                    row.name
+                ));
             }
             *slot = on;
             return Ok(());
         }
         Err(format!(
             "--{verb}={name} is not a feature zeo knows ({}, all)",
-            ROWS.iter()
-                .map(|r| r.name)
-                .collect::<Vec<_>>()
-                .join(", ")
+            ROWS.iter().map(|r| r.name).collect::<Vec<_>>().join(", ")
         ))
     }
 

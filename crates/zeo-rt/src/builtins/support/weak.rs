@@ -27,13 +27,13 @@ use crate::{RubyValue, Signal, Symbol};
 use zeo_abi::{ClassId, WEAKMAP_CLASS};
 use zeo_macros::ruby_class;
 
-use super::{arg_error, local_jump_error, type_error};
+use crate::builtins::{arg_error, local_jump_error, type_error};
 
 /// A weak handle to a Ruby value's liveness. The heap kinds carry a real
 /// `Weak` to their backing `Arc`; everything else is kept alive strongly
 /// (immediates never die anyway, and weak-referencing the rarer heap kinds is
 /// uncommon enough that "never expires" is the accepted best-effort answer).
-pub(super) enum WeakTarget {
+pub(crate) enum WeakTarget {
     /// `true`/`false`/`nil` -- CRuby's weakref.rb cannot put these in its
     /// `WeakMap` at all and stashes them in a `@delegate_sd_obj` IVAR
     /// instead, which is why they alone survive a `#dup` and why
@@ -48,7 +48,7 @@ pub(super) enum WeakTarget {
 }
 
 impl WeakTarget {
-    pub(super) fn downgrade(v: &RubyValue) -> WeakTarget {
+    pub(crate) fn downgrade(v: &RubyValue) -> WeakTarget {
         match v {
             RubyValue::Object(o) => WeakTarget::Object(Arc::downgrade(o)),
             RubyValue::Str(s) => WeakTarget::Str(Arc::downgrade(s)),
@@ -60,7 +60,7 @@ impl WeakTarget {
     }
 
     /// The referent if it's still alive, else `None`.
-    pub(super) fn upgrade(&self) -> Option<RubyValue> {
+    pub(crate) fn upgrade(&self) -> Option<RubyValue> {
         match self {
             WeakTarget::Sd(v) | WeakTarget::Strong(v) => Some(v.clone()),
             WeakTarget::Object(w) => w.upgrade().map(RubyValue::Object),
@@ -73,7 +73,7 @@ impl WeakTarget {
 
 /// Whether two values are the SAME object (identity), the keying `WeakMap`
 /// and `equal?` use: immediates compare by value, heap kinds by `Arc` pointer.
-pub(super) fn same_object(a: &RubyValue, b: &RubyValue) -> bool {
+pub(crate) fn same_object(a: &RubyValue, b: &RubyValue) -> bool {
     match (a, b) {
         (RubyValue::Nil, RubyValue::Nil) => true,
         (RubyValue::Bool(x), RubyValue::Bool(y)) => x == y,
@@ -588,17 +588,17 @@ pub fn register_weak(registry: &mut ClassRegistry) {
 /// captured at registration (the referent may be gone by the time the
 /// callback runs, so the id -- CRuby's finalizer argument -- must be kept
 /// independently). `target` detects collection for the `GC.start` sweep.
-pub(super) struct Finalizer {
-    pub(super) target: WeakTarget,
-    pub(super) object_id: i64,
-    pub(super) callback: RubyValue,
+pub(crate) struct Finalizer {
+    pub(crate) target: WeakTarget,
+    pub(crate) object_id: i64,
+    pub(crate) callback: RubyValue,
 }
 
-pub(super) static FINALIZERS: Mutex<Vec<Finalizer>> = Mutex::new(Vec::new());
+pub(crate) static FINALIZERS: Mutex<Vec<Finalizer>> = Mutex::new(Vec::new());
 
 /// CRuby's object id for a value -- the Integer a finalizer callback receives.
 /// Mirrors `Kernel#object_id` (the immediate shapes and heap-pointer ids).
-pub(super) fn object_id_i64(v: &RubyValue) -> i64 {
+pub(crate) fn object_id_i64(v: &RubyValue) -> i64 {
     match v {
         RubyValue::Int(i) => i.wrapping_mul(2).wrapping_add(1),
         RubyValue::Nil => 4,

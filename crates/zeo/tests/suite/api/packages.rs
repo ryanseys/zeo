@@ -1105,14 +1105,14 @@ fn the_package_cache_serves_hits_and_invalidates_on_edit() {
         .map(|e| e.path().join("pkg.zeopkg"))
         .find(|p| p.is_file())
         .expect("one cache entry");
-    let (manifest, object) = zeo::package::read_zeopkg(&cached).expect("read the entry");
+    let (manifest, object) = zeo::packages::package::read_zeopkg(&cached).expect("read the entry");
     let marked = manifest.replace("\"iface_hash\": \"", "\"iface_hash\": \"cafe");
     assert_ne!(marked, manifest, "the mark landed");
-    zeo::package::write_zeopkg(&cached, &marked, &object).expect("mark the entry");
+    zeo::packages::package::write_zeopkg(&cached, &marked, &object).expect("mark the entry");
 
     build(&dir.join("second.zeopkg"));
     let (manifest, _) =
-        zeo::package::read_zeopkg(&dir.join("second.zeopkg")).expect("read the second build");
+        zeo::packages::package::read_zeopkg(&dir.join("second.zeopkg")).expect("read the second build");
     let listing: Vec<String> = std::fs::read_dir(&cache)
         .map(|es| {
             es.filter_map(Result::ok)
@@ -1142,7 +1142,7 @@ fn the_package_cache_serves_hits_and_invalidates_on_edit() {
     std::fs::write(&entry, "class Cachegem\n  def go = :two\nend\n").expect("edit the gem");
     build(&dir.join("third.zeopkg"));
     let (manifest, _) =
-        zeo::package::read_zeopkg(&dir.join("third.zeopkg")).expect("read the third build");
+        zeo::packages::package::read_zeopkg(&dir.join("third.zeopkg")).expect("read the third build");
     assert!(
         !manifest.contains("\"iface_hash\": \"cafe"),
         "the source edit invalidated the entry"
@@ -1165,13 +1165,13 @@ fn a_refused_artifact_drops_to_the_source_splice() {
         .arg(&artifact)
         .arg(fixture_gem().join("lib/pureleaf.rb"))
         .env("ZEO_CACHE", "0"));
-    let (manifest, object) = zeo::package::read_zeopkg(&artifact).expect("read");
+    let (manifest, object) = zeo::packages::package::read_zeopkg(&artifact).expect("read");
     let foreign = manifest.replace(
         &format!("\"target\": \"{}\"", target_of(&manifest)),
         "\"target\": \"wasm32-unknown-unknown\"",
     );
     assert_ne!(foreign, manifest, "the target was rewritten");
-    zeo::package::write_zeopkg(&artifact, &foreign, &object).expect("rewrite");
+    zeo::packages::package::write_zeopkg(&artifact, &foreign, &object).expect("rewrite");
     let host = dir.join("host.rb");
     std::fs::write(
         &host,
@@ -1212,13 +1212,13 @@ fn a_target_mismatch_refuses_by_name() {
         .arg(&artifact)
         .arg(fixture_gem().join("lib/pureleaf.rb"))
         .env("ZEO_CACHE", "0"));
-    let (manifest, object) = zeo::package::read_zeopkg(&artifact).expect("read");
+    let (manifest, object) = zeo::packages::package::read_zeopkg(&artifact).expect("read");
     let foreign = manifest.replace(
         &format!("\"target\": \"{}\"", target_of(&manifest)),
         "\"target\": \"wasm32-unknown-unknown\"",
     );
     assert_ne!(foreign, manifest, "the target was rewritten");
-    zeo::package::write_zeopkg(&artifact, &foreign, &object).expect("rewrite");
+    zeo::packages::package::write_zeopkg(&artifact, &foreign, &object).expect("rewrite");
     let host = dir.join("host.rb");
     std::fs::write(&host, "require \"pureleaf\"\n").expect("write host");
     let out = run(zeo()
@@ -1552,7 +1552,7 @@ fn a_precompiled_platform_gem_ships_its_artifact_to_a_consumer() {
 #[test]
 fn a_packaged_builtin_feature_defers_to_the_merged_unit() {
     let root = crate::paths::workspace_root();
-    let store = root.join(zeo::bundled::RESOLVED_TIER);
+    let store = root.join(zeo::gems::bundled::RESOLVED_TIER);
     let tmpdir_rb = store.join("gems/tmpdir-0.3.1/lib/tmpdir.rb");
     let fileutils_rb = store.join("gems/fileutils-1.8.0/lib/fileutils.rb");
     if !tmpdir_rb.is_file() || !fileutils_rb.is_file() {
@@ -1594,7 +1594,7 @@ fn a_packaged_builtin_feature_defers_to_the_merged_unit() {
 fn a_packaged_timeout_times_out() {
     let root = crate::paths::workspace_root();
     let timeout_rb = root
-        .join(zeo::bundled::RESOLVED_TIER)
+        .join(zeo::gems::bundled::RESOLVED_TIER)
         .join("gems/timeout-0.6.1/lib/timeout.rb");
     if !timeout_rb.is_file() {
         eprintln!("skipping: the resolved store has no timeout 0.6.1 (run `cargo xtask deps`)");

@@ -285,7 +285,11 @@ fn rows_for(inputs: &[Input]) -> std::io::Result<String> {
             // reader would misparse.
             return Err(std::io::Error::other("a source path contains a newline"));
         }
-        rows.push_str(&format!("F {:016x} {}\n", hash(input.source.as_bytes()), input.name));
+        rows.push_str(&format!(
+            "F {:016x} {}\n",
+            hash(input.source.as_bytes()),
+            input.name
+        ));
         if let Some(parent) = path.parent()
             && !dirs.contains(&parent.to_path_buf())
         {
@@ -346,7 +350,7 @@ fn dir_stamp(dir: &Path) -> Option<u128> {
         .map(|d| d.as_nanos())
 }
 
-use crate::package::fnv64 as hash;
+use crate::packages::package::fnv64 as hash;
 
 #[cfg(test)]
 mod tests {

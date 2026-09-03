@@ -29,15 +29,15 @@ pub(crate) use methods::*;
 pub(crate) use scans::*;
 use static_guards::*;
 use top_stmts::*;
-pub(crate) mod mro;
-mod pkg_iface;
 pub(crate) mod alias_reveals;
 pub(crate) mod dyn_defs;
+pub(crate) mod mro;
+mod pkg_iface;
 pub(crate) mod redefs;
 
-use crate::analyze_error::AnalyzeError;
 use crate::compiler::{AccessorKind, AccessorShape, ClassId, Compiler, OBJECT_CLASS, Scope};
 use crate::compiler::{FMap, FSet};
+use crate::diagnostics::analyze::AnalyzeError;
 use crate::hir::{ArrayElem, Hir, HirNode, NodeId, Params, ScopeKind, StrPart, Visibility};
 use crate::types::TyKind;
 
@@ -91,7 +91,7 @@ struct AnalyzedParts {
 }
 
 /// The whole pass. Its sites raise bare messages; the statement walk locates
-/// them (see `analyze_error`), and the boundary above types them.
+/// them (see `diagnostics::analyze`), and the boundary above types them.
 fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, AnalyzeError> {
     let HirNode::Program(statements) = &compiler.hir[root] else {
         return Err("expected a Program root".into());
@@ -154,7 +154,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // BEFORE any fold fires -- its writers are as real as this arena's,
     // they just have no nodes here. Every field is monotone-conservative:
     // the union can only fold less, never differently.
-    let merged: Vec<crate::package::MFacts> = compiler
+    let merged: Vec<crate::packages::package::MFacts> = compiler
         .hir
         .pkg_merge
         .iter()
@@ -177,11 +177,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         compiler
             .assigned_const_names
             .extend(f.const_names.iter().cloned());
-        compiler
-            .hir
-            .loader
-            .unrun_unit_consts
-            .extend(f.const_names);
+        compiler.hir.loader.unrun_unit_consts.extend(f.const_names);
         compiler.external_global_writers.extend(f.global_names);
     }
 
@@ -440,11 +436,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     mark_accessor_sites(compiler, &main_statements, &main_local_types);
     mark_typed_call_sites(compiler, &main_statements, &main_local_types);
     compiler.runtime_eval = narrow_runtime_eval(compiler, &main_statements, &feature_units)
-        || compiler
-            .hir
-            .pkg_merge
-            .iter()
-            .any(|m| m.facts.runtime_eval);
+        || compiler.hir.pkg_merge.iter().any(|m| m.facts.runtime_eval);
     // After `runtime_eval`: a program that compiles Ruby at run time can name
     // any class at all, and this reads that answer.
     compiler.reachable_builtins = class_reach::resolve(compiler);

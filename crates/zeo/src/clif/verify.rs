@@ -13,7 +13,7 @@
 //! only with control-flow shapes that break the one-site-per-value rule.
 
 use super::ctx::Fx;
-use crate::codegen_error::{CResult, CodegenError};
+use crate::diagnostics::clif::{CResult, CodegenError};
 
 pub(crate) fn check(fx: &Fx, what: &str) -> CResult<()> {
     if fx.owned_created != fx.owned_consumed {

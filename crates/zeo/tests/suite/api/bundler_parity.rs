@@ -15,7 +15,7 @@
 //! difference in the *libraries* rather than in the engines -- which is the
 //! one thing this test must never be able to say.
 //!
-//! **The same driver on both sides**, [`zeo::subcommand::BUNDLE_DRIVER`]
+//! **The same driver on both sides**, [`zeo::gems::bundle::BUNDLE_DRIVER`]
 //! verbatim, so neither side runs a program the other does not.
 //!
 //! **No network, and no ambient anything.** The fixture gems are built into a
@@ -145,7 +145,7 @@ fn install_with_ruby(ruby: &Path, root: &Path) -> Run {
     for lib in vendored_libs() {
         cmd.arg("-I").arg(lib);
     }
-    cmd.arg("-e").arg(zeo::subcommand::BUNDLE_DRIVER);
+    cmd.arg("-e").arg(zeo::gems::bundle::BUNDLE_DRIVER);
     cmd.args(["install", "--local"]);
     hermetic(&mut cmd, root);
     finish(cmd.output().expect("running ruby's install"), root)
@@ -392,7 +392,7 @@ fn the_bundler_driver_compiles_to_a_standalone_artifact() {
     let zeo = crate::zeo_bin::zeo_cli().unwrap_or_else(|e| panic!("{e}"));
     let dir = scratch("standalone");
     let src = dir.join("zbundle.rb");
-    std::fs::write(&src, zeo::subcommand::BUNDLE_DRIVER).expect("writing the driver");
+    std::fs::write(&src, zeo::gems::bundle::BUNDLE_DRIVER).expect("writing the driver");
 
     let artifact = dir.join("zbundle");
     let built = Command::new(&zeo)

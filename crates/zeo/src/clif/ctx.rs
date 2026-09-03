@@ -4,7 +4,7 @@
 
 use super::module::Emitter;
 use crate::analyze::Analyzed;
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use cranelift_codegen::cursor::{Cursor, FuncCursor};
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, types};
 use cranelift_frontend::FunctionBuilder;
@@ -521,7 +521,10 @@ impl<'e, 'f> Fx<'e, 'f> {
         let gv = match self.gates_gv {
             Some(gv) => gv,
             None => {
-                let gv = self.em.module.declare_data_in_func(self.em.gates_id, self.b.func);
+                let gv = self
+                    .em
+                    .module
+                    .declare_data_in_func(self.em.gates_id, self.b.func);
                 self.gates_gv = Some(gv);
                 gv
             }
@@ -571,7 +574,9 @@ impl<'e, 'f> Fx<'e, 'f> {
             ));
             for (i, &cid) in ids.iter().enumerate() {
                 let v = self.cid_value(cid);
-                self.b.ins().stack_store(self.em.ptr, v, slot, (i * 4) as i32);
+                self.b
+                    .ins()
+                    .stack_store(self.em.ptr, v, slot, (i * 4) as i32);
             }
             let ptr = self.b.ins().stack_addr(self.em.ptr, slot, 0);
             let n = self.b.ins().iconst(self.em.ptr, ids.len() as i64);
@@ -620,7 +625,9 @@ impl<'e, 'f> Fx<'e, 'f> {
         let ptr = self.em.ptr;
         let addr = self.b.ins().symbol_value(ptr, gv);
         let fl = MemFlagsData::trusted().with_readonly();
-        self.b.ins().load(ir::types::I32, fl, addr, (slot * 4) as i32)
+        self.b
+            .ins()
+            .load(ir::types::I32, fl, addr, (slot * 4) as i32)
     }
 
     /// A locally minted site id plus this package's stride for `slot`, as
@@ -847,7 +854,7 @@ impl<'e, 'f> Fx<'e, 'f> {
     /// A loud "a package cannot lower this" error; the location travels
     /// as the node's span.
     pub fn unsupported<T>(&self, node: crate::hir::NodeId, what: &str) -> CResult<T> {
-        Err(crate::codegen_error::CodegenError::unsupported(
+        Err(crate::diagnostics::clif::CodegenError::unsupported(
             format!("the CLIF backend cannot lower {what} yet"),
             self.an.compiler.hir.span(node),
         ))

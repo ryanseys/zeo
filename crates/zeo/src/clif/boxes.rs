@@ -5,7 +5,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::{ArrayElem, HirNode, NodeId};
 use cranelift_codegen::ir::{InstBuilder, types};
 
@@ -25,11 +25,12 @@ pub(super) fn cref_chain<'a>(fx: &'a Fx) -> &'a [crate::compiler::ClassId] {
 /// chain translates like every other class-id immediate.
 pub(super) fn emit_cref_push(fx: &mut Fx) {
     let chain: Vec<crate::compiler::ClassId> = cref_chain(fx).iter().rev().copied().collect();
-    let slot = fx.b.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
-        cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-        (chain.len() * 4) as u32,
-        2,
-    ));
+    let slot =
+        fx.b.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+            (chain.len() * 4) as u32,
+            2,
+        ));
     for (i, cid) in chain.iter().enumerate() {
         let v = fx.cid_value(cid.0);
         fx.b.ins().stack_store(fx.em.ptr, v, slot, (i * 4) as i32);
@@ -362,7 +363,11 @@ pub(super) fn module_nesting(
     // tag + id, so an id this compiler holds no entry for still works; its
     // type claim dies at the push.
     let chain: Vec<crate::compiler::ClassId> = match &fx.eval_cref {
-        Some(cref) => cref.chain.iter().map(|&c| crate::compiler::ClassId(c)).collect(),
+        Some(cref) => cref
+            .chain
+            .iter()
+            .map(|&c| crate::compiler::ClassId(c))
+            .collect(),
         None => cref_chain(fx).iter().rev().copied().collect(),
     };
     let ss = fx.temp_slot();

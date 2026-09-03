@@ -104,12 +104,12 @@ pub struct Hir {
     /// options; read by analyze (records the minted class band) and by
     /// emit (skips `main`/desc, writes the manifest). On the Hir because
     /// neither analyze nor emit sees `CompileOptions`.
-    pub pkg_build: Option<crate::package::PackageBuild>,
+    pub pkg_build: Option<crate::packages::package::PackageBuild>,
     /// Manifests of the packages merged into this
     /// compile (`--with-package`), in command-line order. Analyze
     /// pads the class-id band past them; emit appends their rows to this
     /// program's one desc.
-    pub pkg_merge: Vec<crate::package::Manifest>,
+    pub pkg_merge: Vec<crate::packages::package::Manifest>,
     /// Parallel to [`Hir::pkg_merge`]: each package's real source root on
     /// this machine, when the resolution tier knew it. The merge binds the
     /// package's `/zeopkg/<feature>/` prefix to it for backtrace display.
@@ -531,7 +531,7 @@ pub struct LoaderState {
     pub store_overrides: crate::compiler::FSet<String>,
     /// Every BUNDLED gem a `require` activated, in activation order, with
     /// what this compile asked of it -- the auto-packaging tier's candidate
-    /// rows (see `zeo::autopkg`). Empty for any compile that reached no
+    /// rows (see `zeo::packages::autopkg`). Empty for any compile that reached no
     /// bundled gem.
     pub activated_bundled: Vec<ActivatedBundled>,
     /// Features a PACKAGE build deferred because a FOREIGN gem owns them

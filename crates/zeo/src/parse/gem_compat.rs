@@ -71,7 +71,7 @@ fn classify(store: &std::path::Path, parsed: &[LockedGem]) -> Result<Vec<GemComp
         .iter()
         .map(|e| (e.name.as_str(), e.extconfs.as_slice()))
         .collect();
-    let disclosed: std::collections::HashMap<&str, &crate::gem_report::SatisfiedBy> = resolution
+    let disclosed: std::collections::HashMap<&str, &crate::gems::report::SatisfiedBy> = resolution
         .disclosures
         .iter()
         .map(|r| (r.name.as_str(), &r.by))
@@ -89,15 +89,15 @@ fn classify(store: &std::path::Path, parsed: &[LockedGem]) -> Result<Vec<GemComp
             GemCompatOutcome::Compiled
         } else {
             match disclosed.get(gem.name.as_str()) {
-                Some(crate::gem_report::SatisfiedBy::Excluded { kind, reason }) => {
+                Some(crate::gems::report::SatisfiedBy::Excluded { kind, reason }) => {
                     GemCompatOutcome::NativeUnsupported {
                         kind: kind.clone(),
                         reason: reason.clone(),
                     }
                 }
                 Some(_) => GemCompatOutcome::Builtin {
-                    diverges: crate::gem_report::substitution_note(&gem.name).is_some(),
-                    note: crate::gem_report::substitution_note(&gem.name).map(str::to_string),
+                    diverges: crate::gems::report::substitution_note(&gem.name).is_some(),
+                    note: crate::gems::report::substitution_note(&gem.name).map(str::to_string),
                 },
                 None => GemCompatOutcome::Skipped {
                     reason: "no require-path root (default-gem placeholder or empty)".to_string(),

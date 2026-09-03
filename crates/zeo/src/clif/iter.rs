@@ -15,7 +15,7 @@
 
 use super::ctx::{Fx, LoopCtl};
 use super::ownership;
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::{HirNode, NodeId};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, types};

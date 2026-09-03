@@ -7,7 +7,7 @@ use super::ctx::{Fx, VALUE_SIZE};
 use super::expr::lower_expr;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::{ArrayElem, NodeId};
 use cranelift_codegen::ir::{InstBuilder, StackSlotData, StackSlotKind, types};
 use cranelift_module::Module;
@@ -867,7 +867,10 @@ pub(crate) fn typed_direct_send(
     }
     let Some(decl) = fx.em.typed_methods.get(&(cid.0, name.to_string())) else {
         if trace {
-            eprintln!("typed_direct_send: no typed_methods entry for ({}, {name})", cid.0);
+            eprintln!(
+                "typed_direct_send: no typed_methods entry for ({}, {name})",
+                cid.0
+            );
         }
         return Ok(None);
     };
@@ -898,7 +901,10 @@ pub(crate) fn typed_direct_send(
         return Ok(None);
     }
     if trace {
-        eprintln!("typed_direct_send: emitting direct call for {name} on class {}", cid.0);
+        eprintln!(
+            "typed_direct_send: emitting direct call for {name} on class {}",
+            cid.0
+        );
     }
 
     let bypass = super::expr::bypasses_visibility(fx, Some(recv));
@@ -942,20 +948,18 @@ pub(crate) fn typed_direct_send(
     fx.b.switch_to_block(gates_chk);
     let gbase = fx.gates_base();
     let gates = fx.b.ins().load(types::I16, fl, gbase, 0);
-    let wide = fx
-        .b
-        .ins()
-        .band_imm_u(gates, i64::from(zeo_abi::abi::GATE_TYPED_DIRECT_SLOW));
+    let wide =
+        fx.b.ins()
+            .band_imm_u(gates, i64::from(zeo_abi::abi::GATE_TYPED_DIRECT_SLOW));
     fx.b.ins().brif(wide, slow, &[], patch_chk, &[]);
 
     fx.b.switch_to_block(patch_chk);
     let pbase = fx.patched_bits_base();
     let bit = match dyn_cid {
         None => {
-            let word = fx
-                .b
-                .ins()
-                .load(types::I64, fl, pbase, ((cid.0 / 64) * 8) as i32);
+            let word =
+                fx.b.ins()
+                    .load(types::I64, fl, pbase, ((cid.0 / 64) * 8) as i32);
             fx.b.ins().band_imm_u(word, (1u64 << (cid.0 % 64)) as i64)
         }
         Some(cv) => {
@@ -975,10 +979,10 @@ pub(crate) fn typed_direct_send(
     fx.b.switch_to_block(class_chk);
     let live_cid = fx.call_status("zeo_rt_class_of", &[recv_ptr]);
     let hit = match dyn_cid {
-        None => fx
-            .b
-            .ins()
-            .icmp_imm_u(IntCC::Equal, live_cid, i64::from(cid.0)),
+        None => {
+            fx.b.ins()
+                .icmp_imm_u(IntCC::Equal, live_cid, i64::from(cid.0))
+        }
         Some(cv) => fx.b.ins().icmp(IntCC::Equal, live_cid, cv),
     };
     fx.b.ins().brif(hit, fast, &[], slow, &[]);
@@ -991,7 +995,8 @@ pub(crate) fn typed_direct_send(
         let p = if i == 0 {
             argv_ptr
         } else {
-            fx.b.ins().iadd_imm_u(argv_ptr, i64::from(i as u32 * VALUE_SIZE))
+            fx.b.ins()
+                .iadd_imm_u(argv_ptr, i64::from(i as u32 * VALUE_SIZE))
         };
         call_args.push(p);
     }
@@ -1109,19 +1114,17 @@ pub(crate) fn indexed_send(
     fx.b.switch_to_block(gates_chk);
     let gbase = fx.gates_base();
     let gates = fx.b.ins().load(types::I16, fl, gbase, 0);
-    let wide = fx
-        .b
-        .ins()
-        .band_imm_u(gates, i64::from(zeo_abi::abi::GATE_ITER_INLINE_SLOW));
+    let wide =
+        fx.b.ins()
+            .band_imm_u(gates, i64::from(zeo_abi::abi::GATE_ITER_INLINE_SLOW));
     fx.b.ins().brif(wide, slow, &[], patch_chk, &[]);
 
     fx.b.switch_to_block(patch_chk);
     let acid = crate::compiler::ARRAY_CLASS.0;
     let pbase = fx.patched_bits_base();
-    let word = fx
-        .b
-        .ins()
-        .load(types::I64, fl, pbase, ((acid / 64) * 8) as i32);
+    let word =
+        fx.b.ins()
+            .load(types::I64, fl, pbase, ((acid / 64) * 8) as i32);
     let bit = fx.b.ins().band_imm_u(word, (1u64 << (acid % 64)) as i64);
     fx.b.ins().brif(bit, slow, &[], fast, &[]);
 

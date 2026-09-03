@@ -4,7 +4,7 @@
 
 use cranelift_codegen::ir::{self, InstBuilder, types};
 
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::{ArrayElem, HirNode, NodeId};
 
 use super::super::ctx::Fx;

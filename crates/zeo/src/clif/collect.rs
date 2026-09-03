@@ -4,7 +4,7 @@
 
 use super::module::Emitter;
 use crate::analyze::Analyzed;
-use crate::codegen_error::{CResult, CodegenError};
+use crate::diagnostics::clif::{CResult, CodegenError};
 use cranelift_module::{FuncId, Linkage, Module};
 
 /// One eligible top-level `def`'s facts (from `Compiler.classes[0]` --

@@ -15,7 +15,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::{HashPatternRest, NodeId, Pattern, PatternArm};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};

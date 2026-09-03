@@ -65,7 +65,7 @@ pub fn lower_box_eval(
         drop(frame);
         hir.lowering_file = prev_file;
         let body = lowered.map_err(|e| {
-            crate::lower_error::LowerError::unsupported(format!("Ruby::Box#eval: {e}"))
+            crate::diagnostics::lower::LowerError::unsupported(format!("Ruby::Box#eval: {e}"))
         })?;
         if !allow_defs {
             reject_top_level_defs(hir, &body)?;

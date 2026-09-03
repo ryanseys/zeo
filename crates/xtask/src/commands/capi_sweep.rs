@@ -1,7 +1,7 @@
 //! `cargo xtask capi-sweep bless [<gem>]` -- record ruby's answer for the
 //! C-gem sweep's smoke programs.
 //!
-//! The sweep (`crates/zeo/tests/e2e/capi_sweep.rs`) runs each
+//! The sweep (`api::capi_sweep`) runs each
 //! `crates/zeo/tests/fixtures/capi_sweep/<gem>/smoke.rb` through zeo's C-API
 //! route and compares stdout with `smoke.expected`. This records that file
 //! from the oracle ruby resolving the same `Gemfile.lock`, so both sides

@@ -40,24 +40,19 @@ static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use zeo_capi as _;
 
 pub mod analyze;
-pub mod analyze_error;
-pub mod autopkg;
 pub mod backend;
 pub mod builtin_surface;
-pub mod bundled;
 pub mod cext;
+pub mod cli;
 pub mod clif;
-pub mod codegen_error;
 pub mod compiler;
 pub(crate) mod debug_flags;
-pub mod default_gems;
 pub mod diagnostics;
 pub mod dump;
 pub mod eval;
-pub mod gem_report;
+pub mod gems;
 pub mod home;
 pub mod memguard;
-pub mod package;
 
 pub use diagnostics::CompileError;
 
@@ -68,19 +63,14 @@ pub use diagnostics::CompileError;
 pub mod constpath;
 pub mod hir;
 pub mod lower;
-pub mod lower_error;
 pub mod rename;
 
 pub use parse::gem_compat::{GemCompatEntry, GemCompatOutcome, gem_compat, gem_compat_installed};
 mod embed;
-mod ffi_vocab;
 mod guard_fold;
 pub(crate) mod names;
+pub mod packages;
 pub mod parse;
-pub mod progcache;
-pub mod project;
-pub mod ruby_features;
-pub mod subcommand;
 pub mod types;
 
 /// What a compile is FOR.
@@ -186,11 +176,11 @@ pub struct CompileOptions {
     /// Compile ONE gem entry file as a separately linked
     /// package -- an object whose bodies are exported plus a row manifest --
     /// instead of a runnable program. See [`package`].
-    pub package_build: Option<package::PackageBuild>,
+    pub package_build: Option<packages::package::PackageBuild>,
     /// Packages to merge into this program. Each
     /// contributes its manifest rows to THIS compile's one `ProgramDesc`;
     /// the caller links each package's object beside the emitted one.
-    pub use_packages: Vec<package::UsePackage>,
+    pub use_packages: Vec<packages::package::UsePackage>,
     /// Consult the machine package cache for every bundled gem this
     /// compile activates, and link the artifacts it holds
     /// (see [`autopkg`]). Set by the CLI's LINKING roads only -- the
@@ -251,7 +241,7 @@ pub struct ObjectOutput {
     /// whether the cached binary is still the right answer.
     ///
     /// Collecting them costs an `Arc` bump per file, not a copy.
-    pub inputs: Vec<progcache::Input>,
+    pub inputs: Vec<packages::progcache::Input>,
     /// Package objects the LINK must include beside this
     /// one (`--with-package`). Empty for every ordinary compile.
     pub extra_objects: Vec<std::path::PathBuf>,
@@ -265,8 +255,8 @@ pub struct ObjectOutput {
     pub unresolvable_requires: Vec<String>,
     /// Bundled gems this compile spliced that the package cache could not
     /// answer. The CLI builds each one AFTER the program succeeds
-    /// ([`autopkg::build_and_cache`]), so the next compile links it.
-    pub auto_package_misses: Vec<autopkg::Candidate>,
+    /// ([`packages::autopkg::build_and_cache`]), so the next compile links it.
+    pub auto_package_misses: Vec<packages::autopkg::Candidate>,
 }
 
 /// The Cranelift pipeline: front end, then `clif::emit`.
@@ -327,13 +317,13 @@ pub fn compile_to_object_with_package_fallback(
             Err(e) => {
                 let msg = e.to_string();
                 let refused = opts.use_packages.iter().position(|p| {
-                    package::feature_of_manifest_text(&p.manifest_text)
+                    packages::package::feature_of_manifest_text(&p.manifest_text)
                         .is_some_and(|f| msg.contains(&format!("package '{f}'")))
                 });
                 if let Some(i) = refused {
                     let p = opts.use_packages.remove(i);
                     let dropped = DroppedPackage {
-                        feature: package::feature_of_manifest_text(&p.manifest_text)
+                        feature: packages::package::feature_of_manifest_text(&p.manifest_text)
                             .unwrap_or_else(|| "?".to_string()),
                         reason: msg.lines().next().unwrap_or_default().to_string(),
                     };
@@ -415,7 +405,7 @@ impl FrontEnd {
 fn analyze_on_this_thread(
     source: &str,
     opts: &CompileOptions,
-) -> Result<(analyze::Analyzed, FrontEnd, autopkg::AutoPackages), CompileError> {
+) -> Result<(analyze::Analyzed, FrontEnd, packages::autopkg::AutoPackages), CompileError> {
     let start = std::time::Instant::now();
     memguard::set_phase(memguard::Phase::ParseLower);
     let (mut hir, mut root, mut gem_records) = parse::parse_and_lower_with(source, opts)?;
@@ -424,14 +414,15 @@ fn analyze_on_this_thread(
     // this loop merges those artifacts and re-parses. A rejection (an
     // artifact that cannot serve this compile whole) re-parses too, so
     // the gem splices after all. Bounded: hits and rejections only grow.
-    let mut auto = autopkg::AutoPackages::default();
-    if opts.auto_package && opts.package_build.is_none() && progcache::enabled() {
+    let mut auto = packages::autopkg::AutoPackages::default();
+    if opts.auto_package && opts.package_build.is_none() && packages::progcache::enabled() {
         // Rejections are per COMPILE; the compile thread is fresh per
         // compile, but a retry on the same thread must not inherit them.
-        autopkg::clear_rejected();
+        packages::autopkg::clear_rejected();
         let mut local = opts.clone();
         for _ in 0..6 {
-            let (new, rejected_any) = autopkg::consult_new(&hir, &local.use_packages, &mut auto);
+            let (new, rejected_any) =
+                packages::autopkg::consult_new(&hir, &local.use_packages, &mut auto);
             if new.is_empty() && !rejected_any {
                 break;
             }
@@ -458,7 +449,7 @@ fn analyze_on_this_thread(
     hir.loader.embedded_sources = embed::collect(&opts.embed_sources)?;
     let parse_lower = start.elapsed();
     if let Some(path) = &opts.gem_report {
-        gem_report::write_report(&gem_records, path)
+        gems::report::write_report(&gem_records, path)
             .map_err(|message| CompileError::Report { message })?;
     }
     let (nodes, node_bytes) = (
@@ -508,7 +499,7 @@ fn compile_object_on_this_thread(
         .hir
         .files
         .iter()
-        .map(|f| progcache::Input {
+        .map(|f| packages::progcache::Input {
             // A package build's respelled file names its REAL path here, so
             // the cache manifest re-reads the file that actually exists.
             name: f.real_path.clone().unwrap_or_else(|| f.name.clone()),
@@ -531,7 +522,7 @@ fn compile_object_on_this_thread(
     } else {
         &auto.use_packages
     };
-    let mut inputs: Vec<progcache::Input> = inputs;
+    let mut inputs: Vec<packages::progcache::Input> = inputs;
     inputs.extend(auto.extra_inputs);
     Ok(ObjectOutput {
         object,
@@ -559,7 +550,7 @@ pub fn check_syntax(source: &str) -> Result<(), CompileError> {
         // No `files` to resolve a span against: the check runs before any
         // arena exists, and prism's own message already names the place.
         Some(err) => Err(CompileError::lower(
-            lower_error::LowerError::syntax(format!("parse error: {}", err.message())),
+            diagnostics::lower::LowerError::syntax(format!("parse error: {}", err.message())),
             &[],
         )),
     }

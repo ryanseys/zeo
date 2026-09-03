@@ -202,12 +202,11 @@ pub(crate) fn read_encodings_with(
     let mut ext = crate::encoding::default_external();
     let mut int = None;
     let named_in_hash = matches!(trailing, Some(RubyValue::Hash(h))
-        if ["encoding", "external_encoding", "internal_encoding"].iter().any(|k| {
-            !crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern(k))).is_nil()
-        }));
+    if ["encoding", "external_encoding", "internal_encoding"].iter().any(|k| {
+        !crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern(k))).is_nil()
+    }));
     // A `mode:` keyword carries the same tail a positional mode string does.
-    let from_kwarg = kwarg_str(trailing, "mode")
-        .and_then(|m| split_mode(&m).1.map(str::to_string));
+    let from_kwarg = kwarg_str(trailing, "mode").and_then(|m| split_mode(&m).1.map(str::to_string));
     let mode_enc = mode_enc.map(str::to_string).or(from_kwarg);
     if let Some(spec) = mode_enc.as_deref() {
         if named_in_hash {
@@ -276,9 +275,7 @@ fn apply_encoding_spec(
         None | Some("-") => {}
         Some(i) => match crate::encoding::find(i) {
             Some(id) => *int = Some(id),
-            None => {
-                crate::builtins::warning::rb_warn(&format!("Unsupported encoding {i} ignored"))
-            }
+            None => crate::builtins::warning::rb_warn(&format!("Unsupported encoding {i} ignored")),
         },
     }
 }
@@ -964,7 +961,8 @@ fn world_perm(path: &str, bit: libc::mode_t) -> RubyValue {
 /// symlink (`lstat`), as CRuby's fixed strings.
 fn ftype_string(path: &str) -> Result<&'static str, Signal> {
     use std::os::unix::fs::FileTypeExt;
-    let md = std::fs::symlink_metadata(path).map_err(|e| raise_errno(&e, "rb_file_s_lstat", path))?;
+    let md =
+        std::fs::symlink_metadata(path).map_err(|e| raise_errno(&e, "rb_file_s_lstat", path))?;
     let ft = md.file_type();
     Ok(if ft.is_symlink() {
         "link"
@@ -1083,8 +1081,7 @@ pub(crate) fn int_mode(v: &RubyValue) -> Option<Result<RubyValue, Signal>> {
     }
     let int = crate::Symbol::intern("to_int");
     let has = |n| crate::dispatch::responds_to_value(v, n, true);
-    (!has(crate::Symbol::intern("to_str")) && has(int))
-        .then(|| crate::builtins::convert::to_int(v))
+    (!has(crate::Symbol::intern("to_str")) && has(int)).then(|| crate::builtins::convert::to_int(v))
 }
 
 pub(crate) fn open_options_for(
@@ -1095,7 +1092,9 @@ pub(crate) fn open_options_for(
     let converted = mode.and_then(int_mode).transpose()?;
     let mode = converted.as_ref().or(mode);
     let mut o = match mode {
-        None | Some(RubyValue::Nil) => open_options(kwarg_str(opts, "mode").as_deref().unwrap_or("r"))?,
+        None | Some(RubyValue::Nil) => {
+            open_options(kwarg_str(opts, "mode").as_deref().unwrap_or("r"))?
+        }
         Some(RubyValue::Int(flags)) => open_options_int(*flags),
         Some(v) => open_options(&path_arg(v, "open")?)?,
     };
@@ -1208,7 +1207,10 @@ pub(crate) fn open_path(
         // A NAMED encoding is recorded even when it matches the default: the
         // `binmode` send above has already claimed the slot for ASCII-8BIT,
         // and `"rb:UTF-8"` reports `#binmode?` true with a UTF-8 external.
-        if binary || mode_enc.is_some() || ext != crate::encoding::default_external() || int.is_some()
+        if binary
+            || mode_enc.is_some()
+            || ext != crate::encoding::default_external()
+            || int.is_some()
         {
             let ext = match binary {
                 true => crate::encoding::ASCII_8BIT,

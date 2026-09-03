@@ -47,9 +47,9 @@ impl Loader {
                 // reads the same table, so the second require answers `false`.
                 self.built_cexts
                     .insert(bare.to_string(), (library.clone(), init.clone()));
-                self.record_gem(crate::gem_report::GemRecord {
+                self.record_gem(crate::gems::report::GemRecord {
                     name: bare.to_string(),
-                    by: crate::gem_report::SatisfiedBy::CompiledExt {
+                    by: crate::gems::report::SatisfiedBy::CompiledExt {
                         library: library.clone(),
                     },
                 });
@@ -81,9 +81,9 @@ impl Loader {
         // when its `.rb` spliced, and recording the `.so` would double-count.
         if !is_native_feature(feature) {
             let canonical = canonical_ext_feature(bare).to_string();
-            self.record_gem(crate::gem_report::GemRecord {
+            self.record_gem(crate::gems::report::GemRecord {
                 name: canonical.clone(),
-                by: crate::gem_report::SatisfiedBy::BuiltinExt { feature: canonical },
+                by: crate::gems::report::SatisfiedBy::BuiltinExt { feature: canonical },
             });
         }
         // An in-tree `ext/` feature's `require` ACTIVATES its gated builtin
@@ -160,9 +160,9 @@ impl Loader {
         let library = library.display().to_string();
         self.built_cexts
             .insert(memo_key, (library.clone(), init.clone()));
-        self.record_gem(crate::gem_report::GemRecord {
+        self.record_gem(crate::gems::report::GemRecord {
             name: gem.to_string(),
-            by: crate::gem_report::SatisfiedBy::CompiledExt {
+            by: crate::gems::report::SatisfiedBy::CompiledExt {
                 library: library.clone(),
             },
         });

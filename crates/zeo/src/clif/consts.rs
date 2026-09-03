@@ -6,7 +6,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::NodeId;
 use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
 use zeo_abi::abi::{PAYLOAD_OFFSET, TAG_OFFSET, ValueTag};
@@ -130,7 +130,9 @@ fn const_cref_call(
     let site = fx.const_site_ptr();
     let status = fx.call_status(
         "zeo_rt_const_get_cref_cached",
-        &[site, ids_ptr, n_ids, nptr, nlen, qptr, qlen, hook_v, box_v, out],
+        &[
+            site, ids_ptr, n_ids, nptr, nlen, qptr, qlen, hook_v, box_v, out,
+        ],
     );
     fx.fallible(status);
     fx.owned_created += 1;

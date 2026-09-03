@@ -69,14 +69,14 @@ impl Loader {
         // Deduped by name in `record_gem`, so a re-require is a no-op.
         if name == "require" && !is_native_feature(feature) {
             let by = match &package {
-                Some(_) => crate::gem_report::SatisfiedBy::BundledGem {
+                Some(_) => crate::gems::report::SatisfiedBy::BundledGem {
                     path: display_path(&path),
                 },
-                None => crate::gem_report::SatisfiedBy::StdlibRoot {
+                None => crate::gems::report::SatisfiedBy::StdlibRoot {
                     path: display_path(&path),
                 },
             };
-            self.record_gem(crate::gem_report::GemRecord {
+            self.record_gem(crate::gems::report::GemRecord {
                 name: feature.to_string(),
                 by,
             });
@@ -157,9 +157,9 @@ impl Loader {
         if !self.required.insert((box_id, canonical.clone())) && !self.in_unit_sweep {
             return Ok(Some(Vec::new()));
         }
-        self.record_gem(crate::gem_report::GemRecord {
+        self.record_gem(crate::gems::report::GemRecord {
             name: feature.to_string(),
-            by: crate::gem_report::SatisfiedBy::BuiltinExt {
+            by: crate::gems::report::SatisfiedBy::BuiltinExt {
                 feature: feature.to_string(),
             },
         });
@@ -513,8 +513,7 @@ impl Loader {
             std::sync::Arc::clone(&source),
         );
         if spelled != *canonical {
-            hir.files[file_id.0 as usize].real_path =
-                Some(canonical.display().to_string());
+            hir.files[file_id.0 as usize].real_path = Some(canonical.display().to_string());
         }
         let prev_file = hir.lowering_file.replace(file_id);
         // `loaded_files` and `files` are indexed independently (splice

@@ -7,7 +7,7 @@ use super::*;
 /// non-symbol/string is a `TypeError`; anything that is not a valid ivar
 /// name is a `NameError` -- both mirroring CRuby's own messages. Shared by
 /// the universal `Object#instance_variable_*` helpers below (the
-/// class-object table in `builtins::class_module` keeps its own parallel
+/// class-object table in `builtins::rclass` keeps its own parallel
 /// copy).
 ///
 /// The WHOLE name is checked, not just the leading `@`: `"@@bad"` is the

@@ -76,8 +76,8 @@ tar.workspace = true
 flate2.workspace = true
 
 [dev-dependencies]
-# CLIF snapshot pinning (`tests/checks/clif.rs`) and the diagnostic
-# renderings (`tests/checks/diagnostics.rs`).
+# CLIF snapshot pinning (`tests/suite/checks/clif.rs`) and the diagnostic
+# renderings (`tests/suite/checks/diagnostics.rs`).
 insta.workspace = true
 zeo-abi.workspace = true
 datatest-stable.workspace = true
@@ -95,7 +95,7 @@ criterion = { version = "0.8.2", default-features = false, features = ["cargo_be
 # recorded under its `__END__` (tests/corpus/). `harness = false` hands the
 # target to datatest-stable, whose case names are `<fn>::<path>`, so one
 # binary carries every suite and every leg and a `test(core::)` filter still
-# names exactly one. `tests/checks/` and `tests/api/` are autodiscovered.
+# names exactly one. `tests/suite/` carries both `checks/` and `api/`.
 # Two test binaries, and the split is forced: `corpus` replaces libtest with
 # datatest-stable (`harness = false`), so nothing with an ordinary `#[test]`
 # can live in it. Everything else is one binary, because a test target costs

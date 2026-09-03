@@ -4,7 +4,7 @@
 //! The dev tree keeps them in three tiers -- zeo's own halves under
 //! `crates/zeo-rt/ext/`, the rubygems/bundler bootstrap under `vendor/ruby/`,
 //! and everything else in the gem store under `vendor/gems/` from
-//! `Gemfile.lock`. `zeo::bundled` decides that list, and both `dist` and
+//! `Gemfile.lock`. `zeo::gems::bundled` decides that list, and both `dist` and
 //! `stage-publish` read it from there, so neither they nor the compiler can
 //! disagree about what ships.
 //!
@@ -59,9 +59,9 @@ pub fn files() -> Result<Vec<(String, PathBuf)>, Error> {
 /// `<name>-<version>` read out of the lock, so this is the whole of the
 /// reproducibility question -- there is no way for a stale disk to
 /// contribute a library at a version the lock does not name.
-fn libraries() -> Result<Vec<zeo::bundled::Library>, Error> {
-    let libs = zeo::bundled::dev_tree_libraries(root());
-    let missing: Vec<String> = zeo::bundled::vendored_names(root())
+fn libraries() -> Result<Vec<zeo::gems::bundled::Library>, Error> {
+    let libs = zeo::gems::bundled::dev_tree_libraries(root());
+    let missing: Vec<String> = zeo::gems::bundled::vendored_names(root())
         .into_iter()
         .map(|(name, _)| name)
         .filter(|name| !libs.iter().any(|lib| &lib.name == name))

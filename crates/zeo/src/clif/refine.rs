@@ -7,7 +7,7 @@
 //! and a refined name actually meet -- which is a handful of sites in the
 //! rare program that refines at all.
 
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
 
@@ -291,9 +291,11 @@ fn candidate_table(
             let t = fx.cid_value(target.0);
             fx.b.ins().stack_store(fx.em.ptr, t, slot, (i * 12) as i32);
             let h = fx.cid_value(holder.0);
-            fx.b.ins().stack_store(fx.em.ptr, h, slot, (i * 12 + 4) as i32);
+            fx.b.ins()
+                .stack_store(fx.em.ptr, h, slot, (i * 12 + 4) as i32);
             let s = fx.b.ins().iconst(types::I32, i64::from(singleton));
-            fx.b.ins().stack_store(fx.em.ptr, s, slot, (i * 12 + 8) as i32);
+            fx.b.ins()
+                .stack_store(fx.em.ptr, s, slot, (i * 12 + 8) as i32);
         }
         let ptr = fx.b.ins().stack_addr(fx.em.ptr, slot, 0);
         let n = fx.b.ins().iconst(fx.em.ptr, cands.len() as i64);

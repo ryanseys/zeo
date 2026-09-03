@@ -2,7 +2,7 @@
 //! programs zeo compiles and runs.
 //!
 //! In the library rather than beside the argument parser because the parity
-//! probe (`tests/e2e/bundler_parity.rs`) runs the SAME driver text under
+//! probe (`api::bundler_parity`) runs the SAME driver text under
 //! CRuby. Two copies of it would let the probe pass while the two engines ran
 //! different programs, which is the one thing that probe exists to rule out.
 

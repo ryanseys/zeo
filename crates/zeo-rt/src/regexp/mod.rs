@@ -1480,7 +1480,7 @@ mod tests {
         assert_eq!(s.lock().to_utf8_lossy(), "$N and $N");
     }
 
-    /// Oracle-verified against real `ruby` (see `crates/zeo/tests/e2e.rs`'s
+    /// Oracle-verified against real `ruby` (see the corpus's recorded
     /// `split_*` tests for the e2e-visible half of this behavior) -- tested
     /// directly here too since `puts` on an EMPTY `Array` result can't
     /// currently distinguish "empty array" from "array of one empty string"

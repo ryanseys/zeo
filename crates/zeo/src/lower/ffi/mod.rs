@@ -9,6 +9,7 @@
 //! - [`synth`]: `FFI::Struct` layout -> accessor synthesis;
 //! - [`types`]: keyword -> `FfiType` resolution.
 
+pub mod vocab;
 mod directive;
 mod recognize;
 mod synth;

@@ -17,7 +17,7 @@
 //! variadic calls, no aggregate ABI). Both answer identically; the tier is
 //! a cost, never a behaviour.
 
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use cranelift_codegen::ir::{InstBuilder, types};
 use cranelift_module::Module;
 use zeo_abi::ffi::CScalar;
@@ -320,8 +320,8 @@ fn scalar_of(ty: &FfiType) -> CResult<CScalar> {
 
 /// The signature helpers' refusal: span-less here, stamped with the call
 /// site's own by `lower_ffi_call`.
-fn cannot_lower(what: impl std::fmt::Display) -> crate::codegen_error::CodegenError {
-    crate::codegen_error::CodegenError::unsupported(
+fn cannot_lower(what: impl std::fmt::Display) -> crate::diagnostics::clif::CodegenError {
+    crate::diagnostics::clif::CodegenError::unsupported(
         format!("the CLIF backend cannot lower {what} yet"),
         None,
     )

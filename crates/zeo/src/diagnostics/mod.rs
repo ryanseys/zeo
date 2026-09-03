@@ -13,9 +13,16 @@
 //! via `Display`/`From`, so the in-process harnesses keep asserting on the
 //! exact message text they always have.
 
-use crate::analyze_error::AnalyzeError;
+/// Each pass's own error type, one file each. They are siblings, not a
+/// hierarchy: a pass raises its own and [`CompileError`] says which pass it
+/// came from.
+pub mod analyze;
+pub mod clif;
+pub mod lower;
+
+use crate::diagnostics::analyze::AnalyzeError;
+use crate::diagnostics::lower::{LowerError, LowerErrorKind};
 use crate::hir::{SourceFile, Span};
-use crate::lower_error::{LowerError, LowerErrorKind};
 use miette::{Diagnostic, LabeledSpan, NamedSource, SourceCode};
 use std::fmt;
 use thiserror::Error;
@@ -365,7 +372,7 @@ impl CompileError {
     /// codegen error never has to become a Ruby exception through this
     /// path (the run-time `eval` boundary converts for itself).
     pub fn from_codegen(
-        err: crate::codegen_error::CodegenError,
+        err: crate::diagnostics::clif::CodegenError,
         files: &[SourceFile],
     ) -> CompileError {
         CompileError::codegen_located(err.message, err.span, files)

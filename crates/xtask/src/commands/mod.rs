@@ -1,8 +1,8 @@
-pub mod bench;
 pub mod bless;
 pub mod capi_sweep;
 pub mod cext;
 pub mod cext_layout;
+pub mod compile_cost;
 pub mod ci;
 pub mod deps;
 pub mod diff;

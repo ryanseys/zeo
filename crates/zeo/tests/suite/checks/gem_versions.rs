@@ -66,8 +66,8 @@ fn locked_versions() -> BTreeMap<String, Vec<String>> {
 fn committed_versions() -> BTreeMap<String, Option<String>> {
     let root = repo_root();
     let mut out = BTreeMap::new();
-    for tier in [zeo::bundled::EXT_TIER, zeo::bundled::BOOTSTRAP_TIER] {
-        for lib in zeo::bundled::libraries_in(&root.join(tier)) {
+    for tier in [zeo::gems::bundled::EXT_TIER, zeo::gems::bundled::BOOTSTRAP_TIER] {
+        for lib in zeo::gems::bundled::libraries_in(&root.join(tier)) {
             let spec = lib.dir.join(format!("{}.gemspec", lib.name));
             let version = spec.is_file().then(|| {
                 let text = std::fs::read_to_string(&spec)
@@ -89,7 +89,7 @@ fn committed_versions() -> BTreeMap<String, Option<String>> {
 /// The lock entry a committed directory is measured against, where the two
 /// are spelled differently.
 fn locked_name(dir: &str) -> Option<&'static str> {
-    zeo::bundled::BOOTSTRAP_LOCK_NAMES
+    zeo::gems::bundled::BOOTSTRAP_LOCK_NAMES
         .iter()
         .find(|(d, _)| *d == dir)
         .map(|(_, locked)| *locked)
@@ -139,8 +139,8 @@ fn every_gem_with_its_own_gemspec_matches_the_locked_version() {
 #[test]
 fn every_resolved_gem_is_unpacked_in_the_store() {
     let root = repo_root();
-    let resolved = zeo::bundled::resolved_libraries(root);
-    let missing: Vec<String> = zeo::bundled::vendored_names(root)
+    let resolved = zeo::gems::bundled::resolved_libraries(root);
+    let missing: Vec<String> = zeo::gems::bundled::vendored_names(root)
         .into_iter()
         .filter(|(name, _)| !resolved.iter().any(|lib| &lib.name == name))
         .map(|(name, version)| format!("{name} {version}"))
@@ -158,7 +158,7 @@ fn every_resolved_gem_is_unpacked_in_the_store() {
 #[test]
 fn every_withheld_library_is_still_locked() {
     let locked = locked_versions();
-    let stale: Vec<&str> = zeo::bundled::NOT_SHIPPED
+    let stale: Vec<&str> = zeo::gems::bundled::NOT_SHIPPED
         .iter()
         .map(|(name, _)| *name)
         .filter(|name| !locked.contains_key(*name))
@@ -166,10 +166,10 @@ fn every_withheld_library_is_still_locked() {
     assert!(
         stale.is_empty(),
         "withheld but no longer in Gemfile.lock, so drop them from \
-         `zeo::bundled::NOT_SHIPPED`: {stale:?}"
+         `zeo::gems::bundled::NOT_SHIPPED`: {stale:?}"
     );
-    let shipped = zeo::bundled::vendored_names(repo_root());
-    for (name, _) in zeo::bundled::NOT_SHIPPED {
+    let shipped = zeo::gems::bundled::vendored_names(repo_root());
+    for (name, _) in zeo::gems::bundled::NOT_SHIPPED {
         assert!(
             !shipped.iter().any(|(n, _)| n == name),
             "{name} is withheld and must not be part of the payload"
@@ -186,7 +186,7 @@ fn every_exemption_still_names_a_library_with_a_gemspec() {
         .iter()
         .chain(REIMPLEMENTED.iter())
         .chain(
-            zeo::bundled::BOOTSTRAP_LOCK_NAMES
+            zeo::gems::bundled::BOOTSTRAP_LOCK_NAMES
                 .iter()
                 .map(|(dir, _)| dir),
         )
@@ -208,7 +208,7 @@ fn every_exemption_still_names_a_library_with_a_gemspec() {
 fn no_library_tier_holds_a_leftover_directory() {
     let root = repo_root();
     let mut strays: Vec<String> = Vec::new();
-    for tier in [zeo::bundled::EXT_TIER, zeo::bundled::BOOTSTRAP_TIER] {
+    for tier in [zeo::gems::bundled::EXT_TIER, zeo::gems::bundled::BOOTSTRAP_TIER] {
         let dir = root.join(tier);
         for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{tier} is readable: {e}")) {
             let path: PathBuf = entry.expect("readable entry").path();
@@ -290,7 +290,7 @@ fn the_oracle_group_is_still_a_block_the_scan_can_read() {
         "the group block has no closing `end` on a line of its own"
     );
     let root = repo_root();
-    let shipped = zeo::bundled::vendored_names(root);
+    let shipped = zeo::gems::bundled::vendored_names(root);
     for gem in ["rspec", "rspec-core", "diff-lcs"] {
         assert!(
             !shipped.iter().any(|(name, _)| name == gem),

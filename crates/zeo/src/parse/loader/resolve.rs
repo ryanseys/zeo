@@ -393,7 +393,7 @@ impl Loader {
             .auto_verdicts
             .borrow_mut()
             .entry(pkg.name.clone())
-            .or_insert_with(|| crate::autopkg::cache_has(&pkg.name, &pkg.roots, feature));
+            .or_insert_with(|| crate::packages::autopkg::cache_has(&pkg.name, &pkg.roots, feature));
         if !has {
             return false;
         }
@@ -460,14 +460,14 @@ impl Loader {
             if paths.len() != pkg.roots.len() {
                 continue;
             }
-            gems.push(crate::default_gems::DefaultGem {
+            gems.push(crate::gems::default_gems::DefaultGem {
                 name: &pkg.name,
                 version,
                 dir,
                 require_paths: paths,
             });
         }
-        ONCE.call_once(|| crate::default_gems::materialize(&gems));
+        ONCE.call_once(|| crate::gems::default_gems::materialize(&gems));
     }
 
     /// What `$LOAD_PATH` holds at run time: the `-I` roots as given, then the

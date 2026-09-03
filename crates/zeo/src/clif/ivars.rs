@@ -3,7 +3,7 @@
 
 use super::ctx::Fx;
 use super::ownership;
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::NodeId;
 use cranelift_codegen::ir::InstBuilder;
 

@@ -28,7 +28,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::gem_report::{GemRecord, SatisfiedBy};
+use crate::gems::report::{GemRecord, SatisfiedBy};
 use crate::lower::PResult;
 use crate::parse::read_gemspec;
 use zeo_gem::Gemspec;

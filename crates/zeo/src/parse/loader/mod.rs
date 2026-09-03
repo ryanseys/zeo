@@ -41,11 +41,11 @@
 //! time; `load`'s `wrap` parameter, native features, and `~`/`./`-prefixed
 //! `require` are clean rejections.
 
+use crate::diagnostics::lower::LowerError;
 use crate::hir::{Hir, HirNode, LoadedFile, NodeId};
 use crate::lower::context::{BindingsFrame, SourceFileFrame, current_box_binding};
 use crate::lower::features::{canonical_ext_feature, is_builtin_feature, zeo_provides};
 use crate::lower::{PResult, lower_node};
-use crate::lower_error::LowerError;
 use crate::rename;
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
@@ -105,7 +105,7 @@ pub(super) struct Gem {
 pub(super) enum GemProvenance {
     /// A caller-supplied package dir (`--gems`).
     PackageDir,
-    /// zeo's own bundled library (`zeo::bundled`) -- the compiler's stdlib tier.
+    /// zeo's own bundled library (`zeo::gems::bundled`) -- the compiler's stdlib tier.
     Bundled,
     /// An external installed store, admitted by a lockfile.
     Store,
@@ -219,7 +219,7 @@ pub(super) struct Loader {
     /// A LOG of what resolution did, not a property of the program -- it used
     /// to hang off `Hir`, which made the IR depend on the gem reporter for
     /// bookkeeping no consumer of the arena ever reads.
-    gem_records: Vec<crate::gem_report::GemRecord>,
+    gem_records: Vec<crate::gems::report::GemRecord>,
     /// `gem_records`' names, for the first-wins test -- see `record_gem`.
     gem_names: std::collections::HashSet<String>,
     /// `resolve_require` results, per feature. Sound as a plain memo because
@@ -414,7 +414,7 @@ pub(super) fn lower_main_file(
     hir: &mut Hir,
     source: &str,
     opts: &crate::CompileOptions,
-) -> PResult<(Vec<NodeId>, Vec<crate::gem_report::GemRecord>)> {
+) -> PResult<(Vec<NodeId>, Vec<crate::gems::report::GemRecord>)> {
     let input_path = opts.input_path.as_deref();
     let line_offset = opts.line_offset;
     // The requiring-file directory for the main file's own require_relative
@@ -486,7 +486,7 @@ pub(super) fn lower_main_file(
         pkg_foreign: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         auto_consult: opts.auto_package
             && opts.package_build.is_none()
-            && crate::progcache::enabled(),
+            && crate::packages::progcache::enabled(),
         auto_verdicts: std::cell::RefCell::new(HashMap::new()),
         auto_pending: std::cell::RefCell::new(HashMap::new()),
     };
@@ -574,7 +574,7 @@ pub(super) fn lower_main_file(
         for record in resolution.disclosures {
             // An excluded gem's reason is kept so a `require` of it fails
             // precisely; every record is also disclosed in the report.
-            if let crate::gem_report::SatisfiedBy::Excluded { reason, .. } = &record.by {
+            if let crate::gems::report::SatisfiedBy::Excluded { reason, .. } = &record.by {
                 loader
                     .store_exclusions
                     .insert(record.name.clone(), reason.clone());
@@ -733,10 +733,10 @@ pub(super) fn lower_main_file(
     let mut deferred: Vec<&String> = hir.loader.deferred_requires.iter().collect();
     deferred.sort();
     for name in deferred {
-        loader.record_gem(crate::gem_report::GemRecord {
+        loader.record_gem(crate::gems::report::GemRecord {
             name: name.clone(),
-            by: crate::gem_report::SatisfiedBy::Excluded {
-                kind: crate::gem_report::DEFERRED_KIND.to_string(),
+            by: crate::gems::report::SatisfiedBy::Excluded {
+                kind: crate::gems::report::DEFERRED_KIND.to_string(),
                 reason: "required only from a method body, which whole-program AOT does not \
                          load; require it at top level to compile it in"
                     .to_string(),
@@ -830,7 +830,7 @@ impl Loader {
     /// Records how one `require`d library was satisfied, deduped by
     /// name (first-wins): a bundled gem's user-facing `.rb` is recorded before
     /// its internal `.so` require, so the entry point wins.
-    fn record_gem(&mut self, record: crate::gem_report::GemRecord) {
+    fn record_gem(&mut self, record: crate::gems::report::GemRecord) {
         // The set decides first-wins; `gem_records` keeps the order, which the
         // report depends on. Scanning the list per record made recording a
         // program's gems quadratic in their count.
@@ -930,14 +930,14 @@ impl Loader {
                 // "not compiled in" record the deferred set would
                 // otherwise produce at the end of the load).
                 let by = match &package {
-                    Some(_) => crate::gem_report::SatisfiedBy::BundledGem {
+                    Some(_) => crate::gems::report::SatisfiedBy::BundledGem {
                         path: display_path(&path),
                     },
-                    None => crate::gem_report::SatisfiedBy::StdlibRoot {
+                    None => crate::gems::report::SatisfiedBy::StdlibRoot {
                         path: display_path(&path),
                     },
                 };
-                self.record_gem(crate::gem_report::GemRecord {
+                self.record_gem(crate::gems::report::GemRecord {
                     name: feature.clone(),
                     by,
                 });
@@ -1678,14 +1678,14 @@ impl Loader {
         // be.
         if name == "require" {
             let by = match &package {
-                Some(_) => crate::gem_report::SatisfiedBy::BundledGem {
+                Some(_) => crate::gems::report::SatisfiedBy::BundledGem {
                     path: display_path(&target),
                 },
-                None => crate::gem_report::SatisfiedBy::StdlibRoot {
+                None => crate::gems::report::SatisfiedBy::StdlibRoot {
                     path: display_path(&target),
                 },
             };
-            self.record_gem(crate::gem_report::GemRecord {
+            self.record_gem(crate::gems::report::GemRecord {
                 name: feature.to_string(),
                 by,
             });

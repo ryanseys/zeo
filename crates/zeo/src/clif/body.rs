@@ -5,7 +5,7 @@ use super::ctx::Fx;
 use super::module::Emitter;
 use super::{stmt, verify};
 use crate::analyze::Analyzed;
-use crate::codegen_error::{CResult, CodegenError};
+use crate::diagnostics::clif::{CResult, CodegenError};
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, UserFuncName, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{FuncId, Linkage, Module};
@@ -518,10 +518,9 @@ pub(super) fn define_method_body(
     // (CRuby reads it off the control frame), so any scope containing a
     // run-time eval publishes its chain -- class bodies included, which is
     // where rss writes `module_eval("class X < Element")`.
-    let publishes_cref = crate::analyze::captures::body_contains_runtime_eval(
-        &analyzed.compiler,
-        def.body,
-    ) && !super::boxes::cref_chain(&fx).is_empty();
+    let publishes_cref =
+        crate::analyze::captures::body_contains_runtime_eval(&analyzed.compiler, def.body)
+            && !super::boxes::cref_chain(&fx).is_empty();
     if publishes_cref {
         super::boxes::emit_cref_push(&mut fx);
     }

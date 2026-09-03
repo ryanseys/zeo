@@ -5,7 +5,7 @@
 use super::ctx::{Fx, LoopCtl, VALUE_SIZE};
 use super::expr::lower_expr;
 use super::ownership;
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::{ArrayElem, HirNode, NodeId};
 use cranelift_codegen::ir::{InstBuilder, StackSlotData, StackSlotKind, types};
 use cranelift_module::Module;
@@ -29,9 +29,7 @@ pub(crate) fn lower_stmts(fx: &mut Fx, stmts: &[NodeId]) -> CResult<()> {
             continue;
         }
         let mark = fx.stmt_mark();
-        let pool = fx
-            .drain_temps
-            .then(|| super::frames::emit_pool_mark(fx));
+        let pool = fx.drain_temps.then(|| super::frames::emit_pool_mark(fx));
         lower_stmt(fx, stmts[i])?;
         if let Some(pool) = pool {
             super::frames::emit_pool_reset(fx, pool);
@@ -382,7 +380,10 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
         } if name == "puts"
             && kwargs.is_empty()
             && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
-            && !crate::analyze::class_query::overrides_kernel_universal(&fx.an.compiler, "puts") =>
+            && !crate::analyze::class_query::overrides_kernel_universal(
+                &fx.an.compiler,
+                "puts",
+            ) =>
         {
             let args = args.clone();
             lower_puts(fx, stmt, &args)
@@ -873,7 +874,7 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
         HirNode::Using(module) if fx.eval_mode.is_some() => {
             let module = module.clone();
             let Some(slot) = fx.an.compiler.eval_activation_slot(stmt) else {
-                return Err(crate::codegen_error::CodegenError::unsupported(
+                return Err(crate::diagnostics::clif::CodegenError::unsupported(
                     "a `using` inside an `eval` that analyze did not place",
                     None,
                 ));

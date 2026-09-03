@@ -57,9 +57,9 @@ fn skip_reason(dir: &str) -> Option<&'static str> {
 fn bundled_gems() -> Vec<String> {
     let root = crate::paths::workspace_root();
     let mut names: Vec<String> =
-        zeo::bundled::libraries_in(&root.join(zeo::bundled::BOOTSTRAP_TIER))
+        zeo::gems::bundled::libraries_in(&root.join(zeo::gems::bundled::BOOTSTRAP_TIER))
             .into_iter()
-            .chain(zeo::bundled::resolved_libraries(&root))
+            .chain(zeo::gems::bundled::resolved_libraries(&root))
             .map(|lib| lib.name)
             .collect();
     names.sort();

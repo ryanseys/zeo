@@ -197,7 +197,7 @@ pub(crate) fn synthesize_struct_class(
     let written_at = hir.current_span();
     let nodes = parse_and_lower_into(hir, &src)?;
     let [class_def] = nodes[..] else {
-        return Err(crate::lower_error::LowerError::syntax(
+        return Err(crate::diagnostics::lower::LowerError::syntax(
             "a synthesized struct class must lower to exactly one ClassDef",
         ));
     };

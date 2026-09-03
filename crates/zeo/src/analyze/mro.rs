@@ -16,9 +16,9 @@
 //! emitted code ends up with one copy per class, exactly the
 //! trade monomorphization already makes.
 
-use crate::analyze_error::AnalyzeError;
 use crate::compiler::{ClassId, Compiler, MethodEntry, NameId, OBJECT_CLASS, ScopeId};
 use crate::compiler::{FMap, FSet};
+use crate::diagnostics::analyze::AnalyzeError;
 use crate::hir::{HirNode, NodeId, Span, Visibility};
 
 /// Real Ruby's linearization: CRuby's own `include_modules_at`, replayed.

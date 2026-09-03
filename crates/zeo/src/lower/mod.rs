@@ -19,14 +19,14 @@ pub(crate) mod ffi;
 mod literals;
 mod pattern;
 
+use crate::diagnostics::lower::LowerError;
 use crate::hir::{ArrayElem, Hir, HirNode, KwArg, LastMatch, NodeId, Span, StrPart};
-use crate::lower_error::LowerError;
 use ruby_prism::{CallNode, Node, ParseResult};
 
 pub use literals::encoding_const_name;
 use literals::line_of;
 
-pub type PResult<T> = Result<T, crate::lower_error::LowerError>;
+pub type PResult<T> = Result<T, crate::diagnostics::lower::LowerError>;
 
 /// Parses `source` as a standalone program and lowers it into `hir`, which
 /// may already contain other nodes -- the primitive the compiler's top-level
@@ -746,9 +746,9 @@ fn current_dir_str() -> PResult<String> {
 
 #[cfg(test)]
 mod regexp_encoding_tests {
-    use crate::lower_error::LowerErrorKind;
+    use crate::diagnostics::lower::LowerErrorKind;
 
-    fn lower(src: &str) -> Result<(), crate::lower_error::LowerError> {
+    fn lower(src: &str) -> Result<(), crate::diagnostics::lower::LowerError> {
         let mut hir = crate::hir::Hir::default();
         crate::lower::parse_and_lower_into(&mut hir, src).map(|_| ())
     }

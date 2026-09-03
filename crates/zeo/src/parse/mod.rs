@@ -196,7 +196,7 @@ fn magic_encoding_comment(source: &str) -> Option<String> {
 pub fn parse_and_lower_with(
     source: &str,
     opts: &crate::CompileOptions,
-) -> Result<(Hir, NodeId, Vec<crate::gem_report::GemRecord>), CompileError> {
+) -> Result<(Hir, NodeId, Vec<crate::gems::report::GemRecord>), CompileError> {
     // The exception-class prefix is the same source for every compile, so it
     // is lowered ONCE into a template arena and cloned in, rather than
     // re-parsed per compile. Sound because the prefix is always the FIRST
@@ -207,11 +207,11 @@ pub fn parse_and_lower_with(
     // must not re-emit it and the statement never joins the emitted stream.
     // `builtin_exceptions_len` counts them.
     static BUILTIN_PREFIX: std::sync::LazyLock<
-        Result<(Hir, Vec<NodeId>), crate::lower_error::LowerError>,
+        Result<(Hir, Vec<NodeId>), crate::diagnostics::lower::LowerError>,
     > = std::sync::LazyLock::new(|| {
         let mut hir = Hir::default();
         let statements = parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB).map_err(|e| {
-            crate::lower_error::LowerError {
+            crate::diagnostics::lower::LowerError {
                 message: format!(
                     "internal error in zeo's built-in exception classes (this is a zeo bug): {e}"
                 ),
@@ -240,7 +240,7 @@ pub fn parse_and_lower_with(
     // analyze nor emit sees `CompileOptions` -- see `Hir::pkg_build`.
     hir.pkg_build = opts.package_build.clone();
     for up in &opts.use_packages {
-        let m = crate::package::Manifest::parse(&up.manifest_text)
+        let m = crate::packages::package::Manifest::parse(&up.manifest_text)
             .map_err(|e| CompileError::analyze(format!("{}: {e}", up.manifest_path.display())))?;
         hir.pkg_merge.push(m);
         hir.pkg_source_roots.push(up.source_root.clone());
@@ -257,7 +257,7 @@ pub fn parse_and_lower_with(
     // A snippet is its own compile and would otherwise have never heard of an
     // FFI type an earlier one -- or the program -- declared.
     if opts.mode.is_eval() {
-        crate::ffi_vocab::seed(&mut hir);
+        crate::lower::ffi::vocab::seed(&mut hir);
     }
     // This is THE boundary where a located `LowerError` becomes a renderable
     // `CompileError`: the error and the `Hir::files` table it points into
@@ -267,7 +267,7 @@ pub fn parse_and_lower_with(
         Err(e) => return Err(CompileError::lower(e, &hir.files)),
     };
     statements.extend(main_statements);
-    crate::ffi_vocab::publish(&hir);
+    crate::lower::ffi::vocab::publish(&hir);
     let root = hir.push(HirNode::Program(statements));
     Ok((hir, root, gem_records))
 }

@@ -4,7 +4,7 @@
 //! cache).
 
 use super::capi_names::{self, CTy};
-use crate::codegen_error::{CResult, CodegenError};
+use crate::diagnostics::clif::{CResult, CodegenError};
 use cranelift_codegen::ir::{self, AbiParam, types};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -230,7 +230,7 @@ pub(crate) struct Emitter {
     /// The package build this emission is, when it is
     /// one -- names the unit machinery `{prefix}_unit_*`, exports the
     /// row-referenced bodies, and swaps the desc for a manifest.
-    pub pkg: Option<crate::package::PackageBuild>,
+    pub pkg: Option<crate::packages::package::PackageBuild>,
     /// How a class id becomes a machine value -- see
     /// [`IdMode`] and `Fx::cid_value`.
     pub id_mode: IdMode,

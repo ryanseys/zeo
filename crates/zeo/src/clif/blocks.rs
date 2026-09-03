@@ -8,7 +8,7 @@ use super::ctx::{Fx, Local, VALUE_SIZE};
 use super::operand::{Operand, TagInfo};
 use super::ownership;
 use crate::analyze::captures;
-use crate::codegen_error::{CResult, CodegenError};
+use crate::diagnostics::clif::{CResult, CodegenError};
 use crate::hir::{ArrayElem, HirNode, NodeId};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
@@ -797,7 +797,6 @@ fn define_block_fn(
     if publishes_cref {
         super::boxes::emit_cref_push(&mut bfx);
     }
-
 
     // A required-only 0/1-name NON-LAMBDA block binds inline: ruby's
     // lenient rules reduce to "args[0], or nil when the yield brought

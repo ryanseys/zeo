@@ -79,7 +79,7 @@ fn every_shape_the_emitter_once_refused_now_compiles() {
 
 /// A failure past lowering carries its stage as the diagnostic code, and the
 /// statement that provoked it: analyze refuses definitions, and the walk stamps
-/// the one it was handed (see `analyze_error`). Without that, a rejection names
+/// the one it was handed (see `diagnostics::analyze`). Without that, a rejection names
 /// a construct rather than a place -- which for a gem is a search across every
 /// file that spells it.
 #[test]
@@ -126,7 +126,7 @@ fn a_codegen_error_renders_a_located_excerpt() {
     let mut hir = zeo::hir::Hir::default();
     hir.add_file("-e", "x = 1\nlist.compile_me\n");
     let err = zeo::CompileError::from_codegen(
-        zeo::codegen_error::CodegenError::unsupported(
+        zeo::diagnostics::clif::CodegenError::unsupported(
             "the CLIF backend cannot lower this construct yet",
             Some(zeo::hir::Span {
                 file: zeo::hir::FileId(0),

@@ -12,7 +12,7 @@ use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, condcodes
 use cranelift_module::Module;
 use zeo_abi::ffi::CScalar;
 
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::FfiCall;
 
 use super::super::ctx::Fx;

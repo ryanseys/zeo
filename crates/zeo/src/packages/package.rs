@@ -302,10 +302,7 @@ pub fn store_artifact_home(
 /// a device and by copy where they do not. `Ok(false)` means the store is
 /// not writable -- the caller keeps serving from the machine cache, which
 /// is the tolerated degradation, never an error.
-pub fn store_install(
-    home: &std::path::Path,
-    artifact: &std::path::Path,
-) -> std::io::Result<bool> {
+pub fn store_install(home: &std::path::Path, artifact: &std::path::Path) -> std::io::Result<bool> {
     let dir = home.parent().expect("a store home has a directory");
     if std::fs::create_dir_all(dir).is_err() {
         return Ok(false);
@@ -352,8 +349,7 @@ pub fn write_zeopkg(
     manifest_json: &str,
     object: &[u8],
 ) -> std::io::Result<()> {
-    let mut bytes =
-        Vec::with_capacity(8 + 16 + manifest_json.len() + object.len());
+    let mut bytes = Vec::with_capacity(8 + 16 + manifest_json.len() + object.len());
     bytes.extend_from_slice(ZEOPKG_MAGIC);
     bytes.extend_from_slice(&(manifest_json.len() as u64).to_le_bytes());
     bytes.extend_from_slice(manifest_json.as_bytes());
@@ -452,7 +448,11 @@ impl PackageBuild {
     /// A path outside the entry's directory keeps its real spelling.
     pub fn respell(&self, canonical: &std::path::Path) -> Option<std::path::PathBuf> {
         let rel = canonical.strip_prefix(&self.root).ok()?;
-        Some(std::path::Path::new("/zeopkg").join(&self.feature).join(rel))
+        Some(
+            std::path::Path::new("/zeopkg")
+                .join(&self.feature)
+                .join(rel),
+        )
     }
 
     /// The exported-symbol prefix: the feature spelling with every

@@ -5,7 +5,7 @@
 use super::module::Emitter;
 use super::names;
 use crate::analyze::Analyzed;
-use crate::codegen_error::{CResult, CodegenError};
+use crate::diagnostics::clif::{CResult, CodegenError};
 use cranelift_codegen::ir::{self, InstBuilder, UserFuncName};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};

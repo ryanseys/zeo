@@ -76,7 +76,7 @@ pub fn locate(
     let mut stores = stores;
     if stores.is_empty() {
         let root = gemfile.parent().unwrap_or_else(|| Path::new("."));
-        if let Some(vendored) = crate::bundled::store_dir(root) {
+        if let Some(vendored) = crate::gems::bundled::store_dir(root) {
             stores.push(vendored);
         } else if let Some(gp) = gem_path_env {
             stores.extend(std::env::split_paths(gp));
@@ -132,7 +132,7 @@ pub fn survey_lock(lockfile: &Path, stores: &[PathBuf]) -> Result<Vec<GemRow>, S
         .into_iter()
         .map(|g| {
             let home = g.entry.is_some().then(|| {
-                crate::package::store_artifact_home(&g.store, target, &g.name, &g.version)
+                crate::packages::package::store_artifact_home(&g.store, target, &g.name, &g.version)
             });
             GemRow {
                 name: g.name,
@@ -204,10 +204,10 @@ pub fn linkable(rows: &[GemRow]) -> Vec<PathBuf> {
 
 /// The manifest at `path`, if the artifact was built by THIS compiler for
 /// THIS target -- `None` otherwise, unreadable included.
-fn read_matching_manifest(path: &Path) -> Option<crate::package::Manifest> {
-    let (manifest_text, _) = crate::package::read_zeopkg(path).ok()?;
-    let m = crate::package::Manifest::parse(&manifest_text).ok()?;
-    (m.compiler == crate::package::compiler_identity()
+fn read_matching_manifest(path: &Path) -> Option<crate::packages::package::Manifest> {
+    let (manifest_text, _) = crate::packages::package::read_zeopkg(path).ok()?;
+    let m = crate::packages::package::Manifest::parse(&manifest_text).ok()?;
+    (m.compiler == crate::packages::package::compiler_identity()
         && m.target == crate::backend::link::host_triple())
     .then_some(m)
 }
@@ -322,10 +322,10 @@ mod tests {
 
     /// A minimal valid artifact for `feature`, at `<dir>/<feature>.zeopkg`.
     fn artifact(dir: &Path, feature: &str, host_features: &[&str]) -> PathBuf {
-        let m = crate::package::Manifest {
-            manifest_version: crate::package::MANIFEST_VERSION,
+        let m = crate::packages::package::Manifest {
+            manifest_version: crate::packages::package::MANIFEST_VERSION,
             abi_version: zeo_abi::abi::ABI_VERSION,
-            compiler: crate::package::compiler_identity(),
+            compiler: crate::packages::package::compiler_identity(),
             target: crate::backend::link::host_triple().to_string(),
             source_digest: "0".into(),
             iface_hash: "0".into(),
@@ -356,7 +356,8 @@ mod tests {
             iface: vec![],
         };
         let path = dir.join(format!("{feature}.zeopkg"));
-        crate::package::write_zeopkg(&path, &m.to_json(), b"obj").expect("write artifact");
+        crate::packages::package::write_zeopkg(&path, &m.to_json(), b"obj")
+            .expect("write artifact");
         path
     }
 

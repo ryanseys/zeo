@@ -7,7 +7,7 @@
 //! guard). A ledger row reading `subclassing the built-in type \`Module\`
 //! isn't supported yet` names a construct that appears in dozens of files.
 //!
-//! This is `lower_error::LowerError`'s smaller sibling and works the same way:
+//! This is `lower::LowerError`'s smaller sibling and works the same way:
 //! rejection sites keep raising bare messages (`Err("...".into())` still
 //! compiles, via `From`), and the STATEMENT WALK stamps the span on the way out
 //! -- `process_top_stmt` knows the `NodeId` it was handed, so every site inside

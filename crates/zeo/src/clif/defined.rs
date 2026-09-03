@@ -5,7 +5,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::{HirNode, NodeId};
 use cranelift_codegen::ir::{InstBuilder, types};
 use zeo_abi::abi::{TAG_OFFSET, ValueTag};

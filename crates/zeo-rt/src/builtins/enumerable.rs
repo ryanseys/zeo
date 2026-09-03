@@ -688,14 +688,12 @@ fn min_max_by(
     // several equal keys survive is decided there rather than by the order
     // they arrived in.
     if let Some(n) = count {
-        let mut run = crate::builtins::sort::Nmin::new(
-            n,
-            !min,
-            |a: &RubyValue, b: &RubyValue| match a.rb_cmp(b) {
+        let mut run = crate::builtins::sort::Nmin::new(n, !min, |a: &RubyValue, b: &RubyValue| {
+            match a.rb_cmp(b) {
                 Some(c) => Ok(c as i32),
                 None => Err(crate::value::cmp_error(a, b)),
-            },
-        );
+            }
+        });
         for e in items {
             let key = blk.call(e.raw())?;
             run.push(key, e.packed)?;

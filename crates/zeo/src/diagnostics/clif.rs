@@ -1,7 +1,7 @@
 //! What went wrong while emitting CLIF from HIR, WHICH KIND of wrong it
 //! was, and WHERE.
 //!
-//! `lower_error`'s sibling for the back end. The emitter had one error
+//! `lower`'s sibling for the back end. The emitter had one error
 //! type -- `String` -- for two situations a reader must be able to tell
 //! apart:
 //!

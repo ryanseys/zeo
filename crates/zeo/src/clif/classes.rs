@@ -7,8 +7,8 @@
 use super::module::Emitter;
 use super::{names, params, statics};
 use crate::analyze::Analyzed;
-use crate::codegen_error::{CResult, CodegenError};
 use crate::compiler::AccessorKind;
+use crate::diagnostics::clif::{CResult, CodegenError};
 use cranelift_module::{Linkage, Module};
 use zeo_abi::ClassId;
 

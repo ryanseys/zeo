@@ -8,7 +8,7 @@
 //! pointers (null = absent optional; its default runs in the body).
 
 use super::module::Emitter;
-use crate::codegen_error::{CResult, CodegenError};
+use crate::diagnostics::clif::{CResult, CodegenError};
 use crate::hir::{KeywordParam, Params};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{

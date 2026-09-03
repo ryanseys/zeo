@@ -52,7 +52,7 @@ pub(crate) enum DebugFlag {
     /// tests read -- a disassembly cannot see an address-materialized call.
     TraceTyped,
     /// `no-auto-package`: keep a linking compile from consulting or filling
-    /// the first-use package cache (`zeo::autopkg`) -- every bundled gem
+    /// the first-use package cache (`zeo::packages::autopkg`) -- every bundled gem
     /// splices from source, today's whole-program path exactly. The
     /// spliced side of the spliced-vs-packaged differential, and the
     /// escape hatch when the package tier is suspected.

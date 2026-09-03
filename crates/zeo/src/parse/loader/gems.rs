@@ -2,7 +2,7 @@
 //! parsing, lockfile precedence, and the native-gem/feature classifiers.
 
 use super::{Gem, GemProvenance, PResult};
-use crate::bundled::Library;
+use crate::gems::bundled::Library;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -11,21 +11,21 @@ use std::path::{Path, PathBuf};
 ///
 /// The dev tree draws on three tiers and an installed zeo on one, because
 /// `dist`/`stage-publish` flatten all of them into `share/zeo/lib/ruby/`.
-/// [`crate::bundled`] is where that list is decided and why.
+/// [`crate::gems::bundled`] is where that list is decided and why.
 ///
 /// Memoized: the tiers are read once per process, and a run-time `eval` is a
 /// whole compile that would otherwise walk the store again.
 pub(super) fn bundled_libraries() -> &'static [Library] {
     static LIBS: std::sync::OnceLock<Vec<Library>> = std::sync::OnceLock::new();
     LIBS.get_or_init(|| match crate::home::zeo_home() {
-        crate::home::ZeoHome::DevTree { root } => crate::bundled::dev_tree_libraries(root),
+        crate::home::ZeoHome::DevTree { root } => crate::gems::bundled::dev_tree_libraries(root),
         crate::home::ZeoHome::Installed { payload, .. } => {
-            crate::bundled::libraries_in(&payload.join(crate::bundled::BOOTSTRAP_TIER))
+            crate::gems::bundled::libraries_in(&payload.join(crate::gems::bundled::BOOTSTRAP_TIER))
         }
         // Embedded in the binary at publish time; extracted once per version.
         crate::home::ZeoHome::Registry { cache } => crate::home::registry_libraries_dir(cache)
             .as_deref()
-            .map(crate::bundled::libraries_in)
+            .map(crate::gems::bundled::libraries_in)
             .unwrap_or_default(),
     })
 }
@@ -171,7 +171,7 @@ fn discover_packages_uncached(
         // incumbent there and displacing it would hand the name back to the
         // upstream Ruby this rule exists to keep out.
         if pkg.provenance == GemProvenance::Bundled
-            && crate::gem_report::substitution_note(&pkg.name).is_some()
+            && crate::gems::report::substitution_note(&pkg.name).is_some()
             && let Some(slot) = packages
                 .iter_mut()
                 .find(|g| g.name == pkg.name && g.provenance == GemProvenance::PackageDir)

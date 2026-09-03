@@ -1,8 +1,6 @@
 //! The builtin method tables -- one Rust module per Ruby core
 //! class/module, mirroring CRuby's file-per-class source layout (string.c,
-//! array.c, compar.c, ...). `struct`/`class`/`module` are Rust keywords, so
-//! Struct follows the crate's existing `rproc.rs` precedent (`rstruct`) and
-//! Class+Module share `class_module`.
+//! array.c, compar.c, ...).
 //!
 //! Architecture (the module-faithful placement the phase is named for):
 //! every method is implemented ONCE, in the module/class that OWNS it in
@@ -17,10 +15,38 @@
 //! real rescuable `ArgumentError`/`TypeError` through
 //! `dispatch::raise_error` -- CRuby's own behavior (`"a" + 1` is a
 //! TypeError, not NoMethodError).
+//!
+//! # Two files per class, and what each holds
+//!
+//! A class with real machinery has a file at the crate root as well as one
+//! here, and the split is always the same: `crate::thread` is Thread's
+//! machinery -- the OS threads, the join handles, the state a Ruby program
+//! never sees -- and `builtins/thread.rs` is `Thread`'s method table, the
+//! rows that call into it. Reading the table tells you what Ruby can ask
+//! for; reading the root file tells you how it is answered.
+//!
+//! # The `r` prefix
+//!
+//! `struct`, `proc` and `module` are Rust keywords, so those three tables
+//! are `rstruct.rs`, `rproc.rs` and `rmodule.rs`. `rclass.rs` follows them
+//! for symmetry rather than necessity. The prefix means nothing else.
+//!
+//! # `support/`
+//!
+//! One file per class is what makes this directory navigable, so the eleven
+//! helpers that belong to no class -- conversion, formatting, sorting,
+//! waiting -- sit in [`support`] instead of diluting it. They keep their
+//! names: `builtins::convert` still resolves.
 
 use crate::{ClassId, RubyValue, Signal};
 use std::sync::LazyLock;
 
+pub mod support;
+// The eleven helpers `support/` holds keep the names they always had: they
+// moved to stop diluting the one-file-per-class rule, not to be respelled.
+pub use support::{
+    convert, format, formatter, lazy, pack, sort, value_subclass, waiter, weak, yielder, zeo_eval,
+};
 pub(crate) mod argf;
 pub mod array;
 pub(crate) mod backtrace_location;
@@ -29,7 +55,6 @@ pub(crate) mod binding;
 pub(crate) mod comparable;
 pub(crate) mod complex;
 pub(crate) mod condition_variable;
-pub(crate) mod convert;
 pub(crate) mod converter;
 pub(crate) mod data;
 pub(crate) mod dir;
@@ -43,15 +68,12 @@ pub(crate) mod fiber;
 pub mod file;
 pub(crate) mod file_test;
 pub(crate) mod float;
-pub(crate) mod format;
-pub(crate) mod formatter;
 pub(crate) mod gc;
 pub(crate) mod hash;
 pub mod integer;
 pub mod io;
 pub(crate) mod io_buffer;
 pub(crate) mod kernel;
-pub(crate) mod lazy;
 pub(crate) mod marshal;
 pub(crate) mod matchdata;
 pub(crate) mod math;
@@ -60,7 +82,6 @@ pub(crate) mod mutex;
 pub(crate) mod nil_class;
 pub(crate) mod numeric;
 pub(crate) mod objspace;
-pub(crate) mod pack;
 pub(crate) mod pathname;
 pub(crate) mod process;
 pub(crate) mod queue;
@@ -79,7 +100,6 @@ pub(crate) mod rubyvm_ast;
 pub(crate) mod set;
 pub(crate) mod signal;
 pub(crate) mod sized_queue;
-pub(crate) mod sort;
 pub mod stat;
 pub mod string;
 pub(crate) mod symbol;
@@ -88,12 +108,7 @@ pub(crate) mod thread_group;
 pub(crate) mod time;
 pub(crate) mod true_class;
 pub(crate) mod unbound_method;
-pub(crate) mod value_subclass;
-pub(crate) mod waiter;
 pub mod warning;
-pub(crate) mod weak;
-pub(crate) mod yielder;
-pub(crate) mod zeo_eval;
 
 /// One builtin method: receiver (guaranteed by the table's ClassId keying
 /// to be the right variant), positional args, optional block. Deliberately

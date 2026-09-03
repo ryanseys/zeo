@@ -5,7 +5,7 @@
 use super::ctx::Fx;
 use super::operand::{Operand, TagInfo};
 use super::ownership;
-use crate::codegen_error::CResult;
+use crate::diagnostics::clif::CResult;
 use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{InstBuilder, MemFlagsData, types};
@@ -1803,8 +1803,8 @@ fn plain_call(
         None => match fx.em.methods.get(&name) {
             Some(decl)
                 if decl.plain
-                && !decl.reopen_flagged
-                && !decl.concealed
+                    && !decl.reopen_flagged
+                    && !decl.concealed
                     && decl.arity == args.len()
                     && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
                     && !method_class_shadows(fx, &name) =>

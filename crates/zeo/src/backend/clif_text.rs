@@ -26,7 +26,7 @@ use cranelift_module::{DataId, FuncId, Linkage, Module};
 use super::sidecar::{ALL_TABLES, BOOT_ROWS, PARAM_KINDS, RegEntry, RegRow, SEED_TABLES, Sidecar};
 use crate::clif::module::Emitter;
 use crate::clif::{capi_names, emit, names, statics};
-use crate::codegen_error::{CResult, CodegenError};
+use crate::diagnostics::clif::{CResult, CodegenError};
 
 /// Link `clif` (with `sidecar`, or the `.zeodata` beside it, or none) into
 /// `output`.

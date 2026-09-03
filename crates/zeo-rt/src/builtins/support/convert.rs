@@ -6,7 +6,7 @@
 //!
 //! - method absent (strict form): `no implicit conversion of X into Y`
 //!   (`nil`/`true`/`false` spell their value, not their class -- see
-//!   [`super::convert_name_of`]);
+//!   [`crate::builtins::convert_name_of`]);
 //! - method present but answering the wrong type:
 //!   `can't convert X to Y (X#meth gives Z)`.
 //!
@@ -19,7 +19,7 @@
 //! existed. NOTE the numeric tower's `X can't be coerced into Y` operator
 //! errors are a DIFFERENT protocol (`coerce`, `numeric.rs`) and stay there.
 
-use super::{convert_name_of, type_error};
+use crate::builtins::{convert_name_of, type_error};
 use crate::dispatch::{responds_to_value, send_value};
 use crate::{ClassId, RubyValue, Signal, Symbol};
 
@@ -287,7 +287,7 @@ pub fn to_rhash(v: &RubyValue) -> Result<crate::collections::RHash, Signal> {
 
 // Deliberately no registry-less unit tests: every interesting path (duck
 // types, the two TypeError shapes, nil answers) dispatches through the live
-// class registry, so coverage lives in the e2e tier (`tests/e2e/`) where a
+// class registry, so coverage lives in the corpus (`test/`), where a
 // real program exercises the protocol end-to-end.
 
 #[cfg(test)]

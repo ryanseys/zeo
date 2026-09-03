@@ -6,7 +6,7 @@
 //! set and the gem's source stops splicing; a miss splices as today, and
 //! after the program builds, [`build_and_cache`] packages the gem so the
 //! NEXT compile hits. A package build that refuses is recorded
-//! ([`crate::progcache::pkg_record_refusal`]) so no compile retries it
+//! ([`crate::packages::progcache::pkg_record_refusal`]) so no compile retries it
 //! until zeo itself changes.
 //!
 //! The keys are the ones `zeo install` writes -- [`pkg_opts`] is the ONE
@@ -22,7 +22,7 @@
 //! is not answerable splices from source instead; the dependency's own
 //! build then fills the cache and the next compile links both.
 
-use crate::package::UsePackage;
+use crate::packages::package::UsePackage;
 use std::path::{Path, PathBuf};
 
 /// One bundled gem a compile could package: derived from the loader's
@@ -46,7 +46,7 @@ pub(crate) struct AutoPackages {
     pub use_packages: Vec<UsePackage>,
     /// The used artifacts' own source files, re-read -- appended to the
     /// program-cache manifest so a gem edit invalidates the program too.
-    pub extra_inputs: Vec<crate::progcache::Input>,
+    pub extra_inputs: Vec<crate::packages::progcache::Input>,
     /// Candidates with no artifact: build these after the program
     /// compiles, so the next compile hits.
     pub misses: Vec<Candidate>,
@@ -55,7 +55,7 @@ pub(crate) struct AutoPackages {
 /// Whether a linking compile should auto-package at all: the cache is on
 /// and `ZEO_DEBUG=no-auto-package` was not asked for.
 pub fn enabled() -> bool {
-    crate::progcache::enabled()
+    crate::packages::progcache::enabled()
         && !crate::debug_flags::debug(crate::debug_flags::DebugFlag::NoAutoPackage)
 }
 
@@ -131,8 +131,9 @@ pub(crate) fn cache_has(name: &str, roots: &[PathBuf], feature: &str) -> bool {
     let Ok(opts) = pkg_opts(&feature, &entry, PathBuf::new()) else {
         return false;
     };
-    let key = crate::progcache::pkg_key("", &opts);
-    crate::progcache::pkg_refusal(&key).is_none() && crate::progcache::pkg_lookup(&key).is_some()
+    let key = crate::packages::progcache::pkg_key("", &opts);
+    crate::packages::progcache::pkg_refusal(&key).is_none()
+        && crate::packages::progcache::pkg_lookup(&key).is_some()
 }
 
 /// The bundled gem that provides `feature`, as a consultable candidate --
@@ -177,7 +178,7 @@ pub fn pkg_opts(
         input_path: Some(entry.to_path_buf()),
         file_name: Some(PathBuf::from(format!("<package {feature}>"))),
         mode: crate::CompileMode::Program,
-        package_build: Some(crate::package::PackageBuild {
+        package_build: Some(crate::packages::package::PackageBuild {
             entry: entry.to_path_buf(),
             feature: feature.to_string(),
             manifest_out,
@@ -221,8 +222,8 @@ enum Consult {
     /// cache entry vouches for (re-read, for the program manifest).
     Hit {
         up: UsePackage,
-        manifest: crate::package::Manifest,
-        inputs: Vec<crate::progcache::Input>,
+        manifest: crate::packages::package::Manifest,
+        inputs: Vec<crate::packages::progcache::Input>,
     },
     /// A recorded refusal, or no entry: splice from source. `build` says
     /// whether a post-compile build is worth attempting.
@@ -234,8 +235,8 @@ fn consult(cand: &Candidate) -> Consult {
     let Ok(opts) = pkg_opts(&cand.feature, &cand.entry, PathBuf::new()) else {
         return no_build;
     };
-    let key = crate::progcache::pkg_key("", &opts);
-    if let Some(reason) = crate::progcache::pkg_refusal(&key) {
+    let key = crate::packages::progcache::pkg_key("", &opts);
+    if let Some(reason) = crate::packages::progcache::pkg_refusal(&key) {
         tracing::debug!(
             "autopkg: '{}' has a recorded refusal, splicing from source: {}",
             cand.feature,
@@ -243,31 +244,31 @@ fn consult(cand: &Candidate) -> Consult {
         );
         return no_build;
     }
-    let Some(hit) = crate::progcache::pkg_lookup(&key) else {
+    let Some(hit) = crate::packages::progcache::pkg_lookup(&key) else {
         return Consult::Miss { build: true };
     };
-    let Ok((manifest_text, bytes)) = crate::package::read_zeopkg(&hit) else {
+    let Ok((manifest_text, bytes)) = crate::packages::package::read_zeopkg(&hit) else {
         return Consult::Miss { build: true };
     };
     // A stale entry (another manifest version, another ABI) reads as a
     // miss: the rebuild overwrites it.
-    let Ok(manifest) = crate::package::Manifest::parse(&manifest_text) else {
+    let Ok(manifest) = crate::packages::package::Manifest::parse(&manifest_text) else {
         return Consult::Miss { build: true };
     };
-    let object_digest = crate::package::fnv64(&bytes);
-    let Ok(object) = crate::progcache::pkg_object_file(object_digest, &bytes) else {
+    let object_digest = crate::packages::package::fnv64(&bytes);
+    let Ok(object) = crate::packages::progcache::pkg_object_file(object_digest, &bytes) else {
         return no_build;
     };
     // The entry's own manifest rows name every source the artifact was
     // built from; re-read them so the PROGRAM cache's manifest covers the
     // gem too, and a gem edit invalidates the cached binary.
-    let inputs = crate::progcache::pkg_manifest_rows(&key)
+    let inputs = crate::packages::progcache::pkg_manifest_rows(&key)
         .map(|rows| {
-            crate::progcache::manifest_files(&rows)
+            crate::packages::progcache::manifest_files(&rows)
                 .into_iter()
                 .filter_map(|p| {
                     let text = std::fs::read_to_string(&p).ok()?;
-                    Some(crate::progcache::Input {
+                    Some(crate::packages::progcache::Input {
                         name: p.display().to_string(),
                         source: std::sync::Arc::from(text.as_str()),
                     })
@@ -289,7 +290,7 @@ fn consult(cand: &Candidate) -> Consult {
 }
 
 /// Every feature spelling `m` can answer a require for.
-fn manifest_features(m: &crate::package::Manifest) -> Vec<String> {
+fn manifest_features(m: &crate::packages::package::Manifest) -> Vec<String> {
     let mut v: Vec<String> = m.units.iter().map(|(f, _)| f.clone()).collect();
     v.push(m.feature.clone());
     v
@@ -309,7 +310,7 @@ pub(crate) fn consult_new(
     // What the merge set can already answer.
     let mut covered: std::collections::HashSet<String> = merged
         .iter()
-        .filter_map(|p| crate::package::Manifest::parse(&p.manifest_text).ok())
+        .filter_map(|p| crate::packages::package::Manifest::parse(&p.manifest_text).ok())
         .flat_map(|m| manifest_features(&m))
         .collect();
     struct HitRow {
@@ -323,9 +324,7 @@ pub(crate) fn consult_new(
     let mut hits: Vec<HitRow> = Vec::new();
     let mut rejected_any = false;
     for (cand, required, deferred) in candidates(hir) {
-        if covered.contains(&cand.feature)
-            || auto.misses.iter().any(|m| m.name == cand.name)
-        {
+        if covered.contains(&cand.feature) || auto.misses.iter().any(|m| m.name == cand.name) {
             continue;
         }
         match consult(&cand) {
@@ -374,13 +373,13 @@ pub(crate) fn consult_new(
     // the covered set, so this runs to a fixpoint.
     let mut chased: std::collections::HashSet<String> = std::collections::HashSet::new();
     while let Some((i, f)) = hits.iter().enumerate().find_map(|(i, h)| {
-            h.required
-                .iter()
-                .chain(&h.host_features)
-                // A feature the build serves natively is covered by the
-                // host binary itself; its gem never packages (`ext_backed`).
-                .find(|f| !covered.contains(*f) && !crate::lower::features::zeo_provides(f))
-                .map(|f| (i, f.clone()))
+        h.required
+            .iter()
+            .chain(&h.host_features)
+            // A feature the build serves natively is covered by the
+            // host binary itself; its gem never packages (`ext_backed`).
+            .find(|f| !covered.contains(*f) && !crate::lower::features::zeo_provides(f))
+            .map(|f| (i, f.clone()))
     }) {
         if chased.insert(f.clone())
             && let Some(cand) = bundled_provider(&f)
@@ -406,7 +405,7 @@ pub(crate) fn consult_new(
         // post-compile build, and drop the hit that needed it.
         if let Some(cand) = bundled_provider(&f)
             && !auto.misses.iter().any(|m| m.name == cand.name)
-            && crate::progcache::pkg_refusal(&crate::progcache::pkg_key(
+            && crate::packages::progcache::pkg_refusal(&crate::packages::progcache::pkg_key(
                 "",
                 &pkg_opts(&cand.feature, &cand.entry, PathBuf::new()).unwrap_or_default(),
             ))
@@ -425,7 +424,7 @@ pub(crate) fn consult_new(
         }
         covered = merged
             .iter()
-            .filter_map(|p| crate::package::Manifest::parse(&p.manifest_text).ok())
+            .filter_map(|p| crate::packages::package::Manifest::parse(&p.manifest_text).ok())
             .flat_map(|m| manifest_features(&m))
             .collect();
         for h in &hits {
@@ -433,7 +432,10 @@ pub(crate) fn consult_new(
         }
     }
     hits.iter().for_each(|h| {
-        tracing::debug!("autopkg: linking '{}' from the package cache", h.cand.feature);
+        tracing::debug!(
+            "autopkg: linking '{}' from the package cache",
+            h.cand.feature
+        );
     });
     (hits.into_iter().map(|h| h.up).collect(), rejected_any)
 }
@@ -445,12 +447,12 @@ pub fn build_and_cache(cand: &Candidate) -> Result<(), String> {
     let manifest_out = std::env::temp_dir().join(format!(
         "zeo-autopkg-{}-{:016x}.zman",
         std::process::id(),
-        crate::package::fnv64(cand.entry.as_os_str().as_encoded_bytes())
+        crate::packages::package::fnv64(cand.entry.as_os_str().as_encoded_bytes())
     ));
     let opts = pkg_opts(&cand.feature, &cand.entry, manifest_out.clone())?;
-    let key = crate::progcache::pkg_key("", &opts);
-    if crate::progcache::pkg_refusal(&key).is_some()
-        || crate::progcache::pkg_lookup(&key).is_some()
+    let key = crate::packages::progcache::pkg_key("", &opts);
+    if crate::packages::progcache::pkg_refusal(&key).is_some()
+        || crate::packages::progcache::pkg_lookup(&key).is_some()
     {
         return Ok(());
     }
@@ -462,18 +464,18 @@ pub fn build_and_cache(cand: &Candidate) -> Result<(), String> {
                 cand.feature,
                 reason.lines().next().unwrap_or_default()
             );
-            crate::progcache::pkg_record_refusal(&key, &reason);
+            crate::packages::progcache::pkg_record_refusal(&key, &reason);
             Ok(())
         }
         Ok(compiled) => {
             let manifest_json = std::fs::read_to_string(&manifest_out)
                 .map_err(|e| format!("reading {}: {e}", manifest_out.display()))?;
             let _ = std::fs::remove_file(&manifest_out);
-            let slot = crate::progcache::pkg_reserve(&key)
+            let slot = crate::packages::progcache::pkg_reserve(&key)
                 .map_err(|e| format!("reserving the cache entry: {e}"))?;
-            crate::package::write_zeopkg(&slot, &manifest_json, &compiled.object)
+            crate::packages::package::write_zeopkg(&slot, &manifest_json, &compiled.object)
                 .map_err(|e| format!("writing {}: {e}", slot.display()))?;
-            crate::progcache::pkg_commit(&key, &compiled.inputs)
+            crate::packages::progcache::pkg_commit(&key, &compiled.inputs)
                 .map_err(|e| format!("recording the cache manifest: {e}"))?;
             tracing::debug!("autopkg: packaged '{}' for the next compile", cand.feature);
             Ok(())

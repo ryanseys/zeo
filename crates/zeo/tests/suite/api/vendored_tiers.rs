@@ -43,12 +43,12 @@ fn one_release_states_the_version_of_both_trees() {
     // bundler refuses to resolve a version other than the one running it. So
     // the pair is pinned once, and drifting out of step is not expressible.
     assert!(
-        zeo::bundled::BOOTSTRAP_LOCK_NAMES
+        zeo::gems::bundled::BOOTSTRAP_LOCK_NAMES
             .iter()
             .all(|(_, locked)| *locked == LOCKED_AS),
         "the bootstrap tier is measured against more than one lock entry"
     );
-    let names: Vec<&str> = zeo::bundled::BOOTSTRAP_LOCK_NAMES
+    let names: Vec<&str> = zeo::gems::bundled::BOOTSTRAP_LOCK_NAMES
         .iter()
         .map(|(dir, _)| *dir)
         .collect();
@@ -116,14 +116,14 @@ fn the_bootstrap_pair_never_comes_out_of_the_store() {
     // `rubygems-update`'s require_paths is deliberately NOT `lib` -- it exists
     // so installing it cannot shadow the running RubyGems -- so a store copy
     // would contribute a name and no files.
-    let libs = zeo::bundled::dev_tree_libraries(&crate::paths::workspace_root());
+    let libs = zeo::gems::bundled::dev_tree_libraries(&crate::paths::workspace_root());
     for name in ["rubygems", "bundler"] {
         let lib = libs
             .iter()
             .find(|l| l.name == name)
             .unwrap_or_else(|| panic!("{name} is not a shipped library at all"));
         assert!(
-            lib.dir.starts_with(repo(zeo::bundled::BOOTSTRAP_TIER)),
+            lib.dir.starts_with(repo(zeo::gems::bundled::BOOTSTRAP_TIER)),
             "{name} resolved to {}",
             lib.dir.display()
         );
@@ -141,7 +141,7 @@ fn the_racc_accelerator_is_declined_and_the_gem_serves_pure_ruby() {
     let report = std::env::temp_dir().join(format!("zeo-racc-{}.json", std::process::id()));
     let _ = std::fs::remove_file(&report);
     let opts = zeo::CompileOptions {
-        gem_paths: vec![repo(zeo::bundled::RESOLVED_TIER)],
+        gem_paths: vec![repo(zeo::gems::bundled::RESOLVED_TIER)],
         lockfile: Some(repo("Gemfile.lock")),
         gem_report: Some(report.clone()),
         ..Default::default()

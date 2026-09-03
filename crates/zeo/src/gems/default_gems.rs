@@ -98,11 +98,7 @@ fn try_materialize(store: &Path, gems: &[DefaultGem<'_>]) -> std::io::Result<()>
 /// what `to_spec` evaluates when something wants more than the stub.
 fn gemspec(gem: &DefaultGem<'_>) -> String {
     let paths = gem.require_paths.join("\u{0}");
-    let literals: Vec<String> = gem
-        .require_paths
-        .iter()
-        .map(|p| format!("{p:?}"))
-        .collect();
+    let literals: Vec<String> = gem.require_paths.iter().map(|p| format!("{p:?}")).collect();
     format!(
         "# -*- encoding: utf-8 -*-\n\
          # stub: {name} {version} ruby {paths}\n\
@@ -205,8 +201,14 @@ mod tests {
         let mut g = gem("ext", "0.1.0", Path::new("/x/ext"));
         g.require_paths = vec!["lib".into(), "ext".into()];
         let spec = gemspec(&g);
-        assert_eq!(spec.lines().nth(1), Some("# stub: ext 0.1.0 ruby lib\u{0}ext"));
-        assert!(spec.contains("s.require_paths = [\"lib\", \"ext\"]"), "{spec}");
+        assert_eq!(
+            spec.lines().nth(1),
+            Some("# stub: ext 0.1.0 ruby lib\u{0}ext")
+        );
+        assert!(
+            spec.contains("s.require_paths = [\"lib\", \"ext\"]"),
+            "{spec}"
+        );
     }
 
     #[test]
@@ -216,8 +218,14 @@ mod tests {
         let one = content_key(store, &[gem("uri", "1.1.1", dir)]);
         assert_eq!(one, content_key(store, &[gem("uri", "1.1.1", dir)]));
         assert_ne!(one, content_key(store, &[gem("uri", "1.1.2", dir)]));
-        assert_ne!(one, content_key(store, &[gem("uri", "1.1.1", Path::new("/y/uri"))]));
-        assert_ne!(one, content_key(Path::new("/other"), &[gem("uri", "1.1.1", dir)]));
+        assert_ne!(
+            one,
+            content_key(store, &[gem("uri", "1.1.1", Path::new("/y/uri"))])
+        );
+        assert_ne!(
+            one,
+            content_key(Path::new("/other"), &[gem("uri", "1.1.1", dir)])
+        );
         assert_ne!(one, content_key(store, &[]));
     }
 
@@ -233,17 +241,27 @@ mod tests {
         let store = tmp.join("store");
         let (uri, csv) = (payload.join("uri"), payload.join("csv"));
 
-        try_materialize(&store, &[gem("uri", "1.1.1", &uri), gem("csv", "3.3.6", &csv)]).unwrap();
+        try_materialize(
+            &store,
+            &[gem("uri", "1.1.1", &uri), gem("csv", "3.3.6", &csv)],
+        )
+        .unwrap();
         let specs = store.join("specifications/default");
         assert!(specs.join("uri-1.1.1.gemspec").is_file());
         assert!(specs.join("csv-3.3.6.gemspec").is_file());
         // `is_dir` follows the link, so this is the whole round trip:
         // `<store>/gems/uri-1.1.1` reaches the payload's `uri` directory.
-        assert!(store.join("gems/uri-1.1.1/lib").is_dir(), "the symlink resolves");
+        assert!(
+            store.join("gems/uri-1.1.1/lib").is_dir(),
+            "the symlink resolves"
+        );
 
         try_materialize(&store, &[gem("uri", "1.1.1", &uri)]).unwrap();
         assert!(specs.join("uri-1.1.1.gemspec").is_file());
-        assert!(!specs.join("csv-3.3.6.gemspec").exists(), "csv survived a rebuild");
+        assert!(
+            !specs.join("csv-3.3.6.gemspec").exists(),
+            "csv survived a rebuild"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

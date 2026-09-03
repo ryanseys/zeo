@@ -182,7 +182,7 @@ impl From<String> for Refusal {
 /// boundary that turns the error into a Ruby exception restores it here,
 /// where the compiler's file table is still alive.
 fn located_message(
-    err: crate::codegen_error::CodegenError,
+    err: crate::diagnostics::clif::CodegenError,
     analyzed: &crate::analyze::Analyzed,
 ) -> String {
     let at = err
