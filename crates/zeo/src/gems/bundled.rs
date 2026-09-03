@@ -55,8 +55,18 @@ pub const EXT_TIER: &str = "crates/zeo-rt/ext";
 /// zeo's regex engine); a verbatim official pure gem (`base64`) rides the
 /// lock instead and resolves from the store like any bundled gem.
 pub const PURE_TIER: &str = "crates/zeo-rt/gems";
-/// rubygems and bundler, written by `cargo xtask deps`.
+/// rubygems and bundler, written by `cargo xtask deps`. A DEV TREE path.
 pub const BOOTSTRAP_TIER: &str = "vendor/ruby";
+/// Where an INSTALLED zeo's libraries are: `dist` and `stage-crate` flatten
+/// all three shipped tiers into one directory under the payload, so a
+/// release has a single place to look.
+///
+/// Not [`BOOTSTRAP_TIER`], though it was for a while and the two agreed by
+/// accident while the dev tree also spelled it `lib/ruby`. When the bootstrap
+/// tier moved to `vendor/ruby`, an installed zeo went looking there and found
+/// no libraries at all -- every `require` of a bundled gem answered
+/// `LoadError` while the payload sat beside it.
+pub const PAYLOAD_TIER: &str = "lib/ruby";
 /// The RubyGems store `cargo xtask deps` unpacks the lock into. Flat: one
 /// store for one lock, with no ruby ABI level, because nothing here is
 /// installed for a ruby.

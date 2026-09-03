@@ -20,7 +20,7 @@ pub(super) fn bundled_libraries() -> &'static [Library] {
     LIBS.get_or_init(|| match crate::home::zeo_home() {
         crate::home::ZeoHome::DevTree { root } => crate::gems::bundled::dev_tree_libraries(root),
         crate::home::ZeoHome::Installed { payload, .. } => {
-            crate::gems::bundled::libraries_in(&payload.join(crate::gems::bundled::BOOTSTRAP_TIER))
+            crate::gems::bundled::libraries_in(&payload.join(crate::gems::bundled::PAYLOAD_TIER))
         }
         // Embedded in the binary at publish time; extracted once per version.
         crate::home::ZeoHome::Registry { cache } => crate::home::registry_libraries_dir(cache)

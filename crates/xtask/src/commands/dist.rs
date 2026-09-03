@@ -72,7 +72,10 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     let payload_dir = stage.join("share/zeo");
 
     for (rel, src) in payload::files()? {
-        copy(&src, &payload_dir.join("lib/ruby").join(rel))?;
+        copy(
+            &src,
+            &payload_dir.join(zeo::gems::bundled::PAYLOAD_TIER).join(rel),
+        )?;
     }
     // MRI's headers, finished, so an install builds a native gem without a
     // fetch. `cext::headers` finds this tree by its rev.
@@ -462,9 +465,17 @@ fn smoke_test(stage: &Path) -> Result<(), Error> {
     let cache = work.path().join("cache");
     let src = work.path().join("smoke.rb");
     let bin = work.path().join("smoke");
+    // Three requires, and the first two are the point. `json` is a Rust
+    // extension compiled into the binary, so it answers with no payload at
+    // all -- a smoke test that asks only for json passes on a staging whose
+    // libraries are unreachable, which is exactly what happened when the
+    // payload's directory and the constant the loader read drifted apart.
+    // `csv` comes from the resolved tier and `rubygems` from the bootstrap
+    // tier, so between them every flattened tier has to be found.
     write(
         &src,
-        b"require \"json\"\nputs JSON.generate({smoke: \"ok\"})\n",
+        b"require \"json\"\nrequire \"csv\"\nrequire \"rubygems\"\n\
+          puts JSON.generate({smoke: \"ok\", csv: CSV.parse_line(\"a,b\"), gem: Gem::VERSION.is_a?(String)})\n",
     )?;
     println!("dist: smoke test (compile and run)...");
     let cache = cache.to_string_lossy().into_owned();
@@ -489,8 +500,11 @@ fn smoke_test(stage: &Path) -> Result<(), Error> {
     if !out.success() {
         return Err(smoke_failure("run", &out));
     }
-    if !out.stdout_text().contains("{\"smoke\":\"ok\"}") {
-        return Err(smoke_failure("output", &out));
+    let text = out.stdout_text();
+    for want in ["\"smoke\":\"ok\"", "\"csv\":[\"a\",\"b\"]", "\"gem\":true"] {
+        if !text.contains(want) {
+            return Err(smoke_failure(&format!("output (no {want})"), &out));
+        }
     }
     println!("dist: smoke test passed");
     Ok(())
