@@ -23,6 +23,9 @@ zeo-gems.json
 # (`cext/api.rs`, `cext/forward.rs`), so a fresh clone builds.
 /measurements/
 
+# What `gem build zeo.gemspec` leaves in the directory it ran in.
+*.gem
+
 # Publish-time artifacts staged by `cargo xtask stage-publish`; never committed.
 crates/zeo/gems.pregen.tar.gz
 crates/zeo/src/class_surface.pregen.rs

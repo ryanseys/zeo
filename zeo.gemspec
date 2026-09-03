@@ -1,10 +1,21 @@
 # frozen_string_literal: true
 
-# The rubygems half of one payload, two published artifacts.
+# zeo, as a RubyGem.
 #
-# `cargo xtask gem` stages a directory that already IS this layout and then
-# builds from here, so the file list below describes a staged tree rather
-# than the repo:
+# Two gems come out of this one file, and which one depends on what is beside
+# it when `gem build` runs:
+#
+#   SOURCE gem      built here, in the repo. Carries the launcher and the
+#                   docs and no binary, because there is nothing to build
+#                   from a Ruby packaging step -- zeo is Rust. Installing it
+#                   gives a `zeo` that says which platform gem to fetch.
+#   PLATFORM gem    built by `cargo xtask gem` from a staging directory that
+#                   already holds `libexec/zeo` and `share/zeo/`. Those are
+#                   picked up by the globs below and the platform comes from
+#                   `ZEO_GEM_PLATFORM`.
+#
+# The staged layout is `cargo xtask dist`'s tree with `bin/` renamed
+# `libexec/`:
 #
 #   exe/zeo                             the Ruby launcher (RubyGems binstubs it)
 #   libexec/zeo                         the native binary
@@ -12,7 +23,8 @@
 #   share/zeo/lib/<triple>/libzeo.a     what `zeo -o` links a program against
 #   share/zeo/dist-manifest.json
 #
-# That is `cargo xtask dist`'s tree with `bin/` renamed `libexec/`, so a gem
+# `libexec/` because RubyGems binstubs an executable by `load`ing it as Ruby,
+# and zeo is a native binary. Both sit two levels above `share/zeo`, so a gem
 # install and a release tarball put the same bytes in the same shape and
 # `zeo::home`'s executable-relative probe finds the payload in both.
 #
@@ -22,23 +34,20 @@
 # pins, and for the libraries zeo REIMPLEMENTS in Rust a dependency would be
 # a false claim, because zeo does not run that code. `add_dependency` is for
 # what a gem needs INSTALLED, and zeo needs none of these installed.
-#
-# Which gems a compiled program uses is stated in the README and in
-# `zeo --help`: the embedded payload by default, and the project's own
-# resolved gems when `--bundle-gemfile` / `--gem-path` name them.
 
 root = __dir__
 
-# Single-sourced from the staged payload, which `dist` writes from
-# `Cargo.toml`. Built anywhere else -- the repo root, say -- there is no
-# manifest and this raises rather than inventing a version.
+# One version, from whichever file states it here. A staging directory has
+# the manifest `cargo xtask dist` wrote; the repo has `Cargo.toml`, which is
+# where that manifest's number came from. Neither is invented.
 manifest = File.join(root, "share/zeo/dist-manifest.json")
-unless File.file?(manifest)
-  raise "#{manifest} is missing: build this gem from a `cargo xtask gem` " \
-        "staging directory, not from the repo"
-end
-version = File.read(manifest)[/"version":\s*"([^"]+)"/, 1]
-raise "#{manifest} states no version" unless version
+version =
+  if File.file?(manifest)
+    File.read(manifest)[/"version":\s*"([^"]+)"/, 1]
+  else
+    File.read(File.join(root, "Cargo.toml"))[/^\s*version\s*=\s*"([^"]+)"/, 1]
+  end
+raise "no version in #{manifest} or Cargo.toml" unless version
 
 Gem::Specification.new do |s|
   s.name = "zeo"
@@ -62,6 +71,7 @@ Gem::Specification.new do |s|
     "homepage_uri" => s.homepage,
     "source_code_uri" => s.homepage,
     "bug_tracker_uri" => "#{s.homepage}/issues",
+    "changelog_uri" => "#{s.homepage}/blob/main/CHANGELOG.md",
     # Nothing here is loadable Ruby, so there is no point indexing it.
     "rubygems_mfa_required" => "true"
   }
@@ -72,11 +82,14 @@ Gem::Specification.new do |s|
 
   s.bindir = "exe"
   s.executables = ["zeo"]
+  # zeo ships no Ruby to require, but RubyGems refuses a spec with no require
+  # path at all, so this is the conventional one and it stays empty.
   s.require_paths = ["lib"]
 
   s.files = Dir.chdir(root) do
-    %w[README.md LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.md exe/zeo] +
-      Dir.glob("libexec/**/*", File::FNM_DOTMATCH).select { |f| File.file?(f) } +
-      Dir.glob("share/**/*", File::FNM_DOTMATCH).select { |f| File.file?(f) }
+    docs = %w[README.md LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.md]
+    payload = Dir.glob("{libexec,share}/**/*", File::FNM_DOTMATCH)
+                 .select { |f| File.file?(f) }
+    docs.select { |f| File.file?(f) } + ["exe/zeo"] + payload
   end
 end

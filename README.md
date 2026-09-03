@@ -44,7 +44,8 @@ Every known difference is recorded: in
 $ cargo install zeo
 ```
 
-Or take a release tarball, which relocates anywhere:
+Or `gem install zeo`, which fetches the build for your platform. Or take a
+release tarball, which relocates anywhere:
 
 ```console
 $ tar xzf zeo-<version>-<triple>.tar.gz -C /usr/local

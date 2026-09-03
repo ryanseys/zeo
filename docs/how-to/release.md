@@ -29,15 +29,24 @@ zeo-<version>-<triple>/
 The binary finds its payload through `bin/../share/zeo`, so the tree
 relocates anywhere; `ZEO_HOME` overrides the search.
 
-The platform gem is the same staging rearranged:
+## The gems
+
+`zeo.gemspec` at the root builds two different gems, and which one depends on
+what is beside it.
 
 ```console
-$ cargo xtask gem
+$ gem build zeo.gemspec   # the SOURCE gem: launcher and docs, no binary
+$ cargo xtask gem         # the PLATFORM gem: the staging above, packaged
 ```
 
-`bin/` becomes `libexec/`, because RubyGems binstubs an executable by
-`load`ing it as Ruby and zeo is a native binary — `gem/exe/zeo` is the Ruby
-that gets loaded and `exec`s the real one. This step runs `gem build`,
+The source gem is what a `gem install zeo` gets when RubyGems has no build
+for the platform. It installs, and its `zeo` says which platform gem to fetch
+rather than failing obscurely.
+
+The platform gem is `cargo xtask dist`'s tree with `bin/` renamed `libexec/`,
+because RubyGems binstubs an executable by `load`ing it as Ruby and zeo is a
+native binary — `exe/zeo` is the Ruby that gets loaded and `exec`s the real
+one. `cargo xtask gem` sets `ZEO_GEM_PLATFORM`, stages, and runs `gem build`,
 RubyGems' own packager, so the published gem is not built by zeo.
 
 ## What the tag does
