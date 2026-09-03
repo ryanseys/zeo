@@ -4,7 +4,7 @@
 # MRI `.so` never loads. Nothing is vendored: the compiler fetches upstream's
 # `include/` tree at this rev the first time an extension is built, applies
 # the edits `src/headers/hunks.rs` holds (the layout-reading macros become
-# calls), and writes the two files zeo adds. `cargo xtask cext hunks --check`
+# calls), and writes the two files zeo adds. `cargo xtask check-c-headers hunks --check`
 # proves every edit still applies at this rev, and `crates/zeo/tools-lib/
 # mkmf.rb` rides the same pin.
 #

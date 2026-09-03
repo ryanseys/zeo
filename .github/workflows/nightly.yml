@@ -100,7 +100,7 @@ jobs:
       # The published `zeo` crate carries pregenerated artifacts that its build
       # script would otherwise derive from sibling crates absent from the
       # .crate file. This fails if they drift from their sources.
-      - run: cargo xtask stage-publish --check
+      - run: cargo xtask stage-crate --check
 
       # Stage the payload without building it: proves the tree lays out and
       # the docs and gems copy. The archive and the compile-and-run smoke test
@@ -117,7 +117,7 @@ jobs:
       # manifest parses and the right files ship.
       - name: packages list cleanly and carry their pregen artifacts
         run: |
-          cargo xtask stage-publish
+          cargo xtask stage-crate
           for c in zeo-abi zeo-dsl zeo-gem zeo-macros zeo-rt zeo-capi zeo; do
             n=$(cargo package -p "$c" --list --allow-dirty | wc -l)
             echo "$c: $n files"

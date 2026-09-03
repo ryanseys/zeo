@@ -141,17 +141,40 @@ fn steps() -> Result<Vec<Step>, Error> {
         step(
             "features-bare",
             "zeo-rt compiles with every optional feature off",
-            &["cargo", "check", "-p", "zeo-rt", "--no-default-features", FEATURE_TARGET_DIR.0, FEATURE_TARGET_DIR.1],
+            &[
+                "cargo",
+                "check",
+                "-p",
+                "zeo-rt",
+                "--no-default-features",
+                FEATURE_TARGET_DIR.0,
+                FEATURE_TARGET_DIR.1,
+            ],
         ),
         step(
             "features-capi",
             "the C API compiles on its own",
-            &["cargo", "check", "-p", "zeo-capi", FEATURE_TARGET_DIR.0, FEATURE_TARGET_DIR.1],
+            &[
+                "cargo",
+                "check",
+                "-p",
+                "zeo-capi",
+                FEATURE_TARGET_DIR.0,
+                FEATURE_TARGET_DIR.1,
+            ],
         ),
         step(
             "features-compiler",
             "the compiler compiles with every optional feature off",
-            &["cargo", "check", "-p", "zeo", "--no-default-features", FEATURE_TARGET_DIR.0, FEATURE_TARGET_DIR.1],
+            &[
+                "cargo",
+                "check",
+                "-p",
+                "zeo",
+                "--no-default-features",
+                FEATURE_TARGET_DIR.0,
+                FEATURE_TARGET_DIR.1,
+            ],
         ),
         step(
             "features-docsrs",

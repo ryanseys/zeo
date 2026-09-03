@@ -174,7 +174,7 @@ pub fn ruby_prefix() -> PathBuf {
 }
 
 /// The embedded gems archive, staged into the published crate by
-/// `cargo xtask stage-publish`. Absent (and the cfg off) in every dev build.
+/// `cargo xtask stage-crate`. Absent (and the cfg off) in every dev build.
 #[cfg(zeo_embedded_gems)]
 static EMBEDDED_GEMS: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/gems.pregen.tar.gz"));
@@ -401,7 +401,7 @@ mod tests {
     }
 
     /// Runs only when a staged `gems.pregen.tar.gz` armed the embedded-gems
-    /// cfg (i.e. after `cargo xtask stage-publish`): the archive must extract
+    /// cfg (i.e. after `cargo xtask stage-crate`): the archive must extract
     /// into a cache dir whose layout IS the bundled-gems dir.
     #[cfg(zeo_embedded_gems)]
     #[test]

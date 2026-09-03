@@ -225,11 +225,8 @@ against a whole library since:
   the numbers yourself with `zeo --dump=methods <file>`, which is front-end
   only and answers in under a second.
 
-The whole ladder, hello-world to bundler, is banked in
-[`test/bench/compile-baseline.tsv`](../../test/bench/compile-baseline.tsv) and refreshed
-with `cargo xtask compile-cost --update-baseline`. Its `frontend_ms` and
-`peak_rss` columns time `--emit-clif`, which renders the CLIF as text, so
-they are larger than the `-o` wall times above and are not the same
+These numbers were taken with `--emit-clif`, which renders the CLIF as text,
+so they are larger than the `-o` wall times above and are not the same
 measurement.
 
 **A definition that reaches many classes is still the shape that costs.**

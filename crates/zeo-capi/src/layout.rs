@@ -5,7 +5,7 @@
 //! that fills a view has to agree with the header to the byte -- a wrong
 //! offset reads or writes an unrelated field, silently. So the layout is not
 //! trusted: [`super::layout_facts`] holds the sizes, offsets and constants
-//! `cargo xtask cext layout` measured from the pinned headers with a C
+//! `cargo xtask check-c-headers layout` measured from the pinned headers with a C
 //! compiler, and the test below holds every field here to that record. A
 //! header bump that moves a field fails `cext layout --check` first and this
 //! crate's tests second, both by field name.
@@ -302,7 +302,7 @@ mod tests {
             let (_, want) = facts::SIZES
                 .iter()
                 .find(|(name, _)| *name == c)
-                .unwrap_or_else(|| panic!("{c} was not measured; run `cargo xtask cext layout`"));
+                .unwrap_or_else(|| panic!("{c} was not measured; run `cargo xtask check-c-headers layout`"));
             assert_eq!(have, *want, "sizeof({c})");
             self.seen.insert((c, ""));
         }
@@ -312,7 +312,7 @@ mod tests {
                 .iter()
                 .find(|(name, field, _, _)| *name == c && *field == f)
                 .unwrap_or_else(|| {
-                    panic!("{c}.{f} was not measured; run `cargo xtask cext layout`")
+                    panic!("{c}.{f} was not measured; run `cargo xtask check-c-headers layout`")
                 });
             assert_eq!(offset, want_offset, "offsetof({c}, {f})");
             assert_eq!(size, want_size, "sizeof({c}.{f})");

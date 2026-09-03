@@ -63,8 +63,8 @@ pregenerated class surface, and the bundled libraries as a tarball extracted
 on first run.
 
 ```console
-$ cargo xtask stage-publish
-$ cargo xtask stage-publish --check
+$ cargo xtask stage-crate
+$ cargo xtask stage-crate --check
 ```
 
 `--check` verifies a staged copy still matches a fresh generation. CI runs

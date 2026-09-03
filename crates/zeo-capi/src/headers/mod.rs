@@ -5,7 +5,7 @@
 //! `ext/**/*.c` compiles against MRI's own headers, and a prebuilt MRI `.so`
 //! never loads. Nothing is vendored. The compiler crate fetches upstream's
 //! `include/` tree at the pinned rev the first time an extension is built
-//! and calls [`finish`] on it; `cargo xtask cext` materializes the same tree
+//! and calls [`finish`] on it; `cargo xtask check-c-headers` materializes the same tree
 //! from a checkout to run its checks. Both go through this module, so there
 //! is one owner of what the tree contains.
 //!

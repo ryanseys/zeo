@@ -1,12 +1,10 @@
 pub mod bless;
 pub mod capi_sweep;
-pub mod cext;
 pub mod cext_layout;
-pub mod compile_cost;
+pub mod check_c_headers;
 pub mod ci;
 pub mod deps;
-pub mod diff;
 pub mod dist;
 pub mod gem;
 pub mod linux;
-pub mod stage_publish;
+pub mod stage_crate;

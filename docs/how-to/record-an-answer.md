@@ -41,12 +41,3 @@ $ git diff test/
 ```
 
 A trailer that changed when you did not expect it to is the finding.
-
-## Comparing one snippet without writing a file
-
-```console
-$ cargo xtask diff 'puts [1,2].sum'
-```
-
-Runs the snippet under both engines and shows the difference. With a
-divergence worth keeping, it files the program for you.

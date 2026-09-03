@@ -1,8 +1,9 @@
 # Measure performance
 
-Two instruments, and they answer different questions.
+What a compiled program costs to run, measured against the pinned ruby on the
+same machine.
 
-## What a compiled program costs to RUN
+## The benchmark bank
 
 ```console
 $ cargo bench -p zeo --bench programs
@@ -30,24 +31,6 @@ $ ZEO_BENCH_DIST=pgo cargo bench -p zeo --bench programs
 
 The current numbers, and what the losses are waiting on, are in
 [Performance](../explanation/performance.md).
-
-## What a compile costs
-
-```console
-$ cargo xtask compile-cost
-```
-
-A different question: front-end wall time, emitted CLIF lines, peak RSS and
-binary size, per program, across a fixed hello-world-to-bundler ladder.
-
-```console
-$ cargo xtask compile-cost --filter bundler
-$ cargo xtask compile-cost --runs 5
-$ cargo xtask compile-cost --update-baseline
-```
-
-The baseline is `test/bench/compile-baseline.tsv`, committed, so a
-regression is a diff.
 
 ## Before you optimize anything
 

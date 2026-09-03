@@ -12,7 +12,7 @@ description = "An ahead-of-time Ruby compiler: compiles Ruby programs to self-co
 readme = "../../README.md"
 default-run = "zeo"
 # Packaging whitelist: the .crate ships only the compiler itself plus the
-# two publish-time artifacts `cargo xtask stage-publish` stages (the
+# two publish-time artifacts `cargo xtask stage-crate` stages (the
 # pregen class surface rides inside /src). /tests -- the golden and e2e
 # suites, rooted at the repo corpus -- is deliberately outside it.
 include = ["/src", "/build.rs", "/README.md", "/gems.pregen.tar.gz"]

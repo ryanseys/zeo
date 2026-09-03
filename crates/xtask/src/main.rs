@@ -117,15 +117,13 @@ usage: cargo xtask <command> [options]
 commands:
   bless           record a program's answer under its `__END__` from the oracle
   capi-sweep      record ruby's answers for the C-gem sweep's smoke programs
-  cext            the vendored MRI C API headers and the rb_* census
+  check-c-headers regenerate and check what MRI's C headers pin
   ci              every non-test check CI runs, in order
-  compile-cost    what a compile costs per program (runtime suite: cargo bench)
   deps            fetch the libraries Gemfile.lock names (no ruby needed)
-  diff            compare a snippet across ruby and zeo, and file a gap
   dist            assemble the relocatable distribution
   gem             build the platform gem from a dist staging
   linux           run the suites in the linux container
-  stage-publish   stage the artifacts the published crate ships
+  stage-crate     stage the artifacts the published crate ships
 
 `cargo xtask <command> --help` describes one command.
 ";
@@ -144,15 +142,13 @@ fn main() -> std::process::ExitCode {
     let result = match command.as_str() {
         "bless" => commands::bless::run(rest),
         "capi-sweep" => commands::capi_sweep::run(rest),
-        "cext" => commands::cext::run(rest),
+        "check-c-headers" => commands::check_c_headers::run(rest),
         "ci" => commands::ci::run(rest),
-        "compile-cost" => commands::compile_cost::run(rest),
         "deps" => commands::deps::run(rest),
-        "diff" => commands::diff::run(rest),
         "dist" => commands::dist::run(rest),
         "gem" => commands::gem::run(rest),
         "linux" => commands::linux::run(rest),
-        "stage-publish" => commands::stage_publish::run(rest),
+        "stage-crate" => commands::stage_crate::run(rest),
         other => Err(Error::new(format!("unknown command {other:?}\n\n{USAGE}"))),
     };
     match result {

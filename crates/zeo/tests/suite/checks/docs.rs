@@ -102,7 +102,16 @@ fn every_documented_xtask_verb_exists() {
             if verb.starts_with('<') || verb.starts_with('-') {
                 continue;
             }
-            let verb = verb.trim_end_matches(['`', '.', ',', ')', '"']);
+            // Take the identifier and stop: prose puts a backtick, a
+            // possessive or a comma straight after it.
+            let verb: String = verb
+                .chars()
+                .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+                .collect();
+            let verb = verb.as_str();
+            if verb.is_empty() {
+                continue;
+            }
             if !verbs.contains(verb) {
                 bad.push(format!(
                     "{}:{}: `cargo xtask {verb}`",
@@ -140,8 +149,12 @@ fn every_documented_nextest_profile_exists() {
                 let Some(profile) = rest.split_whitespace().next() else {
                     continue;
                 };
-                let profile = profile.trim_end_matches(['`', '.', ',', ')', '"']);
-                if profile.starts_with('<') {
+                let profile: String = profile
+                    .chars()
+                    .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+                    .collect();
+                let profile = profile.as_str();
+                if profile.is_empty() {
                     continue;
                 }
                 if !profiles.contains(profile) {

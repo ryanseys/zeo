@@ -29,7 +29,7 @@ use crate::{Error, payload, root, root_join};
 const SURFACE: &str = "crates/zeo/src/class_surface.pregen.rs";
 const GEMS_TAR: &str = "crates/zeo/gems.pregen.tar.gz";
 
-const USAGE: &str = "usage: cargo xtask stage-publish [--check]";
+const USAGE: &str = "usage: cargo xtask stage-crate [--check]";
 
 pub fn run(args: &[String]) -> Result<(), Error> {
     let mut check = false;
@@ -81,7 +81,7 @@ fn check_staged(
         if staged != surface {
             return Err(Error::new(format!(
                 "{SURFACE} is STALE relative to the live projection -- re-run \
-                 `cargo xtask stage-publish`"
+                 `cargo xtask stage-crate`"
             )));
         }
     }
@@ -97,7 +97,7 @@ fn check_staged(
         if staged != gems_tar {
             return Err(Error::new(format!(
                 "{GEMS_TAR} is STALE relative to the bundled libraries -- re-run \
-                 `cargo xtask stage-publish`"
+                 `cargo xtask stage-crate`"
             )));
         }
     }
