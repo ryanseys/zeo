@@ -178,6 +178,27 @@ debug = "line-tables-only"
 opt-level = 1
 debug = "line-tables-only"
 
+# The suite runs the compiler it just built, 5,900 times, so how well these
+# two are optimized IS the cost of a test run -- and not only in the tail:
+# `zeo --version` is 10ms, so of the ~50ms floor on a trivial case about
+# 40ms is compiler work.
+#
+# MEASURED, unoptimized against target/dist/zeo, same programs, serial:
+#   lang/methods/undef_method_reflection.rb    0.06s -> 0.07s  (floor-bound)
+#   core/io/an_io_reopen_onto_a_file_fails.rb  1.65s -> 0.26s  (6.3x)
+#   lang/exceptions/deep_object_chain_release  4.28s -> 0.46s  (9.3x)
+#   stdlib/digest/big5_and_euc_jp_encode…      9.94s -> 0.80s  (12.4x)
+#
+# `zeo-rt` earns its row as much as `zeo` does: it is linked into every
+# compiled program, so it is the RUNTIME half, and the digest case above is
+# mostly runtime. `cargo xtask timings` is how the trade was priced and is
+# how to re-price it.
+[profile.dev.package.zeo]
+opt-level = 2
+
+[profile.dev.package.zeo-rt]
+opt-level = 2
+
 # Package overrides never reach build scripts or proc-macros, so without these
 # `zeo-macros` (240 ruby_class! expansions over the whole runtime), zeo's
 # build.rs (parses and hashes megabytes per rerun), bindgen and openssl-src's
