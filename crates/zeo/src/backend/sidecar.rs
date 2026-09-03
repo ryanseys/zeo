@@ -35,9 +35,20 @@ pub struct Sidecar {
     /// The `<main>` body's symbol.
     #[serde(default = "default_toplevel")]
     pub toplevel: String,
-    /// The top-level `def`s, in registration order.
+    /// The `def`s, in registration order.
     #[serde(default)]
     pub defs: Vec<Def>,
+    /// The classes and modules the program defines, in registration order.
+    /// Their ids are assigned here, after the last id the empty program
+    /// reaches, so a front end never learns one.
+    #[serde(default)]
+    pub classes: Vec<Class>,
+    /// The first class id free for a program's own classes -- the count
+    /// the EMPTY program reaches. `--emit-zeodata` writes it and the
+    /// backend reads it off its own boot compile; a front end leaves it
+    /// out, because the answer belongs to the zeo doing the linking.
+    #[serde(default)]
+    pub first_user_class: u32,
     /// The builtin class tables the program keeps, by `zeo_ctable_*`
     /// symbol. Two words stand for sets: `"@seed"` is what every program
     /// keeps (the empty program's tables), and `"@all"` is every table this
@@ -67,7 +78,24 @@ pub struct Sidecar {
     pub eval_install: bool,
 }
 
-/// One top-level `def`: its dispatch row and its reflection row.
+/// One class or module the program defines. The superclass and the
+/// ancestry it implies are resolved by name, so nothing here is an id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Class {
+    pub name: String,
+    /// Another class in this list, or `Object`. A builtin superclass is
+    /// refused: its subclass is a different native shape.
+    #[serde(default = "default_superclass")]
+    pub superclass: String,
+    /// `class` or `module`.
+    #[serde(default = "default_class_kind")]
+    pub kind: String,
+    /// The instance variables the class declares, in slot order.
+    #[serde(default)]
+    pub ivars: Vec<String>,
+}
+
+/// One `def`: its dispatch row and its reflection row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Def {
     pub name: String,
@@ -88,6 +116,13 @@ pub struct Def {
     /// The original name when this row is an alias; empty otherwise.
     #[serde(default)]
     pub aliased_from: String,
+    /// The class this method is defined on, by name; empty is the top
+    /// level, whose `def`s are private methods of `Object`.
+    #[serde(default)]
+    pub class: String,
+    /// `def self.x` -- the method rides the class-method channel.
+    #[serde(default)]
+    pub singleton: bool,
 }
 
 /// One entry of [`Sidecar::reg`]: a row, or the `"@boot"` set.
@@ -144,6 +179,21 @@ fn default_visibility() -> String {
     "public".to_string()
 }
 
+fn default_superclass() -> String {
+    "Object".to_string()
+}
+
+fn default_class_kind() -> String {
+    "class".to_string()
+}
+
+/// The `superclass` spelling that means the root of the ordinary
+/// hierarchy -- the only non-sidecar superclass a class may name.
+pub const OBJECT_SUPERCLASS: &str = "Object";
+
+/// [`Class::kind`] spellings.
+pub const CLASS_KINDS: &[&str] = &["class", "module"];
+
 impl Default for Sidecar {
     /// A program with no symbols, no sites and no `def`s: what a CLIF file
     /// with no sidecar beside it means.
@@ -155,6 +205,8 @@ impl Default for Sidecar {
             callsites: Vec::new(),
             toplevel: default_toplevel(),
             defs: Vec::new(),
+            classes: Vec::new(),
+            first_user_class: 0,
             class_tables: default_class_tables(),
             reg: default_reg(),
             load_path: Vec::new(),
@@ -218,6 +270,22 @@ mod tests {
         assert_eq!(parsed, Sidecar::default());
         assert_eq!(parsed.class_tables, vec![SEED_TABLES]);
         assert_eq!(parsed.reg, vec![RegEntry::Boot(BOOT_ROWS.to_string())]);
+    }
+
+    #[test]
+    fn a_class_reads_with_its_defaults() {
+        let parsed: Sidecar = serde_json::from_str(
+            r#"{"abi_version": 1, "classes": [{"name": "Foo"}],
+                "defs": [{"name": "bar", "tramp": "zeo_t_Foo_bar", "class": "Foo"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.classes[0].superclass, OBJECT_SUPERCLASS);
+        assert_eq!(parsed.classes[0].kind, CLASS_KINDS[0]);
+        assert!(parsed.classes[0].ivars.is_empty());
+        assert_eq!(parsed.defs[0].class, "Foo");
+        assert!(!parsed.defs[0].singleton);
+        // The one number a front end must not guess.
+        assert_eq!(parsed.first_user_class, 0);
     }
 
     #[test]

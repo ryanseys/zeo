@@ -23,7 +23,10 @@ use std::path::Path;
 use cranelift_codegen::ir::{self, ExternalName, GlobalValueData, UserExternalName, UserFuncName};
 use cranelift_module::{DataId, FuncId, Linkage, Module};
 
-use super::sidecar::{ALL_TABLES, BOOT_ROWS, PARAM_KINDS, RegEntry, RegRow, SEED_TABLES, Sidecar};
+use super::sidecar::{
+    ALL_TABLES, BOOT_ROWS, CLASS_KINDS, OBJECT_SUPERCLASS, PARAM_KINDS, RegEntry, RegRow,
+    SEED_TABLES, Sidecar,
+};
 use crate::clif::module::Emitter;
 use crate::clif::{capi_names, emit, names, statics};
 use crate::diagnostics::clif::{CResult, CodegenError};
@@ -83,8 +86,10 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
         }
         declared.push((name, id, func));
     }
+    let (class_specs, class_ids) = class_specs(sidecar)?;
+    let class_ids_data = define_class_ids(&mut em, &class_specs)?;
     for (name, id, mut func) in declared {
-        resolve_names(&mut em, &ids, &name, &mut func)?;
+        resolve_names(&mut em, &ids, class_ids_data, &name, &mut func)?;
         cranelift_codegen::verify_function(&func, em.module.isa())
             .map_err(|e| CodegenError::internal(format!("{name}: {e}")))?;
         em.define(id, func, &name, false)?;
@@ -106,8 +111,9 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
     statics::define_dyn_sites(&mut em)?;
     statics::define_proc_shapes(&mut em)?;
     statics::define_reopen_flags(&mut em)?;
-    let (vm_rows, vis_rows, meta_rows) = def_rows(sidecar, &ids)?;
-    let reg_rows = reg_rows(&sidecar.reg, &ids)?;
+    let (vm_rows, vis_rows, obj_rows, cm_rows, meta_rows) = def_rows(sidecar, &ids, &class_ids)?;
+    let mut reg_rows = reg_rows(&sidecar.reg, &ids)?;
+    reg_rows.extend(own_method_rows(sidecar, &class_ids));
     let program = statics::DescProgram {
         warnings: sidecar.warnings.clone(),
         load_path: sidecar.load_path.clone(),
@@ -127,9 +133,9 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
             rows: statics::DescRows {
                 vm: &vm_rows,
                 vis: &vis_rows,
-                classes: &[],
-                obj: &[],
-                cm: &[],
+                classes: &class_specs,
+                obj: &obj_rows,
+                cm: &cm_rows,
                 reg: &reg_rows,
                 foreign: &[],
                 meta: &meta_rows,
@@ -160,6 +166,7 @@ fn own_name(name: &UserFuncName) -> CResult<String> {
 fn resolve_names(
     em: &mut Emitter,
     in_file: &HashMap<String, FuncId>,
+    class_ids: DataId,
     in_fn: &str,
     func: &mut ir::Function,
 ) -> CResult<()> {
@@ -203,7 +210,7 @@ fn resolve_names(
         };
         let symbol = String::from_utf8_lossy(tc.raw()).into_owned();
         let offset = *offset;
-        let data = data_symbol(em, &symbol).ok_or_else(|| {
+        let data = data_symbol(em, class_ids, &symbol).ok_or_else(|| {
             CodegenError::internal(format!(
                 "{in_fn} names the data symbol `{symbol}`, which is not one a program carries"
             ))
@@ -244,8 +251,9 @@ fn import(em: &mut Emitter, in_fn: &str, callee: &str, have: &ir::Signature) -> 
 }
 
 /// The data tables a program carries, by symbol.
-fn data_symbol(em: &Emitter, symbol: &str) -> Option<DataId> {
+fn data_symbol(em: &Emitter, class_ids: DataId, symbol: &str) -> Option<DataId> {
     Some(match symbol {
+        CLASS_IDS => class_ids,
         names::RODATA => em.rodata_id,
         names::SYMS => em.syms_id,
         names::CALLSITES => em.callsites_id,
@@ -263,31 +271,187 @@ fn data_symbol(em: &Emitter, symbol: &str) -> Option<DataId> {
     })
 }
 
+
+/// The classes the sidecar declares, with their ids -- assigned after the
+/// last id the EMPTY program reaches, which is the one number a front end
+/// cannot know and must not guess.
+fn class_specs(sidecar: &Sidecar) -> CResult<(Vec<crate::clif::classes::ClassSpec>, ClassIds)> {
+    let base = boot()?.first_user_class;
+    let mut ids: ClassIds = HashMap::new();
+    for (i, c) in sidecar.classes.iter().enumerate() {
+        if ids.insert(c.name.clone(), base + i as u32).is_some() {
+            return Err(CodegenError::internal(format!(
+                "the sidecar declares the class `{}` twice",
+                c.name
+            )));
+        }
+    }
+    let mut specs = Vec::with_capacity(sidecar.classes.len());
+    for c in &sidecar.classes {
+        let kind = match CLASS_KINDS.iter().position(|k| *k == c.kind) {
+            Some(0) => zeo_abi::abi::CLASS_PLAIN,
+            Some(_) => zeo_abi::abi::CLASS_MODULE,
+            None => {
+                return Err(CodegenError::internal(format!(
+                    "`{}` is a `{}`; the kinds are {}",
+                    c.name,
+                    c.kind,
+                    CLASS_KINDS.join(", ")
+                )));
+            }
+        };
+        let ancestors = if kind == zeo_abi::abi::CLASS_MODULE {
+            vec![ids[&c.name]]
+        } else {
+            let mut chain = vec![ids[&c.name]];
+            chain.extend(ancestors_of(&c.superclass, sidecar, &ids, &c.name)?);
+            chain
+        };
+        specs.push(crate::clif::classes::ClassSpec {
+            id: ids[&c.name],
+            name: c.name.clone(),
+            ancestors,
+            ivars: c.ivars.clone(),
+            hidden: 0,
+            members: Vec::new(),
+            kind,
+        });
+    }
+    Ok((specs, ids))
+}
+
+/// The linearized chain of `name`, which is another sidecar class or
+/// `Object`. A builtin superclass is refused: its subclass is a different
+/// native shape, and the emitter refuses one too.
+fn ancestors_of(
+    name: &str,
+    sidecar: &Sidecar,
+    ids: &ClassIds,
+    of: &str,
+) -> CResult<Vec<u32>> {
+    if name == OBJECT_SUPERCLASS {
+        return Ok(vec![
+            zeo_abi::OBJECT_CLASS.0,
+            zeo_abi::KERNEL_CLASS.0,
+            zeo_abi::BASIC_OBJECT_CLASS.0,
+        ]);
+    }
+    let Some(&id) = ids.get(name) else {
+        return Err(CodegenError::internal(format!(
+            "`{of}` names the superclass `{name}`, which is neither a class in this sidecar nor \
+             `{OBJECT_SUPERCLASS}` (a builtin superclass is a different native shape)"
+        )));
+    };
+    let parent = sidecar
+        .classes
+        .iter()
+        .find(|c| c.name == name)
+        .expect("the id map and the list agree");
+    if parent.kind != CLASS_KINDS[0] {
+        return Err(CodegenError::internal(format!(
+            "`{of}` inherits from the module `{name}`"
+        )));
+    }
+    let mut chain = vec![id];
+    chain.extend(ancestors_of(&parent.superclass, sidecar, ids, name)?);
+    Ok(chain)
+}
+
+/// The `zeo_class_ids` array: one `u32` per sidecar class, in the order the
+/// sidecar lists them. Ids are assigned at LINK time, so a front end that
+/// needs one in its code -- a constant's cref, an assignment's owner --
+/// reads it out of here the way it reads a symbol out of `zeo_syms`.
+fn define_class_ids(em: &mut Emitter, specs: &[crate::clif::classes::ClassSpec]) -> CResult<DataId> {
+    let mut bytes = Vec::with_capacity(specs.len().max(1) * 4);
+    for c in specs {
+        bytes.extend_from_slice(&c.id.to_le_bytes());
+    }
+    if bytes.is_empty() {
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+    }
+    let id = em
+        .module
+        .declare_data(CLASS_IDS, Linkage::Local, false, false)
+        .map_err(|e| CodegenError::internal(format!("declaring {CLASS_IDS}: {e}")))?;
+    let mut data = cranelift_module::DataDescription::new();
+    data.define(bytes.into_boxed_slice());
+    data.set_align(4);
+    em.module
+        .define_data(id, &data)
+        .map_err(|e| CodegenError::internal(format!("defining {CLASS_IDS}: {e}")))?;
+    Ok(id)
+}
+
+/// The data symbol [`define_class_ids`] writes.
+pub const CLASS_IDS: &str = "zeo_class_ids";
+
+type ClassIds = HashMap<String, u32>;
+
 /// The dispatch, visibility and reflection rows of the sidecar's `def`s.
 fn def_rows(
     sidecar: &Sidecar,
     in_file: &HashMap<String, FuncId>,
+    class_ids: &ClassIds,
 ) -> CResult<(
     Vec<statics::VmRowSpec>,
     Vec<statics::VisRowSpec>,
+    Vec<statics::ObjRowSpec>,
+    Vec<statics::CmRowSpec>,
     Vec<statics::MetaRowSpec>,
 )> {
     let mut vm = Vec::new();
     let mut vis = Vec::new();
+    let mut obj = Vec::new();
+    let mut cm = Vec::new();
     let mut meta = Vec::new();
     for def in &sidecar.defs {
+        // Which channel a method rides is not a choice the sidecar makes:
+        // a top-level `def` and a module's method ride the VALUE channel,
+        // a compiled class's instance method the OBJECT channel, and
+        // `def self.x` the class-method one.
+        let (class, is_module) = match def.class.as_str() {
+            "" => (0, false),
+            name => {
+                let Some(&id) = class_ids.get(name) else {
+                    return Err(CodegenError::internal(format!(
+                        "`{}` is defined on `{name}`, which the sidecar does not declare",
+                        def.name
+                    )));
+                };
+                let kind = &sidecar
+                    .classes
+                    .iter()
+                    .find(|c| c.name == name)
+                    .expect("the id map and the list agree")
+                    .kind;
+                (id, kind == CLASS_KINDS[1])
+            }
+        };
         let f = *in_file.get(&def.tramp).ok_or_else(|| {
             CodegenError::internal(format!(
                 "the sidecar's `{}` names the trampoline `{}`, which the text does not define",
                 def.name, def.tramp
             ))
         })?;
-        vm.push(statics::VmRowSpec {
-            class: 0,
-            box_id: 0,
-            name: def.name.clone(),
-            f,
-        });
+        match (def.singleton, class, is_module) {
+            (true, _, _) => cm.push(statics::CmRowSpec {
+                class,
+                box_id: 0,
+                name: def.name.clone(),
+                f,
+            }),
+            (false, 0, _) | (false, _, true) => vm.push(statics::VmRowSpec {
+                class,
+                box_id: 0,
+                name: def.name.clone(),
+                f,
+            }),
+            (false, _, false) => obj.push(statics::ObjRowSpec {
+                class,
+                name: def.name.clone(),
+                f,
+            }),
+        }
         let verb = match def.visibility.as_str() {
             "public" => None,
             "private" => Some(0),
@@ -301,7 +465,7 @@ fn def_rows(
         };
         if let Some(verb) = verb {
             vis.push(statics::VisRowSpec {
-                class: 0,
+                class,
                 name: def.name.clone(),
                 verb,
             });
@@ -321,8 +485,8 @@ fn def_rows(
             })
             .collect::<CResult<Vec<(u8, String)>>>()?;
         meta.push(statics::MetaRowSpec {
-            class: 0,
-            singleton: false,
+            class,
+            singleton: def.singleton,
             name: def.name.clone(),
             params,
             file: def.file.clone(),
@@ -330,7 +494,39 @@ fn def_rows(
             aliased_from: def.aliased_from.clone(),
         });
     }
-    Ok((vm, vis, meta))
+    Ok((vm, vis, obj, cm, meta))
+}
+
+/// What each class's own body wrote, which is `instance_methods(false)`
+/// and `Method#owner` truth. The front end never says this: it follows
+/// from which class each `def` names, so the backend derives it rather
+/// than asking for a row whose `class` would have to be an id.
+fn own_method_rows(sidecar: &Sidecar, class_ids: &ClassIds) -> Vec<statics::RegRowSpec> {
+    let mut rows: Vec<(u32, u8, String)> = sidecar
+        .defs
+        .iter()
+        .filter(|d| !d.class.is_empty())
+        .map(|d| {
+            let kind = if d.singleton {
+                zeo_abi::abi::REG_MARK_OWN_CLASS_METHOD_ROWS
+            } else {
+                zeo_abi::abi::REG_MARK_OWN_ROWS
+            };
+            (class_ids[&d.class], kind, d.name.clone())
+        })
+        .collect();
+    rows.sort();
+    rows.into_iter()
+        .map(|(class, kind, a)| statics::RegRowSpec {
+            kind,
+            class,
+            a,
+            b: String::new(),
+            f: None,
+            ids: Vec::new(),
+            flag: 0,
+        })
+        .collect()
 }
 
 /// The registration rows the sidecar names, `@boot` expanded to the rows

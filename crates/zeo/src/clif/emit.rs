@@ -1092,6 +1092,7 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
             &program,
             code_rodata,
             eval_install,
+            analyzed.compiler.classes.len() as u32,
         ));
     }
     let desc = statics::define_desc(
@@ -1118,6 +1119,7 @@ fn draft_sidecar(
     program: &statics::DescProgram,
     code_rodata: &[u8],
     eval_install: bool,
+    n_classes: u32,
 ) -> Result<Sidecar, String> {
     use crate::backend::sidecar::{Def, PARAM_KINDS, RegEntry, RegRow, encode_hex};
     let beyond = [
@@ -1181,6 +1183,8 @@ fn draft_sidecar(
                 line: meta.line,
                 visibility: visibility.to_string(),
                 aliased_from: meta.aliased_from.clone(),
+                class: String::new(),
+                singleton: false,
             })
         })
         .collect::<Result<Vec<Def>, String>>()?;
@@ -1207,6 +1211,8 @@ fn draft_sidecar(
         callsites: em.callsites.clone(),
         toplevel: super::names::TOPLEVEL.to_string(),
         defs,
+        classes: Vec::new(),
+        first_user_class: n_classes,
         class_tables: program.class_tables.iter().map(|s| s.to_string()).collect(),
         reg,
         load_path: program.load_path.clone(),
