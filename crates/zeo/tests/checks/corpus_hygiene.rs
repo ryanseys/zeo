@@ -74,7 +74,8 @@ fn names_data(line: &str) -> bool {
     line.match_indices("DATA").any(|(i, _)| {
         let before = i.checked_sub(1).map(|j| bytes[j]);
         let after = bytes.get(i + 4).copied();
-        let joins = |b: Option<u8>| b.is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b':');
+        let joins =
+            |b: Option<u8>| b.is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b':');
         !joins(before) && !joins(after)
     })
 }

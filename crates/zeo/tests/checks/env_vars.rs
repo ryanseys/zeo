@@ -59,7 +59,10 @@ fn names(bytes: &[u8]) -> Vec<(usize, String)> {
             continue;
         }
         let end = start + bytes[start..].iter().take_while(|&&b| is_word(b)).count();
-        out.push((start, String::from_utf8_lossy(&bytes[start..end]).into_owned()));
+        out.push((
+            start,
+            String::from_utf8_lossy(&bytes[start..end]).into_owned(),
+        ));
         i = end;
     }
     out

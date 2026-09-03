@@ -7,10 +7,10 @@ mod binary_size;
 mod builtin_shape;
 mod cli;
 mod clif;
+mod corpus_hygiene;
 mod diagnostics;
 mod env_vars;
 mod gem_versions;
-mod corpus_hygiene;
 mod mkmf_probes;
 mod no_c;
 mod ze0_clif;
@@ -30,9 +30,12 @@ mod suites;
 mod normalize;
 mod normalize_tests;
 
-// `clif` reads `libzeo.a`, which a test run does not build.
-#[path = "../harness/paths.rs"]
-mod paths;
-// `ze0_clif` runs the Ruby front end under the built `zeo`.
-#[path = "../harness/zeo_bin.rs"]
-mod zeo_bin;
+#[path = "../common/mod.rs"]
+mod common;
+/// The names the modules grew up with.
+mod paths {
+    pub use crate::common::{profile_dir, runtime_archive, workspace_root};
+}
+mod zeo_bin {
+    pub use crate::common::zeo_cli;
+}

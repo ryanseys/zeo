@@ -1,0 +1,7 @@
+$LOAD_PATH.unshift(File.expand_path("plain_require_resolves_against_search_roots_including_nested_features/vendorlib", __dir__))
+require_relative "plain_require_resolves_against_search_roots_including_nested_features/main"
+__END__
+util/strings loaded
+util loaded
+util root
+42

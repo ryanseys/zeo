@@ -30,9 +30,7 @@ fn pointer_width_hex_runs_are_scrubbed() {
 
 #[test]
 fn panic_thread_ids_are_scrubbed() {
-    let n = |s: &str| {
-        String::from_utf8(normalize_thread_ids(s.as_bytes().to_vec())).unwrap()
-    };
+    let n = |s: &str| String::from_utf8(normalize_thread_ids(s.as_bytes().to_vec())).unwrap();
     assert_eq!(
         n("thread 'ruby-main' (156051069) panicked"),
         "thread 'ruby-main' (TID) panicked"

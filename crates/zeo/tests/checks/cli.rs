@@ -72,7 +72,11 @@ fn a_bare_file_runs_with_argv_and_exit_status() {
     // file name, ruby's rule, which is what lets `zeo test.rb --seed 42`
     // drive a test framework. A literal `--` after the file is ARGV too --
     // also ruby's answer.
-    let out = zeo().arg(&rb).args(["-n", "x"]).output().expect("spawn zeo");
+    let out = zeo()
+        .arg(&rb)
+        .args(["-n", "x"])
+        .output()
+        .expect("spawn zeo");
     assert_eq!(stdout_of(&out), "[\"-n\", \"x\"]\n");
     assert_eq!(out.status.code(), Some(7));
 
@@ -153,14 +157,23 @@ fn a_build_flag_after_the_file_is_argv_and_builds_nothing() {
             "{flag:?} after the file should reach the program as ARGV"
         );
     }
-    assert!(!dir.join("out").exists(), "`-o out` after the file built one");
-    assert!(!dir.join("hello").exists(), "`--compile` after the file built one");
+    assert!(
+        !dir.join("out").exists(),
+        "`-o out` after the file built one"
+    );
+    assert!(
+        !dir.join("hello").exists(),
+        "`--compile` after the file built one"
+    );
 
     // The help text has to spell it the way that works, or it teaches the bug.
     let help = zeo().arg("--help").output().expect("spawn zeo");
     let text = stdout_of(&help);
     for want in ["-o <path> <input.rb>", "--compile <input.rb>"] {
-        assert!(text.contains(want), "`zeo --help` has no `{want}` line:\n{text}");
+        assert!(
+            text.contains(want),
+            "`zeo --help` has no `{want}` line:\n{text}"
+        );
     }
 }
 
@@ -250,7 +263,11 @@ fn enabling_a_feature_zeo_has_nothing_behind_reports_why() {
         .output()
         .expect("spawn zeo");
     assert_ne!(out.status.code(), Some(0));
-    assert!(stderr_of(&out).contains("syntax_suggest"), "{}", stderr_of(&out));
+    assert!(
+        stderr_of(&out).contains("syntax_suggest"),
+        "{}",
+        stderr_of(&out)
+    );
 
     // Turning it off names the state already in force, so it runs.
     let out = zeo()
@@ -263,8 +280,16 @@ fn enabling_a_feature_zeo_has_nothing_behind_reports_why() {
 #[test]
 fn both_of_rubys_spellings_reach_one_dial() {
     for flag in ["--disable=gems", "--disable-gems", "--disable=all"] {
-        let out = zeo().args([flag, "-e", "puts 1"]).output().expect("spawn zeo");
-        assert_eq!(stdout_of(&out), "1\n", "{flag} -- stderr: {}", stderr_of(&out));
+        let out = zeo()
+            .args([flag, "-e", "puts 1"])
+            .output()
+            .expect("spawn zeo");
+        assert_eq!(
+            stdout_of(&out),
+            "1\n",
+            "{flag} -- stderr: {}",
+            stderr_of(&out)
+        );
     }
 }
 
@@ -293,8 +318,16 @@ fn a_library_named_in_the_runtime_load_dial_loads_at_run_time() {
     // -- so a difference in what the program prints is a difference in the
     // loader, which is the whole question the dial exists to answer.
     let dir = scratch("runtime-load");
-    write(&dir, "lib/greet.rb", "require \"greet/name\"\nmodule Greet\n  def self.hello = \"hi #{NAME}\"\nend\n");
-    write(&dir, "lib/greet/name.rb", "module Greet\n  NAME = \"there\"\nend\n");
+    write(
+        &dir,
+        "lib/greet.rb",
+        "require \"greet/name\"\nmodule Greet\n  def self.hello = \"hi #{NAME}\"\nend\n",
+    );
+    write(
+        &dir,
+        "lib/greet/name.rb",
+        "module Greet\n  NAME = \"there\"\nend\n",
+    );
     let rb = write(
         &dir,
         "t.rb",
@@ -302,14 +335,24 @@ fn a_library_named_in_the_runtime_load_dial_loads_at_run_time() {
     );
 
     let compiled_in = zeo().arg(&rb).output().expect("spawn zeo");
-    assert_eq!(stdout_of(&compiled_in), "hi there\n", "stderr: {}", stderr_of(&compiled_in));
+    assert_eq!(
+        stdout_of(&compiled_in),
+        "hi there\n",
+        "stderr: {}",
+        stderr_of(&compiled_in)
+    );
 
     let at_run_time = zeo()
         .env("ZEO_DEBUG_RUNTIME_LOAD", "greet")
         .arg(&rb)
         .output()
         .expect("spawn zeo");
-    assert_eq!(stdout_of(&at_run_time), "hi there\n", "stderr: {}", stderr_of(&at_run_time));
+    assert_eq!(
+        stdout_of(&at_run_time),
+        "hi there\n",
+        "stderr: {}",
+        stderr_of(&at_run_time)
+    );
 
     // A name the dial does NOT hold is untouched, so the dial cannot quietly
     // move a library nobody asked about.
@@ -318,7 +361,12 @@ fn a_library_named_in_the_runtime_load_dial_loads_at_run_time() {
         .arg(&rb)
         .output()
         .expect("spawn zeo");
-    assert_eq!(stdout_of(&other), "hi there\n", "stderr: {}", stderr_of(&other));
+    assert_eq!(
+        stdout_of(&other),
+        "hi there\n",
+        "stderr: {}",
+        stderr_of(&other)
+    );
 
     // `irb` names `irb/init` too -- a library defers WHOLE, or the run
     // measures a mixture of the two loaders rather than either one. A BUNDLED
@@ -486,7 +534,11 @@ fn an_explicit_backend_skips_the_cache() {
 #[test]
 fn a_cached_run_keeps_the_programs_own_name() {
     let dir = scratch("cache-arg0");
-    let rb = write(&dir, "who.rb", "puts $0\nputs $PROGRAM_NAME\nputs __FILE__\n");
+    let rb = write(
+        &dir,
+        "who.rb",
+        "puts $0\nputs $PROGRAM_NAME\nputs __FILE__\n",
+    );
 
     let want = format!("{0}\n{0}\n{0}\n", rb.display());
     for run in ["first", "cached"] {

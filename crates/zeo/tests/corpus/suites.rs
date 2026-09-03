@@ -81,6 +81,14 @@ pub const ERRORS: Suite = Suite {
     takes_legs: false,
     ..suite("errors", "test/errors", Depth::One)
 };
+/// Programs that use something only zeo has: embedded sources, `Zeo.prepare`,
+/// the cycle collector's own messages, a stack ruby cannot match. Recorded
+/// from zeo, because ruby cannot run them.
+pub const FEATURES: Suite = Suite {
+    recorder: Recorder::Zeo,
+    takes_legs: false,
+    ..suite("features", "test/features", Depth::One)
+};
 pub const DIVERGENCES: Suite = Suite {
     recorder: Recorder::Zeo,
     takes_legs: false,
@@ -109,6 +117,7 @@ pub const SUITES: &[Suite] = &[
     AOT,
     BENCH,
     ERRORS,
+    FEATURES,
     DIVERGENCES,
     GAPS,
     MILESTONES,

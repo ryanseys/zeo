@@ -44,7 +44,11 @@ fn release_zeo() -> PathBuf {
         .expect("target/")
         .join("release")
         .join("zeo");
-    assert!(exe.is_file(), "{} is missing after the build", exe.display());
+    assert!(
+        exe.is_file(),
+        "{} is missing after the build",
+        exe.display()
+    );
     exe
 }
 

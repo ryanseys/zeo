@@ -88,7 +88,10 @@ fn committed_versions() -> BTreeMap<String, Option<String>> {
                 let text = std::fs::read_to_string(&spec)
                     .unwrap_or_else(|e| panic!("{} is readable: {e}", spec.display()));
                 text.lines()
-                    .find_map(|l| l.split_once("s.version").and_then(|(_, r)| r.split('"').nth(1)))
+                    .find_map(|l| {
+                        l.split_once("s.version")
+                            .and_then(|(_, r)| r.split('"').nth(1))
+                    })
                     .unwrap_or_else(|| panic!("{} states no s.version", spec.display()))
                     .to_string()
             });
@@ -274,7 +277,10 @@ fn the_gemfile_pins_every_dependency_to_one_version() {
         .take_while(|l| l.starts_with("  "))
         .map(str::trim)
         .collect();
-    assert!(!deps.is_empty(), "no DEPENDENCIES parsed out of Gemfile.lock");
+    assert!(
+        !deps.is_empty(),
+        "no DEPENDENCIES parsed out of Gemfile.lock"
+    );
     let loose: Vec<&&str> = deps
         .iter()
         .filter(|d| !d.contains("(= ") || !d.ends_with(')'))

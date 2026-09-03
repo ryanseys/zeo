@@ -570,10 +570,9 @@ fn assert_corpus_needs_no_bundler(corpus: &[PathBuf]) {
     let mut needy = Vec::new();
     for rb in corpus {
         let src = std::fs::read_to_string(rb).unwrap_or_default();
-        if src
-            .lines()
-            .any(|l| l.trim_start().starts_with("require ") || l.trim_start().starts_with("require("))
-        {
+        if src.lines().any(|l| {
+            l.trim_start().starts_with("require ") || l.trim_start().starts_with("require(")
+        }) {
             needy.push(rb.file_stem().unwrap().to_string_lossy().into_owned());
         }
     }

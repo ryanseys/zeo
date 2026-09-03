@@ -55,5 +55,5 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 # These spawn the real `zeo` binary and compile like a corpus case. No
 # terminate: some legitimately compile a whole require graph.
 [[profile.default.overrides]]
-filter = "(binary(checks) & test(cli::)) | binary(e2e)"
+filter = "binary(api) | (binary(checks) & test(cli::))"
 test-group = "golden"

@@ -28,8 +28,14 @@ const PROGRAMS: &[(&str, Option<&str>)] = &[
     ("bm_json_parse", Some("test/bench/bm_json_parse.rb")),
     ("bm_micro_lisp", Some("test/bench/bm_micro_lisp.rb")),
     ("core_classes", Some("test/lang/classes/core_classes.rb")),
-    ("uri_parse_and_build", Some("test/stdlib/uri/uri_parse_and_build.rb")),
-    ("optparse_subset", Some("test/stdlib/optparse/optparse_subset.rb")),
+    (
+        "uri_parse_and_build",
+        Some("test/stdlib/uri/uri_parse_and_build.rb"),
+    ),
+    (
+        "optparse_subset",
+        Some("test/stdlib/optparse/optparse_subset.rb"),
+    ),
     ("gem_rubygems", Some("test/bench/compile/rubygems.rb")),
     ("gem_bundler", Some("test/bench/compile/bundler.rb")),
 ];

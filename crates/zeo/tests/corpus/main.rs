@@ -3,8 +3,8 @@
 //! status). One nextest case per program per leg.
 //!
 //! A program's contract is its DIRECTORY (`suites.rs`): `test/lang`,
-//! `test/core`, `test/stdlib` and `test/compiler` must match ruby; `errors`
-//! and `divergences` record zeo's own answer and must match it; `gaps` must
+//! `test/core`, `test/stdlib` and `test/compiler` must match ruby; `errors`,
+//! `features` and `divergences` record zeo's own answer and must match it; `gaps` must
 //! NOT match yet; `aot` runs on both the JIT and a real link in every
 //! profile; `milestones` splice whole require graphs; `ze0` takes three
 //! roads. Anything deeper than a suite's depth is a fixture, not a test.
@@ -60,6 +60,10 @@ fn errors(rb: &Path) -> datatest_stable::Result<()> {
     golden::run(rb, &suites::ERRORS, Leg::Jit)
 }
 
+fn features(rb: &Path) -> datatest_stable::Result<()> {
+    golden::run(rb, &suites::FEATURES, Leg::Jit)
+}
+
 fn divergences(rb: &Path) -> datatest_stable::Result<()> {
     golden::run(rb, &suites::DIVERGENCES, Leg::Jit)
 }
@@ -98,6 +102,7 @@ datatest_stable::harness! {
     { test = aot, root = "../../test/aot", pattern = r"^[^/]+\.rb$" },
     { test = aot_link, root = "../../test/aot", pattern = r"^[^/]+\.rb$" },
     { test = errors, root = "../../test/errors", pattern = r"^[^/]+\.rb$" },
+    { test = features, root = "../../test/features", pattern = r"^[^/]+\.rb$" },
     { test = divergences, root = "../../test/divergences", pattern = r"^[^/]+\.rb$" },
     { test = gaps, root = "../../test/gaps", pattern = r"^[^/]+\.rb$" },
     { test = milestones, root = "../../test/milestones", pattern = r"^(pending/)?[^/]+\.rb$" },

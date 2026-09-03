@@ -8,5 +8,6 @@ pub mod dist;
 pub mod gem;
 pub mod linux;
 pub mod migrate_corpus;
+pub mod migrate_e2e;
 pub mod promote_gap;
 pub mod stage_publish;

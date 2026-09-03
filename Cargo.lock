@@ -2176,9 +2176,12 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "flate2",
+ "proc-macro2",
+ "quote",
  "regex",
  "serde_json",
  "sha2",
+ "syn 2.0.118",
  "tar",
  "zeo",
  "zeo-capi",

@@ -54,11 +54,19 @@ fn normalize_source_path(bytes: Vec<u8>, source: &Path, run_cwd: &Path) -> Vec<u
     replace_bytes(&bytes, abs.as_bytes(), rel.as_bytes())
 }
 
-/// Every scrub, in order: CRLF, the source path, object addresses, thread ids.
+/// A fixture a program requires is named by its absolute path in a
+/// backtrace (`require_relative` resolves to one); the recorded form is
+/// relative to the run directory like the program's own.
+fn normalize_run_cwd(bytes: Vec<u8>, run_cwd: &Path) -> Vec<u8> {
+    let prefix = format!("{}/", run_cwd.display());
+    replace_bytes(&bytes, prefix.as_bytes(), b"")
+}
+
+/// Every scrub, in order: CRLF, the source path, the run directory, object
+/// addresses, thread ids.
 pub fn norm(bytes: &[u8], source: &Path, run_cwd: &Path) -> Vec<u8> {
-    normalize_thread_ids(normalize_addresses(normalize_source_path(
-        normalize_crlf(bytes),
-        source,
+    normalize_thread_ids(normalize_addresses(normalize_run_cwd(
+        normalize_source_path(normalize_crlf(bytes), source, run_cwd),
         run_cwd,
     )))
 }
