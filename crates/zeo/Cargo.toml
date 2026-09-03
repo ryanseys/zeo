@@ -18,6 +18,8 @@ default-run = "zeo"
 include = ["/src", "/build.rs", "/README.md", "/gems.pregen.tar.gz"]
 
 [dependencies]
+# RubyGems formats: `Gemfile.lock`, gemspecs, platforms, versions.
+zeo-gem.workspace = true
 # The package row manifest (`package.rs`): a separately compiled gem's
 # registration rows as data.
 serde.workspace = true

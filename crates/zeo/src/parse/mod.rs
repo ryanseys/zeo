@@ -8,11 +8,19 @@
 pub mod gem_compat;
 mod gem_store;
 pub(crate) use gem_store::store_gems;
-pub(crate) mod gemspec;
+
+/// A gemspec, with `zeo-gem`'s error reshaped into the compiler's own.
+pub(crate) fn read_gemspec(path: &std::path::Path) -> crate::lower::PResult<zeo_gem::Gemspec> {
+    zeo_gem::Gemspec::parse_file(path).map_err(|e| e.message().into())
+}
+
+/// A `Gemfile.lock`, the same way.
+pub(crate) fn read_lockfile(path: &std::path::Path) -> crate::lower::PResult<zeo_gem::Lockfile> {
+    zeo_gem::Lockfile::parse_file(path).map_err(|e| e.message().into())
+}
 mod loader;
 pub use loader::absolutize_feature;
 pub(crate) use loader::bundled_gem_roots;
-pub(crate) mod lockfile;
 pub(crate) mod syntax_report;
 
 pub use loader::read_source;
@@ -232,9 +240,8 @@ pub fn parse_and_lower_with(
     // analyze nor emit sees `CompileOptions` -- see `Hir::pkg_build`.
     hir.pkg_build = opts.package_build.clone();
     for up in &opts.use_packages {
-        let m = crate::package::Manifest::parse(&up.manifest_text).map_err(|e| {
-            CompileError::analyze(format!("{}: {e}", up.manifest_path.display()))
-        })?;
+        let m = crate::package::Manifest::parse(&up.manifest_text)
+            .map_err(|e| CompileError::analyze(format!("{}: {e}", up.manifest_path.display())))?;
         hir.pkg_merge.push(m);
         hir.pkg_source_roots.push(up.source_root.clone());
     }

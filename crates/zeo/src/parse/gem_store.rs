@@ -30,7 +30,9 @@ use std::path::{Path, PathBuf};
 
 use crate::gem_report::{GemRecord, SatisfiedBy};
 use crate::lower::PResult;
-use crate::parse::lockfile::{GemSource, LockedGem, Lockfile};
+use crate::parse::read_gemspec;
+use zeo_gem::Gemspec;
+use zeo_gem::lockfile::{GemSource, LockedGem};
 
 /// What an installed store yields for a lockfile: the pure-Ruby gems zeo can
 /// compile (as `(name, roots)`), and disclosure entries for the rest.
@@ -141,9 +143,9 @@ pub(crate) struct StoreGem {
 /// carrying the reason it is not. Git- and path-sourced gems are not
 /// listed: their trees live outside the store the artifact home is keyed
 /// on.
-pub(crate) fn store_gems(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<Vec<StoreGem>> {
+pub(crate) fn store_gems(stores: &[PathBuf], locked: &[LockedGem]) -> PResult<Vec<StoreGem>> {
     let mut out = Vec::new();
-    for locked in &lockfile.gems {
+    for locked in locked {
         if locked.source != GemSource::Rubygems {
             continue;
         }
@@ -176,7 +178,7 @@ pub(crate) fn store_gems(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<Vec
         if found.is_none()
             && let Some((path, store)) = &precompiled
         {
-            let spec = super::gemspec::parse_file(path)?;
+            let spec = read_gemspec(path)?;
             let version = spec.version.clone().unwrap_or(locked.version.clone());
             if zeo_platform_gem(store, &spec, &version).is_some() {
                 found = Some((path.clone(), store));
@@ -196,7 +198,7 @@ pub(crate) fn store_gems(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<Vec
                 continue;
             }
         };
-        let spec = super::gemspec::parse_file(&gemspec_path)?;
+        let spec = read_gemspec(&gemspec_path)?;
         let version = spec.version.as_deref().unwrap_or(&locked.version);
         let gem_dir = match zeo_platform_gem(store, &spec, version) {
             Some(dir) => dir,
@@ -239,8 +241,7 @@ pub(crate) fn store_gems(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<Vec
                         row.entry = Some(e);
                     }
                     None => {
-                        row.skip =
-                            Some(format!("no {}.rb under its require paths", row.feature));
+                        row.skip = Some(format!("no {}.rb under its require paths", row.feature));
                     }
                 }
             }
@@ -255,13 +256,13 @@ pub(crate) fn store_gems(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<Vec
 /// wins). Never fails on an individual gem -- an unusable one becomes a
 /// disclosure, because the program may never `require` it (an AOT compiler
 /// only compiles what a require reaches).
-pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreResolution> {
+pub(super) fn resolve(stores: &[PathBuf], locked_gems: &[LockedGem]) -> PResult<StoreResolution> {
     let mut roots = Vec::new();
     let mut disclosures = Vec::new();
     let mut native_exts = Vec::new();
     let mut overrides = Vec::new();
 
-    for locked in &lockfile.gems {
+    for locked in locked_gems {
         // Only RubyGems-store gems live in `specifications/`; a git checkout or
         // a local path gem is out of scope for the store provider.
         if locked.source != GemSource::Rubygems {
@@ -296,7 +297,7 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
                     // accelerator beside it), so it serves as a source gem;
                     // a C-ABI binary gem stays excluded below.
                     if found.is_none() {
-                        let spec = super::gemspec::parse_file(&path)?;
+                        let spec = read_gemspec(&path)?;
                         let version = spec.version.clone().unwrap_or(locked.version.clone());
                         if zeo_platform_gem(store, &spec, &version).is_some() {
                             found = Some((path, store));
@@ -338,7 +339,7 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
             None => continue,
         };
 
-        let spec = super::gemspec::parse_file(&gemspec_path)?;
+        let spec = read_gemspec(&gemspec_path)?;
         let version = spec.version.as_deref().unwrap_or(&locked.version);
         // A zeo platform gem's tree carries the platform suffix, and its
         // suffix is not a C-ABI signal (pure Ruby by construction).
@@ -411,11 +412,11 @@ pub(super) fn resolve(stores: &[PathBuf], lockfile: &Lockfile) -> PResult<StoreR
     })
 }
 
-/// A synthetic `Lockfile` naming every gem installed in the store, one per
-/// name (ruby-platform spec preferred) -- the input to the no-lockfile
-/// store-sweep mode, which classifies the whole installed store. A gemspec
-/// that fails the static parse is skipped rather than aborting the sweep.
-pub(super) fn installed_as_lockfile(store: &Path) -> PResult<Lockfile> {
+/// Every gem installed in the store, one row per name (ruby-platform spec
+/// preferred) -- the input to the no-lockfile store-sweep mode, which
+/// classifies the whole installed store. A gemspec that fails the static
+/// parse is skipped rather than aborting the sweep.
+pub(super) fn installed_gems(store: &Path) -> PResult<Vec<LockedGem>> {
     use std::collections::BTreeMap;
     let specs = store.join("specifications");
     let mut gems: BTreeMap<String, LockedGem> = BTreeMap::new();
@@ -428,7 +429,7 @@ pub(super) fn installed_as_lockfile(store: &Path) -> PResult<Lockfile> {
             if path.extension().and_then(|e| e.to_str()) != Some("gemspec") {
                 continue;
             }
-            let Ok(spec) = super::gemspec::parse_file(&path) else {
+            let Ok(spec) = read_gemspec(&path) else {
                 continue; // an unparseable gemspec is skipped, not fatal
             };
             let platform = spec.platform.filter(|p| p != "ruby" && !p.is_empty());
@@ -452,12 +453,7 @@ pub(super) fn installed_as_lockfile(store: &Path) -> PResult<Lockfile> {
     if gems.is_empty() {
         return Err(format!("no gemspecs found under {}", specs.display()).into());
     }
-    Ok(Lockfile {
-        gems: gems.into_values().collect(),
-        platforms: Vec::new(),
-        bundler_version: None,
-        roots: Vec::new(),
-    })
+    Ok(gems.into_values().collect())
 }
 
 /// The result of locating a locked gem's gemspec, forcing the ruby platform.
@@ -506,7 +502,7 @@ fn locate_gemspec(specs: &Path, name: &str, version: &str) -> Located {
 /// in the tree, and the `.zeopkg` beside it. The one platform-gem shape
 /// the force-ruby-platform rule does NOT exclude -- there is no C-ABI
 /// object in it to mislead anyone.
-fn zeo_platform_gem(store: &Path, spec: &super::gemspec::GemSpec, version: &str) -> Option<PathBuf> {
+fn zeo_platform_gem(store: &Path, spec: &Gemspec, version: &str) -> Option<PathBuf> {
     let platform = spec.platform.as_deref().filter(|p| *p != "ruby")?;
     let gem_dir = store
         .join("gems")
@@ -538,7 +534,7 @@ const ACCELERATOR_ONLY: &[&str] = &["racc"];
 /// `s.extensions` is checked FIRST and wins: a gem that ships its C source
 /// also ships the `.so` from an earlier build in the same directory, and
 /// reading that as "precompiled" would refuse a gem zeo can build.
-fn native_kind(spec: &super::gemspec::GemSpec, gem_dir: &Path) -> NativeKind {
+fn native_kind(spec: &Gemspec, gem_dir: &Path) -> NativeKind {
     // Before the extension check on purpose, and before the native-object
     // scan: an installed accelerator gem carries both the extconf AND a
     // built `.bundle` under lib/, and either reading would sink the gem.

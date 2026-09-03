@@ -534,8 +534,9 @@ pub(super) fn lower_main_file(
     if let Some(lock) = opts.lockfile.as_deref()
         && !opts.gem_paths.is_empty()
     {
-        let parsed = super::lockfile::parse_file(lock)?;
-        let resolution = super::gem_store::resolve(&opts.gem_paths, &parsed)?;
+        let parsed = super::read_lockfile(lock)?;
+        let locked = parsed.resolved();
+        let resolution = super::gem_store::resolve(&opts.gem_paths, &locked)?;
         // The overriding names first: a gem zeo also implements already sits
         // in `packages` from the bundled-gems scan, and the guard below would
         // read that as "already provided" and drop the store root on the
@@ -553,8 +554,7 @@ pub(super) fn lower_main_file(
         }
         for (name, roots) in resolution.roots {
             if !loader.packages.iter().any(|g| g.name == name) {
-                let version = parsed
-                    .gems
+                let version = locked
                     .iter()
                     .find(|g| g.name == name)
                     .map(|g| g.version.clone());
@@ -1935,7 +1935,7 @@ mod tests {
     /// dependency, expressing Bundler's last-activated-wins as first-match.
     #[test]
     fn lockfile_precedence_ranks_dependents_ahead_of_their_deps() {
-        let lock = crate::parse::lockfile::parse(
+        let lock = zeo_gem::Lockfile::parse(
             "GEM\n  remote: https://rubygems.org/\n  specs:\n    hashie (5.0.0)\n    pronto (0.11.4)\n      rugged (>= 0.23.0)\n      thor (>= 0.20.3)\n    rugged (1.9.0)\n    thor (1.4.0)\n\nDEPENDENCIES\n  pronto\n",
         )
         .unwrap();

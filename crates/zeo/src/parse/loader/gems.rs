@@ -47,15 +47,14 @@ pub(super) fn strict_ambiguous_require() -> bool {
 /// first-match. Locked gems no edge reaches (a lockfile always connects, but
 /// a hand-edited one may not) follow in name order, still ahead of anything
 /// unlocked.
-pub(super) fn lockfile_precedence(
-    lock: &crate::parse::lockfile::Lockfile,
-) -> HashMap<String, usize> {
-    let by_name: HashMap<&str, &crate::parse::lockfile::LockedGem> =
-        lock.gems.iter().map(|g| (g.name.as_str(), g)).collect();
+pub(super) fn lockfile_precedence(lock: &zeo_gem::Lockfile) -> HashMap<String, usize> {
+    let gems = lock.resolved();
+    let by_name: HashMap<&str, &zeo_gem::LockedGem> =
+        gems.iter().map(|g| (g.name.as_str(), g)).collect();
     let mut order: Vec<&str> = Vec::new();
     let mut seen: HashSet<&str> = HashSet::new();
-    let mut queue: std::collections::VecDeque<&str> =
-        lock.roots.iter().map(String::as_str).collect();
+    let roots = lock.roots();
+    let mut queue: std::collections::VecDeque<&str> = roots.iter().map(String::as_str).collect();
     while let Some(name) = queue.pop_front() {
         if !seen.insert(name) {
             continue;
@@ -67,8 +66,8 @@ pub(super) fn lockfile_precedence(
             queue.extend(deps);
         }
     }
-    // `lock.gems` is already name-sorted (the parser's BTreeMap).
-    for gem in &lock.gems {
+    // The resolved view is already name-sorted.
+    for gem in &gems {
         if !seen.contains(gem.name.as_str()) {
             order.push(&gem.name);
         }
@@ -110,7 +109,11 @@ pub(super) fn discover_packages(
     package_dirs: &[PathBuf],
     bundled_libs: &[Library],
 ) -> PResult<Vec<Gem>> {
-    type Key = (Vec<PathBuf>, Vec<PathBuf>, Vec<Option<std::time::SystemTime>>);
+    type Key = (
+        Vec<PathBuf>,
+        Vec<PathBuf>,
+        Vec<Option<std::time::SystemTime>>,
+    );
     static MEMO: std::sync::Mutex<Option<HashMap<Key, Vec<Gem>>>> = std::sync::Mutex::new(None);
 
     let stamps: Vec<Option<std::time::SystemTime>> = package_dirs
@@ -238,7 +241,7 @@ pub(super) fn parse_manifest(
             None => return bundled_library(pkg_dir, provenance),
         },
     };
-    let spec = crate::parse::gemspec::parse_file(&manifest_path)?;
+    let spec = crate::parse::read_gemspec(&manifest_path)?;
     let dir_name = pkg_dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())

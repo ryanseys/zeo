@@ -450,7 +450,7 @@ instantly, not generated code.
 
 ## The workspace
 
-Six crates, edition 2024, MSRV 1.94.
+Seven crates, edition 2024, MSRV 1.94.
 
 ```
 crates/
@@ -459,6 +459,7 @@ crates/
   zeo-abi     a dependency-free leaf: the ClassId numbers both sides agree on
   zeo-dsl     the shared `syn` grammar for the ruby_class! / ruby_module! DSL
   zeo-macros  the macro that expands that DSL into runtime code
+  zeo-gem     RubyGems' formats: Gemfile.lock, gemspecs, .gem files, the store
   xtask       the repo's own chores (`cargo xtask`); not published
 ```
 

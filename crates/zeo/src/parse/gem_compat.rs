@@ -6,7 +6,8 @@
 //! store/lockfile/gemspec readers it calls, rather than in `parse/mod.rs`,
 //! which it has nothing to do with.
 
-use super::{gem_store, lockfile};
+use super::gem_store;
+use zeo_gem::LockedGem;
 
 /// How one lockfile gem fares against zeo.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,23 +48,20 @@ pub fn gem_compat(
     store: &std::path::Path,
     lockfile: &std::path::Path,
 ) -> Result<Vec<GemCompatEntry>, String> {
-    let parsed = lockfile::parse_file(lockfile)?;
-    classify(store, &parsed)
+    let parsed = super::read_lockfile(lockfile).map_err(|e| e.message().to_string())?;
+    classify(store, &parsed.resolved())
 }
 
 /// Like [`gem_compat`], but over EVERY gem installed in the store rather than a
 /// lockfile's subset -- the broad out-of-the-box sample. Builds a synthetic gem
 /// set from the store's own `specifications/`.
 pub fn gem_compat_installed(store: &std::path::Path) -> Result<Vec<GemCompatEntry>, String> {
-    let parsed = gem_store::installed_as_lockfile(store)?;
+    let parsed = gem_store::installed_gems(store).map_err(|e| e.message().to_string())?;
     classify(store, &parsed)
 }
 
-fn classify(
-    store: &std::path::Path,
-    parsed: &lockfile::Lockfile,
-) -> Result<Vec<GemCompatEntry>, String> {
-    use super::lockfile::GemSource;
+fn classify(store: &std::path::Path, parsed: &[LockedGem]) -> Result<Vec<GemCompatEntry>, String> {
+    use zeo_gem::lockfile::GemSource;
     let resolution = gem_store::resolve(&[store.to_path_buf()], parsed)?;
 
     let compiled: std::collections::HashSet<&str> =
@@ -79,8 +77,8 @@ fn classify(
         .map(|r| (r.name.as_str(), &r.by))
         .collect();
 
-    let mut out = Vec::with_capacity(parsed.gems.len());
-    for gem in &parsed.gems {
+    let mut out = Vec::with_capacity(parsed.len());
+    for gem in parsed {
         let outcome = if gem.source != GemSource::Rubygems {
             GemCompatOutcome::ExternalSource
         } else if let Some(extconfs) = native.get(gem.name.as_str()) {

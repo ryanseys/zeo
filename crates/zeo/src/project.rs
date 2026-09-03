@@ -123,9 +123,9 @@ pub fn survey(project: &Project) -> Result<Vec<GemRow>, String> {
 
 /// [`survey`] from the two inputs a compile already holds.
 pub fn survey_lock(lockfile: &Path, stores: &[PathBuf]) -> Result<Vec<GemRow>, String> {
-    let lock = crate::parse::lockfile::parse_file(lockfile)
+    let lock = crate::parse::read_lockfile(lockfile)
         .map_err(|e| format!("reading {}: {e}", lockfile.display()))?;
-    let gems = crate::parse::store_gems(stores, &lock)
+    let gems = crate::parse::store_gems(stores, &lock.resolved())
         .map_err(|e| format!("reading the gem store: {e}"))?;
     let target = crate::backend::link::host_triple();
     Ok(gems
@@ -220,14 +220,8 @@ pub fn artifact_matches(path: &Path) -> bool {
 }
 
 /// RubyGems' name for this build's platform (`Gem::Platform.local`).
-pub fn gem_platform() -> &'static str {
-    match crate::backend::link::host_triple() {
-        "aarch64-apple-darwin" => "arm64-darwin",
-        "x86_64-apple-darwin" => "x86_64-darwin",
-        "x86_64-unknown-linux-gnu" => "x86_64-linux",
-        "aarch64-unknown-linux-gnu" => "aarch64-linux",
-        other => other,
-    }
+pub fn gem_platform() -> String {
+    zeo_gem::Platform::from_target_triple(crate::backend::link::host_triple()).to_string()
 }
 
 /// The gem an author is standing in: exactly one `*.gemspec` at `dir`'s
@@ -256,7 +250,7 @@ pub fn author_gem(dir: &Path) -> Result<AuthorGem, String> {
         1 => specs.remove(0),
         _ => return Err(format!("{} gemspecs here; expected one", specs.len())),
     };
-    let spec = crate::parse::gemspec::parse_file(&gemspec)
+    let spec = crate::parse::read_gemspec(&gemspec)
         .map_err(|e| format!("reading {}: {e}", gemspec.display()))?;
     if !spec.extensions.is_empty() {
         return Err(format!(

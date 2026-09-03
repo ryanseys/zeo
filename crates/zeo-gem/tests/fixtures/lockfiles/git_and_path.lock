@@ -1,0 +1,38 @@
+PATH
+  remote: ../local_gem
+  specs:
+    local_gem (0.1.0)
+      rake
+
+GIT
+  remote: https://github.com/rubocop/rubocop.git
+  revision: 6a1c4c56b1f1b6a1b8f6a45e2ee6a1a10ba1cafe
+  branch: master
+  specs:
+    rubocop (1.71.0)
+      parser (>= 3.3.0.2)
+
+GIT
+  remote: https://github.com/rubycdp/cuprite.git
+  revision: 4a4d1b7a54c1b6d15b47cbb7b0d2b6b0d1e0f00d
+  tag: v0.17
+  submodules: true
+  specs:
+    cuprite (0.17)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    parser (3.3.7.0)
+    rake (13.2.1)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  cuprite!
+  local_gem!
+  rubocop (~> 1.71)!
+
+BUNDLED WITH
+  2.6.2

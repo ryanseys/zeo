@@ -1,0 +1,21 @@
+PLUGIN SOURCE
+  remote: https://github.com/example/bundler-plugin.git
+  type: git
+  revision: 0fa1e1b1b1e0f0a1b2c3d4e5f60718293a4b5c6d
+  specs:
+    bundler-plugin (0.2.0)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    rake (13.2.1)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  bundler-plugin!
+  rake
+
+BUNDLED WITH
+  2.6.2

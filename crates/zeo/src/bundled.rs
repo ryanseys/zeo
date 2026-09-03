@@ -65,8 +65,10 @@ pub const BOOTSTRAP_TIER: &str = "lib/ruby";
 /// `rubygems-update` (whose `require_paths` is deliberately not `lib`, so it
 /// would contribute nothing but a name collision), and it tells the version
 /// check which lock entry a committed tree is measured against.
-pub const BOOTSTRAP_LOCK_NAMES: &[(&str, &str)] =
-    &[("bundler", "rubygems-update"), ("rubygems", "rubygems-update")];
+pub const BOOTSTRAP_LOCK_NAMES: &[(&str, &str)] = &[
+    ("bundler", "rubygems-update"),
+    ("rubygems", "rubygems-update"),
+];
 
 /// Locked libraries the compiler resolves but does NOT ship, each with the
 /// reason. Pinned in the lock all the same, so the oracle resolves the same
@@ -177,8 +179,7 @@ pub fn resolved_libraries(root: &Path) -> Vec<Library> {
             name,
         })
         .filter(|lib| {
-            lib.dir.join("lib").is_dir()
-                && lib.gemspec.as_ref().is_some_and(|spec| spec.is_file())
+            lib.dir.join("lib").is_dir() && lib.gemspec.as_ref().is_some_and(|spec| spec.is_file())
         })
         .collect()
 }
@@ -211,7 +212,7 @@ pub fn vendored_names(root: &Path) -> Vec<(String, String)> {
     let Ok(text) = std::fs::read_to_string(root.join("Gemfile.lock")) else {
         return Vec::new();
     };
-    let Ok(lock) = crate::parse::lockfile::parse(&text) else {
+    let Ok(lock) = zeo_gem::Lockfile::parse(&text) else {
         return Vec::new();
     };
     let oracle_only = oracle_group(root);
@@ -246,10 +247,11 @@ pub fn vendored_names(root: &Path) -> Vec<(String, String)> {
     );
     supplied.extend(NOT_SHIPPED.iter().map(|(name, _)| (*name).to_string()));
 
-    let by_name: BTreeMap<&str, &crate::parse::lockfile::LockedGem> =
-        lock.gems.iter().map(|g| (g.name.as_str(), g)).collect();
-    let mut queue: VecDeque<&str> = lock
-        .roots
+    let gems = lock.resolved();
+    let by_name: BTreeMap<&str, &zeo_gem::LockedGem> =
+        gems.iter().map(|g| (g.name.as_str(), g)).collect();
+    let roots = lock.roots();
+    let mut queue: VecDeque<&str> = roots
         .iter()
         .map(String::as_str)
         .filter(|n| !oracle_only.contains(*n))

@@ -4,6 +4,7 @@ members = [
     "crates/zeo",
     "crates/zeo-abi",
     "crates/zeo-dsl",
+    "crates/zeo-gem",
     "crates/zeo-macros",
     "crates/zeo-rt",
     "crates/zeo-capi",
@@ -31,6 +32,7 @@ zeo-abi = { path = "crates/zeo-abi", version = "=0.1.0" }
 zeo-rt = { path = "crates/zeo-rt", version = "=0.1.0", default-features = false }
 zeo-capi = { path = "crates/zeo-capi", version = "=0.1.0" }
 zeo-dsl = { path = "crates/zeo-dsl", version = "=0.1.0" }
+zeo-gem = { path = "crates/zeo-gem", version = "=0.1.0" }
 zeo-macros = { path = "crates/zeo-macros", version = "=0.1.0" }
 
 # The Cranelift backend: zeo lowers HIR to CLIF itself and

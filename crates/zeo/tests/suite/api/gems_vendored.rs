@@ -27,11 +27,12 @@ const LOCKED_AS: &str = "rubygems-update";
 
 /// `rubygems-update`'s version in `Gemfile.lock`.
 fn locked_version() -> String {
-    let text = std::fs::read_to_string(repo("Gemfile.lock")).expect("Gemfile.lock is committed");
-    text.lines()
-        .map(str::trim)
-        .find_map(|l| l.strip_prefix(&format!("{LOCKED_AS} (")))
-        .map(|rest| rest.trim_end_matches(')').to_string())
+    let lock = zeo_gem::Lockfile::parse_file(&repo("Gemfile.lock"))
+        .expect("Gemfile.lock is committed and parses");
+    lock.specs()
+        .map(|(_, spec)| spec)
+        .find(|spec| spec.name == LOCKED_AS)
+        .map(|spec| spec.version.to_string())
         .unwrap_or_else(|| panic!("Gemfile.lock names no {LOCKED_AS}"))
 }
 

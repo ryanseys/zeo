@@ -1,0 +1,32 @@
+[package]
+name = "zeo-gem"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "RubyGems formats in Rust: versions, platforms, Gemfile.lock, gemspecs, .gem packages and the store"
+readme = "README.md"
+
+[dependencies]
+# The parser for a gemspec body. A serialized gemspec is Ruby source, and
+# prism is the same parser CRuby uses, so what it accepts is what ruby accepts.
+ruby-prism.workspace = true
+# A `.gem`'s `metadata.gz` is YAML with Ruby object tags.
+yaml-rust2.workspace = true
+# A `.gem` is a tar of gzipped members.
+tar.workspace = true
+flate2.workspace = true
+# Checksum verification: the lockfile's CHECKSUMS rows and a package's own
+# `checksums.yaml.gz`.
+sha2.workspace = true
+thiserror.workspace = true
+
+# No HTTP client. This crate reads and writes RubyGems formats; fetching is the
+# caller's business, so a download tool can pick its own transport.
+
+[lints]
+workspace = true

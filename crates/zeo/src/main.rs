@@ -1727,7 +1727,7 @@ fn run_gem_precompile() -> Result<(), MainError> {
         .arg(zeo::subcommand::PRECOMPILE_GEM_BUILD)
         .arg("--")
         .arg(&gem.gemspec)
-        .arg(platform)
+        .arg(&platform)
         .current_dir(&dir)
         .status()
         .map_err(|e| format!("running the gem build: {e}"))?;

@@ -2231,6 +2231,7 @@ dependencies = [
  "zeo-abi",
  "zeo-capi",
  "zeo-dsl",
+ "zeo-gem",
  "zeo-rt",
 ]
 
@@ -2260,6 +2261,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "zeo-gem"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "ruby-prism",
+ "sha2",
+ "tar",
+ "thiserror",
+ "yaml-rust2",
 ]
 
 [[package]]

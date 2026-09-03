@@ -43,30 +43,15 @@ const REIMPLEMENTED: &[&str] = &["psych", "strscan"];
 /// several platforms appears once per platform with the platform appended to
 /// the version, so the value is a list.
 fn locked_versions() -> BTreeMap<String, Vec<String>> {
-    let text = std::fs::read_to_string(repo_root().join("Gemfile.lock"))
-        .expect("Gemfile.lock is committed");
+    let lock = zeo_gem::Lockfile::parse_file(&repo_root().join("Gemfile.lock"))
+        .expect("Gemfile.lock is committed and parses");
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut in_specs = false;
-    for line in text.lines() {
-        if line.trim_end() == "  specs:" {
-            in_specs = true;
-            continue;
-        }
-        if in_specs && !line.starts_with("    ") {
-            in_specs = false;
-        }
-        // Six spaces is a dependency OF the entry above it, not an entry.
-        if !in_specs || line.starts_with("      ") {
-            continue;
-        }
-        let entry = line.trim();
-        let Some((name, rest)) = entry.split_once(" (") else {
-            continue;
+    for (_, spec) in lock.specs() {
+        let version = match spec.platform.is_ruby() {
+            true => spec.version.to_string(),
+            false => format!("{}-{}", spec.version, spec.platform),
         };
-        let version = rest.trim_end_matches(')');
-        out.entry(name.to_string())
-            .or_default()
-            .push(version.to_string());
+        out.entry(spec.name.clone()).or_default().push(version);
     }
     assert!(!out.is_empty(), "no specs parsed out of Gemfile.lock");
     out
@@ -268,22 +253,22 @@ fn only_the_no_source_names_ship_without_a_gemspec() {
 fn the_gemfile_pins_every_dependency_to_one_version() {
     // A requirement the resolver is free to move is a version nothing in the
     // tree records, which is the shape this whole migration removes.
-    let text = std::fs::read_to_string(repo_root().join("Gemfile.lock"))
-        .expect("Gemfile.lock is committed");
-    let deps: Vec<&str> = text
-        .lines()
-        .skip_while(|l| l.trim_end() != "DEPENDENCIES")
-        .skip(1)
-        .take_while(|l| l.starts_with("  "))
-        .map(str::trim)
-        .collect();
+    let lock = zeo_gem::Lockfile::parse_file(&repo_root().join("Gemfile.lock"))
+        .expect("Gemfile.lock is committed and parses");
     assert!(
-        !deps.is_empty(),
+        !lock.dependencies.is_empty(),
         "no DEPENDENCIES parsed out of Gemfile.lock"
     );
-    let loose: Vec<&&str> = deps
+    let loose: Vec<String> = lock
+        .dependencies
         .iter()
-        .filter(|d| !d.contains("(= ") || !d.ends_with(')'))
+        .filter(|d| {
+            !matches!(
+                d.requirement.clauses.as_slice(),
+                [(zeo_gem::version::Op::Eq, _)]
+            )
+        })
+        .map(|d| d.name.clone())
         .collect();
     assert!(loose.is_empty(), "unpinned Gemfile entries: {loose:?}");
 }
