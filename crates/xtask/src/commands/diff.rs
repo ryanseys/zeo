@@ -1,15 +1,13 @@
 //! Run a ruby snippet through BOTH engines, show each side, and say whether
-//! they agree. On a DIVERGENCE it captures the snippet as an XFAIL gap under
-//! `test/gaps/`, blessed from ruby; on a MATCH it writes nothing.
+//! they agree. On a DIVERGENCE it files the snippet under `todo/` with
+//! ruby's answer recorded under `__END__`; on a MATCH it writes nothing.
 //!
-//! This is the long-tail loop in one command: find a divergence, file it with
-//! its golden, confirm the harness agrees it is real.
+//! This is the long-tail loop in one command: find a divergence, file it
+//! with the answer zeo has to reach.
 //!
-//! The gaps harness is the ARBITER of whether a divergence is a real gap. It
-//! normalizes source paths, so two outputs that differ here can still match
-//! there -- after writing and blessing, the gap is run, and a "GAP FIXED"
-//! verdict means the file is removed and the snippet belongs in a topic dir
-//! instead.
+//! `todo/` is not run by anything. When the program starts matching, it
+//! moves into the topic directory it belongs to under `test/` and becomes an
+//! ordinary test.
 
 use std::io::Read;
 
@@ -157,53 +155,23 @@ fn show_stdout_diff(a: &str, b: &str) {
 
 fn write_gap(name: &str, source: &str) -> Result<(), Error> {
     let name = name.trim_end_matches(".rb");
-    let dest = root_join("test/gaps").join(format!("{name}.rb"));
+    let dest = root_join("todo").join(format!("{name}.rb"));
     if dest.exists() {
         return Err(Error::new(format!(
-            "refusing to overwrite test/gaps/{name}.rb (use --name)"
+            "refusing to overwrite todo/{name}.rb (use --name)"
         )));
     }
     std::fs::write(&dest, source)
         .map_err(|e| Error::new(format!("writing {}: {e}", dest.display())))?;
-    // Through `bless` -- the ONE golden writer -- so the recorded output goes
-    // through the harness's own normalization (CRLF, source-path
+    // Through `bless` -- the ONE writer of a recorded answer -- so the output
+    // gets the same normalization a test's does (CRLF, source-path
     // relativization, address scrubbing). A hand-rolled oracle capture here
     // once skipped the address scrub, so a snippet printing `#<Object:0x...>`
-    // recorded a raw process-random address into its golden.
-    super::bless::bless(&[&format!("gaps::{name}.rb")], false)?;
-    println!("wrote test/gaps/{name}.rb (+ recorded ruby's answer under __END__)");
-
-    println!("confirming the XFAIL holds via the gaps harness ...");
-    let out = exec::run(
-        &[
-            "cargo",
-            "nextest",
-            "run",
-            "-p",
-            "zeo",
-            "--test",
-            "corpus",
-            "-E",
-            &format!("test(gaps::{name})"),
-        ],
-        root(),
-        &[],
-        Capture::Both,
-    )?;
-    if format!("{}{}", out.stdout_text(), out.stderr_text()).contains("GAP FIXED") {
-        println!();
-        println!("the gaps harness says zeo actually MATCHES ruby (under source-path");
-        println!(
-            "normalization) -- this is NOT a gap. Removing it; put it in a topic dir instead."
-        );
-        match std::fs::remove_file(&dest) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(Error::new(format!("removing {}: {e}", dest.display()))),
-        }
-        return Err(Error::reported());
-    }
-    println!("gap test/gaps/{name}.rb is a valid XFAIL (zeo diverges). Grind it down, then:");
-    println!("  cargo xtask promote-gap {name} <topic/area>");
+    // recorded a raw process-random address.
+    super::bless::bless(&[&format!("todo::{name}.rb")], false)?;
+    println!("wrote todo/{name}.rb, with ruby's answer under __END__");
+    println!();
+    println!("Nothing runs it. When zeo matches, move it into a topic dir:");
+    println!("  git mv todo/{name}.rb test/<topic>/<area>/{name}.rb");
     Ok(())
 }

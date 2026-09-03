@@ -4,9 +4,7 @@
 //! through a `-sys` crate that compiles the library it wraps, and the
 //! extension a test builds is text the test writes. A tracked `.c` is the
 //! start of a second implementation language, so the rule is a file list
-//! and a crate list rather than a review note. `make no-c-files` is the
-//! push-tier half of the first test, which builds nothing; this holds the
-//! exceptions exact.
+//! and a crate list rather than a review note.
 
 use std::collections::BTreeSet;
 use std::path::Path;

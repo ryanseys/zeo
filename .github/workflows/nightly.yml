@@ -1,36 +1,29 @@
 name: Nightly
 
-# The legs the push tier (ci.yml) does not pay for, on a schedule or by hand.
+# What the push tier does not pay for: macOS, and the release payload.
 #
-# The minutes arithmetic, so nobody moves these back onto every push: a
-# private repo has 2,000-3,000 minutes a month; Linux bills at 1x and macOS at
-# 10x. The full Linux gate is ~60 minutes. A full-leg macOS run is ~40 minutes
-# = 400 billed, so a NIGHTLY macOS would be ~12,000 a month and even the slim
-# tier (`make test-jit`, ~17 minutes) ~5,000. macOS therefore runs the slim
-# tier once a week, and anything more is a `workflow_dispatch` by choice. A
-# self-hosted runner on a developer's Mac is the only free way to more.
+# The minutes arithmetic, so nobody moves macOS onto every push: a private
+# repo has 2,000-3,000 minutes a month; Linux bills at 1x and macOS at 10x. A
+# full macOS run is ~40 minutes = 400 billed, so a nightly macOS would be
+# ~12,000 a month. macOS therefore runs weekly, and anything more is a
+# `workflow_dispatch` by choice.
 #
 # `moved` skips the heavy jobs when main has not changed since the last green
 # nightly, so an idle week costs a few seconds a day.
 
 on:
   schedule:
-    # The Linux gate, daily at 02:00 Pacific.
+    # The payload check, daily at 02:00 Pacific.
     - cron: "0 9 * * *"
-    # macOS, slim tier, Sundays.
+    # macOS, Sundays.
     - cron: "0 10 * * 0"
   workflow_dispatch:
     inputs:
       os:
         description: runner
         type: choice
-        options: [ubuntu-24.04, macos-15]
-        default: ubuntu-24.04
-      tier:
-        description: "make target (test-jit ≈ dev loop, gate = the phase boundary, test-all = everything)"
-        type: choice
-        options: [test-jit, check-batch, gate, test-all]
-        default: gate
+        options: [macos-15, ubuntu-24.04]
+        default: macos-15
 
 concurrency:
   group: nightly-${{ github.ref }}
@@ -64,48 +57,45 @@ jobs:
             echo run=true >> "$GITHUB_OUTPUT"
           fi
 
-  # The phase boundary (`make gate`: every leg plus the full-spinel AOT and the
-  # whole-gem compile), the packaged-codegen differential and the binary-size
-  # floor. By hand, any tier on either runner.
-  gate:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.tier || 'gate' }} (${{ github.event_name == 'workflow_dispatch' && inputs.os || 'ubuntu-24.04' }})
+  # The one platform the dev machines already are, so the least CI adds per
+  # minute -- and the most expensive minute. The whole profile, weekly. The
+  # anchor-workspace claim only macOS can answer rides in it.
+  macos:
+    name: macOS (weekly)
     needs: moved
-    if: needs.moved.outputs.run == 'true' && github.event.schedule != '0 10 * * 0'
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.os || 'ubuntu-24.04' }}
-    timeout-minutes: 150
+    if: needs.moved.outputs.run == 'true' && github.event.schedule != '0 9 * * *'
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.os || 'macos-15' }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest@0.9.143
-      - uses: ./.github/actions/ruby-bundle
-      - run: make
-      - run: make ${{ github.event_name == 'workflow_dispatch' && inputs.tier || 'gate test-packaged test-size build-pure' }}
+      - uses: ./.github/actions/deps
+      - run: cargo build --workspace
+      - run: cargo nextest run -P full --no-fail-fast
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: junit-${{ github.job }}-${{ runner.os }}
-          path: |
-            target/nextest/default/junit.xml
-            target/nextest/full/junit.xml
+          name: junit-macos
+          path: target/nextest/full/junit.xml
           if-no-files-found: ignore
 
-  # What ships. The payload is assembled from `vendor/bundle`, so every
+  # What ships. The payload is assembled from the resolved store, so every
   # library's path is `<name>-<version>` read out of Gemfile.lock and a stale
   # or partial install is a MISSING directory that `payload::library_dirs`
   # refuses, naming each one: reproducibility by construction.
   payload:
     name: release payload
     needs: moved
-    if: needs.moved.outputs.run == 'true' && github.event.schedule != '0 10 * * 0' && (github.event_name != 'workflow_dispatch' || inputs.os == 'ubuntu-24.04')
+    if: needs.moved.outputs.run == 'true' && github.event.schedule != '0 10 * * 0'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
-      - uses: ./.github/actions/ruby-bundle
-      - run: make deps
+      - uses: ./.github/actions/deps
 
       # The published `zeo` crate carries pregenerated artifacts that its build
       # script would otherwise derive from sibling crates absent from the
@@ -125,10 +115,6 @@ jobs:
       # leaves. `--list` reads the manifest and walks the file set without
       # touching the index, which is what this gate is for: proving the
       # manifest parses and the right files ship.
-      #
-      # `zeo` is the one that matters. Its build script needs the two
-      # pregenerated artifacts, because the sibling crates it would otherwise
-      # read are absent from the .crate file.
       - name: packages list cleanly and carry their pregen artifacts
         run: |
           cargo xtask stage-publish
@@ -141,28 +127,3 @@ jobs:
               || { echo "::error::zeo package is missing $f"; exit 1; }
           done
           echo "zeo carries both pregen artifacts"
-
-  # The one platform the dev machines already are, so the least that CI adds
-  # per minute -- and the most expensive minute. The slim tier, weekly, plus
-  # the anchor-workspace claim only macOS can answer (`make test-platform`).
-  macos:
-    name: macOS (weekly, slim)
-    needs: moved
-    if: needs.moved.outputs.run == 'true' && github.event.schedule == '0 10 * * 0'
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/rust
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@0.9.143
-      - uses: ./.github/actions/ruby-bundle
-      - run: make
-      - run: make test-jit test-platform test-capi
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: junit-macos
-          path: target/nextest/default/junit.xml
-          if-no-files-found: ignore

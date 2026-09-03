@@ -11,7 +11,8 @@
 //! second `build` is incremental.
 //!
 //! The container runs as ROOT, and one golden can tell:
-//! `process_identity_rows` expects `Errno::EPERM` from `Sys.setuid("root")`
+//! `test/compiler/builtins/process_identity_rows.rb` expects `Errno::EPERM`
+//! from `Sys.setuid("root")`
 //! and its siblings, which succeed here. CI and any developer machine run
 //! unprivileged, so the expectation is right and this leg is the odd one out
 //! -- do not bless it away.
@@ -21,24 +22,23 @@ use std::path::PathBuf;
 
 use crate::{Error, root, root_join};
 
-const DEFAULT_STAGES: &[&str] = &["build", "jit", "aot", "units", "natlibs", "valgrind"];
-const EXTRA_STAGES: &[&str] = &["aot-full", "cross", "dist", "shell", "all"];
+const DEFAULT_STAGES: &[&str] = &["build", "test", "units", "natlibs", "valgrind"];
+const EXTRA_STAGES: &[&str] = &["gate", "cross", "dist", "shell", "all"];
 
 const USAGE: &str = "\
 usage: cargo xtask linux <stage>... | -E '<nextest expr>'
 
 stages:
   build     cargo build --workspace
-  jit       the default golden legs
-  aot       the AOT smoke tier (examples+gaps+e2e), linked binaries
-  aot-full  the full corpus incl. spinel, linked (release boundaries)
+  test      the dev loop: the corpus on the JIT plus the AOT smoke tier
+  gate      -P full: every leg over the whole corpus (release boundaries)
   units     zeo + zeo-rt + zeo-capi unit suites
   natlibs   diff link.rs's glibc table against rustc
   valgrind  leak-check a linked program
   cross     x86_64 compile check
   dist      build a linux release tarball into target/dist
   shell     an interactive prompt in the image
-  all       build jit aot units natlibs valgrind
+  all       build test units natlibs valgrind
 
 -E '<expr>' runs one nextest filter, for triage after a red run.
 ";
@@ -147,37 +147,35 @@ fn script_for(name: &str) -> Result<String, Error> {
         // `Gemfile.lock`, so a golden with no committed `.expected` needs the
         // linux store present before any suite runs.
         "build" => format!("bundle install --quiet && cargo build --workspace {profile}"),
-        // No env var = the default (jit) leg. The goldens spawn a child zeo
-        // each and the watchdog caps them at 512 MiB.
-        "jit" => {
+        // The default nextest profile: every corpus suite on the JIT, plus
+        // the AOT smoke tier really linked. Each case spawns a child zeo and
+        // the harness caps its memory.
+        "test" => {
             format!("cargo nextest run {profile} -p zeo --test-threads {threads} --no-fail-fast")
         }
-        // The SMOKE tier, matching macOS test-aot: the feature-diverse examples
-        // plus gaps and e2e under a real link. The full spinel corpus takes
-        // the linked path only in `aot-full` (release boundaries) -- it is the
-        // container loop's dominant cost and JIT already runs it here.
-        "aot" => format!(
-            "ZEO_GOLDEN_BACKEND=aot cargo nextest run {profile} -p zeo \
-             --test-threads {threads} --no-fail-fast -E 'binary(goldens) - test(spinel::)' && \
-             ZEO_E2E_BACKEND=aot cargo nextest run {profile} -p zeo \
-             --test-threads {threads} --no-fail-fast --test e2e"
+        // Every leg over the whole corpus: AOT, memcheck, the differentials
+        // and the whole-graph milestones. The container loop's dominant cost,
+        // so it is a release-boundary stage rather than a default one.
+        "gate" => format!(
+            "cargo nextest run {profile} -P full -p zeo \
+             --test-threads {threads} --no-fail-fast"
         ),
-        "aot-full" => format!(
-            "ZEO_GOLDEN_BACKEND=aot cargo nextest run {profile} -p zeo \
-             --test-threads {threads} --no-fail-fast --test goldens"
-        ),
-        // `zeo-capi` last and alone: its dev-dependency feature must not unify
-        // into the `zeo` binary (see the Makefile's `test`).
+        // `zeo-capi` last and alone: its dev-dependency turns on zeo-rt's
+        // `unit-tables` feature, and cargo unifies features per invocation --
+        // shared with the `zeo` tests, the binary the corpus runs would carry
+        // every builtin table and stop noticing a dropped one.
         "units" => format!(
             "cargo nextest run {profile} -p zeo -p zeo-rt --test-threads {threads} && \
              cargo nextest run {profile} -p zeo-capi --test-threads {threads}"
         ),
         // The one test that asks rustc for the live answer instead of trusting
-        // the table; ignored by default because it compiles the lib in a probe
-        // target dir. This is the platform whose table was never confirmed.
-        "natlibs" => {
-            "cargo test -p zeo --lib -- --ignored natlibs_table_matches_rustc --nocapture".into()
-        }
+        // the table; out of the default profile because it compiles the lib in
+        // a probe target dir. This is the platform whose table was never
+        // confirmed.
+        "natlibs" => format!(
+            "cargo nextest run {profile} -P full -p zeo \
+             --no-capture -E 'test(natlibs_table_matches_rustc)'"
+        ),
         "valgrind" => valgrind_script(),
         "cross" => CROSS_SCRIPT.into(),
         // A NATIVE linux build of the release tarball, from a mac. zeo does

@@ -124,7 +124,7 @@ fn every_directory_at_case_depth_belongs_to_a_program() {
     for suite in SUITES {
         let root = repo_root().join(suite.root);
         let case_dirs: Vec<PathBuf> = match suite.depth {
-            Depth::One | Depth::OneAndPending => vec![root.clone()],
+            Depth::One => vec![root.clone()],
             Depth::Two => std::fs::read_dir(&root)
                 .into_iter()
                 .flatten()
@@ -146,7 +146,6 @@ fn every_directory_at_case_depth_belongs_to_a_program() {
                     .into_owned();
                 let allowed = name == "fixtures"
                     || name == "compile"
-                    || (suite.depth == Depth::OneAndPending && name == "pending")
                     || dir.join(format!("{name}.rb")).is_file()
                     || name.ends_with("_fixture")
                     || name == "lib";

@@ -26,12 +26,9 @@ Every test compares Zeo's output with real Ruby 4.0.6, byte for byte.
 
 ## Status
 
-Zeo is **experimental** and moving fast. Three golden suites — the
-conformance corpus ([`tests/spinel/`](tests/spinel)), the example goldens
-([`tests/*.rb`](tests)), and the end-to-end suite
-(`crates/zeo/tests/e2e/`) — run green in CI, each case comparing stdout,
-stderr, and the exit status with real Ruby, byte for byte.
-[`tests/gaps/`](tests/gaps) holds the programs that still
+Zeo is **experimental** and moving fast. The corpus ([`test/`](test)) runs
+green in CI, each program comparing stdout, stderr, and the exit status with
+real Ruby, byte for byte. [`test/gaps/`](test/gaps) holds the programs that still
 diverge. Each one **must** fail until it is fixed.
 
 Every module, method, constant, and visibility that Ruby 4.0.6 reaches has a
@@ -54,14 +51,15 @@ You need:
 - A **C compiler**. The tree has no C of its own; the compiler builds the
   libraries a few `-sys` crates vendor (Prism, Oniguruma, libffi, OpenSSL),
   links each program, and builds a gem's C extension.
-- **Ruby 4.0.6** — for `make deps`, which resolves the bundled stdlib
-  out of `Gemfile.lock`, and to re-record test goldens. `mise.toml` pins it.
+- **Ruby 4.0.6** — to resolve the bundled stdlib out of `Gemfile.lock`, and
+  to re-record a test's answer. `.ruby-version` pins it.
 
 Build and run:
 
 ```console
 $ git clone https://github.com/ryanseys/zeo && cd zeo
-$ make                       # deps, then cargo build --workspace
+$ bundle install             # Gemfile.lock -> vendor/bundle
+$ cargo build                # the zeo binary and libzeo.a
 $ target/debug/zeo -e 'puts "hello"'
 hello
 ```
@@ -346,7 +344,7 @@ For what does not match yet, read
 
 A compiled program starts in **under a millisecond**. `bench/` holds 61
 programs, each with its
-correct output, and the criterion bench harness (`make bench`) verifies the
+correct output, and the criterion bench harness (`cargo bench`) verifies the
 output before it times anything.
 
 Measured 2026-08-25 on one machine, against CRuby 4.0.6 (the Zeo rows from
@@ -540,40 +538,38 @@ programs, not a way to call Ruby from Rust.
 
 ## Development
 
-The Makefile is the front door. Every recipe is one blessed invocation, and
-CI calls the same targets, so the two cannot drift.
+Cargo is the front door, and CI runs the same commands.
 
 ```console
-$ make            # build the workspace (zeo + libzeo.a)
-$ make test       # the dev loop: unit + e2e + golden suites
-$ make check      # clippy at CI's severity
-$ make gate       # everything: the CI legs, whole-gem cases, doctests, bench
-$ make linux      # the Linux container verification loop (needs podman)
+$ cargo build                  # the zeo binary and libzeo.a
+$ cargo nextest run            # the dev loop
+$ cargo nextest run -P full    # the gate: every leg
+$ cargo xtask ci               # every check that is not a test
+$ cargo xtask linux            # the Linux container loop (needs podman)
 ```
 
-Narrower runs go through cargo and the dev CLI directly:
+Narrower runs are nextest filters:
 
 ```console
-$ cargo nextest run -p zeo --test goldens       # every golden corpus
-$ cargo xtask bless spinel::                  # re-record goldens from ruby
-$ make bench                                    # the performance suite (criterion)
-$ make test-size                                   # the linked-binary size gate
+$ cargo nextest run -E 'test(core::string/)'   # one area
+$ cargo xtask bless core::string/              # re-record answers from ruby
+$ cargo bench -p zeo --bench programs          # the performance suite (criterion)
 ```
 
 Suites are [`datatest-stable`](https://crates.io/crates/datatest-stable)
 targets — one case per `.rb` file:
 
-- **`tests/spinel/`** — the conformance corpus, compared with real Ruby byte
-  for byte.
-- **`tests/*.rb`** — Zeo's own example goldens.
-- **`tests/gaps/`** — known divergences. Each **must** fail; when one starts
+- **`test/{lang,core,stdlib,compiler}/`** — the conformance corpus, compared
+  with real Ruby byte for byte.
+- **`test/aot/`** — the programs that also take a real link on every run.
+- **`test/gaps/`** — known divergences. Each **must** fail; when one starts
   agreeing with Ruby the suite goes red and `cargo xtask promote-gap`
   moves it.
 
-`ZEO_GOLDEN_BACKEND=aot` runs the goldens through a linked binary instead of
-the JIT.
+The `aot_`, `memcheck_` and `diff_` case-name prefixes are the other legs the
+same program takes under `-P full`.
 
-Goldens are only ever written by `cargo xtask bless <filter>`, which runs
+Answers are only ever written by `cargo xtask bless <filter>`, which runs
 Ruby with `--disable-error_highlight --disable-did_you_mean`, records instead
 of comparing, and reports everything it changed. The filter is mandatory, so
 a bless is always scoped. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
@@ -599,7 +595,7 @@ toolchain has.
 
 `cargo xtask gem` rearranges that same staging into a platform gem — `bin/`
 becomes `libexec/`, because RubyGems binstubs an executable by `load`ing it
-as Ruby and zeo is a native binary, so `exe/zeo` is the Ruby that gets
+as Ruby and zeo is a native binary, so `gem/exe/zeo` is the Ruby that gets
 loaded and `exec`s the real one. Both sit two levels above `share/zeo`, so
 the payload probe is the same code in both artifacts and neither the
 compiler nor the runtime knows what a gem is. One `dist` staging, two
@@ -633,13 +629,12 @@ structurally impossible.
 crates/      the six workspace crates (above)
 docs/        BINARY_SIZE, CLIF, COMPATIBILITY, EVAL, EXTENSIONS,
              ROADMAP
-tests/       example goldens, the spinel corpus, the gaps tracker
+test/        the corpus: one .rb per program, its answer under __END__
+             (test/bench/ is the criterion input)
 lib/ruby/    rubygems and bundler, the one tier that must be committed
-Gemfile      every other bundled library, pinned; `make deps`
-bench/       61 benchmark programs; read bench/README.md
+Gemfile      every other bundled library, pinned
 vendor/      the resolved gems and fetched test trees (gitignored)
-exe/zeo      the gem's launcher; zeo.gemspec is beside it
-Makefile     the front door: make / test / check / gate / linux
+gem/         the RubyGems packaging: the launcher and the gemspec
 Dockerfile   the linux verification image (`cargo xtask linux`)
 ```
 

@@ -1,17 +1,12 @@
 name: CI
 
-# The PUSH tier: what every commit pays for, on Linux at 1x. It is the dev
-# loop (`make test-jit`) plus the cheap shape checks. Everything heavier --
-# the AOT, memcheck, packaged and milestone legs, the release payload, and
-# macOS at all -- lives in nightly.yml, on a schedule or by hand.
+# Every commit gets the WHOLE answer: `cargo xtask ci` for the shape checks
+# and the full nextest profile for the tests, split four ways so a job stays
+# near a quarter of an hour. One tier, so a red board never means "and the
+# rest runs tonight".
 #
-# The arithmetic that shaped this: a private repo has 2,000-3,000 minutes a
-# month, macOS bills at 10x, and a full-leg macOS run is ~40 minutes. One push
-# cost ~400 minutes, and fifteen pushes in a night spent the month.
-#
-# Every job calls `make` targets (see the Makefile). What CI runs and what
-# `make ci-local` / `make test-jit` run here cannot drift, because they are
-# the same words.
+# Nothing here installs Ruby. Ruby records a program's answer under its
+# `__END__`; running one needs only the committed trailer.
 
 on:
   push:
@@ -29,56 +24,61 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  lint:
-    name: clippy
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/rust
-      # No `cargo fmt --check` gate, deliberately: holding the tree
-      # rustfmt-clean is not worth failing a build over -- style drift is a
-      # review comment, not a red X. See CONTRIBUTING.md.
-      - run: make lint
-
-  test:
-    name: test (ubuntu)
+  # clippy, cargo deny, cargo machete, the four C API header checks, the
+  # doctests and the optional-feature builds. One command, and it runs every
+  # step even after one fails, so a red board says everything at once.
+  ci:
+    name: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/rust
       # Pinned. `@latest` here and whatever `cargo install` left on a dev box
-      # is two versions of the meter every suite runs through.
+      # is two versions of the same meter.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.19.0,cargo-machete@0.9.2
+      # No `cargo fmt --check` gate, deliberately: holding the tree
+      # rustfmt-clean is not worth failing a build over -- style drift is a
+      # review comment, not a red X. See CONTRIBUTING.md.
+      - run: cargo xtask ci
+
+  test:
+    name: test ${{ matrix.partition }}/4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/rust
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest@0.9.143
-      - uses: ./.github/actions/ruby-bundle
+      - uses: ./.github/actions/deps
 
-      # `make` first: `zeo` is a BINARY target, and nothing gives a test target
+      # Build first: `zeo` is a BINARY target, and nothing gives a test target
       # a cargo dependency edge to one -- so the suites would happily run
-      # yesterday's compiler. The build produces both the `zeo` the golden
-      # harness spawns and the `libzeo.a` every AOT link needs. `deps` runs
-      # inside it: `bundle install` into vendor/bundle, which the goldens'
-      # oracle and the vendored-gem suites both read.
-      - run: make
+      # yesterday's compiler. This produces both the `zeo` the corpus harness
+      # spawns and the `libzeo.a` every AOT link needs.
+      - run: cargo build --workspace
 
-      # The smoke tier: every unit test, plus a quarter of the suites that
-      # spawn a compile per case (e2e, goldens, checks), the quarter rotating
-      # with the run number so the corpus is covered every four pushes. The
-      # full `make test-jit` (7,284 cases) took the 4-vCPU runner over 20
-      # minutes; the spawn is the cost, not the assertion. Nightly runs it
-      # all. The goldens compare against committed `.expected` files; under
-      # `CI` the harness refuses to consult a live ruby for a golden nobody
-      # blessed. A fixed gap fails as an XPASS (promote it).
-      - run: make test-smoke SMOKE_SLICE=$(( GITHUB_RUN_NUMBER % 4 + 1 ))
+      # The full profile: every corpus suite on the JIT, the AOT and memcheck
+      # legs, the differentials, the whole-graph milestones and the C-gem
+      # sweep. nextest's hash partition is deterministic, so a red case
+      # reproduces locally with the same number. A fixed gap fails here and
+      # says which command promotes it.
+      - run: cargo nextest run -P full --no-fail-fast --partition hash:${{ matrix.partition }}/4
 
-      # Two files to triage a red run from, instead of an 8,000-line log.
+      # One file to triage a red run from, instead of a 20,000-line log.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: junit-test-ubuntu
-          path: target/nextest/default/junit*.xml
+          name: junit-${{ matrix.partition }}
+          path: target/nextest/full/junit.xml
           if-no-files-found: ignore
 
   msrv:
@@ -98,17 +98,3 @@ jobs:
           cache-on-failure: true
       - run: echo "CARGO_BUILD_JOBS=$(getconf _NPROCESSORS_ONLN)" >> "$GITHUB_ENV"
       - run: cargo check --workspace --all-features
-
-  # Everything that guards the shape of what gets PUBLISHED and needs no ruby
-  # and no test run. Each target's rationale is a comment in the Makefile.
-  hygiene:
-    name: hygiene
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/rust
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny@0.19.0,cargo-machete@0.9.2
-      - run: make hygiene check-generated

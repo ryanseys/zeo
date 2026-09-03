@@ -2,17 +2,17 @@
 
 ## Setup
 
-- Rust ≥ 1.94 (`rust-version` in `Cargo.toml`; `mise.toml` pins the toolchain
-  used in development) and a C compiler, for the libraries a few `-sys`
-  crates vendor and for the link step (see "No C, no headers" below).
-- A real Ruby matching the oracle version pinned in `mise.toml`
-  (via `mise install`) — only needed when re-blessing golden output from the
-  oracle (`cargo xtask bless`); the committed snapshots cover ordinary runs.
-- Network access on a fresh clone, once, for `make deps`.
+- Rust: `rust-toolchain.toml` pins it and rustup installs it. A C compiler
+  too, for the libraries a few `-sys` crates vendor and for the link step
+  (see "No C, no headers" below).
+- Ruby is needed only to RECORD a test's answer (`cargo xtask bless`). The
+  version is pinned in `.ruby-version`; point `ZEO_RUBY` at it if it is not
+  the `ruby` on PATH. Every ordinary run reads the committed answers instead.
+- Network access on a fresh clone, once, to resolve the gems.
 
 ```console
-$ make deps   # bundle install: Gemfile.lock -> vendor/bundle
-$ make                # cargo build --workspace
+$ bundle install      # Gemfile.lock -> vendor/bundle
+$ cargo build         # the zeo binary and libzeo.a
 ```
 
 `Gemfile` and `Gemfile.lock` name every gem version zeo depends on. One lock
@@ -20,20 +20,21 @@ decides both what the compiler vendors and what the ruby oracle resolves, so
 the two cannot disagree about a version — which they did, and a golden then
 recorded the difference as a zeo bug.
 
-The golden and e2e suites spawn the built `zeo` binary and link against
-`libzeo.a`. There is no build-first ritual: `cargo nextest run -p zeo` works
-from a clean tree. Cargo builds the binary, but a test run never builds the
+The corpus and api suites spawn the built `zeo` binary and link against
+`libzeo.a`. There is no build-first ritual: `cargo nextest run` works from a
+clean tree. Cargo builds the binary, but a test run never builds the
 staticlib — only `cargo build` asks the lib target for every crate-type — so
-anything that links an AOT program goes through `harness::paths::
-runtime_archive()`, which builds it when it is missing or older than the
-sources in it.
+anything that links an AOT program goes through `runtime_archive()`, which
+builds it when it is missing or older than the sources in it. Do not edit a
+runtime source while a suite is running: the rebuild re-keys the scratch root
+under the run.
 
 ## The one rule: oracle-verified, divergence-documented
 
 Zeo's house style is *approximation is fine, silent wrongness is not*:
 
-- New behavior is verified against real `ruby` (the oracle), ideally as a
-  conformance test or e2e case in the same change.
+- New behavior is verified against real `ruby` (the oracle), as a program
+  under `test/` in the same change.
 - Every intentional divergence gets a comment at the code site explaining
   what differs and why, and user-visible ones also get a row in
   `docs/COMPATIBILITY.md`.
@@ -42,41 +43,35 @@ Zeo's house style is *approximation is fine, silent wrongness is not*:
 
 ## Workflow
 
-The Makefile is the front door, and it is what CI runs -- the test legs in
-`.github/workflows/ci.yml` call the same `ci-*` targets `make gate` composes,
-so the gate and CI cannot drift:
+Two commands, and CI runs the same two:
 
 ```console
-$ make test    # the dev loop: unit + e2e + all golden suites (default profile)
-$ make check   # clippy at CI's severity
-$ make gate    # everything: the CI legs + whole-gem cases + full-corpus AOT + bench
-$ make linux   # the container verification loop (needs podman)
+$ cargo nextest run          # the dev loop
+$ cargo nextest run -P full  # the gate: every leg
+$ cargo xtask ci             # every check that is not a test
+$ cargo xtask linux          # the container verification loop (needs podman)
 ```
 
-Targeted runs go through nextest directly:
+The default profile is the dev loop: every unit test, the in-process checks,
+the api tests, and every corpus program on the JIT plus the AOT smoke tier
+really linked. `-P full` adds the legs that re-run the whole corpus (AOT,
+memcheck, the zeo-vs-zeo differentials), the whole-graph milestones and the
+cases that build a release compiler of their own.
+
+Targeted runs are nextest filters:
 
 ```console
-$ cargo nextest run -p zeo --test goldens     # every ruby-oracle corpus
-$ cargo nextest run -p zeo -E 'test(example::)'  # one corpus
-$ cargo nextest run -p zeo -P full            # + the whole-gem cases
-$ cargo xtask bless <filter>              # re-record goldens from ruby
-$ make bench                                # the criterion perf bank (bench/README.md)
-$ make test-size                              # the linked-binary size gate
+$ cargo nextest run -E 'test(core::string/)'   # one area
+$ cargo nextest run -E 'test(/^aot_/)'         # the AOT legs
+$ cargo xtask bless core::string/              # re-record answers from ruby
+$ cargo bench -p zeo --bench programs          # the criterion perf bank
 ```
 
-The default profile is the dev loop. `-P full` adds the cases that compile a
-whole gem's require graph (`slow_goldens`, `every_bundled_gem_compiles`); they
-belong to `make gate`, not to every run.
-
-- The golden suites live under `tests/` (examples + the spinel corpus + the
-  XFAIL gaps tracker) and run as datatest-stable `cargo test`/nextest targets;
-  a green `cargo nextest` is the conformance record. A fixed gap fails CI as an
-  XPASS — promote it with `cargo xtask promote-gap`, which moves it into
-  `tests/`, the zeo-authored suite. Not `tests/spinel/`, which mirrors the
-  vendored spinel corpus (see `tests/spinel/UPSTREAM.md`).
-- `cargo xtask bless` is the only golden writer: `golden.rs` honours
-  `ZEO_BLESS_FROM_TOOL`, which only `cargo xtask bless` sets, so a bare
-  `ZEO_BLESS=1 cargo test` does nothing.
+- The corpus lives under `test/`: one `.rb` per program, its answer recorded
+  under `__END__`, and its DIRECTORY says what it is held to. A green
+  `cargo nextest run` is the conformance record. A fixed gap fails as an
+  XPASS — promote it with `cargo xtask promote-gap <stem> <topic/area>`.
+- `cargo xtask bless` is the only writer of a recorded answer.
 - Perf-sensitive changes report their bench delta: save a criterion baseline
   before the change (`cargo bench -p zeo --bench programs -- --save-baseline
   before`) and compare after (`critcmp`; see `bench/README.md`).
@@ -102,21 +97,20 @@ reached parity, then the differential oracle during the bring-up, and it was
 retired on 2026-08-21. The branch `archive/rustc-backend` keeps it readable.
 The oracle for correctness is `ruby` on `PATH`.
 
-The golden suites take two legs, and the e2e suite does too:
+A program takes both backends, and the leg is a case-name prefix rather than
+an environment variable:
 
 ```console
-$ cargo nextest run -p zeo --test goldens                       # jit
-$ ZEO_GOLDEN_BACKEND=aot   cargo nextest run -p zeo --test goldens
-$ cargo nextest run -p zeo --test e2e                           # jit child (default)
-$ ZEO_E2E_BACKEND=aot      cargo nextest run -p zeo --test e2e  # link per test
+$ cargo nextest run -E 'test(core::string/)'      # the JIT
+$ cargo nextest run -P full -E 'test(/^aot_core::string/)'  # a real link
 ```
 
-A third leg is the typed differential oracle (`make test-typed`, or
-`ZEO_GOLDEN_DIFF_TYPED=1` on any golden suite): every case compiles and
-runs twice -- once as-is, once with `ZEO_DEBUG=no-typed-calls` turning
-every TyKind-driven emission off -- and the two zeo outputs must agree
-byte-for-byte. Run it on any change to typed emission; a wrong static
-type is a miscompile, and this leg is what catches one.
+A third leg is the zeo-vs-zeo differential (`diff_`): every program compiles
+and runs three more times -- with `ZEO_DEBUG=no-typed-calls` turning every
+TyKind-driven emission off, with packaged ids forced, and down the packaged
+cache road -- and every answer must equal the first, byte for byte. Ruby is
+not consulted. Run it on any change to typed emission; a wrong static type is
+a miscompile, and this leg is what catches one.
 
 `crates/zeo/tests/checks/clif.rs` holds insta snapshots of the emitted CLIF. They
 record emitter *shape*, which no golden can see, so **run `cargo nextest run
@@ -156,8 +150,8 @@ zeo is Rust. The tree tracks no C, C++ or assembly source and no patch to
 one, and no copy of MRI's headers: the C API is `crates/zeo-capi`, Rust over
 the runtime, and an extension builds against upstream's headers fetched at
 the first build (`docs/EXTENSIONS.md`). Two gates hold the rule.
-`make no-c-files` (in `make hygiene`) lists tracked C by extension, and
-`crates/zeo/tests/checks/no_c.rs` holds the exceptions exact, each dated.
+`crates/zeo/tests/checks/no_c.rs` lists tracked C by extension and holds the
+exceptions exact, each dated.
 `deny.toml` bans `cc`, `bindgen`, `cmake` and `cxx-build` except through the
 crates that compile a vendored library, and the same checks file pins that
 set: `onig_sys`, `ruby-prism-sys`, `libffi-sys`, `libmimalloc-sys`,
@@ -167,7 +161,7 @@ not a build, and is fine anywhere.
 To add a crate that compiles C: name it in `deny.toml`'s `wrappers` and in
 `no_c.rs`'s `C_COMPILING_CRATES`, with the library it wraps and why a Rust
 crate cannot do the job. A test that needs an extension writes the C from a
-string constant (`e2e::support::extension_dir`); it never tracks a `.c`.
+string constant; it never tracks a `.c`.
 
 ## Commits
 

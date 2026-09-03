@@ -119,11 +119,11 @@ commands:
   bless           record a program's answer under its `__END__` from the oracle
   capi-sweep      record ruby's answers for the C-gem sweep's smoke programs
   cext            the vendored MRI C API headers and the rb_* census
+  ci              every non-test check CI runs, in order
   diff            compare a snippet across ruby and zeo, and file a gap
   dist            assemble the relocatable distribution
   gem             build the platform gem from a dist staging
   linux           run the suites in the linux container
-  promote-gap     move a fixed gap into the passing suite
   stage-publish   stage the artifacts the published crate ships
 
 `cargo xtask <command> --help` describes one command.
@@ -145,11 +145,11 @@ fn main() -> std::process::ExitCode {
         "bless" => commands::bless::run(rest),
         "capi-sweep" => commands::capi_sweep::run(rest),
         "cext" => commands::cext::run(rest),
+        "ci" => commands::ci::run(rest),
         "diff" => commands::diff::run(rest),
         "dist" => commands::dist::run(rest),
         "gem" => commands::gem::run(rest),
         "linux" => commands::linux::run(rest),
-        "promote-gap" => commands::promote_gap::run(rest),
         "stage-publish" => commands::stage_publish::run(rest),
         other => Err(Error::new(format!("unknown command {other:?}\n\n{USAGE}"))),
     };

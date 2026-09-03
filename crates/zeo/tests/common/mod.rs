@@ -42,8 +42,14 @@ pub fn runtime_archive() -> Result<PathBuf, String> {
 
 /// The one directory tests write under: `target/zeo-test/<stamp>/`, where
 /// the stamp names THIS build of `zeo` and `libzeo.a`. A rebuilt compiler
-/// must never read artifacts an older one wrote, so the first use of a new
-/// stamp deletes every other one. Nothing test-related goes to `$TMPDIR`.
+/// must never read artifacts an older one wrote, so a new stamp sweeps the
+/// old ones. Nothing test-related goes to `$TMPDIR`.
+///
+/// The sweep spares any directory touched in the last [`IN_USE`], because a
+/// stamp can change DURING a run: an edit to a runtime source rebuilds
+/// `libzeo.a`, and every process started after it keys differently. Without
+/// the reprieve those processes delete the directory their siblings are
+/// linking in, and a dozen unrelated cases fail with a missing object file.
 ///
 /// Children get `ZEO_CACHE_DIR` under it too, so the product cache a test
 /// exercises is never the developer's own.
@@ -72,7 +78,7 @@ pub fn scratch_root() -> Result<PathBuf, String> {
             .join("zeo-test");
         if let Ok(entries) = std::fs::read_dir(&root) {
             for e in entries.flatten() {
-                if e.file_name() != *key.as_str() {
+                if e.file_name() != *key.as_str() && idle(&e.path()) {
                     let _ = std::fs::remove_dir_all(e.path());
                 }
             }
@@ -87,6 +93,33 @@ pub fn scratch_root() -> Result<PathBuf, String> {
     .clone()
 }
 
+/// How long a scratch directory counts as belonging to a run still in
+/// flight. Well above the slowest case's own bounds.
+const IN_USE: std::time::Duration = std::time::Duration::from_secs(900);
+
+/// Whether nothing has written under `dir` recently. A directory's own mtime
+/// only moves when its top-level entries change, so this reads the
+/// subdirectories the children actually write into as well.
+fn idle(dir: &Path) -> bool {
+    let touched = |p: &Path| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+    };
+    std::iter::once(dir.to_path_buf())
+        .chain(
+            std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path()),
+        )
+        .filter_map(|p| touched(&p))
+        .min()
+        .is_none_or(|age| age > IN_USE)
+}
+
 /// A fresh, empty directory under the scratch root for one test.
 #[allow(dead_code)]
 pub fn scratch_dir(name: &str) -> Result<PathBuf, String> {
@@ -98,11 +131,42 @@ pub fn scratch_dir(name: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// The environment every spawned `zeo` gets: its own cache and temp dir
-/// under the scratch root.
+/// The environment every spawned `zeo` gets.
+///
+/// `ZEO_CACHE=0` is the one that matters for the corpus: the program cache
+/// writes a compiled object per program, and 5,757 of those every run is a
+/// gigabyte written and thrown away. A corpus child compiles in memory and
+/// leaves nothing behind. The cache has its own tests
+/// (`test/compiler/cache/`, `api::packages`, `checks::cli`), which turn it
+/// back on for the programs that are about it.
+///
+/// The two paths still point under the scratch root for the children that
+/// DO write -- a real link, and a test that turns the cache on -- so nothing
+/// reaches the developer's own cache or `$TMPDIR`.
 pub fn child_env(cmd: &mut std::process::Command) -> Result<(), String> {
     let root = scratch_root()?;
-    cmd.env("ZEO_CACHE_DIR", root.join("cache"))
-        .env("TMPDIR", root.join("bin"));
+    cmd.env("ZEO_CACHE", "0")
+        .env("ZEO_CACHE_DIR", root.join("cache"))
+        .env("TMPDIR", link_scratch(&root));
     Ok(())
+}
+
+/// Where a link writes its object file and its binary. Only the curated
+/// `test/aot/` tier reaches this -- every other program compiles and runs in
+/// memory -- but a linked binary is ~21 MB, so where those bytes land is
+/// worth choosing.
+///
+/// `/dev/shm` is a tmpfs, so on Linux they never reach the disk at all.
+/// macOS has no tmpfs; a RAM disk there costs an `hdiutil` mount to set up
+/// and another to tear down, which is more test machinery than ~800 MB of
+/// transient writes per run is worth.
+fn link_scratch(root: &Path) -> PathBuf {
+    let shm = Path::new("/dev/shm");
+    if cfg!(target_os = "linux") && shm.is_dir() {
+        let dir = shm.join("zeo-link");
+        if std::fs::create_dir_all(&dir).is_ok() {
+            return dir;
+        }
+    }
+    root.join("bin")
 }

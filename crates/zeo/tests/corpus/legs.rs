@@ -1,4 +1,10 @@
-//! The legs a program can take: the same file, a different question.
+//! How a program is run: in memory, or through a real link.
+//!
+//! There are two, and almost every program takes only the first. A program
+//! is compiled ONCE per leg -- the corpus is not re-run under variations.
+//! What used to be separate passes is folded in instead: the ownership
+//! ledger and the cycle census ride on the ordinary run, because they are
+//! switches on the same process rather than a different execution.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -11,14 +17,9 @@ pub enum Leg {
     /// The in-process JIT: compile and run in memory, nothing on disk.
     Jit,
     /// The same CLIF through an object file and a real link: what ships.
+    /// Only `test/aot/` takes it -- the link line is what that leg asks
+    /// about, and the curated set covers it.
     Aot,
-    /// The JIT under the ownership ledger, the cycle collector and the exit
-    /// census.
-    Memcheck,
-    /// The JIT, then the same program with typed emission off, with packaged
-    /// ids forced, and down the packaged-cache road; every answer must equal
-    /// the first.
-    Differential,
 }
 
 impl Leg {
@@ -29,55 +30,34 @@ impl Leg {
     fn backend(self) -> &'static str {
         match self {
             Leg::Aot => "aot",
-            Leg::Jit | Leg::Memcheck | Leg::Differential => "jit",
+            Leg::Jit => "jit",
         }
     }
 }
 
-/// Which road the spawned CLI takes: an explicit `--backend`, or the default
-/// cache road with auto-packaging on against a pinned program/package cache
-/// pair (the spliced-vs-packaged question).
-pub enum Road<'a> {
-    Backend(&'a str),
-    PackagedCache {
-        programs: &'a Path,
-        packages: &'a Path,
-    },
-}
-
-/// The `zeo` command for `case`, on `leg`, with an optional extra
-/// `ZEO_DEBUG` flag (the differential children).
+/// The `zeo` command for `case` on `leg`.
 pub fn zeo_command(
     leg: Leg,
-    road: Road<'_>,
     case: &Case,
     rb: &Path,
     suite: &Suite,
     run_cwd: &Path,
-    extra_debug: Option<&str>,
 ) -> Result<Command, String> {
     let mut cmd = Command::new(crate::common::zeo_cli()?);
-    match road {
-        Road::Backend(backend) => {
-            cmd.arg("--backend").arg(backend);
-        }
-        Road::PackagedCache { programs, packages } => {
-            // ZEO_CACHE=1 beats an ambient off switch: this road exists to
-            // run the cache.
-            cmd.env("ZEO_CACHE", "1")
-                .env("ZEO_PROGRAM_CACHE", programs)
-                .env("ZEO_PACKAGE_CACHE", packages);
-        }
-    }
-    if let Some(flag) = extra_debug {
-        let ambient = std::env::var("ZEO_DEBUG").unwrap_or_default();
-        let joined = if ambient.is_empty() {
-            flag.to_string()
-        } else {
-            format!("{ambient},{flag}")
-        };
-        cmd.env("ZEO_DEBUG", joined);
-    }
+    cmd.arg("--backend").arg(leg.backend());
+    // Both memory checks, on every run. They are switches on the same
+    // process, they compose (verified over the whole corpus), and neither
+    // changes a program's answer -- the census line is split out of stderr
+    // before the comparison. A separate instrumented pass would double the
+    // corpus to ask a question this run can answer for nearly nothing.
+    //
+    // ZEO_RT_LEAKCHECK: the compiled-ownership ledger. A non-zero balance at
+    //   exit is a leak or a double-consume in the emitted lowering.
+    // ZEO_GC + ZEO_RT_GCCHECK: the cycle collector, and the census it writes
+    //   at exit, checked against the program's `#@ gccheck` line.
+    cmd.env("ZEO_RT_LEAKCHECK", "1")
+        .env("ZEO_GC", "1")
+        .env("ZEO_RT_GCCHECK", "1");
     if suite.whole_graph {
         for root in oracle_store_rspec_libs(&crate::common::workspace_root()) {
             cmd.arg("-I").arg(root);
@@ -94,19 +74,9 @@ pub fn zeo_command(
     for (k, v) in &case.directives.zeo_env {
         cmd.env(k, v);
     }
-    if leg == Leg::Memcheck {
-        cmd.env("ZEO_RT_LEAKCHECK", "1")
-            .env("ZEO_GC", "1")
-            .env("ZEO_RT_GCCHECK", "1");
-    }
     crate::common::child_env(&mut cmd)?;
     cmd.current_dir(run_cwd);
     Ok(cmd)
-}
-
-/// The default backend for a leg.
-pub fn road_for(leg: Leg) -> Road<'static> {
-    Road::Backend(leg.backend())
 }
 
 /// The oracle store's rspec trees, for the zeo side of the milestone that
@@ -137,16 +107,4 @@ pub fn oracle_store_rspec_libs(repo: &Path) -> Vec<PathBuf> {
         .collect();
     libs.sort();
     libs
-}
-
-/// The persistent cache pair the packaged road pins, under the scratch root
-/// (which is already keyed on this build of the compiler). Within one build
-/// the caches persist, so a gem packages once and every later program links
-/// it.
-pub fn packaged_cache() -> Result<(PathBuf, PathBuf), String> {
-    let root = crate::common::scratch_root()?.join("pkgcache");
-    let pair = (root.join("programs"), root.join("packages"));
-    std::fs::create_dir_all(&pair.0).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&pair.1).map_err(|e| e.to_string())?;
-    Ok(pair)
 }

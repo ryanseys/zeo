@@ -94,10 +94,18 @@ criterion = { version = "0.8.2", default-features = false, features = ["cargo_be
 # target to datatest-stable, whose case names are `<fn>::<path>`, so one
 # binary carries every suite and every leg and a `test(core::)` filter still
 # names exactly one. `tests/checks/` and `tests/api/` are autodiscovered.
+# Two test binaries, and the split is forced: `corpus` replaces libtest with
+# datatest-stable (`harness = false`), so nothing with an ordinary `#[test]`
+# can live in it. Everything else is one binary, because a test target costs
+# a full link of the compiler.
 [[test]]
 name = "corpus"
 path = "tests/corpus/main.rs"
 harness = false
+
+[[test]]
+name = "suite"
+path = "tests/suite/main.rs"
 
 # The runtime performance bank: every `bench/bm_*.rb` compiled with the
 # release `zeo` and timed end-to-end, under criterion (saved baselines,

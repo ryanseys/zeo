@@ -265,8 +265,8 @@ fn registry_archive(cache: &std::path::Path) -> Result<PathBuf, String> {
 
 /// What `rustc --print=native-static-libs` reports for the `zeo` staticlib
 /// on each target -- the system libraries the final `cc` link must name
-/// AFTER the archive. Checked against the live answer by the ignored diff
-/// test below (a CI leg: it compiles the lib in its own target dir).
+/// AFTER the archive. Checked against the live answer by
+/// `natlibs_table_matches_rustc` below, which the full nextest profile runs.
 const NATLIBS_MACOS: &[&str] = &["-liconv", "-lSystem", "-lc", "-lm"];
 /// What rustc reports on glibc, VERBATIM -- captured live by the diff test
 /// below on 2026-08-20, replacing a list seeded from documentation that had
@@ -482,15 +482,16 @@ mod tests {
     /// `libzeo.a` appears. `registry_archive` stands on exactly that, and
     /// nothing in cargo's documented behaviour promises it.
     ///
-    /// Ignored by default: it is a full release build of the workspace in a
-    /// target dir of its own, minutes rather than milliseconds. It uses a
-    /// PATH dependency because the real one resolves `zeo = "=X.Y.Z"` from
-    /// crates.io, which cannot be exercised before the version is published.
+    /// A full release build of the workspace in a target dir of its own, so
+    /// the default nextest profile leaves it out and `-P full` runs it. It
+    /// uses a PATH dependency because the real one resolves `zeo = "=X.Y.Z"`
+    /// from crates.io, which cannot be exercised before the version is
+    /// published.
     #[test]
-    #[ignore = "CI leg: a release build in a probe target dir"]
     fn a_dependency_position_zeo_still_builds_the_staticlib() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let anchor = std::env::temp_dir().join(format!("zeo-anchor-{}", std::process::id()));
+        let workspace = root.parent().and_then(|p| p.parent()).expect("workspace");
+        let anchor = probe_dir(workspace).join(format!("anchor-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&anchor);
         std::fs::create_dir_all(anchor.join("src")).expect("creating the anchor");
         std::fs::write(
@@ -554,24 +555,23 @@ mod tests {
         );
     }
 
-    /// Where the probe build writes. Beside the ambient target dir when
-    /// there is one, because the Linux leg mounts the repo READ-ONLY --
-    /// `<workspace>/target` is not writable there, and the probe must not
-    /// share the ambient dir either (it would churn the real build's
-    /// fingerprints).
-    fn natlibs_probe_dir(workspace: &std::path::Path) -> PathBuf {
+    /// Where a probe build writes. Beside the ambient target dir when there
+    /// is one, because the Linux leg mounts the repo READ-ONLY --
+    /// `<workspace>/target` is not writable there, and a probe must not share
+    /// the ambient dir either (it would churn the real build's fingerprints).
+    fn probe_dir(workspace: &std::path::Path) -> PathBuf {
         match std::env::var_os("CARGO_TARGET_DIR") {
-            Some(dir) => PathBuf::from(dir).join("natlibs-probe"),
-            None => workspace.join("target/natlibs-probe"),
+            Some(dir) => PathBuf::from(dir).join("probes"),
+            None => workspace.join("target/probes"),
         }
     }
 
-    /// The CI diff leg: asks rustc for the live answer and compares it to
-    /// the table for this host. Compiles the `zeo` lib in its own target
-    /// dir so the main tree's fingerprints stay put -- expensive on a cold
-    /// cache, which is why it is ignored by default.
+    /// Asks rustc for the live answer and compares it to the table for this
+    /// host. This is where `-lcrypt` once went missing while macOS stayed
+    /// green. It compiles the `zeo` lib in its own target dir so the main
+    /// tree's fingerprints stay put -- expensive on a cold cache, so the
+    /// default nextest profile leaves it out and `-P full` runs it.
     #[test]
-    #[ignore = "CI leg: compiles the zeo lib in a probe target dir to diff the natlibs table"]
     fn natlibs_table_matches_rustc() {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let workspace = manifest.parent().unwrap().parent().unwrap();
@@ -585,7 +585,7 @@ mod tests {
                 "--print=native-static-libs",
             ])
             .current_dir(workspace)
-            .env("CARGO_TARGET_DIR", natlibs_probe_dir(workspace))
+            .env("CARGO_TARGET_DIR", probe_dir(workspace).join("natlibs"))
             .output()
             .expect("cargo rustc must run");
         let stderr = String::from_utf8_lossy(&out.stderr);

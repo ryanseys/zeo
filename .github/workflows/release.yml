@@ -54,7 +54,7 @@ jobs:
 
       # The bundled stdlib is resolved out of `vendor/bundle`, so the payload
       # cannot be staged without it. No `ruby-version`: the action reads
-      # `mise.toml`, the ruby the lock was resolved with -- `.bundle/config`
+      # `.ruby-version`, the ruby the lock was resolved with -- `.bundle/config`
       # sets frozen, and another bundler may refuse the lock.
       - uses: ruby/setup-ruby@v1
         with:

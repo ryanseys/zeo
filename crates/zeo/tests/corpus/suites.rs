@@ -18,14 +18,6 @@ pub enum Recorder {
     Zeo,
 }
 
-/// What a run of the program must do against its trailer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Verdict {
-    Match,
-    /// A gap: the run must NOT match yet, and a match fails with "promote".
-    Xfail,
-}
-
 /// How far below the root a program sits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Depth {
@@ -33,8 +25,6 @@ pub enum Depth {
     One,
     /// `<root>/<area>/<name>.rb`
     Two,
-    /// `<root>/<name>.rb` and `<root>/pending/<name>.rb` (the XFAIL tier)
-    OneAndPending,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,13 +35,10 @@ pub struct Suite {
     pub root: &'static str,
     pub depth: Depth,
     pub recorder: Recorder,
-    pub verdict: Verdict,
     /// Every case splices a whole require graph: minutes and gigabytes, so
     /// the bounds are raised and the zeo side gets the oracle store's rspec
     /// on its load path.
     pub whole_graph: bool,
-    /// The AOT and memcheck legs run over this suite in the full profile.
-    pub takes_legs: bool,
 }
 
 const fn suite(name: &'static str, root: &'static str, depth: Depth) -> Suite {
@@ -60,9 +47,7 @@ const fn suite(name: &'static str, root: &'static str, depth: Depth) -> Suite {
         root,
         depth,
         recorder: Recorder::Ruby,
-        verdict: Verdict::Match,
         whole_graph: false,
-        takes_legs: true,
     }
 }
 
@@ -70,15 +55,12 @@ pub const LANG: Suite = suite("lang", "test/lang", Depth::Two);
 pub const CORE: Suite = suite("core", "test/core", Depth::Two);
 pub const STDLIB: Suite = suite("stdlib", "test/stdlib", Depth::Two);
 pub const COMPILER: Suite = suite("compiler", "test/compiler", Depth::Two);
-/// Programs that run on both the JIT and a real link in every profile.
+/// The curated link tier: these run on the JIT like every other program,
+/// and again through a real link.
 pub const AOT: Suite = suite("aot", "test/aot", Depth::One);
-pub const BENCH: Suite = Suite {
-    takes_legs: false,
-    ..suite("bench", "test/bench", Depth::One)
-};
+pub const BENCH: Suite = suite("bench", "test/bench", Depth::One);
 pub const ERRORS: Suite = Suite {
     recorder: Recorder::Zeo,
-    takes_legs: false,
     ..suite("errors", "test/errors", Depth::One)
 };
 /// Programs that use something only zeo has: embedded sources, `Zeo.prepare`,
@@ -86,28 +68,23 @@ pub const ERRORS: Suite = Suite {
 /// from zeo, because ruby cannot run them.
 pub const FEATURES: Suite = Suite {
     recorder: Recorder::Zeo,
-    takes_legs: false,
     ..suite("features", "test/features", Depth::One)
 };
 pub const DIVERGENCES: Suite = Suite {
     recorder: Recorder::Zeo,
-    takes_legs: false,
     ..suite("divergences", "test/divergences", Depth::One)
-};
-pub const GAPS: Suite = Suite {
-    verdict: Verdict::Xfail,
-    takes_legs: false,
-    ..suite("gaps", "test/gaps", Depth::One)
 };
 pub const MILESTONES: Suite = Suite {
     whole_graph: true,
-    takes_legs: false,
-    ..suite("milestones", "test/milestones", Depth::OneAndPending)
+    ..suite("milestones", "test/milestones", Depth::One)
 };
-pub const ZE0: Suite = Suite {
-    takes_legs: false,
-    ..suite("ze0", "test/ze0", Depth::One)
-};
+pub const ZE0: Suite = suite("ze0", "test/ze0", Depth::One);
+/// Programs zeo does not get right yet. NOTHING runs these -- the harness
+/// has no entry for the suite. It is in this table so `cargo xtask bless`
+/// can record ruby's answer for one and so corpus hygiene still reads them,
+/// which is what makes a file here ready to move into a topic directory the
+/// day it starts matching.
+pub const TODO: Suite = suite("todo", "todo", Depth::One);
 
 pub const SUITES: &[Suite] = &[
     LANG,
@@ -119,9 +96,9 @@ pub const SUITES: &[Suite] = &[
     ERRORS,
     FEATURES,
     DIVERGENCES,
-    GAPS,
     MILESTONES,
     ZE0,
+    TODO,
 ];
 
 /// The directory every program runs in, relative to the repo root. A
@@ -151,10 +128,6 @@ impl Suite {
         let mut out = Vec::new();
         match self.depth {
             Depth::One => out.extend(ruby_files(&root, "")?),
-            Depth::OneAndPending => {
-                out.extend(ruby_files(&root, "")?);
-                out.extend(ruby_files(&root.join("pending"), "pending/")?);
-            }
             Depth::Two => {
                 for area in dirs(&root)? {
                     let prefix = format!(
@@ -178,7 +151,6 @@ impl Suite {
         match self.depth {
             Depth::One => depth == 0,
             Depth::Two => depth == 1,
-            Depth::OneAndPending => depth == 0 || (depth == 1 && rel.starts_with("pending/")),
         }
     }
 
@@ -187,7 +159,6 @@ impl Suite {
         match self.depth {
             Depth::One => r"^[^/]+\.rb$",
             Depth::Two => r"^[^/]+/[^/]+\.rb$",
-            Depth::OneAndPending => r"^(pending/)?[^/]+\.rb$",
         }
     }
 }

@@ -27,10 +27,8 @@ pub struct Directives {
     pub only: Option<Platform>,
     /// `jit`: the program needs the compiler and itself in one process.
     pub backend: Option<Backend>,
-    /// The exit cycle census the memcheck leg expects.
+    /// The exit cycle census this program is expected to leave behind.
     pub gccheck: Option<String>,
-    /// Gaps only: the divergence is between the spliced and packaged roads.
-    pub pkggap: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,17 +200,16 @@ impl Directives {
                         "jit" => Some(Backend::Jit),
                         other => {
                             return Err(format!(
-                                "line {}: `#@ backend: {other}` -- only `jit` is a directive; every program takes the AOT legs unless it says jit",
+                                "line {}: `#@ backend: {other}` -- `jit` is the only value; it opts a program out of the link tier",
                                 n + 1
                             ));
                         }
                     }
                 }
                 "gccheck" => d.gccheck = Some(value_of()?.to_string()),
-                "pkggap" => d.pkggap = true,
                 other => {
                     return Err(format!(
-                        "line {}: unknown directive `#@ {other}` (args, stdin, env, ruby, zeo, zeo-env, only, backend, gccheck, pkggap)",
+                        "line {}: unknown directive `#@ {other}` (args, stdin, env, ruby, zeo, zeo-env, only, backend, gccheck)",
                         n + 1
                     ));
                 }
@@ -493,7 +490,7 @@ mod tests {
     #[test]
     fn directives_are_read_and_unknown_ones_refused() {
         let d = Directives::parse(
-            b"#@ args: --seed 42\n#@ env: RUBY_BOX=1 X=y\n#@ only: linux\n#@ backend: jit\n#@ pkggap\n#@ gccheck: cycle leak: 1 ring\nputs 1\n",
+            b"#@ args: --seed 42\n#@ env: RUBY_BOX=1 X=y\n#@ only: linux\n#@ backend: jit\n#@ gccheck: cycle leak: 1 ring\nputs 1\n",
         )
         .unwrap();
         assert_eq!(d.args, ["--seed", "42"]);
@@ -506,7 +503,6 @@ mod tests {
         );
         assert_eq!(d.only, Some(Platform::Linux));
         assert_eq!(d.backend, Some(Backend::Jit));
-        assert!(d.pkggap);
         assert_eq!(d.gccheck.as_deref(), Some("cycle leak: 1 ring"));
         assert!(Directives::parse(b"#@ expected: x\n").is_err());
         assert!(Directives::parse(b"#@ args\n").is_err());

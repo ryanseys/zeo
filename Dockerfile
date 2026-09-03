@@ -18,13 +18,13 @@
 # the cached amd64 image, and x86_64 rustc SIGSEGVs under qemu on an Apple
 # Silicon host. x86_64 coverage goes through cross-compilation from the
 # arm64 container instead (see the `cross` stage), never emulation.
-# THE ORACLE, and it is the same ruby the macOS side uses: 4.0.6 at revision
-# 03b6d3f889, which is what `ruby-headers.lock` pins. The image used to take
-# Debian's `ruby` package, and that was 3.3.8 -- so a golden with no committed
-# `.expected` was arbitrated by one ruby on macOS and a different one here,
-# and a version difference would have read as a zeo bug. Deliberately still
-# not zeo's own ruby: an oracle that only works when zeo is correct cannot
-# arbitrate zeo when it is not.
+# THE ORACLE, and it is the same ruby the macOS side uses: 4.0.6, which is
+# what `.ruby-version` and `ruby-headers.lock` both pin. It resolves the
+# Gemfile into the container's own store and it is what `cargo xtask bless`
+# would record with here. The image used to take Debian's `ruby` package, and
+# that was 3.3.8 -- a different answer from the one every trailer holds.
+# Deliberately still not zeo's own ruby: an oracle that only works when zeo is
+# correct cannot arbitrate zeo when it is not.
 #
 # Both images are Debian trixie, so the shared libraries match, and
 # `rust:latest` leaves /usr/local/bin empty for ruby to land in.

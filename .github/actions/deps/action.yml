@@ -1,0 +1,30 @@
+name: deps
+description: >
+  The libraries in Gemfile.lock, resolved into vendor/bundle, plus a cache for
+  them. The corpus compares against committed trailers, so this is for the
+  suites that read the resolved store itself: the vendored-tier checks, the
+  bundler-parity tests and the whole-graph milestones.
+
+runs:
+  using: composite
+  steps:
+    # What `bundle install` builds extensions against: psych wants libyaml,
+    # openssl wants its headers, ffi and fiddle want libffi. macOS has all of
+    # these from the SDK and Homebrew already.
+    - if: runner.os == 'Linux'
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq libyaml-dev libssl-dev libffi-dev
+      shell: bash
+
+    # `.ruby-version` is the pin, and the action reads it natively: the runner
+    # gets the same ruby the lock was resolved with and the goldens were
+    # blessed against. Not `bundler-cache: true`: that rewrites the committed
+    # .bundle/config.
+    - uses: ruby/setup-ruby@v1
+
+    - run: bundle install --quiet
+      shell: bash
+
+    - uses: actions/cache@v4
+      with:
+        path: vendor/bundle
+        key: bundle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.ruby-version', 'Gemfile.lock') }}

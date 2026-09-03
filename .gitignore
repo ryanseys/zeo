@@ -1,27 +1,27 @@
 target/
 .DS_Store
 
-# insta's pending-snapshot droppings; `tools/zeo-dev bless` writes .snap
-# files directly and nothing should ever review a .snap.new.
+# insta's pending-snapshot droppings; `cargo insta accept` writes .snap files
+# directly and nothing should ever review a .snap.new.
 *.snap.new
 
 # Generated per-compile gem-disclosure records (zeo CLI)
 zeo-gems.json
 
-# Resolved and fetched, never authored: `vendor/bundle` is what
-# `make deps` writes out of Gemfile.lock, and the rest is upstream
-# sources fetched on demand. The lock is the committed half.
+# Resolved and fetched, never authored: `vendor/bundle` is what the gem
+# resolve writes out of Gemfile.lock, and the rest is upstream sources
+# fetched on demand. The lock is the committed half.
 /vendor/
 
 # Measurement, not source: what a gem-probe sweep WROTE. The ledger is 21MB
 # and 195,778 rows, and nothing builds or tests against it -- a refreshed one
-# is attached to a GitHub release by hand. See docs/GEM_TESTING.md.
+# is attached to a GitHub release by hand.
 #
 # Anything that IS an input lives in the tree as generated Rust instead
 # (`cext/api.rs`, `cext/forward.rs`), so a fresh clone builds.
 /measurements/
 
-# Publish-time artifacts staged by `tools/zeo-dev stage-publish`; never committed.
+# Publish-time artifacts staged by `cargo xtask stage-publish`; never committed.
 crates/zeo/gems.pregen.tar.gz
 crates/zeo/src/class_surface.pregen.rs
 
@@ -34,7 +34,7 @@ crates/zeo/src/class_surface.pregen.rs
 compile_flags.txt
 
 # Local working notes (research records, follow-up plans) -- deliberately
-# out of the repo; see notes/golden-format-research.md for the shape.
+# out of the repo.
 /notes/
 
 # Local environment and logs
@@ -43,14 +43,12 @@ compile_flags.txt
 !.env.example
 *.log
 
-# `zeo tests/foo.rb` writes its binary to tests/foo -- the input path with the
-# extension stripped. Three of those reached HEAD at 13MB each before the CI
-# size guard existed. Every real file here has an extension; LICENSE is the
-# one exception.
-/tests/**
-!/tests/**/
-!/tests/**/*.*
+# `zeo test/foo.rb` writes its binary to test/foo -- the input path with the
+# extension stripped. Three of those reached HEAD at 13MB each before the size
+# guard existed. Every real file under test/ has an extension.
+/test/**
+!/test/**/
+!/test/**/*.*
 # ...which re-includes `.DS_Store` too, since the leading dot satisfies `*.*`.
 # The top-level rule cannot reach it through the negation above.
-/tests/**/.DS_Store
-!/tests/spinel/LICENSE
+/test/**/.DS_Store

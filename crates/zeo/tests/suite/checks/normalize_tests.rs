@@ -1,6 +1,6 @@
-//! The scrubbing every golden comparison passes through.
-//! `tests/harness/normalize.rs` holds the functions; the golden suites
-//! run under datatest, which has no libtest harness to run these.
+//! The scrubbing every corpus comparison passes through.
+//! `tests/corpus/normalize.rs` holds the functions; the corpus binary runs
+//! under datatest, which has no libtest harness to run these.
 
 use crate::normalize::{normalize_addresses, normalize_thread_ids};
 
