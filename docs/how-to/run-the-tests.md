@@ -55,6 +55,15 @@ breaks.
 The cheap half stays in the ordinary suite: that `XFAIL.json` names only
 swept gems, and that every locked C gem is swept or excluded with a reason.
 Those are file reads, and a ledger nothing checks is worse than no ledger.
+A different question -- can zeo compile some gem that is not in the lock at
+all? -- has its own verb, which writes nothing and takes one row of TSV per
+gem:
+
+```console
+$ cargo xtask test-gem rake rack thor
+$ cargo xtask test-gem nokogiri --aot --no-clean
+```
+
 
 ## What a run costs
 
