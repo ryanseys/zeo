@@ -87,7 +87,7 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
         declared.push((name, id, func));
     }
     let (class_specs, class_ids) = class_specs(sidecar)?;
-    let class_ids_data = define_class_ids(&mut em, &class_specs)?;
+    let class_ids_data = define_class_ids(&mut em, sidecar, &class_ids)?;
     for (name, id, mut func) in declared {
         resolve_names(&mut em, &ids, class_ids_data, &name, &mut func)?;
         cranelift_codegen::verify_function(&func, em.module.isa())
@@ -291,24 +291,19 @@ fn data_symbol(em: &Emitter, class_ids: DataId, symbol: &str) -> Option<DataId> 
 fn class_specs(sidecar: &Sidecar) -> CResult<(Vec<crate::clif::classes::ClassSpec>, ClassIds)> {
     let base = boot()?.first_user_class;
     let mut ids: ClassIds = HashMap::new();
-    for (i, c) in sidecar.classes.iter().enumerate() {
-        // A row is a class the program DEFINES. A name a builtin already
-        // carries would mint a shadow beside it -- the constant answers the
-        // new class and every method written on it lands nowhere the
-        // builtin can be reached -- so it is refused rather than minted.
-        // Reopening a builtin is a runtime definition, not a class row.
-        if zeo_abi::BUILTINS.iter().any(|b| b.name == c.name)
-            || zeo_abi::EXCEPTION_CLASSES.iter().any(|b| b.name == c.name)
-        {
-            return Err(CodegenError::internal(format!(
-                "{}`{}` is a builtin: a class row defines a NEW class, so this would mint a \
-                 shadow beside it, and reopening a builtin has to be written as runtime \
-                 definitions on it",
-                written_at(c),
-                c.name
-            )));
-        }
-        if ids.insert(c.name.clone(), base + i as u32).is_some() {
+    let mut minted = 0u32;
+    for c in &sidecar.classes {
+        let id = match reopened_builtin(c, sidecar)? {
+            // The row REOPENS the builtin: it takes the builtin's own id,
+            // so the program's `def`s register on the module the runtime
+            // already carries, and it mints nothing.
+            Some(id) => id.0,
+            None => {
+                minted += 1;
+                base + minted - 1
+            }
+        };
+        if ids.insert(c.name.clone(), id).is_some() {
             return Err(CodegenError::internal(format!(
                 "the sidecar declares the class `{}` twice",
                 c.name
@@ -317,6 +312,11 @@ fn class_specs(sidecar: &Sidecar) -> CResult<(Vec<crate::clif::classes::ClassSpe
     }
     let mut specs = Vec::with_capacity(sidecar.classes.len());
     for c in &sidecar.classes {
+        // A reopen needs no spec: the class exists, and `feature_rows`
+        // already registers it with the ancestry the ABI declares.
+        if reopened_builtin(c, sidecar)?.is_some() {
+            continue;
+        }
         let kind = match CLASS_KINDS.iter().position(|k| *k == c.kind) {
             Some(0) => zeo_abi::abi::CLASS_PLAIN,
             Some(_) => zeo_abi::abi::CLASS_MODULE,
@@ -358,6 +358,58 @@ fn class_specs(sidecar: &Sidecar) -> CResult<(Vec<crate::clif::classes::ClassSpe
         });
     }
     Ok((specs, ids))
+}
+
+/// The builtin a class row REOPENS, by id, or `None` when the row mints a
+/// class of its own.
+///
+/// A gated builtin is the runtime's half of a library whose other half is
+/// Ruby -- `prism.so` defines the `Prism` module and its native entry
+/// points, and `prism.rb` then writes the rest of the module in Ruby. A
+/// program that requires the feature and carries that Ruby is reopening
+/// what it just loaded, so the row resolves to the builtin's id and the
+/// `def`s land where the native methods already are.
+///
+/// Everything else is refused. An always-on builtin (`String`, `Integer`)
+/// has a native instance shape a class row cannot describe, and a gated
+/// one the program never required is concealed -- the name is free, but a
+/// row that took the builtin's id would reveal it by the back door.
+fn reopened_builtin(
+    c: &super::sidecar::Class,
+    sidecar: &Sidecar,
+) -> CResult<Option<zeo_abi::ClassId>> {
+    let builtin = zeo_abi::BUILTINS.iter().find(|b| b.name == c.name);
+    // An exception class is always on and carries no feature, so it never
+    // reopens; naming one still has to be refused.
+    if builtin.is_none() && !zeo_abi::EXCEPTION_CLASSES.iter().any(|b| b.name == c.name) {
+        return Ok(None);
+    }
+    let required = builtin.is_some_and(|b| {
+        b.feature.is_some_and(|f| {
+            sidecar.features.iter().any(|r| zeo_abi::canonical_ext_feature(r) == f)
+        })
+    });
+    let carried = builtin.is_some_and(|b| crate::lower::features::build_carries_class(b.id));
+    if !required || !carried {
+        return Err(CodegenError::internal(format!(
+            "{}`{}` is a builtin: a class row defines a NEW class, so this would mint a shadow \
+             beside it, and reopening a builtin has to be written as runtime definitions on it",
+            written_at(c),
+            c.name
+        )));
+    }
+    // The builtin's instances are the runtime's, laid out where it put
+    // them, so a reopen cannot add a slot to them.
+    if !c.ivars.is_empty() {
+        return Err(CodegenError::internal(format!(
+            "{}the reopen of `{}` declares the instance variable `{}`; a builtin's layout is the \
+             runtime's, so a reopen can add methods to it but no slots",
+            written_at(c),
+            c.name,
+            c.ivars[0]
+        )));
+    }
+    Ok(builtin.map(|b| b.id))
 }
 
 /// `file:line: ` for a class row that carries a location, empty otherwise.
@@ -446,10 +498,14 @@ fn ancestors_of<'a>(
 /// sidecar lists them. Ids are assigned at LINK time, so a front end that
 /// needs one in its code -- a constant's cref, an assignment's owner --
 /// reads it out of here the way it reads a symbol out of `zeo_syms`.
-fn define_class_ids(em: &mut Emitter, specs: &[crate::clif::classes::ClassSpec]) -> CResult<DataId> {
-    let mut bytes = Vec::with_capacity(specs.len().max(1) * 4);
-    for c in specs {
-        bytes.extend_from_slice(&c.id.to_le_bytes());
+///
+/// The rows and not the specs are what this counts: a row that reopens a
+/// builtin has the builtin's id and no spec of its own, and a front end
+/// still indexes it by the position it wrote it in.
+fn define_class_ids(em: &mut Emitter, sidecar: &Sidecar, ids: &ClassIds) -> CResult<DataId> {
+    let mut bytes = Vec::with_capacity(sidecar.classes.len().max(1) * 4);
+    for c in &sidecar.classes {
+        bytes.extend_from_slice(&ids[&c.name].to_le_bytes());
     }
     if bytes.is_empty() {
         bytes.extend_from_slice(&0u32.to_le_bytes());
