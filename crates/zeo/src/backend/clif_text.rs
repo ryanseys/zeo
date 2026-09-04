@@ -111,7 +111,7 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
     statics::define_dyn_sites(&mut em)?;
     statics::define_proc_shapes(&mut em)?;
     statics::define_reopen_flags(&mut em)?;
-    let (vm_rows, vis_rows, obj_rows, cm_rows, meta_rows) = def_rows(sidecar, &ids, &class_ids)?;
+    let defs = def_rows(sidecar, &ids, &class_ids)?;
     let mut reg_rows = reg_rows(&sidecar.reg, &ids)?;
     reg_rows.extend(own_method_rows(sidecar, &class_ids));
     let program = statics::DescProgram {
@@ -131,14 +131,14 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
             unit_init,
             eval_install: sidecar.eval_install,
             rows: statics::DescRows {
-                vm: &vm_rows,
-                vis: &vis_rows,
+                vm: &defs.vm,
+                vis: &defs.vis,
                 classes: &class_specs,
-                obj: &obj_rows,
-                cm: &cm_rows,
+                obj: &defs.obj,
+                cm: &defs.cm,
                 reg: &reg_rows,
                 foreign: &[],
-                meta: &meta_rows,
+                meta: &defs.meta,
                 redef_metas: &[],
                 unit: &[],
             },
@@ -392,13 +392,7 @@ fn def_rows(
     sidecar: &Sidecar,
     in_file: &HashMap<String, FuncId>,
     class_ids: &ClassIds,
-) -> CResult<(
-    Vec<statics::VmRowSpec>,
-    Vec<statics::VisRowSpec>,
-    Vec<statics::ObjRowSpec>,
-    Vec<statics::CmRowSpec>,
-    Vec<statics::MetaRowSpec>,
-)> {
+) -> CResult<DefRows> {
     let mut vm = Vec::new();
     let mut vis = Vec::new();
     let mut obj = Vec::new();
@@ -494,7 +488,22 @@ fn def_rows(
             aliased_from: def.aliased_from.clone(),
         });
     }
-    Ok((vm, vis, obj, cm, meta))
+    Ok(DefRows {
+        vm,
+        vis,
+        obj,
+        cm,
+        meta,
+    })
+}
+
+/// What the sidecar's `def`s become, one list per channel they ride.
+struct DefRows {
+    vm: Vec<statics::VmRowSpec>,
+    vis: Vec<statics::VisRowSpec>,
+    obj: Vec<statics::ObjRowSpec>,
+    cm: Vec<statics::CmRowSpec>,
+    meta: Vec<statics::MetaRowSpec>,
 }
 
 /// What each class's own body wrote, which is `instance_methods(false)`
