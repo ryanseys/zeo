@@ -129,6 +129,21 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
             flag: 0,
         })
     }));
+    reg_rows.extend(
+        sidecar
+            .classes
+            .iter()
+            .filter(|c| c.conceal)
+            .map(|c| statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_CONCEAL_CLASS,
+                class: class_ids[&c.name],
+                a: String::new(),
+                b: String::new(),
+                f: None,
+                ids: Vec::new(),
+                flag: 0,
+            }),
+    );
     let unit_rows = unit_rows(&sidecar.units, &ids)?;
     let program = statics::DescProgram {
         warnings: sidecar.warnings.clone(),

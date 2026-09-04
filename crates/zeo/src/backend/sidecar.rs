@@ -132,6 +132,13 @@ pub struct Class {
     pub file: String,
     #[serde(default)]
     pub line: u32,
+    /// The shape registers before the first statement, so the static MRO
+    /// has one, but the CONSTANT stays hidden until the `class` statement
+    /// runs and the body calls `zeo_rt_reveal_class`. The id is the
+    /// backend's, so the front end asks for the row here rather than
+    /// writing it, the same trade `private_constants` makes.
+    #[serde(default)]
+    pub conceal: bool,
 }
 
 /// One `zeo_callsites` slot's caller class: the class whose body the site
