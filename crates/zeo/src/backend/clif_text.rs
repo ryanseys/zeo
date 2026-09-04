@@ -292,6 +292,22 @@ fn class_specs(sidecar: &Sidecar) -> CResult<(Vec<crate::clif::classes::ClassSpe
     let base = boot()?.first_user_class;
     let mut ids: ClassIds = HashMap::new();
     for (i, c) in sidecar.classes.iter().enumerate() {
+        // A row is a class the program DEFINES. A name a builtin already
+        // carries would mint a shadow beside it -- the constant answers the
+        // new class and every method written on it lands nowhere the
+        // builtin can be reached -- so it is refused rather than minted.
+        // Reopening a builtin is a runtime definition, not a class row.
+        if zeo_abi::BUILTINS.iter().any(|b| b.name == c.name)
+            || zeo_abi::EXCEPTION_CLASSES.iter().any(|b| b.name == c.name)
+        {
+            return Err(CodegenError::internal(format!(
+                "{}`{}` is a builtin: a class row defines a NEW class, so this would mint a \
+                 shadow beside it, and reopening a builtin has to be written as runtime \
+                 definitions on it",
+                written_at(c),
+                c.name
+            )));
+        }
         if ids.insert(c.name.clone(), base + i as u32).is_some() {
             return Err(CodegenError::internal(format!(
                 "the sidecar declares the class `{}` twice",
@@ -317,7 +333,9 @@ fn class_specs(sidecar: &Sidecar) -> CResult<(Vec<crate::clif::classes::ClassSpe
             vec![ids[&c.name]]
         } else {
             let mut chain = vec![ids[&c.name]];
-            chain.extend(ancestors_of(&c.superclass, sidecar, &ids, &c.name)?);
+            chain.extend(ancestors_of(&c.superclass, sidecar, &ids, &c.name, &mut vec![
+                c.name.as_str(),
+            ])?);
             chain
         };
         // A class whose chain reaches `Exception` needs the registrar that
@@ -342,6 +360,14 @@ fn class_specs(sidecar: &Sidecar) -> CResult<(Vec<crate::clif::classes::ClassSpe
     Ok((specs, ids))
 }
 
+/// `file:line: ` for a class row that carries a location, empty otherwise.
+fn written_at(c: &super::sidecar::Class) -> String {
+    match c.file.is_empty() {
+        true => String::new(),
+        false => format!("{}:{}: ", c.file, c.line),
+    }
+}
+
 /// Whether a linearized chain reaches `Exception`, which is what makes a
 /// class exception-backed.
 fn chain_is_exception(ancestors: &[u32]) -> bool {
@@ -360,12 +386,22 @@ fn builtin_exception(name: &str) -> Option<zeo_abi::ClassId> {
 
 /// The linearized chain of `name`, which is another sidecar class, a
 /// builtin exception, or `Object`.
-fn ancestors_of(
-    name: &str,
-    sidecar: &Sidecar,
+fn ancestors_of<'a>(
+    name: &'a str,
+    sidecar: &'a Sidecar,
     ids: &ClassIds,
     of: &str,
+    seen: &mut Vec<&'a str>,
 ) -> CResult<Vec<u32>> {
+    // A front end writes the superclass by name, so a chain that loops back
+    // on itself is a sidecar the backend has to reject rather than recurse
+    // into until the stack ends.
+    if seen.contains(&name) {
+        return Err(CodegenError::internal(format!(
+            "the superclass chain of `{name}` reaches `{name}` again"
+        )));
+    }
+    seen.push(name);
     if name == OBJECT_SUPERCLASS {
         return Ok(vec![
             zeo_abi::OBJECT_CLASS.0,
@@ -399,7 +435,7 @@ fn ancestors_of(
         )));
     }
     let mut chain = vec![id];
-    chain.extend(ancestors_of(&parent.superclass, sidecar, ids, name)?);
+    chain.extend(ancestors_of(&parent.superclass, sidecar, ids, name, seen)?);
     Ok(chain)
 }
 

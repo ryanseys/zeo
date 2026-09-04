@@ -106,6 +106,13 @@ pub struct Class {
     /// than writing the registration row itself.
     #[serde(default)]
     pub private_constants: Vec<String>,
+    /// Where the class was written, so an error about the ROW -- a name a
+    /// builtin already carries, a superclass chain that loops -- names the
+    /// line rather than only the class. An empty file is no location.
+    #[serde(default)]
+    pub file: String,
+    #[serde(default)]
+    pub line: u32,
 }
 
 /// One `def`: its dispatch row and its reflection row.
@@ -296,6 +303,7 @@ mod tests {
         assert_eq!(parsed.classes[0].superclass, OBJECT_SUPERCLASS);
         assert_eq!(parsed.classes[0].kind, CLASS_KINDS[0]);
         assert!(parsed.classes[0].ivars.is_empty());
+        assert!(parsed.classes[0].file.is_empty());
         assert_eq!(parsed.defs[0].class, "Foo");
         assert!(!parsed.defs[0].singleton);
         // The one number a front end must not guess.
