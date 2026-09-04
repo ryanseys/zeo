@@ -115,6 +115,17 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
     let mut reg_rows = reg_rows(&sidecar.reg, &ids)?;
     reg_rows.extend(own_method_rows(sidecar, &class_ids));
     reg_rows.extend(super_target_rows(sidecar, &ids, &class_ids)?);
+    reg_rows.extend(sidecar.classes.iter().flat_map(|c| {
+        c.private_constants.iter().map(|name| statics::RegRowSpec {
+            kind: zeo_abi::abi::REG_CONST_PRIVATE,
+            class: class_ids[&c.name],
+            a: name.clone(),
+            b: String::new(),
+            f: None,
+            ids: Vec::new(),
+            flag: 0,
+        })
+    }));
     let program = statics::DescProgram {
         warnings: sidecar.warnings.clone(),
         load_path: sidecar.load_path.clone(),

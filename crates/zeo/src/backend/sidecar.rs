@@ -93,6 +93,11 @@ pub struct Class {
     /// The instance variables the class declares, in slot order.
     #[serde(default)]
     pub ivars: Vec<String>,
+    /// The constants the body marked `private_constant`. The owner is an
+    /// id the backend assigns, so the front end names them here rather
+    /// than writing the registration row itself.
+    #[serde(default)]
+    pub private_constants: Vec<String>,
 }
 
 /// One `def`: its dispatch row and its reflection row.
