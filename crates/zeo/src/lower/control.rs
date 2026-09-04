@@ -360,6 +360,19 @@ pub(crate) fn try_lower(
         if defined.value().as_class_variable_read_node().is_some() && hir.cvar_is_toplevel() {
             return Ok(Some(hir.push(HirNode::NilLit)));
         }
+        // `defined?` never EVALUATES its operand, so only the operand's
+        // KIND matters -- and two kinds lose theirs in the lowering: an
+        // interpolated symbol becomes `str.to_sym` (a call, which reads
+        // as "method") and `__ENCODING__` becomes an `Encoding::` read
+        // (which reads as "constant"). Ruby answers "expression" for
+        // both, and only the prism node still knows.
+        if defined.value().as_interpolated_symbol_node().is_some()
+            || defined.value().as_source_encoding_node().is_some()
+        {
+            return Ok(Some(hir.push(HirNode::StringLit(vec![
+                crate::hir::StrPart::Lit("expression".to_string()),
+            ]))));
+        }
         let value = lower_node(result, hir, &defined.value())?;
         return Ok(Some(hir.push(HirNode::Defined(value))));
     }

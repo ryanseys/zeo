@@ -645,6 +645,9 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
         HirNode::BoolLit(true) => Some("true"),
         HirNode::BoolLit(false) => Some("false"),
         HirNode::IntegerLit(_)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        | HirNode::ImaginaryLit(_)
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::StringLit(_)
