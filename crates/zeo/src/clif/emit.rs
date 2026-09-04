@@ -1210,6 +1210,7 @@ fn draft_sidecar(
         syms: em.syms_names().to_vec(),
         callsites: em.callsites.iter().map(|&c| crate::backend::sidecar::CallerClass::Id(c)).collect(),
         toplevel: super::names::TOPLEVEL.to_string(),
+        data_section: None,
         defs,
         classes: Vec::new(),
         first_user_class: n_classes,

@@ -17,6 +17,7 @@ mod mkmf_probes;
 mod no_c;
 mod ze0_clif;
 mod ze0_builtins;
+mod ze0_data_section;
 mod ze0_hygiene;
 mod ze0_refused;
 

@@ -151,7 +151,10 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
         n_load_path_search: sidecar.n_load_path_search,
         embedded_sources: Vec::new(),
         class_tables: class_tables(&sidecar.class_tables)?,
-        data_section: None,
+        data_section: sidecar
+            .data_section
+            .as_ref()
+            .map(|d| (d.path.clone(), d.offset)),
         coverage: Vec::new(),
     };
     let desc = statics::define_desc(

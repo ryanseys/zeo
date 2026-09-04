@@ -84,6 +84,11 @@ pub struct Sidecar {
     /// at the require's position, is what reveals them.
     #[serde(default)]
     pub features: Vec<String>,
+    /// The `__END__` section of the main file, which `DATA` reads: the
+    /// absolute path to reopen and the offset the bytes start at. The
+    /// front end owns both, because only it read the source.
+    #[serde(default)]
+    pub data_section: Option<DataSection>,
     /// The lazily-run feature units. A `require` the front end could not
     /// splice -- one an `if` guards, one inside a method, one whose name
     /// is computed -- keeps its call, and the run-time require looks the
@@ -233,6 +238,13 @@ pub const BOOT_ROWS: &str = "@boot";
 /// all, leaving the constant a `NameError` after a require that worked.
 /// Each is still registered CONCEALED, so the constant appears only when
 /// a require actually names it.
+/// Where `DATA` reads from: [`Sidecar::data_section`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataSection {
+    pub path: String,
+    pub offset: u64,
+}
+
 pub const ALL_FEATURES: &str = "@all";
 
 fn default_reg() -> Vec<RegEntry> {
@@ -281,6 +293,7 @@ impl Default for Sidecar {
             syms: Vec::new(),
             callsites: Vec::new(),
             toplevel: default_toplevel(),
+            data_section: None,
             defs: Vec::new(),
             classes: Vec::new(),
             first_user_class: 0,
