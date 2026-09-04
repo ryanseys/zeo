@@ -844,9 +844,18 @@ fn feature_rows(features: &[String]) -> CResult<Vec<statics::RegRowSpec>> {
                  (a front end can only require what the runtime already has)"
             )));
         }
-        let gated: Vec<_> = zeo_abi::BUILTINS
+        let named_classes: Vec<_> = zeo_abi::BUILTINS
             .iter()
             .filter(|b| b.feature == Some(canonical))
+            .collect();
+        // A feature that gates NO class -- `set`, `time`, `io/console`,
+        // whose constants are always-on here -- is a require the runtime
+        // answers on its own, so there is nothing to register.
+        if named_classes.is_empty() {
+            continue;
+        }
+        let gated: Vec<_> = named_classes
+            .into_iter()
             .filter(|b| crate::lower::features::build_carries_class(b.id))
             .collect();
         if gated.is_empty() {
