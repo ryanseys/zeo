@@ -114,6 +114,7 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
     let defs = def_rows(sidecar, &ids, &class_ids)?;
     let mut reg_rows = reg_rows(&sidecar.reg, &ids)?;
     reg_rows.extend(own_method_rows(sidecar, &class_ids));
+    reg_rows.extend(super_target_rows(sidecar, &ids, &class_ids)?);
     let program = statics::DescProgram {
         warnings: sidecar.warnings.clone(),
         load_path: sidecar.load_path.clone(),
@@ -569,6 +570,53 @@ fn own_method_rows(sidecar: &Sidecar, class_ids: &ClassIds) -> Vec<statics::RegR
             flag: 0,
         })
         .collect()
+}
+
+/// A class's own contribution to a `super` walk, one row per instance
+/// method it writes. A CLIF trampoline is a receiver-generic `ValueFn`, so
+/// the ordinary trampoline serves as the target -- which is why the
+/// sidecar needs no field for this and the backend derives the whole
+/// ladder, ids included, from the `def`s.
+///
+/// Every own method gets a row, whether or not anything calls `super`
+/// through it: the walk needs the ladder, not the rungs someone stands on.
+fn super_target_rows(
+    sidecar: &Sidecar,
+    in_file: &HashMap<String, FuncId>,
+    class_ids: &ClassIds,
+) -> CResult<Vec<statics::RegRowSpec>> {
+    let mut rows = Vec::new();
+    for def in &sidecar.defs {
+        if def.singleton || def.class.is_empty() {
+            continue;
+        }
+        // A module's methods ride the VALUE channel, whose `super` walk
+        // resolves by name rather than through a per-class row.
+        let is_module = sidecar
+            .classes
+            .iter()
+            .find(|c| c.name == def.class)
+            .is_some_and(|c| c.kind == CLASS_KINDS[1]);
+        if is_module {
+            continue;
+        }
+        let f = *in_file.get(&def.tramp).ok_or_else(|| {
+            CodegenError::internal(format!(
+                "the sidecar's `{}` names the trampoline `{}`, which the text does not define",
+                def.name, def.tramp
+            ))
+        })?;
+        rows.push(statics::RegRowSpec {
+            kind: zeo_abi::abi::REG_SUPER_TARGET_VALUE,
+            class: class_ids[&def.class],
+            a: def.name.clone(),
+            b: String::new(),
+            f: Some(f),
+            ids: Vec::new(),
+            flag: 0,
+        });
+    }
+    Ok(rows)
 }
 
 /// The registration rows the sidecar names, `@boot` expanded to the rows
