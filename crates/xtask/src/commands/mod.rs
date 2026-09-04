@@ -8,6 +8,7 @@ pub mod dist;
 pub mod gem;
 pub mod linux;
 pub mod promote_gap;
+pub mod stage2;
 pub mod stage_crate;
 pub mod test_gem;
 pub mod timings;
