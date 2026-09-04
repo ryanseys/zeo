@@ -111,7 +111,8 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
     statics::define_dyn_sites(&mut em)?;
     statics::define_proc_shapes(&mut em)?;
     statics::define_reopen_flags(&mut em)?;
-    let defs = def_rows(sidecar, &ids, &class_ids)?;
+    let mut defs = def_rows(sidecar, &ids, &class_ids)?;
+    defs.cm.extend(inherited_class_methods(sidecar, &class_ids, &ids)?);
     let mut reg_rows = reg_rows(&sidecar.reg, &ids)?;
     reg_rows.extend(own_method_rows(sidecar, &class_ids));
     reg_rows.extend(super_target_rows(sidecar, &ids, &class_ids)?);
@@ -685,6 +686,70 @@ struct DefRows {
 /// and `Method#owner` truth. The front end never says this: it follows
 /// from which class each `def` names, so the backend derives it rather
 /// than asking for a row whose `class` would have to be an id.
+/// Every inherited class method, copied onto the subclass that inherits
+/// it.
+///
+/// The runtime's class-method table walks no ancestry: a hit there is
+/// always that exact class's own entry, so the flattening is the front
+/// end's job (`analyze::mro::materialize_class_methods` is where the Rust
+/// one does it). Without the copies `class Kid < Base` answered
+/// NoMethodError for `Base`'s `def self.tag`.
+///
+/// A nearer definer shadows a farther one, and the copy carries the
+/// SUBCLASS's id, which is what keeps a class-level `@x` on the class
+/// that reads it.
+fn inherited_class_methods(
+    sidecar: &Sidecar,
+    class_ids: &ClassIds,
+    in_file: &HashMap<String, FuncId>,
+) -> CResult<Vec<statics::CmRowSpec>> {
+    let mut supers: HashMap<&str, &str> = HashMap::new();
+    let mut own: HashMap<&str, Vec<&super::sidecar::Def>> = HashMap::new();
+    for c in &sidecar.classes {
+        supers.insert(c.name.as_str(), c.superclass.as_str());
+    }
+    for def in sidecar.defs.iter().filter(|d| d.singleton && !d.class.is_empty()) {
+        own.entry(def.class.as_str()).or_default().push(def);
+    }
+    let mut rows = Vec::new();
+    for c in &sidecar.classes {
+        // The chain, nearest first. `class_specs` has already refused one
+        // that loops, so this walk ends; the guard is belt and braces.
+        let mut chain = vec![c.name.as_str()];
+        while let Some(&up) = supers.get(chain[chain.len() - 1]) {
+            if chain.contains(&up) {
+                break;
+            }
+            chain.push(up);
+        }
+        for (at, ancestor) in chain.iter().enumerate().skip(1) {
+            for def in own.get(ancestor).into_iter().flatten() {
+                let shadowed = chain[..at].iter().any(|nearer| {
+                    own.get(nearer)
+                        .is_some_and(|ds| ds.iter().any(|d| d.name == def.name))
+                });
+                if shadowed {
+                    continue;
+                }
+                let f = *in_file.get(&def.tramp).ok_or_else(|| {
+                    CodegenError::internal(format!(
+                        "the sidecar's `{}` names the trampoline `{}`, which the text does not \
+                         define",
+                        def.name, def.tramp
+                    ))
+                })?;
+                rows.push(statics::CmRowSpec {
+                    class: class_ids[&c.name],
+                    box_id: 0,
+                    name: def.name.clone(),
+                    f,
+                });
+            }
+        }
+    }
+    Ok(rows)
+}
+
 fn own_method_rows(sidecar: &Sidecar, class_ids: &ClassIds) -> Vec<statics::RegRowSpec> {
     let mut rows: Vec<(u32, u8, String)> = sidecar
         .defs
