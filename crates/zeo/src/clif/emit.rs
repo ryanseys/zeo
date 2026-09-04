@@ -1220,8 +1220,10 @@ fn draft_sidecar(
         warnings: program.warnings.clone(),
         eval_install,
         // The Rust emitter registers a gated builtin itself, from the ids
-        // it holds, so its own sidecar names no feature.
+        // it holds, so its own sidecar names no feature -- and it writes
+        // its own unit table for the same reason.
         features: Vec::new(),
+        units: Vec::new(),
     })
 }
 

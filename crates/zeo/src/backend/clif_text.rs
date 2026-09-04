@@ -24,7 +24,8 @@ use cranelift_codegen::ir::{self, ExternalName, GlobalValueData, UserExternalNam
 use cranelift_module::{DataId, FuncId, Linkage, Module};
 
 use super::sidecar::{
-    ALL_TABLES, BASIC_OBJECT_SUPERCLASS, BOOT_ROWS, CLASS_KINDS, CallerClass, OBJECT_SUPERCLASS,
+    ALL_FEATURES, ALL_TABLES, BASIC_OBJECT_SUPERCLASS, BOOT_ROWS, CLASS_KINDS, CallerClass,
+    OBJECT_SUPERCLASS,
     PARAM_KINDS, RegEntry, RegRow, SEED_TABLES, Sidecar,
 };
 use crate::clif::module::Emitter;
@@ -128,6 +129,7 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
             flag: 0,
         })
     }));
+    let unit_rows = unit_rows(&sidecar.units, &ids)?;
     let program = statics::DescProgram {
         warnings: sidecar.warnings.clone(),
         load_path: sidecar.load_path.clone(),
@@ -154,13 +156,34 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
                 foreign: &[],
                 meta: &defs.meta,
                 redef_metas: &[],
-                unit: &[],
+                unit: &unit_rows,
             },
         },
     )?;
     emit::define_main(&mut em, desc)?;
     statics::define_rodata(&mut em)?;
     emit::finish_object(em)
+}
+
+/// The lazily-run feature units, resolved to the functions the text
+/// defines. The runtime keys them by spelling with any `.rb` stripped, so
+/// several rows may name one function.
+fn unit_rows(
+    units: &[super::sidecar::Unit],
+    in_file: &HashMap<String, FuncId>,
+) -> CResult<Vec<(String, FuncId)>> {
+    units
+        .iter()
+        .map(|unit| {
+            let f = *in_file.get(&unit.symbol).ok_or_else(|| {
+                CodegenError::internal(format!(
+                    "the unit `{}` names `{}`, which the text does not define",
+                    unit.feature, unit.symbol
+                ))
+            })?;
+            Ok((unit.feature.clone(), f))
+        })
+        .collect()
 }
 
 /// The `%name` a function was written under.
@@ -788,7 +811,17 @@ fn own_method_rows(sidecar: &Sidecar, class_ids: &ClassIds) -> Vec<statics::RegR
 /// side that can write the rows.
 fn feature_rows(features: &[String]) -> CResult<Vec<statics::RegRowSpec>> {
     let mut rows = Vec::new();
-    for feature in features {
+    let named: Vec<String> = match features.iter().any(|f| f == ALL_FEATURES) {
+        true => zeo_abi::BUILTINS
+            .iter()
+            .filter_map(|b| b.feature)
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        false => features.to_vec(),
+    };
+    for feature in &named {
         let canonical = zeo_abi::canonical_ext_feature(feature);
         if !zeo_abi::is_builtin_feature(canonical) {
             return Err(CodegenError::internal(format!(

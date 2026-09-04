@@ -84,6 +84,25 @@ pub struct Sidecar {
     /// at the require's position, is what reveals them.
     #[serde(default)]
     pub features: Vec<String>,
+    /// The lazily-run feature units. A `require` the front end could not
+    /// splice -- one an `if` guards, one inside a method, one whose name
+    /// is computed -- keeps its call, and the run-time require looks the
+    /// spelling up here and runs the function it names.
+    ///
+    /// One function answers to several spellings (the name as written and
+    /// the absolute path `require_relative` expands to), so a row is one
+    /// spelling rather than a set.
+    #[serde(default)]
+    pub units: Vec<Unit>,
+}
+
+/// One spelling a `require` may use, and the function that runs the file
+/// it names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Unit {
+    pub feature: String,
+    /// A function the text defines, `UnitFn`-shaped: `(out) -> status`.
+    pub symbol: String,
 }
 
 /// One class or module the program defines. The superclass and the
@@ -200,6 +219,15 @@ pub const ALL_TABLES: &str = "@all";
 /// The `@boot` spelling for [`Sidecar::reg`].
 pub const BOOT_ROWS: &str = "@boot";
 
+/// The `@all` spelling for [`Sidecar::features`]: every gated feature
+/// this build carries. What a front end names where a `require` builds
+/// its feature string at RUN time -- the name is not knowable here, and
+/// a gated builtin nothing required literally would register no class at
+/// all, leaving the constant a `NameError` after a require that worked.
+/// Each is still registered CONCEALED, so the constant appears only when
+/// a require actually names it.
+pub const ALL_FEATURES: &str = "@all";
+
 fn default_reg() -> Vec<RegEntry> {
     vec![RegEntry::Boot(BOOT_ROWS.to_string())]
 }
@@ -256,6 +284,7 @@ impl Default for Sidecar {
             warnings: Vec::new(),
             eval_install: false,
             features: Vec::new(),
+            units: Vec::new(),
         }
     }
 }
