@@ -1139,10 +1139,19 @@ fn walk_class_body(
             }
             // The class-method half. See `HirNode::ClassMethodVisibility`.
             HirNode::ClassMethodVisibility { name, visibility } => {
-                // Same unit rule as the instance half. `Protected` has no
-                // runtime class-method application path and no corpus case,
-                // so it keeps the static row even in a unit.
-                if compiler.unit_walk && !matches!(visibility, crate::hir::Visibility::Protected) {
+                // Same OWN and unit rules as the instance half: a re-mark of
+                // a class method an EARLIER body defined is positional, so
+                // `Vault.combination` between a `private_class_method` and a
+                // reopen's `public_class_method` still raises. `Protected`
+                // has no runtime class-method application path and no corpus
+                // case, so it keeps the static row either way.
+                let own = compiler.classes[class_id.0 as usize]
+                    .own_class_methods
+                    .iter()
+                    .any(|&s| compiler.scope(s).name == *name);
+                if (own || compiler.unit_walk)
+                    && !matches!(visibility, crate::hir::Visibility::Protected)
+                {
                     compiler.runtime_patches.insert(name.clone());
                     compiler.class_body_sites[site_idx].stmts.push(stmt);
                 } else {
