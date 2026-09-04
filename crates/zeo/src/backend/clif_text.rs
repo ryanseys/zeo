@@ -307,6 +307,15 @@ fn class_specs(sidecar: &Sidecar) -> CResult<(Vec<crate::clif::classes::ClassSpe
             chain.extend(ancestors_of(&c.superclass, sidecar, &ids, &c.name)?);
             chain
         };
+        // A class whose chain reaches `Exception` needs the registrar that
+        // installs the native `RubyException` and its typed accessors, so
+        // the class's own `def`s layer over them as deltas. The sidecar
+        // does not spell this: it follows from the superclass the front
+        // end named, exactly as `is_exception_backed` derives it.
+        let kind = match chain_is_exception(&ancestors) {
+            true => zeo_abi::abi::CLASS_EXCEPTION,
+            false => kind,
+        };
         specs.push(crate::clif::classes::ClassSpec {
             id: ids[&c.name],
             name: c.name.clone(),
@@ -320,9 +329,24 @@ fn class_specs(sidecar: &Sidecar) -> CResult<(Vec<crate::clif::classes::ClassSpe
     Ok((specs, ids))
 }
 
-/// The linearized chain of `name`, which is another sidecar class or
-/// `Object`. A builtin superclass is refused: its subclass is a different
-/// native shape, and the emitter refuses one too.
+/// Whether a linearized chain reaches `Exception`, which is what makes a
+/// class exception-backed.
+fn chain_is_exception(ancestors: &[u32]) -> bool {
+    ancestors.contains(&zeo_abi::EXCEPTION_CLASS.0)
+}
+
+/// The builtin exception `name` names, by id. Every OTHER builtin stays
+/// unavailable as a superclass: `class Foo < String` is a different native
+/// shape, and the Rust emitter refuses one too.
+fn builtin_exception(name: &str) -> Option<zeo_abi::ClassId> {
+    zeo_abi::EXCEPTION_CLASSES
+        .iter()
+        .find(|e| e.name == name && !e.is_module)
+        .map(|e| e.id)
+}
+
+/// The linearized chain of `name`, which is another sidecar class, a
+/// builtin exception, or `Object`.
 fn ancestors_of(
     name: &str,
     sidecar: &Sidecar,
@@ -336,10 +360,19 @@ fn ancestors_of(
             zeo_abi::BASIC_OBJECT_CLASS.0,
         ]);
     }
+    // A builtin exception's chain is the ABI's own, so the gates that pick
+    // each native default method decide the same way here as they do for
+    // the built-in tree. Its ids are constants, not this program's.
+    if !ids.contains_key(name) {
+        if let Some(id) = builtin_exception(name) {
+            return Ok(zeo_abi::declared_ancestors(id).iter().map(|c| c.0).collect());
+        }
+    }
     let Some(&id) = ids.get(name) else {
         return Err(CodegenError::internal(format!(
-            "`{of}` names the superclass `{name}`, which is neither a class in this sidecar nor \
-             `{OBJECT_SUPERCLASS}` (a builtin superclass is a different native shape)"
+            "`{of}` names the superclass `{name}`, which is not a class in this sidecar, a \
+             builtin exception, or `{OBJECT_SUPERCLASS}` (every other builtin superclass is a \
+             different native shape)"
         )));
     };
     let parent = sidecar

@@ -215,3 +215,48 @@ fn a_program_the_sidecar_cannot_describe_is_refused_by_name() {
     );
     assert!(!dir.join("klass.zeodata").exists());
 }
+
+/// A superclass only the backend can judge: it owns the builtin ids, so a
+/// front end names its superclass and the answer arrives here. An
+/// exception is registered; every other builtin is a different native
+/// shape and is refused with the class named.
+#[test]
+fn a_builtin_superclass_is_an_exception_or_a_refusal() {
+    let dir = scratch("superclass");
+    // The empty top level: `<main>` answers nil with no statement of its
+    // own, so the class row is the only thing the backend has to resolve.
+    const EMPTY: &str = "\
+function %zeo_toplevel(i64) -> i32 system_v {
+block0(v0: i64):
+    v1 = iconst.i64 0
+    store notrap aligned v1, v0
+    store notrap aligned v1, v0+8
+    store notrap aligned v1, v0+16
+    v2 = iconst.i32 0
+    return v2
+}
+";
+    let sidecar = |superclass: &str| {
+        format!(
+            r#"{{"abi_version":1,"toplevel":"zeo_toplevel","classes":[{{"name":"Boom","superclass":"{superclass}","kind":"class","ivars":[]}}]}}"#
+        )
+    };
+    for (superclass, ok) in [("StandardError", true), ("String", false)] {
+        let clif = dir.join(format!("{superclass}.clif"));
+        let data = dir.join(format!("{superclass}.zeodata"));
+        std::fs::write(&clif, EMPTY).expect("write");
+        std::fs::write(&data, sidecar(superclass)).expect("write");
+        let out = Command::new(zeo())
+            .arg("backend")
+            .arg(&clif)
+            .arg("-o")
+            .arg(dir.join(superclass))
+            .output()
+            .expect("zeo runs");
+        assert_eq!(out.status.success(), ok, "{superclass}");
+        if !ok {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(stderr.contains("`Boom` names the superclass `String`"), "{stderr}");
+        }
+    }
+}
