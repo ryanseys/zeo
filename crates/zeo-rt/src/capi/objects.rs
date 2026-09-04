@@ -980,14 +980,30 @@ pub unsafe extern "C" fn zeo_rt_const_get_on_value(
             status_out(crate::dispatch::const_miss(*cid, name), out)
         }
         None => {
+            // The same two steps `zeo_rt_const_get_scoped` takes on a miss:
+            // an `autoload` this scope still owes runs here, and a name it
+            // owed and could not load raises the `LoadError` the read is
+            // what asks for -- not a NameError.
+            match autoload_retry(&[cid.0], name) {
+                Ok(true) => {
+                    if let Some(v) = crate::constants::const_get_scoped(cid.0, name) {
+                        super::leakcheck::created(&v);
+                        unsafe { out.write(v) };
+                        return STATUS_OK;
+                    }
+                }
+                Ok(false) => {}
+                Err(sig) => {
+                    crate::signal::set_pending(sig);
+                    return STATUS_SIGNAL;
+                }
+            }
             let qualified = unsafe { super::str_slice(qualified, qualified_len) };
-            crate::signal::set_pending(Signal::Raise(crate::dispatch::stamp_backtrace(
-                crate::dispatch::make_name_error(
-                    format!("uninitialized constant {qualified}"),
-                    name,
-                    RubyValue::Class(*cid),
-                ),
-            )));
+            crate::signal::set_pending(crate::builtins::rmodule::const_miss_signal(
+                *cid,
+                name,
+                &format!("uninitialized constant {qualified}"),
+            ));
             STATUS_SIGNAL
         }
     }

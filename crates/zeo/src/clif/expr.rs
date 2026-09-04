@@ -1019,6 +1019,11 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
                             && !c.class_method_is_private(cid, "new")
                     })
             {
+                // The fold below skips `const_read`, so the class's own
+                // `autoload` would never run: `Foo.new` READS `Foo`, and a
+                // read is what runs the target. The touch `class_value_of`
+                // would have emitted goes here instead.
+                super::consts::autoload_touch(fx, cid);
                 let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
                 let blk = match block {
                     Some(b) => super::blocks::BlockChannel::Literal(b),
