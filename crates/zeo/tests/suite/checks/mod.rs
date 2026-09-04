@@ -17,6 +17,7 @@ mod mkmf_probes;
 mod no_c;
 mod ze0_clif;
 mod ze0_hygiene;
+mod ze0_refused;
 
 // The corpus file format's and the scrubber's own unit tests. Both modules
 // live under `corpus/`, whose binary replaces the libtest harness with
