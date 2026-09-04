@@ -76,6 +76,14 @@ pub struct Sidecar {
     /// `zeo_eval_install`.
     #[serde(default)]
     pub eval_install: bool,
+    /// The require-gated builtin features the program loads (`"prism"`,
+    /// `"json"`). Each names classes whose ids only this side knows, so
+    /// the front end names the FEATURE and the backend registers what it
+    /// gates -- concealed, because the constant does not exist until the
+    /// `require` runs. `zeo_rt_feature_loaded`, which the front end calls
+    /// at the require's position, is what reveals them.
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 /// One class or module the program defines. The superclass and the
@@ -218,6 +226,7 @@ impl Default for Sidecar {
             n_load_path_search: 0,
             warnings: Vec::new(),
             eval_install: false,
+            features: Vec::new(),
         }
     }
 }

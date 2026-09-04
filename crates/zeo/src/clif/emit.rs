@@ -1219,6 +1219,9 @@ fn draft_sidecar(
         n_load_path_search: program.n_load_path_search,
         warnings: program.warnings.clone(),
         eval_install,
+        // The Rust emitter registers a gated builtin itself, from the ids
+        // it holds, so its own sidecar names no feature.
+        features: Vec::new(),
     })
 }
 

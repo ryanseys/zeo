@@ -115,6 +115,7 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
     let mut reg_rows = reg_rows(&sidecar.reg, &ids)?;
     reg_rows.extend(own_method_rows(sidecar, &class_ids));
     reg_rows.extend(super_target_rows(sidecar, &ids, &class_ids)?);
+    reg_rows.extend(feature_rows(&sidecar.features)?);
     reg_rows.extend(sidecar.classes.iter().flat_map(|c| {
         c.private_constants.iter().map(|name| statics::RegRowSpec {
             kind: zeo_abi::abi::REG_CONST_PRIVATE,
@@ -581,6 +582,59 @@ fn own_method_rows(sidecar: &Sidecar, class_ids: &ClassIds) -> Vec<statics::RegR
             flag: 0,
         })
         .collect()
+}
+
+/// The registration a require-gated builtin feature needs: its classes
+/// register per program, because `register_builtins` covers only the
+/// always-on ones, and each starts CONCEALED -- the constant does not
+/// exist until the `require` runs, which is a position in the program
+/// rather than a whole-program fact.
+///
+/// A front end names the feature and never an id, so this is the only
+/// side that can write the rows.
+fn feature_rows(features: &[String]) -> CResult<Vec<statics::RegRowSpec>> {
+    let mut rows = Vec::new();
+    for feature in features {
+        let canonical = zeo_abi::canonical_ext_feature(feature);
+        if !zeo_abi::is_builtin_feature(canonical) {
+            return Err(CodegenError::internal(format!(
+                "the sidecar requires `{feature}`, which this zeo does not carry as a builtin \
+                 (a front end can only require what the runtime already has)"
+            )));
+        }
+        let gated: Vec<_> = zeo_abi::BUILTINS
+            .iter()
+            .filter(|b| b.feature == Some(canonical))
+            .filter(|b| crate::lower::features::build_carries_class(b.id))
+            .collect();
+        if gated.is_empty() {
+            return Err(CodegenError::internal(format!(
+                "this build does not carry `{feature}`"
+            )));
+        }
+        for b in gated {
+            let ancestors = zeo_abi::declared_ancestors(b.id).iter().map(|c| c.0).collect();
+            rows.push(statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_REGISTER_BUILTIN,
+                class: b.id.0,
+                a: b.name.to_string(),
+                b: String::new(),
+                f: None,
+                ids: ancestors,
+                flag: u8::from(b.is_module),
+            });
+            rows.push(statics::RegRowSpec {
+                kind: zeo_abi::abi::REG_CONCEAL_CLASS,
+                class: b.id.0,
+                a: String::new(),
+                b: String::new(),
+                f: None,
+                ids: Vec::new(),
+                flag: 0,
+            });
+        }
+    }
+    Ok(rows)
 }
 
 /// A class's own contribution to a `super` walk, one row per instance
