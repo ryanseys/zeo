@@ -208,8 +208,13 @@ fn default_class_kind() -> String {
 }
 
 /// The `superclass` spelling that means the root of the ordinary
-/// hierarchy -- the only non-sidecar superclass a class may name.
+/// hierarchy.
 pub const OBJECT_SUPERCLASS: &str = "Object";
+
+/// The root BELOW that root: a class naming it inherits neither
+/// `Object`'s methods nor `Kernel`'s, which is the whole point of
+/// writing it. The only other non-sidecar superclass a class may name.
+pub const BASIC_OBJECT_SUPERCLASS: &str = "BasicObject";
 
 /// [`Class::kind`] spellings.
 pub const CLASS_KINDS: &[&str] = &["class", "module"];

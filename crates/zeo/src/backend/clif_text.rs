@@ -24,8 +24,8 @@ use cranelift_codegen::ir::{self, ExternalName, GlobalValueData, UserExternalNam
 use cranelift_module::{DataId, FuncId, Linkage, Module};
 
 use super::sidecar::{
-    ALL_TABLES, BOOT_ROWS, CLASS_KINDS, OBJECT_SUPERCLASS, PARAM_KINDS, RegEntry, RegRow,
-    SEED_TABLES, Sidecar,
+    ALL_TABLES, BASIC_OBJECT_SUPERCLASS, BOOT_ROWS, CLASS_KINDS, OBJECT_SUPERCLASS, PARAM_KINDS,
+    RegEntry, RegRow, SEED_TABLES, Sidecar,
 };
 use crate::clif::module::Emitter;
 use crate::clif::{capi_names, emit, names, statics};
@@ -409,6 +409,9 @@ fn ancestors_of<'a>(
             zeo_abi::BASIC_OBJECT_CLASS.0,
         ]);
     }
+    if name == BASIC_OBJECT_SUPERCLASS {
+        return Ok(vec![zeo_abi::BASIC_OBJECT_CLASS.0]);
+    }
     // A builtin exception's chain is the ABI's own, so the gates that pick
     // each native default method decide the same way here as they do for
     // the built-in tree. Its ids are constants, not this program's.
@@ -420,8 +423,8 @@ fn ancestors_of<'a>(
     let Some(&id) = ids.get(name) else {
         return Err(CodegenError::internal(format!(
             "`{of}` names the superclass `{name}`, which is not a class in this sidecar, a \
-             builtin exception, or `{OBJECT_SUPERCLASS}` (every other builtin superclass is a \
-             different native shape)"
+             builtin exception, `{OBJECT_SUPERCLASS}` or `{BASIC_OBJECT_SUPERCLASS}` (every \
+             other builtin superclass is a different native shape)"
         )));
     };
     let parent = sidecar
