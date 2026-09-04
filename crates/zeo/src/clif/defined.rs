@@ -244,8 +244,14 @@ pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult
     }
     // `defined?(a_call)`: evaluate the receiver (its raise SWALLOWED to
     // nil -- CRuby's catch entry over the whole expression) and probe it.
-    if let HirNode::Call { receiver, name, .. } = &fx.an.compiler.hir[inner] {
+    if let HirNode::Call {
+        receiver, name, args, ..
+    } = &fx.an.compiler.hir[inner]
+    {
         let (receiver, name) = (*receiver, name.clone());
+        // CRuby answers "method" only when the call resolves AND every
+        // ARGUMENT is itself defined, so `defined?(puts(Missing))` is nil.
+        let arg_ids: Vec<NodeId> = args.iter().map(super::super::hir::ArrayElem::node_id).collect();
         let ss = fx.temp_slot();
         let dst = fx.slot_addr(ss, 0);
         let hit_ss = fx.temp_slot();
@@ -253,6 +259,27 @@ pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult
         let sym = fx.sym_id(&name);
         let merge = fx.b.create_block();
         let check = fx.b.create_block();
+        for a in arg_ids {
+            let op = lower_defined(fx, site, a)?;
+            let p = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, p, op.tag());
+            }
+            let fl = cranelift_codegen::ir::MemFlagsData::trusted();
+            let tag = fx.b.ins().load(types::I8, fl, p, TAG_OFFSET as i32);
+            let known = fx.b.ins().icmp_imm_u(
+                cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+                tag,
+                i64::from(ValueTag::Nil as u8),
+            );
+            let next = fx.b.create_block();
+            let undefined = fx.b.create_block();
+            fx.b.ins().brif(known, next, &[], undefined, &[]);
+            fx.b.switch_to_block(undefined);
+            ownership::write_move_into(fx, &Operand::Nil, dst);
+            fx.b.ins().jump(merge, &[]);
+            fx.b.switch_to_block(next);
+        }
         match receiver {
             None => {
                 let self_ptr = super::ivars::dyn_ivar_recv(fx);
