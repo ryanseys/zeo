@@ -29,9 +29,9 @@ pub struct Sidecar {
     /// The interned symbols, one per `zeo_syms` slot in slot order.
     #[serde(default)]
     pub syms: Vec<String>,
-    /// The caller class id of every `zeo_callsites` slot, in slot order.
+    /// The caller class of every `zeo_callsites` slot, in slot order.
     #[serde(default)]
-    pub callsites: Vec<u32>,
+    pub callsites: Vec<CallerClass>,
     /// The `<main>` body's symbol.
     #[serde(default = "default_toplevel")]
     pub toplevel: String,
@@ -113,6 +113,23 @@ pub struct Class {
     pub file: String,
     #[serde(default)]
     pub line: u32,
+}
+
+/// One `zeo_callsites` slot's caller class: the class whose body the site
+/// is written in, which is what ruby's visibility barrier compares an
+/// explicit receiver's method against.
+///
+/// The Rust emitter holds ids and writes one. A front end cannot -- an id
+/// is assigned at LINK time -- so it writes the NAME and the backend
+/// resolves it, the same trade `Class.superclass` already makes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CallerClass {
+    Id(u32),
+    /// A class this sidecar declares, `"Object"` for the top level,
+    /// `"Class"` or `"Module"` where `self` IS a class, or `""` for
+    /// ruby's `VM_CALL_FCALL`: a receiverless call, which asks nothing.
+    Named(String),
 }
 
 /// One `def`: its dispatch row and its reflection row.

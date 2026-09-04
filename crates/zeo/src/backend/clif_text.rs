@@ -24,8 +24,8 @@ use cranelift_codegen::ir::{self, ExternalName, GlobalValueData, UserExternalNam
 use cranelift_module::{DataId, FuncId, Linkage, Module};
 
 use super::sidecar::{
-    ALL_TABLES, BASIC_OBJECT_SUPERCLASS, BOOT_ROWS, CLASS_KINDS, OBJECT_SUPERCLASS, PARAM_KINDS,
-    RegEntry, RegRow, SEED_TABLES, Sidecar,
+    ALL_TABLES, BASIC_OBJECT_SUPERCLASS, BOOT_ROWS, CLASS_KINDS, CallerClass, OBJECT_SUPERCLASS,
+    PARAM_KINDS, RegEntry, RegRow, SEED_TABLES, Sidecar,
 };
 use crate::clif::module::Emitter;
 use crate::clif::{capi_names, emit, names, statics};
@@ -62,7 +62,6 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
     for sym in &sidecar.syms {
         em.syms.intern(sym);
     }
-    em.callsites = sidecar.callsites.clone();
 
     // Every function is declared before any is defined, so a call forward
     // in the file resolves like one backward.
@@ -87,6 +86,7 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
         declared.push((name, id, func));
     }
     let (class_specs, class_ids) = class_specs(sidecar)?;
+    em.callsites = caller_classes(&sidecar.callsites, &class_ids)?;
     let class_ids_data = define_class_ids(&mut em, sidecar, &class_ids)?;
     for (name, id, mut func) in declared {
         resolve_names(&mut em, &ids, class_ids_data, &name, &mut func)?;
@@ -492,6 +492,40 @@ fn ancestors_of<'a>(
     let mut chain = vec![id];
     chain.extend(ancestors_of(&parent.superclass, sidecar, ids, name, seen)?);
     Ok(chain)
+}
+
+/// Every call site's caller class, as an id. This is the class ruby's
+/// visibility barrier compares an explicit receiver's method against, and
+/// the ids are the ones `class_specs` just assigned.
+fn caller_classes(sites: &[CallerClass], ids: &ClassIds) -> CResult<Vec<u32>> {
+    sites
+        .iter()
+        .map(|site| match site {
+            CallerClass::Id(id) => Ok(*id),
+            // A receiverless call asks no visibility question at all --
+            // ruby's `VM_CALL_FCALL`, which the runtime spells the same way.
+            CallerClass::Named(name) if name.is_empty() => Ok(u32::MAX),
+            CallerClass::Named(name) => named_caller(name, ids),
+        })
+        .collect()
+}
+
+/// A caller class by name: one this program declares, or one of the three
+/// the language itself supplies. `Class` and `Module` are what a body whose
+/// `self` IS a class compares against, because a class object is no kind of
+/// the class whose instances a protected method belongs to.
+fn named_caller(name: &str, ids: &ClassIds) -> CResult<u32> {
+    if let Some(&id) = ids.get(name) {
+        return Ok(id);
+    }
+    match name {
+        OBJECT_SUPERCLASS => Ok(zeo_abi::OBJECT_CLASS.0),
+        "Class" => Ok(zeo_abi::CLASS_CLASS.0),
+        "Module" => Ok(zeo_abi::MODULE_CLASS.0),
+        _ => Err(CodegenError::internal(format!(
+            "a call site names `{name}` as its caller class, which is not a class in this sidecar,              `Object`, `Class` or `Module`"
+        ))),
+    }
 }
 
 /// The `zeo_class_ids` array: one `u32` per sidecar class, in the order the
