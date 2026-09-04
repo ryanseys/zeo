@@ -23,7 +23,10 @@ mod builtins;
 mod errno;
 pub mod ffi;
 
-pub use builtins::{BUILTINS, NOT_PAYLOAD_ROOTS, builtin_class, is_payload_root, payload_root_of};
+pub use builtins::{
+    BUILTINS, INSTANCELESS, NOT_PAYLOAD_ROOTS, builtin_class, is_instanceless, is_payload_root,
+    payload_root_of,
+};
 pub use errno::{ERRNO_ALIASES, ERRNO_CLASSES, ErrnoClass};
 
 /// Identifies a Ruby class at runtime AND at compile time -- the compiler

@@ -380,15 +380,7 @@ fn class_specs(sidecar: &Sidecar) -> CResult<(Vec<crate::clif::classes::ClassSpe
             ])?);
             chain
         };
-        // A class whose chain reaches `Exception` needs the registrar that
-        // installs the native `RubyException` and its typed accessors, so
-        // the class's own `def`s layer over them as deltas. The sidecar
-        // does not spell this: it follows from the superclass the front
-        // end named, exactly as `is_exception_backed` derives it.
-        let kind = match chain_is_exception(&ancestors) {
-            true => zeo_abi::abi::CLASS_EXCEPTION,
-            false => kind,
-        };
+        let kind = registrar_kind(kind, &ancestors);
         specs.push(crate::clif::classes::ClassSpec {
             id: ids[&c.name],
             name: c.name.clone(),
@@ -468,14 +460,51 @@ fn chain_is_exception(ancestors: &[u32]) -> bool {
     ancestors.contains(&zeo_abi::EXCEPTION_CLASS.0)
 }
 
-/// The builtin exception `name` names, by id. Every OTHER builtin stays
-/// unavailable as a superclass: `class Foo < String` is a different native
-/// shape, and the Rust emitter refuses one too.
-fn builtin_exception(name: &str) -> Option<zeo_abi::ClassId> {
-    zeo_abi::EXCEPTION_CLASSES
+/// The builtin CLASS `name` names, by id -- an exception, or any other
+/// builtin a program may subclass. A module is not one: `ancestors_of`
+/// rejects it where the superclass is written.
+fn builtin_superclass(name: &str) -> Option<zeo_abi::ClassId> {
+    let exception = zeo_abi::EXCEPTION_CLASSES
         .iter()
         .find(|e| e.name == name && !e.is_module)
-        .map(|e| e.id)
+        .map(|e| e.id);
+    exception.or_else(|| {
+        zeo_abi::BUILTINS
+            .iter()
+            .find(|b| b.name == name && !b.is_module)
+            .map(|b| b.id)
+    })
+}
+
+/// The registrar a class needs, read off the ancestors alone. The sidecar
+/// never spells it: it follows from the superclass the front end named,
+/// and the order is `Compiler`'s own chain of shape predicates.
+fn registrar_kind(kind: u8, ancestors: &[u32]) -> u8 {
+    if kind == zeo_abi::abi::CLASS_MODULE {
+        return kind;
+    }
+    if chain_is_exception(ancestors) {
+        return zeo_abi::abi::CLASS_EXCEPTION;
+    }
+    // The class itself is first; only what it INHERITS decides the shape.
+    let mut inherited = ancestors.iter().skip(1).map(|&a| zeo_abi::ClassId(a));
+    let reaches = |id| ancestors[1..].contains(&id);
+    if inherited.any(zeo_abi::is_payload_root) {
+        zeo_abi::abi::CLASS_VALUE_SUBCLASS
+    } else if reaches(zeo_abi::DATE_CLASS.0) || reaches(zeo_abi::PROC_CLASS.0) {
+        zeo_abi::abi::CLASS_RECV_HONOURING
+    } else if reaches(zeo_abi::WEAKMAP_CLASS.0) {
+        zeo_abi::abi::CLASS_WEAK_MAP
+    } else if reaches(zeo_abi::MODULE_CLASS.0) {
+        zeo_abi::abi::CLASS_MODULE_SUBCLASS
+    } else if ancestors[1..]
+        .iter()
+        .any(|&a| zeo_abi::is_instanceless(zeo_abi::ClassId(a)))
+    {
+        zeo_abi::abi::CLASS_IMMEDIATE
+    } else {
+        zeo_abi::abi::CLASS_PLAIN
+    }
 }
 
 /// The linearized chain of `name`, which is another sidecar class, a
@@ -510,7 +539,7 @@ fn ancestors_of<'a>(
     // each native default method decide the same way here as they do for
     // the built-in tree. Its ids are constants, not this program's.
     if !ids.contains_key(name) {
-        if let Some(id) = builtin_exception(name) {
+        if let Some(id) = builtin_superclass(name) {
             return Ok(zeo_abi::declared_ancestors(id).iter().map(|c| c.0).collect());
         }
     }

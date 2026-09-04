@@ -816,23 +816,9 @@ impl Compiler {
             return false;
         }
         // Superclass-chain walk, not `ancestors` -- see `superclass_chain`.
-        self.superclass_chain(cid).any(|a| {
-            matches!(
-                a,
-                INTEGER_CLASS
-                    | FLOAT_CLASS
-                    | SYMBOL_CLASS
-                    | NIL_CLASS
-                    | TRUE_CLASS
-                    | FALSE_CLASS
-                    | zeo_abi::BIGDECIMAL_CLASS
-                    | zeo_abi::METHOD_CLASS
-                    | zeo_abi::BINDING_CLASS
-                    | zeo_abi::ENCODING_CLASS
-                    | zeo_abi::RATIONAL_CLASS
-                    | zeo_abi::MATCH_DATA_CLASS
-            )
-        })
+        // The list is `zeo_abi::INSTANCELESS`, shared with the backend's own
+        // derivation of the same shape from a sidecar's ancestors.
+        self.superclass_chain(cid).any(zeo_abi::is_instanceless)
     }
 
     /// Every name `class` answers to, in MRO order -- the reading side of

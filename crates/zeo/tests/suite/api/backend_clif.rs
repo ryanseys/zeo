@@ -217,11 +217,12 @@ fn a_program_the_sidecar_cannot_describe_is_refused_by_name() {
 }
 
 /// A superclass only the backend can judge: it owns the builtin ids, so a
-/// front end names its superclass and the answer arrives here. An
-/// exception is registered; every other builtin is a different native
-/// shape and is refused with the class named.
+/// front end names its superclass and the answer arrives here. Any builtin
+/// CLASS is registered -- the registrar the shape needs follows from the
+/// ancestors -- and a builtin MODULE is refused with the name in the
+/// message, because a class cannot inherit one.
 #[test]
-fn a_builtin_superclass_is_an_exception_or_a_refusal() {
+fn a_builtin_superclass_is_a_class_or_a_refusal() {
     let dir = scratch("superclass");
     // The empty top level: `<main>` answers nil with no statement of its
     // own, so the class row is the only thing the backend has to resolve.
@@ -241,7 +242,12 @@ block0(v0: i64):
             r#"{{"abi_version":1,"toplevel":"zeo_toplevel","classes":[{{"name":"Boom","superclass":"{superclass}","kind":"class","ivars":[]}}]}}"#
         )
     };
-    for (superclass, ok) in [("StandardError", true), ("String", false)] {
+    for (superclass, ok) in [
+        ("StandardError", true),
+        ("String", true),
+        ("Integer", true),
+        ("Comparable", false),
+    ] {
         let clif = dir.join(format!("{superclass}.clif"));
         let data = dir.join(format!("{superclass}.zeodata"));
         std::fs::write(&clif, EMPTY).expect("write");
@@ -256,7 +262,10 @@ block0(v0: i64):
         assert_eq!(out.status.success(), ok, "{superclass}");
         if !ok {
             let stderr = String::from_utf8_lossy(&out.stderr);
-            assert!(stderr.contains("`Boom` names the superclass `String`"), "{stderr}");
+            assert!(
+                stderr.contains(&format!("`Boom` names the superclass `{superclass}`")),
+                "{stderr}"
+            );
         }
     }
 }

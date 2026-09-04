@@ -55,6 +55,34 @@ pub const NOT_PAYLOAD_ROOTS: &[ClassId] = &[
     PROC_CLASS,
 ];
 
+/// The builtins CRuby gives no instances: the immediates, and the pair whose
+/// allocator it undefines. A user subclass of one is a legal DEFINITION --
+/// `superclass`, `ancestors` and `is_a?` all resolve -- with no instances at
+/// all, so `.new` raises `NoMethodError`.
+///
+/// A subset of [`NOT_PAYLOAD_ROOTS`], named on its own because the shape it
+/// selects is a registrar rather than the absence of one, and because both
+/// halves of the compiler ask for it.
+pub const INSTANCELESS: &[ClassId] = &[
+    INTEGER_CLASS,
+    FLOAT_CLASS,
+    SYMBOL_CLASS,
+    NIL_CLASS,
+    TRUE_CLASS,
+    FALSE_CLASS,
+    BIGDECIMAL_CLASS,
+    METHOD_CLASS,
+    BINDING_CLASS,
+    ENCODING_CLASS,
+    RATIONAL_CLASS,
+    MATCH_DATA_CLASS,
+];
+
+/// Whether `id` is one of [`INSTANCELESS`].
+pub fn is_instanceless(id: ClassId) -> bool {
+    INSTANCELESS.contains(&id)
+}
+
 /// Whether `id` is a value-builtin payload root: a built-in CLASS whose
 /// user subclass is a generic `ValueSubclass` wrapping the native value.
 ///
