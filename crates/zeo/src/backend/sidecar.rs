@@ -144,6 +144,13 @@ pub struct Class {
     /// writing it, the same trade `private_constants` makes.
     #[serde(default)]
     pub conceal: bool,
+    /// The class this row is the SINGLETON of: a `class << self` body is a
+    /// class of its own, and only the runtime can mint a singleton, so the
+    /// front end names the owner and the backend ties the two -- which is
+    /// what makes `Owner.singleton_class` answer this row's id and puts
+    /// the body's constants where ruby puts them.
+    #[serde(default)]
+    pub singleton_of: Option<String>,
 }
 
 /// One `zeo_callsites` slot's caller class: the class whose body the site

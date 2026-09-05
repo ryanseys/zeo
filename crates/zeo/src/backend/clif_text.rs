@@ -144,6 +144,7 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
                 flag: 0,
             }),
     );
+    reg_rows.extend(singleton_surrogate_rows(sidecar, &class_ids)?);
     let unit_rows = unit_rows(&sidecar.units, &ids)?;
     let program = statics::DescProgram {
         warnings: sidecar.warnings.clone(),
@@ -816,6 +817,38 @@ fn inherited_class_methods(
                 });
             }
         }
+    }
+    Ok(rows)
+}
+
+/// A `class << self` body's row, tied to the class it is the singleton of.
+/// Only the runtime mints a singleton, so the row seeds the mint: after
+/// this, `Owner.singleton_class` answers the compile-time id, and a
+/// constant the body wrote is on it rather than on `Owner`.
+fn singleton_surrogate_rows(
+    sidecar: &Sidecar,
+    class_ids: &ClassIds,
+) -> CResult<Vec<statics::RegRowSpec>> {
+    let mut rows = Vec::new();
+    for class in &sidecar.classes {
+        let Some(owner) = &class.singleton_of else {
+            continue;
+        };
+        let Some(&owner_id) = class_ids.get(owner) else {
+            return Err(CodegenError::internal(format!(
+                "`{}` is the singleton of `{owner}`, which is not a class in this sidecar",
+                class.name
+            )));
+        };
+        rows.push(statics::RegRowSpec {
+            kind: zeo_abi::abi::REG_SINGLETON_SURROGATE,
+            class: class_ids[&class.name],
+            a: String::new(),
+            b: String::new(),
+            f: None,
+            ids: vec![owner_id],
+            flag: 0,
+        });
     }
     Ok(rows)
 }
