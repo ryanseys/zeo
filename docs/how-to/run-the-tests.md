@@ -86,6 +86,22 @@ itself. Run it after a change to `ze0/` that a golden would not notice --
 a new lowering, a change to how files are spliced, anything touching the
 order of a table.
 
+The `test(ze0::)` tier holds 76 programs to ruby's answer on three roads.
+It says nothing about the other five thousand corpus programs ze0 also
+compiles, and a refusal is honest where a wrong answer is not, so one more
+verb sweeps them:
+
+```console
+$ cargo xtask ze0-sweep --all
+$ cargo xtask ze0-sweep lang/classes/ --show 40
+```
+
+Each program costs one ze0 compile and one real link, and lands in one of
+four buckets -- `refused`, `backend`, `matched`, `diverged`. Only `diverged`
+is a defect: ze0 compiled the program and the binary said something other
+than what ruby said. The refusals are printed as a histogram by shape, which
+is what names the next gap.
+
 ## What a run costs
 
 Nothing on disk. Every corpus child compiles in memory (`ZEO_CACHE=0`) and
