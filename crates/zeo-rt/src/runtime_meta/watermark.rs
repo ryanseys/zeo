@@ -341,6 +341,25 @@ pub(super) fn extended_class_method(mid: ClassId, name: Symbol) -> Option<RProc>
     if let Some(f) = crate::builtins::class_table(mid).and_then(|t| t(&sname)) {
         return Some(RProc::with_self_and_block(f, RubyValue::Nil, -1, true));
     }
+    // A RUNTIME-defined body (`define_method`, or a method an eval'd `def`
+    // installed) is already value-shaped -- it takes `self` as a plain
+    // `RubyValue`, so `self` really is the class, `self.class` answers Module
+    // and a sibling call resolves through the singleton ancestry rather than
+    // looking for an instance method on the class.
+    //
+    // FIRST of the three below it, because it is the body that RAN last:
+    // `module_function :x` after a redefinition has to copy the body the
+    // module carries now, not the compiled row it was born with.
+    if let Some(body) = overlay_value_body(mid, name) {
+        return Some(RProc::with_self_and_block(
+            move |self_val: &RubyValue, args: &[RubyValue], block| {
+                call_value_body(mid, name, &body, self_val, args, block)
+            },
+            RubyValue::Nil,
+            -1,
+            true,
+        ));
+    }
     // A compiled user module ALSO emits a value bridge per method, which takes
     // `self` as a plain `RubyValue` -- so a Class receiver passes straight
     // through and `self` really is the class. That is what makes an
@@ -351,22 +370,6 @@ pub(super) fn extended_class_method(mid: ClassId, name: Symbol) -> Option<RProc>
     if let Some(f) = crate::dispatch::value_method(mid, 0, name) {
         return Some(RProc::with_self_and_block(
             f.into_fn(),
-            RubyValue::Nil,
-            -1,
-            true,
-        ));
-    }
-    // A RUNTIME-defined body (`define_method`, or a method an eval'd `def`
-    // installed) is already value-shaped -- it takes `self` as a plain
-    // `RubyValue`. Preferred over the surrogate below for the same reason the
-    // compiled value bridge is: `self` really is the class, so `self.class`
-    // answers Module and a sibling call resolves through the singleton
-    // ancestry rather than looking for an instance method on the class.
-    if let Some(body) = overlay_value_body(mid, name) {
-        return Some(RProc::with_self_and_block(
-            move |self_val: &RubyValue, args: &[RubyValue], block| {
-                call_value_body(mid, name, &body, self_val, args, block)
-            },
             RubyValue::Nil,
             -1,
             true,
