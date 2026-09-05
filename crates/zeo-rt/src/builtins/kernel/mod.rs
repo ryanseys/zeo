@@ -91,10 +91,17 @@ fn own_singleton_names(recv: &RubyValue) -> Vec<Symbol> {
     // not show here. zeo installs no singleton on main at all, because doing
     // it at startup would mark the runtime-overlay maps live for every
     // program, so the two public names are named here instead.
+    // A `def self.x` written at the top level lands on main's singleton like
+    // any other per-object method, so the two named here are a FLOOR and not
+    // the whole list.
     if let RubyValue::Object(o) = recv
         && crate::dispatch::is_main_object(o)
     {
-        return vec![Symbol::intern("inspect"), Symbol::intern("to_s")];
+        let mut names = vec![Symbol::intern("inspect"), Symbol::intern("to_s")];
+        names.extend(singleton_names_where(recv, |vis| {
+            vis != crate::dispatch::MethodVisibility::Private
+        }));
+        return dedup_syms(names);
     }
     match recv {
         RubyValue::Class(cid) => crate::dispatch::public_class_method_names(*cid, false),
