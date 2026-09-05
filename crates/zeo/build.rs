@@ -78,7 +78,7 @@ fn main() {
     };
     write_if_changed(&out_dir.join("class_surface.rs"), &code);
 
-    render_rbconfig(manifest_dir, out_dir);
+    export_platform_facts();
 }
 
 /// Write only when the content actually differs. rustc's dep-info tracks the
@@ -176,11 +176,15 @@ fn generate_class_surface(rt_src: &Path, rt_ext: &Path) -> String {
 /// (`ruby_platform` and friends). A path `include!` across crates would break
 /// in a packaged crate, and a cargo edge is heavier than the duplication.
 /// Keep the two in sync.
-fn render_rbconfig(manifest_dir: &Path, out_dir: &Path) {
-    let template_path = manifest_dir.join("src/parse/shims/rbconfig.rb.in");
-    println!("cargo:rerun-if-changed=src/parse/shims/rbconfig.rb.in");
-    let template = std::fs::read_to_string(&template_path).expect("reading rbconfig.rb.in");
-
+/// The `RbConfig::CONFIG` entries a COMPILE-TIME guard reads, exported as
+/// env so it needs no shim to parse -- gems spell the platform question as
+/// `RbConfig::CONFIG['host_os'] =~ /linux/` at least as often as they spell
+/// it `RUBY_PLATFORM`.
+///
+/// The shim itself derives these from `RUBY_PLATFORM` in Ruby, so it is one
+/// static file rather than a rendered template; only its install paths are
+/// still filled in (`parse::loader::shims`).
+fn export_platform_facts() {
     let arch = ruby_arch();
     let os = ruby_os();
     // The same string the compiled program's `RUBY_PLATFORM` will hold (the
@@ -188,62 +192,16 @@ fn render_rbconfig(manifest_dir: &Path, out_dir: &Path) {
     // `zeo-rt/build.rs`), so `guard_fold` can decide `if RUBY_PLATFORM ==
     // 'java'` and friends the way the program itself would answer.
     println!("cargo:rustc-env=ZEO_RUBY_PLATFORM={arch}-{os}");
-    // The last field is `DLDFLAGS`: a C extension is a bundle or shared
-    // object that resolves the runtime's `rb_*` against the HOST binary at
-    // load time, so its own link must permit them to be undefined. The two
-    // linkers spell that differently, and getting it wrong reads as a missing
-    // implementation ("Undefined symbols ... _rb_define_method") when it is
-    // only a link-line flag. The oracle's own `DLDFLAGS` carries the same.
-    let (vendor, host_os, dlext, soext, ldshared, undefined) = match target_os().as_str() {
-        "macos" | "ios" | "tvos" | "watchos" => (
-            "apple",
-            format!("darwin{}", darwin_major()),
-            "bundle",
-            "dylib",
-            "clang -dynamic -bundle",
-            "-Wl,-undefined,dynamic_lookup",
-        ),
-        "linux" => (
-            "pc",
-            "linux-gnu".to_string(),
-            "so",
-            "so",
-            "cc -shared",
-            "-Wl,--allow-shlib-undefined",
-        ),
-        other => (
-            "unknown",
-            other.to_string(),
-            "so",
-            "so",
-            "cc -shared",
-            "-Wl,--allow-shlib-undefined",
-        ),
+    let (host_os, dlext, soext) = match target_os().as_str() {
+        "macos" | "ios" | "tvos" | "watchos" => (format!("darwin{}", darwin_major()), "bundle", "dylib"),
+        "linux" => ("linux-gnu".to_string(), "so", "so"),
+        other => (other.to_string(), "so", "so"),
     };
-    // The same `RbConfig::CONFIG` entries the shim above renders, exported so
-    // a compile-time guard can read them without parsing the shim -- gems
-    // spell the platform question as `RbConfig::CONFIG['host_os'] =~ /linux/`
-    // at least as often as they spell it `RUBY_PLATFORM`.
     println!("cargo:rustc-env=ZEO_HOST_OS={host_os}");
     println!("cargo:rustc-env=ZEO_HOST_CPU={arch}");
     println!("cargo:rustc-env=ZEO_DLEXT={dlext}");
     println!("cargo:rustc-env=ZEO_SOEXT={soext}");
-    let rendered = template
-        .replace("@RUBY_PLATFORM@", &format!("{arch}-{os}"))
-        .replace("@HOST_TRIPLE@", &format!("{arch}-{vendor}-{host_os}"))
-        .replace("@HOST_CPU@", &arch)
-        .replace("@HOST_VENDOR@", vendor)
-        .replace("@HOST_OS@", &host_os)
-        .replace("@DLEXT@", dlext)
-        .replace("@SOEXT@", soext)
-        .replace("@OS_VERSION@", &darwin_major())
-        .replace("@LDSHARED@", ldshared)
-        .replace("@UNDEFINED_FLAG@", undefined);
-    assert!(
-        !rendered.contains('@') || !rendered.contains("@RUBY"),
-        "rbconfig.rb.in has an unsubstituted placeholder"
-    );
-    write_if_changed(&out_dir.join("rbconfig.rb"), &rendered);
+    println!("cargo:rerun-if-changed=src/parse/shims/rbconfig.rb.in");
 }
 
 fn target_os() -> String {

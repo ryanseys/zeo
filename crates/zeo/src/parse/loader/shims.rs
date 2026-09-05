@@ -15,7 +15,7 @@ pub(super) fn synthetic_shim_source(feature: &str) -> Option<std::borrow::Cow<'s
     // build cannot see. Filled here, where `cext::zeo_binary` and
     // `home::ruby_prefix` can answer. See the template's own comments.
     if feature == "rbconfig" {
-        let raw: &'static str = include_str!(concat!(env!("OUT_DIR"), "/rbconfig.rb"));
+        let raw: &'static str = include_str!("../shims/rbconfig.rb.in");
         let zeo = crate::cext::zeo_binary().ok();
         let dir = zeo
             .as_deref()

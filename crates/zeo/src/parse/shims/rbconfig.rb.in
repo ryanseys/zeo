@@ -15,7 +15,27 @@
 #
 module RbConfig
   ruby_version = "4.0.0"
-  arch = "@RUBY_PLATFORM@"
+
+  # THE PLATFORM FACTS ARE THE RUNNING PROGRAM'S OWN. `RUBY_PLATFORM` is
+  # `<cpu>-<os>` and every road bakes it from the same build target, so
+  # deriving the rest of them here keeps ONE copy of this file: a front end
+  # that renders no template still gets the values zeo would have rendered.
+  # `dup`, because a value here has to stay mutable -- see the note above.
+  arch = RUBY_PLATFORM.dup
+  host_cpu, os = arch.split("-", 2)
+  darwin = os.start_with?("darwin")
+  linux = os.start_with?("linux")
+  # A glibc ruby reports `host_os` `linux-gnu` beside `arch` `x86_64-linux`,
+  # and a Darwin one reports the same token in both.
+  host_os = linux ? "linux-gnu" : os
+  vendor = darwin ? "apple" : (linux ? "pc" : "unknown")
+  triple = "#{host_cpu}-#{vendor}-#{host_os}"
+  # A C extension is a BUNDLE on Darwin and a shared object everywhere else.
+  dlext = darwin ? "bundle" : "so"
+  soext = darwin ? "dylib" : "so"
+  ldshared = darwin ? "clang -dynamic -bundle" : "cc -shared"
+  # The two linkers spell `DLDFLAGS` differently -- see the key below.
+  undefined_flag = darwin ? "-Wl,-undefined,dynamic_lookup" : "-Wl,--allow-shlib-undefined"
 
   # THE PREFIX IS A REAL DIRECTORY ZEO OWNS, resolved from `zeo::home` and
   # filled by `parse::loader::shims` (the build cannot know it). It used to be
@@ -59,22 +79,22 @@ module RbConfig
     # Platform / host triple.
     "arch" => arch,
     "sitearch" => arch,
-    "platform" => "@HOST_TRIPLE@",
-    "host" => "@HOST_TRIPLE@",
+    "platform" => triple,
+    "host" => triple,
     "host_alias" => "",
-    "host_cpu" => "@HOST_CPU@",
-    "host_vendor" => "@HOST_VENDOR@",
-    "host_os" => "@HOST_OS@",
-    "target" => "@HOST_TRIPLE@",
-    "target_cpu" => "@HOST_CPU@",
-    "target_vendor" => "@HOST_VENDOR@",
-    "target_os" => "@HOST_OS@",
+    "host_cpu" => host_cpu,
+    "host_vendor" => vendor,
+    "host_os" => host_os,
+    "target" => triple,
+    "target_cpu" => host_cpu,
+    "target_vendor" => vendor,
+    "target_os" => host_os,
 
     # Executable / shared-object extensions.
     "EXEEXT" => "",
     "EXECUTABLE_EXTS" => "",
-    "DLEXT" => "@DLEXT@",
-    "SOEXT" => "@SOEXT@",
+    "DLEXT" => dlext,
+    "SOEXT" => soext,
     "LIBEXT" => "a",
     "OBJEXT" => "o",
 
@@ -101,18 +121,18 @@ module RbConfig
 
     # Feature flags rubygems consults.
     "ENABLE_SHARED" => "yes",
-    "host_os_version" => "@OS_VERSION@",
+    "host_os_version" => os.sub(/\A\D*/, ""),
     "CC" => ENV["CC"] || "cc",
     "CXX" => ENV["CXX"] || "c++",
     "LD" => ENV["LD"] || "ld",
     "AR" => "ar",
-    "LDSHARED" => "@LDSHARED@",
+    "LDSHARED" => ldshared,
     # A C extension is a BUNDLE that resolves `rb_*` against the host binary
     # at load, so its own link must leave them undefined. Without this every
     # extension fails to link with "Undefined symbols ... _rb_define_method",
     # which reads like a missing implementation and is not one.
     # The oracle's own `DLDFLAGS` carries the same flag.
-    "DLDFLAGS" => "@UNDEFINED_FLAG@",
+    "DLDFLAGS" => undefined_flag,
     "configure_args" => "",
 
     # --- The keys `mkmf` reads. -------------------------------------------
@@ -126,7 +146,7 @@ module RbConfig
     "rubyhdrdir" => hdrdir,
     "rubyarchhdrdir" => archhdrdir,
     "srcdir" => ".",
-    "build_os" => "@HOST_OS@",
+    "build_os" => host_os,
     "GCC" => "yes",
     "CC_WRAPPER" => "",
     "CCDLFLAGS" => "-fPIC",
