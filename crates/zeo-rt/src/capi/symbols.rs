@@ -290,6 +290,7 @@ capi_symbols!(
     signals::zeo_rt_system_exit_status,
     frames::zeo_rt_trace_frame_self,
     values::zeo_rt_truthy,
+    kernel::zeo_rt_using_slots_ensure,
     lifecycle::zeo_rt_validate_alias_source,
     dispatch::zeo_rt_value_super_args,
     signals::zeo_rt_wrong_arity,

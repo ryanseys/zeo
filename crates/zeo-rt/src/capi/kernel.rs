@@ -235,6 +235,12 @@ pub unsafe extern "C" fn zeo_rt_eval_super(recv: *const RubyValue, out: *mut Rub
     status_out(crate::eval::home_super(&recv), out)
 }
 
+/// A program with `using` sites: reserve their activation slots at boot.
+#[unsafe(no_mangle)]
+pub extern "C" fn zeo_rt_using_slots_ensure(n: u32) {
+    crate::eval::ensure_using_slots(n);
+}
+
 /// `using M` written in a snippet: fill the site's activation slot.
 ///
 /// # Safety

@@ -264,6 +264,19 @@ pub fn reserve_using_slots(n: u32) -> u32 {
     base as u32
 }
 
+/// Reserve slots `0..n` for a whole program's `using` sites, which number
+/// themselves from zero. A program's boot runs before any snippet compiles,
+/// so growing the table to `n` IS that reservation, and a snippet's own
+/// [`reserve_using_slots`] takes the ids above it.
+pub fn ensure_using_slots(n: u32) {
+    let mut slots = USING_SLOTS
+        .lock()
+        .expect("the using table is never poisoned");
+    if slots.len() < n as usize {
+        slots.resize(n as usize, Vec::new());
+    }
+}
+
 /// `using M` running in a snippet: record what `M` refines.
 pub fn using_activate(slot: u32, module: &RubyValue) -> Result<(), Signal> {
     let RubyValue::Class(mid) = module else {
@@ -278,15 +291,19 @@ pub fn using_activate(slot: u32, module: &RubyValue) -> Result<(), Signal> {
         ));
     }
     // `(target, holder, singleton)`, the shape `refinement_home` matches.
-    // The singleton form (`refine C.singleton_class`) is not distinguished:
-    // the registry records a refinement's target class, not whether the
-    // `refine` named its singleton, so a snippet activating one refines the
-    // instance side. Recorded as a divergence rather than guessed.
+    // `refine C.singleton_class` records C's SINGLETON class as the target,
+    // so the pair is read back through the singleton's owner: a covered site
+    // then matches a Class receiver descending from C, which is what the
+    // singleton form refines.
     let candidates: Vec<(zeo_abi::ClassId, zeo_abi::ClassId, bool)> =
         crate::dispatch::refinements_of(*mid)
             .into_iter()
             .filter_map(|holder| {
-                crate::dispatch::refinement_of(holder).map(|(_, target)| (target, holder, false))
+                let (_, target) = crate::dispatch::refinement_of(holder)?;
+                Some(match crate::runtime_meta::singleton_owner_value(target) {
+                    Some(RubyValue::Class(owner)) => (owner, holder, true),
+                    _ => (target, holder, false),
+                })
             })
             .collect();
     let mut slots = USING_SLOTS

@@ -211,6 +211,17 @@ pub fn send_as_defined_in(
             return m.call(obj, args, block);
         }
     }
+    // A body the OVERLAY holds at `owner` for a VALUE receiver: a runtime
+    // `refine` block's `def`, which `Method#call` on a refined Array or
+    // String reaches by naming the holder as its seat. An Object receiver
+    // is answered by the arm above, whose own table is the one its chain
+    // walks.
+    if !matches!(recv, RubyValue::Object(_))
+        && crate::runtime_meta::is_live()
+        && let Some(body) = crate::runtime_meta::overlay_value_body(owner, name)
+    {
+        return crate::runtime_meta::call_value_body(owner, name, &body, recv, args, block);
+    }
     if let Some(r) = probe_generic_row(recv, owner, name, args, block.clone()) {
         return r;
     }
