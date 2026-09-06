@@ -539,10 +539,10 @@ fn ancestors_of<'a>(
     // A builtin exception's chain is the ABI's own, so the gates that pick
     // each native default method decide the same way here as they do for
     // the built-in tree. Its ids are constants, not this program's.
-    if !ids.contains_key(name) {
-        if let Some(id) = builtin_superclass(name) {
-            return Ok(zeo_abi::declared_ancestors(id).iter().map(|c| c.0).collect());
-        }
+    if !ids.contains_key(name)
+        && let Some(id) = builtin_superclass(name)
+    {
+        return Ok(zeo_abi::declared_ancestors(id).iter().map(|c| c.0).collect());
     }
     let Some(&id) = ids.get(name) else {
         return Err(CodegenError::internal(format!(

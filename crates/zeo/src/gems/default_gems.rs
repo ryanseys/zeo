@@ -254,7 +254,7 @@ mod tests {
     /// look exactly like the empty-`stubs` bug this replaced.
     #[test]
     fn the_store_matches_the_shim() {
-        let shim = include_str!(concat!(env!("OUT_DIR"), "/rbconfig.rb"));
+        let shim = include_str!("../parse/shims/rbconfig.rb.in");
         let want = format!("ruby_version = {RUBY_API_VERSION:?}");
         assert!(
             shim.lines().any(|l| l.trim() == want),
