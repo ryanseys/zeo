@@ -75,6 +75,25 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
             {
                 return Some(m.clone());
             }
+            // The tombstones this position may carry. A module's rows are
+            // MATERIALIZED onto every class that mixed it in, so a
+            // `remove_method` on the module writes one here too -- and
+            // without reading it the flat copy below answered a name the
+            // program retired. An `undef` ends the walk; a removal empties
+            // this position and the next ancestor answers.
+            let tomb = |pick: &dyn Fn(&super::OverlayEntry) -> bool| {
+                mine.and_then(|k| c.get(&k)).is_some_and(|e| pick(e))
+                    || c.get(&shared).is_some_and(|e| pick(e))
+            };
+            if tomb(&|e: &super::OverlayEntry| e.undefs.contains(&name)) {
+                return None;
+            }
+            if tomb(&|e: &super::OverlayEntry| e.removed.contains(&name)) {
+                if frozen.get(fi) == Some(anc) {
+                    fi += 1;
+                }
+                continue;
+            }
             if frozen.get(fi) == Some(anc) {
                 fi += 1;
                 if crate::dispatch::class_defines_own_instance_method_if_registered(*anc, name) {

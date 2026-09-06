@@ -1888,6 +1888,11 @@ pub fn runtime_define_singleton_method(
                     .or_insert_with(OverlayEntry::delta);
                 e.class_methods.insert(name, body);
                 e.extended_class_methods.remove(&name);
+                // A fresh `def self.x` installs PUBLIC, as the object arm's
+                // `clear_singleton_visibility` says for its own table: a
+                // `private_class_method` above it marked the name it
+                // supersedes, not this body.
+                e.class_methods_vis.remove(&name);
             }
             mark_singletons_for(recv);
             mark_live();

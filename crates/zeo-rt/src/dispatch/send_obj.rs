@@ -43,6 +43,34 @@ pub(super) fn send_in_reason(
 }
 
 /// [`send_in_reason`] past the duplicate-chain guard.
+/// Whether the registry's FLAT answer for `name` has been retired.
+///
+/// A module's rows are materialized onto every class that mixed it in, so a
+/// copy answers here without the walk ever reaching the module -- and a
+/// `remove_method`/`undef_method` on the module writes its tombstone at the
+/// host's position too, which is the only record that the copy came from
+/// there. Walking those tombstones in chain order is what tells a retired
+/// copy from a host's own definition, which ruby leaves standing.
+fn flat_answer_retired(id: ClassId, name: Symbol) -> bool {
+    // A chain with no tombstone at all retires nothing, whatever the walk
+    // below can see: the flat answer may be a BUILTIN table row, which no
+    // registry question reports as a definition.
+    let mut crossed = false;
+    for &anc in ancestors_of_value(id) {
+        if crate::runtime_meta::overlay_is_undefined(anc, name) {
+            return true;
+        }
+        if crate::runtime_meta::overlay_is_removed(anc, name) {
+            crossed = true;
+            continue;
+        }
+        if crate::dispatch::class_defines_own_instance_method_if_registered(anc, name) {
+            return false;
+        }
+    }
+    crossed
+}
+
 fn send_in_reason_inner(
     box_id: u32,
     recv: &RObj,
@@ -114,7 +142,11 @@ fn send_in_reason_inner(
     if is_env && let Some(f) = crate::builtins::env::lookup(name.name_str()) {
         return f(&RubyValue::Object(recv.clone()), args, block);
     }
-    if let Some(f) = registry().lookup_mro(id, name) {
+    if let Some(f) = registry().lookup_mro(id, name)
+        && !(crate::runtime_meta::gates_live(g)
+            && crate::runtime_meta::class_maybe_patched(id)
+            && flat_answer_retired(id, name))
+    {
         return f.call(recv, args, block);
     }
     let boxed = RubyValue::Object(recv.clone());
