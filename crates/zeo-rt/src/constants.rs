@@ -153,6 +153,15 @@ pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
     const_search(owner_class_id, name, false)
 }
 
+/// `owner`'s OWN constant, with no ancestry at all -- ruby's
+/// `rb_const_get_at`. This is what a LEXICAL scope answers: `Module.nesting`
+/// entries are searched for what they own, and only the innermost one's
+/// ancestry follows.
+pub fn const_get_at(owner_class_id: u32, name: &str) -> Option<RubyValue> {
+    own_const(owner_class_id, name)
+        .or_else(|| nested_class_of(crate::ClassId(owner_class_id), name).map(RubyValue::Class))
+}
+
 /// `owner` and its ancestry, with `skip_object` deciding whether a constant
 /// `Object` itself owns may answer. That single flag is the whole difference
 /// between ruby's two constant searches (`variable.c`'s `exclude`), so both

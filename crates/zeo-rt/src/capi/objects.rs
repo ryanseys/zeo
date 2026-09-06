@@ -575,10 +575,20 @@ fn cref_table_probe(ids: &[u32], name: &str, flags: u8, box_id: u32) -> Option<R
     // the box (`const_set_at`), so a read under box 0 misses what the same
     // box just wrote. That is what broke a run-time box's own constant.
     let _box = crate::boxes::BoxGuard::enter(box_id);
+    // Each LEXICAL scope answers what it OWNS -- `Module.nesting`, no
+    // ancestors -- and only the innermost one's ancestry follows. An ancestry
+    // walk per scope let `Object`'s own constant answer at the first entry, so
+    // a nested `class Widget` reading a bare `Widget` reached the TOP-LEVEL
+    // one it shadows.
     for &id in ids {
-        if let Some(v) = crate::constants::const_get(id, name) {
+        if let Some(v) = crate::constants::const_get_at(id, name) {
             return Some(v);
         }
+    }
+    if let Some(&innermost) = ids.first()
+        && let Some(v) = crate::constants::const_get(innermost, name)
+    {
+        return Some(v);
     }
     // Inside a BOX the chain ends at the box's own surrogate, and the tail
     // past it reaches only the MASTER constants -- the ones installed
