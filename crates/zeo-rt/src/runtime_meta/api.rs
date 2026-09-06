@@ -70,9 +70,16 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     // `M.define_method` -- has to retire the copies analyze flattened onto
     // every including class, or it writes a row nothing reads.
     let hosts = mixin_hosts(id, std::slice::from_ref(&name));
+    // A box's own record for the class, as `remove_method` and
+    // `undef_method` already write it: a box patching a SHARED class must
+    // not hand main the row. A class the box owns, and every write from
+    // main, still name the shared record.
+    let this_box = crate::boxes::current_box();
+    let write_key =
+        crate::boxes::box_record_for_write(this_box, crate::boxes::overlay_root(id.0));
     {
         let mut w = maps().classes.write().unwrap();
-        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        let e = w.entry(write_key).or_insert_with(OverlayEntry::delta);
         e.methods.insert(name, m);
         e.value_bodies.insert(name, body);
         e.undefs.remove(&name);
@@ -111,7 +118,7 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
             // `removed` EMPTIES the position rather than ending the walk, so
             // the host stops answering with its stale copy and the walk
             // carries on to the module, where ruby's one body lives.
-            w.entry(host.0)
+            w.entry(crate::boxes::box_record_for_write(this_box, host.0))
                 .or_insert_with(OverlayEntry::delta)
                 .removed
                 .insert(name);

@@ -174,6 +174,11 @@ pub fn new_box() -> Result<RubyValue, crate::Signal> {
     side.0.insert(internal, cid.0);
     side.1.insert(cid.0, internal);
     drop(side);
+    // The surrogate is the box's OWN class, the way `REG_MARK_BOX_CLASS`
+    // says so for a compile-time one. Without the mark a constant the box
+    // writes on its own top level lands in the box's shadow record, where
+    // `b::X` read from main cannot reach it.
+    mark_box_class(cid, internal);
     crate::globals::seed_box_globals(internal);
     Ok(RubyValue::Class(cid))
 }

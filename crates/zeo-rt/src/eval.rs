@@ -387,17 +387,24 @@ pub unsafe fn call(
         req.line,
         0,
     );
+    // The snippet RUNS in its box, not only resolves in it. The emitted
+    // code carries `req.box_id` to every constant and global site, but a
+    // `def`, an `include` or a class ivar reaches the runtime through an
+    // ordinary send, and those read the ambient box -- so without this a
+    // box's patch to a shared class landed in the record main reads.
     let enter = || {
-        let mut out = std::mem::MaybeUninit::<RubyValue>::uninit();
-        let status = unsafe { f(cells.as_ptr(), &req.self_val, out.as_mut_ptr()) };
-        if status == zeo_abi::abi::STATUS_OK {
-            let v = unsafe { out.assume_init() };
-            crate::capi::leakcheck::consumed(&v);
-            Ok(v)
-        } else {
-            Err(crate::signal::take_pending()
-                .expect("a compiled eval answered STATUS_SIGNAL with an empty pending slot"))
-        }
+        crate::boxes::in_box(req.box_id, || {
+            let mut out = std::mem::MaybeUninit::<RubyValue>::uninit();
+            let status = unsafe { f(cells.as_ptr(), &req.self_val, out.as_mut_ptr()) };
+            if status == zeo_abi::abi::STATUS_OK {
+                let v = unsafe { out.assume_init() };
+                crate::capi::leakcheck::consumed(&v);
+                Ok(v)
+            } else {
+                Err(crate::signal::take_pending()
+                    .expect("a compiled eval answered STATUS_SIGNAL with an empty pending slot"))
+            }
+        })
     };
     // `instance_eval`'s default definee is the receiver's SINGLETON, which
     // is a run-time fact the emitted `def` asks the runtime for -- the
@@ -446,12 +453,35 @@ pub fn class_open(
         // ruby's own `TypeError`, raised before anything is minted.
         Some(_) => return Err(crate::builtins::type_error!("{name} is not a {kind}")),
         None if owner_id == zeo_abi::OBJECT_CLASS.0 => crate::dispatch::class_id_by_name(name),
+        // A box's top level is its SURROGATE, and past the surrogate a box
+        // sees only master -- the world as it stood before the program ran.
+        // So `class Array` written in a box reopens the SHARED class, and
+        // the body's `def` lands in the box's own record for it; only a
+        // name master never had is minted on the surrogate. The read side
+        // ends its cref walk the same way (`cref_table_probe`), and without
+        // this the write minted `#<Ruby::Box:1>::Array` while every later
+        // read answered the builtin.
+        None if crate::boxes::box_of_surrogate_class(crate::ClassId(owner_id)).is_some() => {
+            crate::constants::const_get_master(name)
+                .and_then(|v| match v {
+                    RubyValue::Class(cid) => Some(cid),
+                    _ => None,
+                })
+                .or_else(|| {
+                    crate::dispatch::class_id_by_name(name)
+                        .filter(|&cid| zeo_abi::is_core_class(zeo_abi::ClassId(cid.0)))
+                })
+        }
         None => None,
     };
     if let Some(cid) = existing {
         return Ok(RubyValue::Class(cid));
     }
-    let qualified = if owner_id == zeo_abi::OBJECT_CLASS.0 {
+    // A box's surrogate IS its top level, so a class minted there is named
+    // bare -- `M2` written in a box is called `M2`, exactly as ruby names
+    // it, and `REG_MARK_BOX_CLASS` is what keeps main from reaching it.
+    let box_top = crate::boxes::box_of_surrogate_class(crate::ClassId(owner_id)).is_some();
+    let qualified = if owner_id == zeo_abi::OBJECT_CLASS.0 || box_top {
         name.to_string()
     } else {
         format!(
@@ -463,16 +493,27 @@ pub fn class_open(
     // `inherited` fires (CRuby's `rb_define_class_id_under`) -- rss's
     // `Element.inherited` reads `klass.name`. Only `Class.new` shows the
     // hook a nil name.
+    // A class minted inside a box is the BOX's, the way a compile-time one
+    // carries `REG_MARK_BOX_CLASS`: the mark is what stops a write to it
+    // being shadowed away from main, which reads `b::X` from box 0.
+    let owning_box = crate::boxes::class_box(crate::ClassId(owner_id));
+    let mark = |cid: crate::ClassId| {
+        if owning_box != 0 {
+            crate::boxes::mark_box_class(cid, owning_box);
+        }
+    };
     let val = if is_module {
         let val = crate::runtime_meta::runtime_module_new(None)?;
         let RubyValue::Class(cid) = val else {
             unreachable!("runtime_module_new answers a Class")
         };
+        mark(cid);
         crate::runtime_meta::name_runtime_class_if_anonymous(cid, &qualified);
         crate::constants::const_set(owner_id, name, val.clone());
         val
     } else {
         crate::runtime_meta::runtime_class_new_with(superclass.cloned(), None, |cid| {
+            mark(cid);
             crate::runtime_meta::name_runtime_class_if_anonymous(cid, &qualified);
             crate::constants::const_set(owner_id, name, RubyValue::Class(cid));
             Ok(())

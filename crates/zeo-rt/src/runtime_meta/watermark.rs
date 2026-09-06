@@ -482,12 +482,17 @@ pub fn overlay_instance_method_names(
 /// here would let `Enumerable.define_method(:map)` beat `Array`'s own `map`,
 /// which it must not.
 pub fn overlay_value_body(id: ClassId, name: Symbol) -> Option<RProc> {
-    maps()
-        .classes
-        .read()
-        .unwrap()
-        .get(&id.0)
-        .and_then(|e| e.value_bodies.get(&name).cloned())
+    let root = crate::boxes::overlay_root(id.0);
+    let mine = crate::boxes::box_record_for_read(crate::boxes::current_box(), root);
+    let c = maps().classes.read().unwrap();
+    let pick = |key: u32| {
+        c.get(&key)
+            .and_then(|e| e.value_bodies.get(&name).cloned())
+    };
+    // The running box's own record for the class first, then the shared one
+    // -- `resolver::box_first`'s rule for a value receiver, which is where
+    // a box's patch to `String` or `Array` lands.
+    mine.and_then(pick).or_else(|| pick(root))
 }
 
 /// Run an [`overlay_value_body`] with the method frame around it.
