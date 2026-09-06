@@ -63,6 +63,7 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     }
     crate::method_meta::record_runtime_params(id, crate::MethodKind::Instance, name, &body);
     let m = dynamic_from_proc(id, name, body.clone());
+    let copy = m.clone();
     let frame = current_frame_for(id);
     // Named BEFORE the write, and for the reason `replace_method_impl` gives:
     // "whose copy is this" is `method_owner`, and that walk reads the overlay
@@ -134,6 +135,10 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
         e.class_methods.insert(name, wrapper);
         e.extended_class_methods.remove(&name);
     }
+    // A per-object `extend` COPIED this module's rows into that object's
+    // singleton table, so the write above does not reach them --
+    // `replace_method_impl` refreshes them for the same reason.
+    refresh_extended_copies(id, name, &copy);
     for &host in &hosts {
         patch_class(host);
     }
