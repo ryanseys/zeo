@@ -1528,15 +1528,15 @@ mod span_tests {
     /// the innermost offending construct, not the whole statement.
     #[test]
     fn a_lowering_error_pinpoints_the_offending_construct() {
-        let src = "y = 1\nputs(1) if /bad/\n";
+        let src = "y = 1\ndef f(*) = [*]\n";
         let mut hir = Hir::default();
         let file = hir.add_file("app.rb", src);
         hir.lowering_file = Some(file);
         let err = crate::lower::parse_and_lower_into(&mut hir, src)
-            .expect_err("a bare condition regexp is rejected");
+            .expect_err("a bare `*` inside an array literal is rejected");
         let span = err.span.expect("located");
         assert_eq!(span.file, file);
-        assert_eq!(&src[span.start as usize..span.end as usize], "/bad/");
+        assert_eq!(&src[span.start as usize..span.end as usize], "[*]");
     }
 
     /// `SYNTH` round-trips as "no span" without an `Option` in the table.

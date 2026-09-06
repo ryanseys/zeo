@@ -31,17 +31,18 @@ fn eval_of_a_class_definition_is_not_a_compile_error() {
 // comprehensive tests. Every scenario oracle-verified against real `ruby`
 // first, per this project's established convention.
 
+/// `if /foo/` is `\/foo/ =~ $_`, and the corpus golden holds the answers --
+/// this only pins that the form reaches codegen.
 #[test]
-fn a_bare_regexp_literal_used_as_an_implicit_condition_is_a_clean_lowering_error() {
-    let err = zeo::check_program(
+fn a_bare_regexp_literal_used_as_an_implicit_condition_lowers() {
+    zeo::check_program(
         r#"
         if /foo/
           puts "matched"
         end
         "#,
     )
-    .unwrap_err();
-    assert!(err.contains("implicit condition"), "{err}");
+    .unwrap();
 }
 
 // ---------------------------------------------------------------------------

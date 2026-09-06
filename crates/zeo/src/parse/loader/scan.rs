@@ -604,9 +604,11 @@ pub(super) fn collect_parse_warnings(
     file: &str,
     source: &str,
 ) {
+    let plain_regexp_conditions = plain_regexp_conditions(result);
     for warning in result.warnings() {
         let message = warning.message();
-        if !is_default_level(message) {
+        if !is_default_level(message, &plain_regexp_conditions, warning.location().start_offset())
+        {
             continue;
         }
         let upto = warning.location().start_offset().min(source.len());
@@ -638,9 +640,31 @@ pub(super) fn collect_parse_warnings(
 /// The two shapes below have no such twin: `equal_in_conditional` (`= literal`
 /// in a conditional -- the classic `if x = 1` typo) is spelled two ways, one
 /// per parser version, and both rows are default-level.
-fn is_default_level(message: &str) -> bool {
+fn is_default_level(message: &str, plain_regexps: &[usize], offset: usize) -> bool {
     message.starts_with("key ") && message.contains(" is duplicated and overwritten on line ")
         || message.ends_with("literal' in conditional, should be ==")
+        // `regex literal in condition` is default-level for a plain regexp
+        // and verbose-level for an interpolated one, and both render the
+        // same sentence. The node kind at the warning's own offset is what
+        // separates them.
+        || (message == "regex literal in condition" && plain_regexps.contains(&offset))
+}
+
+/// Where a PLAIN (non-interpolated) regexp stands as a condition -- prism
+/// rewrites each into a `MatchLastLineNode`, and only that shape warns at
+/// default level.
+fn plain_regexp_conditions(result: &ruby_prism::ParseResult<'_>) -> Vec<usize> {
+    use ruby_prism::Visit;
+
+    struct Collect(Vec<usize>);
+    impl<'pr> Visit<'pr> for Collect {
+        fn visit_match_last_line_node(&mut self, node: &ruby_prism::MatchLastLineNode<'pr>) {
+            self.0.push(node.location().start_offset());
+        }
+    }
+    let mut collect = Collect(Vec::new());
+    collect.visit(&result.node());
+    collect.0
 }
 
 #[cfg(test)]

@@ -167,17 +167,48 @@ pub(crate) fn try_lower(
         ))));
     }
 
-    // A bare regex literal used directly as an implicit condition against
-    // `$_` (`if /foo/` -- `MatchLastLineNode`/its interpolated counterpart)
-    // -- `$_`/the "last read line" concept isn't modeled at all, a clean
-    // rejection rather than silently matching against an always-empty
-    // string.
-    if node.as_match_last_line_node().is_some()
-        || node.as_interpolated_match_last_line_node().is_some()
-    {
-        return Err(
-            "a bare Regexp literal used as an implicit condition (`if /foo/`, matching against `$_`) isn't supported yet (zeo limitation) -- write an explicit `=~`/`match?` against a real receiver instead".to_string().into(),
-        );
+    // A bare regexp written where a condition goes (`if /foo/`) matches
+    // against `$_` and answers the position or nil. `Regexp#~` is that
+    // operator and reads the same global, so the literal plus one send is
+    // the whole form.
+    if let Some(re) = node.as_match_last_line_node() {
+        let content = String::from_utf8_lossy(re.unescaped()).into_owned();
+        let encoding = forced_regexp_encoding(RegexpEncodingFlags {
+            ascii_8bit: re.is_ascii_8bit(),
+            euc_jp: re.is_euc_jp(),
+            windows_31j: re.is_windows_31j(),
+            utf_8: re.is_utf_8(),
+        });
+        let lit = hir.push(HirNode::RegexpLit(
+            vec![StrPart::Lit(content)],
+            RegexpFlags {
+                ignore_case: re.is_ignore_case(),
+                extended: re.is_extended(),
+                multiline: re.is_multi_line(),
+                encoding,
+            },
+        ));
+        return Ok(Some(match_last_line(hir, lit)));
+    }
+
+    if let Some(re) = node.as_interpolated_match_last_line_node() {
+        let parts = lower_string_parts(result, hir, re.parts().iter())?;
+        let encoding = forced_regexp_encoding(RegexpEncodingFlags {
+            ascii_8bit: re.is_ascii_8bit(),
+            euc_jp: re.is_euc_jp(),
+            windows_31j: re.is_windows_31j(),
+            utf_8: re.is_utf_8(),
+        });
+        let lit = hir.push(HirNode::RegexpLit(
+            parts,
+            RegexpFlags {
+                ignore_case: re.is_ignore_case(),
+                extended: re.is_extended(),
+                multiline: re.is_multi_line(),
+                encoding,
+            },
+        ));
+        return Ok(Some(match_last_line(hir, lit)));
     }
 
     if let Some(arr) = node.as_array_node() {
@@ -254,6 +285,22 @@ fn backtick_call(hir: &mut Hir, cmd: NodeId) -> NodeId {
         receiver: None,
         name: "`".to_string(),
         args: vec![ArrayElem::Single(cmd)],
+        kwargs: Vec::new(),
+        block: None,
+        block_arg: None,
+        safe: false,
+    })
+}
+
+/// `re =~ $_` -- what `if /foo/` means. NOT `Regexp#~`, which spells the same
+/// idea but answers nil for a `$_` that is not a String where `=~` raises the
+/// `TypeError` ruby raises here.
+fn match_last_line(hir: &mut Hir, regexp: NodeId) -> NodeId {
+    let line = hir.push(HirNode::GlobalRead("$_".to_string()));
+    hir.push(HirNode::Call {
+        receiver: Some(regexp),
+        name: "=~".to_string(),
+        args: vec![ArrayElem::Single(line)],
         kwargs: Vec::new(),
         block: None,
         block_arg: None,

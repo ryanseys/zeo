@@ -205,10 +205,10 @@ mod classification_tests {
         assert_eq!(err.ruby_class(), "SyntaxError");
 
         // Valid Ruby (prism parses it) that this front end declines to lower:
-        // ruby matches a bare condition regexp against `$_`, a concept zeo does
-        // not model at all.
+        // an anonymous splat forwarded into an ARRAY literal rather than into
+        // a call.
         let mut hir = crate::hir::Hir::default();
-        let err = crate::lower::parse_and_lower_into(&mut hir, "if /foo/ then 1 end\n")
+        let err = crate::lower::parse_and_lower_into(&mut hir, "def f(*) = [*]\n")
             .expect_err("unsupported construct is rejected");
         assert!(
             matches!(err.kind, LowerErrorKind::Unsupported),
