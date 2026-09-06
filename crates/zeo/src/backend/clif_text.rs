@@ -114,6 +114,7 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
     statics::define_reopen_flags(&mut em)?;
     let mut defs = def_rows(sidecar, &ids, &class_ids)?;
     defs.cm.extend(inherited_class_methods(sidecar, &class_ids, &ids)?);
+    defs.obj.extend(inherited_native_backed_methods(sidecar, &class_specs, &class_ids, &ids)?);
     let mut reg_rows = reg_rows(&sidecar.reg, &ids)?;
     reg_rows.extend(own_method_rows(sidecar, &class_ids));
     reg_rows.extend(super_target_rows(sidecar, &ids, &class_ids)?);
@@ -812,6 +813,75 @@ fn inherited_class_methods(
                 rows.push(statics::CmRowSpec {
                     class: class_ids[&c.name],
                     box_id: 0,
+                    name: def.name.clone(),
+                    f,
+                });
+            }
+        }
+    }
+    Ok(rows)
+}
+
+/// Every inherited instance method, copied onto a NATIVE-BACKED subclass.
+///
+/// An exception's registrar -- and every other native-backed shape's --
+/// plants the runtime's own default rows on each subclass it registers, and
+/// an own row shadows an ancestor's. So `class Sub < Base` answered
+/// `Exception#initialize` where `Base` had written one of its own, and the
+/// message defaulted to the class name. A plain class needs no copy:
+/// dispatch walks its ancestors and finds nothing in the way.
+/// `analyze::mro::materialize_methods` is where the Rust front end flattens
+/// the same table.
+fn inherited_native_backed_methods(
+    sidecar: &Sidecar,
+    specs: &[crate::clif::classes::ClassSpec],
+    class_ids: &ClassIds,
+    in_file: &HashMap<String, FuncId>,
+) -> CResult<Vec<statics::ObjRowSpec>> {
+    let native_backed = |name: &str| {
+        specs.iter().any(|s| {
+            s.name == name
+                && s.kind != zeo_abi::abi::CLASS_PLAIN
+                && s.kind != zeo_abi::abi::CLASS_MODULE
+        })
+    };
+    let mut supers: HashMap<&str, &str> = HashMap::new();
+    let mut own: HashMap<&str, Vec<&super::sidecar::Def>> = HashMap::new();
+    for c in &sidecar.classes {
+        supers.insert(c.name.as_str(), c.superclass.as_str());
+    }
+    for def in sidecar.defs.iter().filter(|d| !d.singleton && !d.class.is_empty()) {
+        own.entry(def.class.as_str()).or_default().push(def);
+    }
+    let mut rows = Vec::new();
+    for c in sidecar.classes.iter().filter(|c| native_backed(&c.name)) {
+        // The chain, nearest first. `class_specs` has already refused one
+        // that loops, so this walk ends; the guard is belt and braces.
+        let mut chain = vec![c.name.as_str()];
+        while let Some(&up) = supers.get(chain[chain.len() - 1]) {
+            if chain.contains(&up) {
+                break;
+            }
+            chain.push(up);
+        }
+        for (at, ancestor) in chain.iter().enumerate().skip(1) {
+            for def in own.get(ancestor).into_iter().flatten() {
+                let shadowed = chain[..at].iter().any(|nearer| {
+                    own.get(nearer)
+                        .is_some_and(|ds| ds.iter().any(|d| d.name == def.name))
+                });
+                if shadowed {
+                    continue;
+                }
+                let f = *in_file.get(&def.tramp).ok_or_else(|| {
+                    CodegenError::internal(format!(
+                        "the sidecar's `{}` names the trampoline `{}`, which the text does not \
+                         define",
+                        def.name, def.tramp
+                    ))
+                })?;
+                rows.push(statics::ObjRowSpec {
+                    class: class_ids[&c.name],
                     name: def.name.clone(),
                     f,
                 });
