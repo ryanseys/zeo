@@ -306,7 +306,11 @@ pub fn ivar_isolation_check(recv: &RubyValue) -> Result<(), Signal> {
     if in_main_ractor() || matches!(recv, RubyValue::Class(_)) {
         return Ok(());
     }
-    if shareable(recv) {
+    // FROZEN is the exemption CRuby's own guard carries: a frozen object's
+    // table cannot change, so two ractors reading it race on nothing.
+    // `Ractor.make_shareable(o)` freezes `o`, which is what makes its
+    // reader legal inside the ractor it was sent to.
+    if shareable(recv) && !recv.is_frozen() {
         return Err(raise_error(
             "Ractor::IsolationError",
             "can not access instance variables of shareable objects from non-main Ractors"
