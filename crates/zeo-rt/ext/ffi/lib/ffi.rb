@@ -276,6 +276,56 @@ module FFI
     buffer_out: Type::Builtin::BUFFER_OUT,
     buffer_inout: Type::Builtin::BUFFER_INOUT,
     varargs: Type::Builtin::VARARGS,
+    # The C99 and POSIX names whose width is the same on every target zeo
+    # emits for. A compiled signature resolves these at COMPILE time
+    # (`CScalar::from_c_typedef`); a signature the compiler left alone --
+    # one a front end wrote, or a runtime `attach_function` -- resolves
+    # them here, and the two tables have to agree.
+    # The gem's own two aliases for the pointer-width integers.
+    ssize_t: Type::Builtin::LONG,
+    size_t: Type::Builtin::ULONG,
+    # The C99 exact-width names and the POSIX types whose width and
+    # signedness are the SAME on every target zeo emits for -- the same
+    # list, row for row, that `CScalar::from_c_typedef` folds at compile
+    # time. A signature the compiler left alone resolves here, and the two
+    # tables have to agree or one road's call gets a different width.
+    int8_t: Type::Builtin::INT8,
+    int16_t: Type::Builtin::INT16,
+    int32_t: Type::Builtin::INT32,
+    int64_t: Type::Builtin::INT64,
+    uint8_t: Type::Builtin::UINT8,
+    uint16_t: Type::Builtin::UINT16,
+    uint32_t: Type::Builtin::UINT32,
+    uint64_t: Type::Builtin::UINT64,
+    int_least8_t: Type::Builtin::INT8,
+    int_least16_t: Type::Builtin::INT16,
+    int_least32_t: Type::Builtin::INT32,
+    int_least64_t: Type::Builtin::INT64,
+    uint_least8_t: Type::Builtin::UINT8,
+    uint_least16_t: Type::Builtin::UINT16,
+    uint_least32_t: Type::Builtin::UINT32,
+    uint_least64_t: Type::Builtin::UINT64,
+    intptr_t: Type::Builtin::INT64,
+    ptrdiff_t: Type::Builtin::INT64,
+    intmax_t: Type::Builtin::INT64,
+    uintptr_t: Type::Builtin::UINT64,
+    uintmax_t: Type::Builtin::UINT64,
+    off_t: Type::Builtin::INT64,
+    time_t: Type::Builtin::INT64,
+    blkcnt_t: Type::Builtin::INT64,
+    register_t: Type::Builtin::INT64,
+    pid_t: Type::Builtin::INT32,
+    key_t: Type::Builtin::INT32,
+    uid_t: Type::Builtin::UINT32,
+    gid_t: Type::Builtin::UINT32,
+    id_t: Type::Builtin::UINT32,
+    socklen_t: Type::Builtin::UINT32,
+    in_addr_t: Type::Builtin::UINT32,
+    useconds_t: Type::Builtin::UINT32,
+    in_port_t: Type::Builtin::UINT16,
+    ino_t: Type::Builtin::UINT64,
+    rlim_t: Type::Builtin::UINT64,
+    caddr_t: Type::Builtin::POINTER,
   }
 
   # `FFI.typedef` writes here rather than into `TypeDefs`, which is what
@@ -390,7 +440,64 @@ module FFI
     end
   end
 
+  # The proxy an INLINE array field of a struct reads back as: a view over
+  # the struct's own bytes, so writing through it writes the struct. The
+  # compiler synthesizes the field accessor that builds one -- both tiers,
+  # zeo's `lower/ffi/synth.rs` and ze0's `Ze0::Ffi` -- and the class itself
+  # belongs here, where the gem keeps it.
+  class Struct
+    class InlineArray
+      include ::Enumerable
+
+      def initialize(pointer, offset, count, getter, putter, element_size)
+        @pointer = pointer
+        @offset = offset
+        @count = count
+        @getter = getter
+        @putter = putter
+        @element_size = element_size
+      end
+
+      def size = @count
+      def [](i) = @pointer.send(@getter, @offset + i * @element_size)
+
+      def []=(i, value)
+        @pointer.send(@putter, @offset + i * @element_size, value)
+      end
+
+      def each
+        i = 0
+        while i < @count
+          yield self[i]
+          i += 1
+        end
+        self
+      end
+
+      def to_a = ::Array.new(@count) { |i| self[i] }
+      def to_ptr = @pointer + @offset
+    end
+  end
+
   class StructLayout < Type
+    # The 8-bit inline array: the one that also answers `to_s`, which is
+    # how a `[:char, N]` field reads back as the string it holds.
+    class CharArray < ::FFI::Struct::InlineArray
+      def to_s
+        out = []
+        i = 0
+        while i < size
+          b = self[i]
+          break if b == 0
+
+          out << (b & 0xff)
+          i += 1
+        end
+        out.pack("C*")
+      end
+      alias to_str to_s
+    end
+
     class Field
       attr_reader :name, :offset, :type, :size, :alignment
 
