@@ -18,7 +18,7 @@ pub(super) fn super_class_defined(
     name: Symbol,
 ) -> bool {
     let walk = singleton_walk(recv_class);
-    let start = class_super_resume(&walk, defining_class, name)
+    let start = class_super_resume(&walk, recv_class, defining_class, name)
         .unwrap_or_else(|| past_own_position(&walk, recv_class));
     resolve_from(&walk, start, name).is_some() || instance_tail_defines(recv_class, name)
 }
@@ -174,6 +174,11 @@ fn resolve_at(pos: SingletonPos, name: Symbol) -> Option<ClassHit> {
 /// is running.
 #[derive(Clone, Copy)]
 pub(crate) struct ClassResume {
+    /// The class whose walk `next` indexes. A resume is a position in ONE
+    /// walk, and a `super` site that names its lexical owner rather than the
+    /// receiver asks about a shorter one -- where the same index means a
+    /// different ancestor, or none.
+    recv: ClassId,
     defining: ClassId,
     next: usize,
 }
@@ -240,11 +245,13 @@ pub(crate) fn swap_class_mro_resume(v: Option<ClassResume>) -> Option<ClassResum
 /// every ordinary `def self.x` -- this is exactly the old rule.
 fn class_super_resume(
     walk: &[SingletonPos],
+    recv_class: ClassId,
     defining_class: ClassId,
     name: Symbol,
 ) -> Option<usize> {
     if let Some(r) = CLASS_MRO_RESUME.with(|c| c.get())
         && r.defining == defining_class
+        && r.recv == recv_class
     {
         return Some(r.next);
     }
@@ -270,7 +277,7 @@ pub fn send_super_class_from(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let walk = singleton_walk(recv_class);
-    let start = class_super_resume(&walk, defining_class, name)
+    let start = class_super_resume(&walk, recv_class, defining_class, name)
         .unwrap_or_else(|| past_own_position(&walk, recv_class));
     send_walk_from(recv_class, &walk, start, name, args, block)
 }
@@ -380,6 +387,7 @@ fn send_walk_from(
     let recv = RubyValue::Class(recv_class);
     if let Some((at, hit)) = resolve_from(positions, start, name) {
         let resume = Some(ClassResume {
+            recv: recv_class,
             defining: positions[at].defining(),
             next: at + 1,
         });
@@ -517,6 +525,7 @@ fn call_singleton_super_target_at(
     let at = super_target_position(recv_class, target, name, module_instance);
     let resume = |defining: ClassId| {
         at.map(|i| ClassResume {
+            recv: recv_class,
             defining,
             next: i + 1,
         })
