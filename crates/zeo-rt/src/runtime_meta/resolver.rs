@@ -68,19 +68,14 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
         let mut fi = 0;
         for anc in chain.iter() {
             let (mine, shared) = box_first(anc.0);
-            if let Some(m) = mine
-                .and_then(|k| c.get(&k))
-                .and_then(|e| overlay_row(e, name))
-                .or_else(|| c.get(&shared).and_then(|e| overlay_row(e, name)))
-            {
-                return Some(m.clone());
-            }
-            // The tombstones this position may carry. A module's rows are
-            // MATERIALIZED onto every class that mixed it in, so a
-            // `remove_method` on the module writes one here too -- and
-            // without reading it the flat copy below answered a name the
-            // program retired. An `undef` ends the walk; a removal empties
-            // this position and the next ancestor answers.
+            // The tombstones this position may carry, read BEFORE its rows.
+            // A module's rows are MATERIALIZED onto every class that mixed
+            // it in -- a `prepend`s copy lands in the host's own `prepended`
+            // map -- so a `remove_method` on the module writes a tombstone
+            // here too, and the copy it retired sits at this same position.
+            // An `undef` ends the walk; a removal empties this position and
+            // the next ancestor answers. A later definition clears the
+            // tombstone, so a live row is never behind one.
             let tomb = |pick: &dyn Fn(&super::OverlayEntry) -> bool| {
                 mine.and_then(|k| c.get(&k)).is_some_and(|e| pick(e))
                     || c.get(&shared).is_some_and(|e| pick(e))
@@ -93,6 +88,13 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
                     fi += 1;
                 }
                 continue;
+            }
+            if let Some(m) = mine
+                .and_then(|k| c.get(&k))
+                .and_then(|e| overlay_row(e, name))
+                .or_else(|| c.get(&shared).and_then(|e| overlay_row(e, name)))
+            {
+                return Some(m.clone());
             }
             if frozen.get(fi) == Some(anc) {
                 fi += 1;
