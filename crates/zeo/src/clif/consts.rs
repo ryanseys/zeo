@@ -421,7 +421,7 @@ pub(super) fn autoload_touch(fx: &mut Fx, cid: crate::compiler::ClassId) {
 fn class_value_of(
     fx: &mut Fx,
     _id: NodeId,
-    _name: &str,
+    name: &str,
     cid: crate::compiler::ClassId,
 ) -> CResult<Operand> {
     // A constant a literal `autoload` names: the READ is what runs the
@@ -432,7 +432,18 @@ fn class_value_of(
     // constant exists is settled by the guarded body having run, so the
     // reference asks -- `NameError` until `reveal_class` fires there.
     if fx.an.compiler.constant_is_positional(cid) {
-        let fq = fx.an.compiler.fq_name(cid);
+        // Ruby names a missing constant by the CREF the read is written
+        // in, not by the class's own home: `Later` read inside `module
+        // Holder` misses as `Holder::Later`. The same rule the cref walk's
+        // own `qualified` follows. A path as written names itself.
+        let written = name.trim_start_matches("::");
+        let top = super::boxes::box_top(fx);
+        let scope = super::boxes::lexical_class(fx).unwrap_or(top);
+        let fq = if name.starts_with("::") || written.contains("::") || scope == top {
+            written.to_string()
+        } else {
+            format!("{}::{written}", fx.an.compiler.fq_name(scope))
+        };
         let owner = fx
             .an
             .compiler
