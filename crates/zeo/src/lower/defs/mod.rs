@@ -515,7 +515,11 @@ pub(crate) fn lower_using(
     name: &str,
     call: &ruby_prism::CallNode<'_>,
 ) -> PResult<Option<Vec<NodeId>>> {
-    if name != "using" || call.receiver().is_some() {
+    // A `using` inside a `def` activates nothing: ruby raises "main.using
+    // is permitted only at toplevel" when the method runs. So it stays the
+    // ordinary receiverless send, which the runtime's own `Module#using`
+    // answers with exactly that.
+    if name != "using" || call.receiver().is_some() || hir.is_in_def_body() {
         return Ok(None);
     }
     let arg_list: Vec<_> = call

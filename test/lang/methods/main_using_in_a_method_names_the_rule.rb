@@ -1,13 +1,38 @@
-# `using` called from a method body raises RuntimeError "main.using is
-# permitted only at toplevel"; zeo answers NoMethodError instead. (Found
-# by the 2026-08-24 probe sweep.)
-def use_it
+# `using` called from a method body activates nothing: ruby raises
+# RuntimeError "main.using is permitted only at toplevel", whether the
+# module is anonymous or a constant a refinement actually lives in.
+module Second
+  refine Array do
+    def second = self[1]
+  end
+end
+
+def use_anonymous
   using Module.new
 end
-begin
-  use_it
+
+def use_named
+  using Second
+end
+
+def self.use_from_a_class_method
+  using Second
+end
+
+[:use_anonymous, :use_named, :use_from_a_class_method].each do |name|
+  send(name)
 rescue Exception => e
-  puts "#{e.class}: #{e.message}"
+  puts "#{name}: #{e.class}: #{e.message}"
+end
+
+# Nothing was activated, so the refinement is still invisible here.
+begin
+  [1, 2].second
+rescue NoMethodError
+  puts "still refined nowhere"
 end
 __END__
-RuntimeError: main.using is permitted only at toplevel
+use_anonymous: RuntimeError: main.using is permitted only at toplevel
+use_named: RuntimeError: main.using is permitted only at toplevel
+use_from_a_class_method: RuntimeError: main.using is permitted only at toplevel
+still refined nowhere
