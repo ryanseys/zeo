@@ -1024,6 +1024,7 @@ fn for_each_nested_stmt(
         | HirNode::MultiWrite { .. }
         | HirNode::Ffi(_)
         | HirNode::BoxHandle(_)
+        | HirNode::FileEnd(_)
         | HirNode::Return(_)
         | HirNode::Yield(_)
         | HirNode::BlockGiven

@@ -27,6 +27,19 @@ pub(crate) enum Local {
 /// An enclosing native loop's jump targets. `result` is the loop's value
 /// slot when the loop sits in value position: `break v` moves `v` there
 /// (the normal exit writes the loop's own default first).
+/// One open `HirNode::FileEnd(Open)` -- where a spliced file's statements
+/// end, and the two depths a jump there owes, exactly as `LoopCtl` records
+/// them for a loop.
+pub(crate) struct FileCtl {
+    pub end: ir::Block,
+    /// The `ensure_depth` at the file's first statement: a `return` may
+    /// only jump when no `ensure` boundary sits between it and the end.
+    pub depth: usize,
+    /// The `handling_depth` there: a jump out emits the difference in
+    /// `handling_pop`s first.
+    pub handling: usize,
+}
+
 pub(crate) struct LoopCtl {
     pub exit: ir::Block,
     pub latch: ir::Block,
@@ -202,6 +215,11 @@ pub(crate) struct Fx<'e, 'f> {
     /// How many `$!` (`handling_push`) entries the current lexical point
     /// sits under -- a direct jump pops down to its target's depth.
     pub handling_depth: usize,
+    /// The open ends of the SPLICED files whose statements enclose this
+    /// point, innermost last. A top-level `return` inside one ends that
+    /// FILE, so it jumps here instead of ending `<main>`; a file that
+    /// writes none pushes nothing. See `HirNode::FileEnd`.
+    pub file_ends: Vec<FileCtl>,
     /// The enclosing frame's label ("<main>", "Object#fib") -- what a
     /// block's own frame derives its "block in ..." label from. A block
     /// keeps the label of the scope it was WRITTEN in, never its own.
@@ -305,6 +323,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             ensure_depth: 0,
             ensure_jumps: 0,
             handling_depth: 0,
+            file_ends: Vec::new(),
             frame_label: String::new(),
             block_depth: 0,
             blk_ptr: None,

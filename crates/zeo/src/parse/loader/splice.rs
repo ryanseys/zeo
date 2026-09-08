@@ -556,6 +556,14 @@ impl Loader {
         hir.lowering_dir = prev_dir;
         let mut statements = statements?;
         self.splicing.pop();
+        // A top-level `return` ends the FILE it stands in, and reading
+        // resumes in the requiring one -- so the file's statements get the
+        // two ends the jump needs. Only a file that writes one carries
+        // them; see `HirNode::FileEnd`.
+        if statements.iter().any(|&s| ends_the_file(hir, s)) {
+            statements.insert(0, hir.push(HirNode::FileEnd(crate::hir::FileEdge::Open)));
+            statements.push(hir.push(HirNode::FileEnd(crate::hir::FileEdge::Close)));
+        }
         // CRuby records a feature BEFORE it evaluates the file (which is what
         // makes a circular require answer `false` rather than recurse), so
         // the marker leads the spliced statements.
@@ -587,4 +595,20 @@ fn fresh_unit_consts(hir: &Hir, before: &std::collections::BTreeSet<String>) -> 
             None => vec![k.clone()],
         })
         .collect()
+}
+
+/// Whether `node` can hand control back to the requiring file: a `return`
+/// reachable from a spliced file's own top level, through the control-flow
+/// forms alone. A `def`, a `class` body, a lambda and a block each open a
+/// scope of their own, and a `return` written in one belongs to that scope.
+fn ends_the_file(hir: &Hir, node: NodeId) -> bool {
+    if matches!(hir[node], HirNode::Return(_)) {
+        return true;
+    }
+    if hir[node].scope_kind() != crate::hir::ScopeKind::None {
+        return false;
+    }
+    let mut found = false;
+    hir[node].for_each_child(&mut |child| found |= ends_the_file(hir, child));
+    found
 }

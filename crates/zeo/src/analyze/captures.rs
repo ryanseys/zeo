@@ -1115,6 +1115,7 @@ fn walk(
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoxHandle(_)
+        | HirNode::FileEnd(_)
         | HirNode::BoolLit(_)
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)

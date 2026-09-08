@@ -26,7 +26,7 @@ pub use arena::{
 pub use ffi::{FfiCall, FfiLib, FfiStructLayout, FfiType};
 pub use multi::{MultiTarget, MultiTargetGroup};
 pub use node::{
-    HirNode, LastMatch, RaiseCause, RegexpFlags, RescueClause, ScopeKind, StrPart, raise_cause_node,
+    FileEdge, HirNode, LastMatch, RaiseCause, RegexpFlags, RescueClause, ScopeKind, StrPart, raise_cause_node,
 };
 pub(crate) use node::{definition_kind, split_const_path};
 pub use params::{ArrayElem, KeywordParam, KwArg, Params, Visibility};

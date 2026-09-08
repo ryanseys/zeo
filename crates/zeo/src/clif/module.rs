@@ -838,7 +838,13 @@ impl Emitter {
         let outcome = self.module.define_function(id, &mut ctx);
         self.codegen_nanos += started.elapsed().as_nanos() as u64;
         self.codegen_fns += 1;
-        outcome.map_err(|e| CodegenError::internal(format!("compiling {label}: {e}")))?;
+        outcome.map_err(|e| {
+            let inner = match e {
+                cranelift_module::ModuleError::Compilation(inner) => inner,
+                other => return CodegenError::internal(format!("compiling {label}: {other}")),
+            };
+            CodegenError::internal(format!("compiling {label}: {}", codegen_failure(&inner)))
+        })?;
         if debug_rows {
             self.record_debug(label, id, &ctx);
         }
@@ -881,7 +887,13 @@ impl Emitter {
                             let alignment = ctx
                                 .compile(isa, &mut ctrl)
                                 .map(|code| code.buffer.alignment as u64)
-                                .map_err(|e| format!("compiling {}: {}", item.label, e.inner));
+                                .map_err(|e| {
+                                    format!(
+                                        "compiling {}: {}",
+                                        item.label,
+                                        codegen_failure(&e.inner)
+                                    )
+                                });
                             done.lock().expect("the result list is not poisoned").push((
                                 at,
                                 PendingCode {
@@ -1008,5 +1020,16 @@ mod tests {
             on.is_empty(),
             "the object path enabled host-inferred CPU features: {on:?}"
         );
+    }
+}
+
+/// What a cranelift failure says. `CodegenError`'s own `Display` answers a
+/// bare "Verifier errors" for the one kind that carries detail, and the
+/// detail -- which instruction, which value, which block -- is the whole
+/// message.
+fn codegen_failure(err: &cranelift_codegen::CodegenError) -> String {
+    match err {
+        cranelift_codegen::CodegenError::Verifier(errs) => format!("{errs:#?}"),
+        other => other.to_string(),
     }
 }

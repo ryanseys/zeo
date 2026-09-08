@@ -87,6 +87,7 @@ impl HirNode {
             | HirNode::MultiWrite { .. }
             | HirNode::BoxScope { .. }
             | HirNode::BoxHandle(..)
+            | HirNode::FileEnd(..)
             | HirNode::Return(..)
             | HirNode::Yield(..)
             | HirNode::BlockGiven
@@ -150,6 +151,15 @@ pub fn raise_cause_node(cause: &RaiseCause) -> Option<NodeId> {
         RaiseCause::Absent => None,
         RaiseCause::Explicit(id) => Some(*id),
     }
+}
+
+/// Which end of a spliced file `HirNode::FileEnd` marks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FileEdge {
+    /// Before the file's first statement: opens the jump target.
+    Open,
+    /// After its last: the point a top-level `return` jumps to.
+    Close,
 }
 
 /// Which last-match special a `LastMatchRef` reads -- see that variant's
@@ -735,6 +745,14 @@ pub enum HirNode {
     /// statically through the loader's bindings map, never through this
     /// value.
     BoxHandle(u32),
+    /// The two ends of a SPLICED file whose top level writes a `return`.
+    /// Ruby's top-level `return` ends the FILE it stands in, and reading
+    /// resumes in the requiring file -- so a `return` between these two
+    /// markers jumps to the closing one rather than ending `<main>`. They
+    /// stand as ORDINARY statements in the enclosing list, so every walk
+    /// over the spliced statements sees them exactly as it did before, and
+    /// a file that writes no top-level `return` carries neither.
+    FileEnd(FileEdge),
     /// `return` / `return value` -- explicit early return from the enclosing
     /// method. Compiles to a literal Rust `return Ok(value);` (Rust's own
     /// early return already exits arbitrarily deep nesting -- an `if`/`case`/
@@ -1198,6 +1216,7 @@ impl HirNode {
             | HirNode::Ffi(_)
             | HirNode::BoxScope { .. }
             | HirNode::BoxHandle(_)
+            | HirNode::FileEnd(_)
             | HirNode::Return(_)
             | HirNode::Yield(_)
             | HirNode::BlockGiven
@@ -1485,6 +1504,7 @@ impl HirNode {
             | HirNode::NilLit
             | HirNode::BoolLit(_)
             | HirNode::BoxHandle(_)
+            | HirNode::FileEnd(_)
             | HirNode::SelfRef
             | HirNode::BlockGiven
             | HirNode::Redo

@@ -1329,6 +1329,7 @@ fn walk_class_body(
             | HirNode::Ffi(_)
             | HirNode::BoxScope { .. }
             | HirNode::BoxHandle(_)
+            | HirNode::FileEnd(_)
             | HirNode::Return(_)
             | HirNode::Yield(_)
             | HirNode::BlockGiven

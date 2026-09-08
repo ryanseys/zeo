@@ -28,6 +28,14 @@ pub(crate) fn lower_stmts(fx: &mut Fx, stmts: &[NodeId]) -> CResult<()> {
             i = j;
             continue;
         }
+        // The two ends of a spliced file are markers, not statements: they
+        // own no temporaries, and a pool mark taken at the closing one
+        // would not dominate the block a `return` inside the file jumps to.
+        if matches!(fx.an.compiler.hir[stmts[i]], HirNode::FileEnd(_)) {
+            lower_stmt(fx, stmts[i])?;
+            i += 1;
+            continue;
+        }
         let mark = fx.stmt_mark();
         let pool = fx.drain_temps.then(|| super::frames::emit_pool_mark(fx));
         lower_stmt(fx, stmts[i])?;
@@ -596,8 +604,56 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             let (name, value) = (name.clone(), *value);
             super::ivars::lower_ivar_write(fx, &name, value)
         }
+        // A spliced file's two ends -- see `HirNode::FileEnd`. Open mints
+        // the block a top-level `return` in that file jumps to; Close is
+        // that block, which the file's own fall-through reaches too.
+        HirNode::FileEnd(crate::hir::FileEdge::Open) => {
+            let end = fx.b.create_block();
+            fx.file_ends.push(super::ctx::FileCtl {
+                end,
+                depth: fx.ensure_depth,
+                handling: fx.handling_depth,
+            });
+            Ok(())
+        }
+        HirNode::FileEnd(crate::hir::FileEdge::Close) => {
+            let ctl = fx
+                .file_ends
+                .pop()
+                .expect("a FileEnd(Close) is emitted only after its Open");
+            fx.b.ins().jump(ctl.end, &[]);
+            fx.b.switch_to_block(ctl.end);
+            Ok(())
+        }
         HirNode::Return(value) => {
             let value = *value;
+            // A top-level `return` inside a SPLICED file ends that FILE:
+            // reading resumes in the requiring one, so the jump lands at
+            // the file's own end rather than arming the signal `zeo_rt_main`
+            // settles as the end of the program. Its value is discarded --
+            // ruby answers the `require`, not the file. An `ensure` in
+            // between takes the signal road below, the rule a `break` out
+            // of a loop follows.
+            if fx.ret.is_none()
+                && let Some(ctl) = fx.file_ends.last()
+            {
+                if ctl.depth != fx.ensure_depth {
+                    return fx.unsupported(
+                        stmt,
+                        "a required file's top-level `return` written inside an `ensure`",
+                    );
+                }
+                let (end, handling) = (ctl.end, ctl.handling);
+                let op = match value {
+                    Some(v) => lower_expr(fx, v)?,
+                    None => super::operand::Operand::Nil,
+                };
+                ownership::discard(fx, op);
+                fx.pop_handling_to(handling);
+                fx.b.ins().jump(end, &[]);
+                fx.continue_unreachable();
+                return Ok(());
+            }
             let Some((out, ret_ok)) = fx.ret else {
                 // In an escaping block, `return` arms the Return signal;
                 // the runtime resolves it against the proc's captured home

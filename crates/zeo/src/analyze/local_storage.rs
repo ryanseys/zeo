@@ -410,6 +410,7 @@ pub(crate) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Locals) 
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoxHandle(_)
+        | HirNode::FileEnd(_)
         | HirNode::BoolLit(_)
         | HirNode::SelfRef
         | HirNode::LocalRead(_)
