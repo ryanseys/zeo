@@ -1384,7 +1384,7 @@ impl Loader {
                 // hid it. Under load-faithful packages most package files have
                 // no autoload naming them, and there are 131 of these sites
                 // across rubygems and bundler.
-                for call in &nested.lazy {
+                for call in &nested.deferred {
                     let cname = String::from_utf8_lossy(call.name().as_slice()).into_owned();
                     let Some(feature) = literal_feature(result, hir, call)? else {
                         continue;
@@ -1583,7 +1583,7 @@ impl Loader {
         // pre-lowered class-body splices land FIRST -- their position in this
         // list is the one the trailing pass always gave them.
         let mut trailing = nested_spliced;
-        for call in requires.lazy.iter().chain(&requires.calls) {
+        for call in &requires.calls {
             let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
             if let Some(spliced) =
                 self.lower_require_statement(hir, result, call, &name, dir, file_idx, current_box)?

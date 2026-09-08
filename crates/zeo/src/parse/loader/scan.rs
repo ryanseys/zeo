@@ -41,16 +41,10 @@ pub(super) struct RequireCollector<'a> {
     /// file runs -- top level, a conditional, a `begin`, a class body, a
     /// block.
     pub(super) calls: Vec<ruby_prism::CallNode<'a>>,
-    /// A `require_relative` inside a method BODY. Spliced (it names a file of
-    /// this same program, which must stay loaded), but at the END of the
-    /// file: the method cannot run before the file that defines it has
-    /// finished loading, and the target routinely reopens a class this file
-    /// is still building -- irb's `ext/eval_history.rb` pushes onto a
-    /// `NOPRINTING_IVARS` that `context.rb` assigns below the `def` that
-    /// requires it.
-    pub(super) lazy: Vec<ruby_prism::CallNode<'a>>,
-    /// A plain `require` only a method BODY reaches. These are not spliced, but
-    /// their names are still wanted (see `LoaderState::deferred_requires`).
+    /// A require only a method BODY reaches, `require_relative` included.
+    /// Not spliced: CRuby runs it when the method runs, so the target
+    /// becomes a lazy unit and the call stays a real require. Their names
+    /// are still wanted (see `LoaderState::deferred_requires`).
     pub(super) deferred: Vec<ruby_prism::CallNode<'a>>,
     /// `require_relative`s lexically inside a `begin` body whose rescue
     /// catches `LoadError` -- candidates for `Hir::optional_require_sites`
@@ -315,10 +309,6 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
                     self.nested.push(again);
                 }
                 self.calls.push(call);
-            } else if call.name().as_slice() == b"require_relative" {
-                if self.runtime_cond == 0 {
-                    self.lazy.push(call);
-                }
             } else {
                 self.deferred.push(call);
             }
