@@ -561,6 +561,14 @@ pub(super) fn previous_definition_of(
     cid: crate::compiler::ClassId,
     name: &str,
 ) -> String {
+    // A class the ABI carries has no creating site: its constant was never
+    // written by this program, and a REOPEN creates no constant, so ruby's
+    // `rb_const_source_location_at` answers nil. The first body site this
+    // program filed is that reopen, and naming it would put a line where
+    // ruby leaves two empty fields.
+    if zeo_abi::builtin_class(zeo_abi::ClassId(cid.0)).is_some() {
+        return format!("\n:: previous definition of {name} was here");
+    }
     let (file, line) = compiler
         .class_body_sites
         .iter()

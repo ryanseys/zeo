@@ -87,6 +87,18 @@ rescue TypeError => e
   p e.message
 end
 
+# A REOPEN creates no constant either, so a builtin a program reopened still
+# carries none.
+class Integer
+  def doubled = self * 2
+end
+begin
+  module Integer; end
+rescue TypeError => e
+  p e.message
+end
+p 21.doubled
+
 p :after
 __END__
 "superclass mismatch for class A"
@@ -103,4 +115,6 @@ Module
 "Inner is not a module\nlang/exceptions/a_definition_ruby_raises_on_is_rescuable.rb:64: previous definition of Inner was here"
 "Reopened is not a module\nlang/exceptions/a_definition_ruby_raises_on_is_rescuable.rb:74: previous definition of Reopened was here"
 "String is not a module\n:: previous definition of String was here"
+"Integer is not a module\n:: previous definition of Integer was here"
+42
 :after
