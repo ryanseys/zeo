@@ -533,34 +533,38 @@ pub fn overlay_class_method_is_extended(id: ClassId, name: Symbol) -> bool {
 }
 
 pub fn overlay_class_method_names(id: ClassId, own_only: bool) -> Vec<Symbol> {
-    maps()
-        .classes
-        .read()
-        .unwrap()
-        .get(&id.0)
-        .map(|e| {
-            let own = e
-                .class_methods
-                .keys()
-                .copied()
-                .filter(|n| !own_only || !e.extended_class_methods.contains(n));
-            // A singleton-prepend copy dispatches on the class, so the WIDE
-            // list reports it; like an extend it lives in the singleton's
-            // chain, not on the class itself, so the narrow list skips it.
-            match own_only {
-                true => own.collect(),
-                false => {
-                    let mut names: Vec<Symbol> = own.collect();
-                    for n in e.prepended_class_methods.keys() {
-                        if !names.contains(n) {
-                            names.push(*n);
-                        }
-                    }
-                    names
+    let c = maps().classes.read().unwrap();
+    let mut names: Vec<Symbol> = Vec::new();
+    // The shared record and, for a box, its OWN record on top: a box's
+    // `def self.x` on a shared class lands in its own record, so the listing
+    // has to read both or the box cannot see what it just defined. Main
+    // reads only the shared record, which is what keeps a box's row out of
+    // its reflection.
+    let mine = crate::boxes::box_record_for_read(crate::boxes::current_box(), id.0);
+    for key in [Some(id.0), mine].into_iter().flatten() {
+        let Some(e) = c.get(&key) else { continue };
+        let own = e
+            .class_methods
+            .keys()
+            .copied()
+            .filter(|n| !own_only || !e.extended_class_methods.contains(n));
+        // A singleton-prepend copy dispatches on the class, so the WIDE
+        // list reports it; like an extend it lives in the singleton's
+        // chain, not on the class itself, so the narrow list skips it.
+        for n in own {
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        }
+        if !own_only {
+            for n in e.prepended_class_methods.keys() {
+                if !names.contains(n) {
+                    names.push(*n);
                 }
             }
-        })
-        .unwrap_or_default()
+        }
+    }
+    names
 }
 
 pub(super) fn module_own_method_impl(mid: ClassId, name: Symbol) -> Option<MethodImpl> {

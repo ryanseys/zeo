@@ -1076,8 +1076,12 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
             ));
         };
         {
+            // The running box's own record, as `define_singleton_method`
+            // already writes it: a box aliasing a SHARED class's class method
+            // must not hand main the row.
+            let key = crate::boxes::box_record_for_write(crate::boxes::current_box(), owner.0);
             let mut w = maps().classes.write().unwrap();
-            let e = w.entry(owner.0).or_insert_with(OverlayEntry::delta);
+            let e = w.entry(key).or_insert_with(OverlayEntry::delta);
             e.class_methods.insert(new, source);
             e.extended_class_methods.remove(&new);
         }
