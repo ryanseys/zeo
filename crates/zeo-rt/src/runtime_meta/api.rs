@@ -1117,6 +1117,8 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
                 crate::dispatch::class_name(id).unwrap_or_default()
             ));
         };
+        // Resolved before the write lock: the walk reads the same map.
+        let private = crate::dispatch::class_method_is_private(owner, old);
         {
             // The running box's own record, as `define_singleton_method`
             // already writes it: a box aliasing a SHARED class's class method
@@ -1126,6 +1128,11 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
             let e = w.entry(key).or_insert_with(OverlayEntry::delta);
             e.class_methods.insert(new, source);
             e.extended_class_methods.remove(&new);
+            // The alias inherits its source's CURRENT visibility, exactly as
+            // the instance arm below does -- CRuby copies the method entry,
+            // flags and all. Recorded either way, so a stale mark under
+            // `new` cannot shadow a public source.
+            e.class_methods_vis.insert(new, private);
         }
         patch_class(owner);
         mark_live();
