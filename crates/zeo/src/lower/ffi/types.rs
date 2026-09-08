@@ -182,6 +182,12 @@ pub(super) fn ffi_type_node(
         }
     }
     if let Some(path) = const_path_string(node) {
+        // `FFI::Type::UINT32` written where a type goes. ruby-ffi's
+        // `find_type` takes the OBJECT, so the path names itself and no
+        // library has to have declared it.
+        if let Some(t) = super::ffi_type_constant_of(&path) {
+            return Ok(t);
+        }
         let leaf = path.rsplit("::").next().unwrap_or(&path);
         return match aliases.get(leaf) {
             // A bare struct name in a signature is ruby-ffi's

@@ -876,12 +876,15 @@ fn lower_one_class_body_stmt<'a>(
                 hir.declare_ffi_type(&name, &ty);
                 st.ffi_aliases.insert(name.clone(), ty);
             }
-        } else if (st.is_ffi || st.is_ffi_struct || st.is_ffi_union)
-            && let Some(ty) = crate::lower::ffi::const_path_string(&write.value())
-                .and_then(|p| crate::lower::ffi::ffi_type_constant_of(&p))
+        } else if let Some(ty) = crate::lower::ffi::const_path_string(&write.value())
+            .and_then(|p| crate::lower::ffi::ffi_type_constant_of(&p))
         {
             // `CFIndex = FFI::Type::LONG_LONG` (audio's CoreFoundation
-            // vocabulary) -- the FFI::Type constant IS the type.
+            // vocabulary) -- the FFI::Type constant IS the type. Not gated
+            // on `is_ffi`, for the reason the global typedef below is not:
+            // `FFI::Type::X` is an OBJECT, and ruby-ffi's `find_type` reads
+            // the constant's value wherever it was written, so a plain
+            // namespace can hold the vocabulary a struct spends.
             hir.declare_ffi_type(&name, &ty);
             st.ffi_aliases.insert(name, ty);
         } else if let Some(val) = crate::lower::ffi::ffi_const_int(&write.value(), hir, out) {
