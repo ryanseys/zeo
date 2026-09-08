@@ -435,21 +435,38 @@ pub fn overlay_instance_method_names(
     id: ClassId,
 ) -> Vec<(Symbol, Option<crate::dispatch::MethodVisibility>)> {
     let c = maps().classes.read().unwrap();
-    let Some(e) = c.get(&id.0) else {
+    // The shared record and, for a box, its OWN record on top: a box's `def`
+    // on a shared class lands there, so the listing has to read both or the
+    // box cannot see what it just defined. Main reads only the shared one,
+    // which is what keeps a box's row out of its reflection.
+    let mine = crate::boxes::box_record_for_read(crate::boxes::current_box(), id.0);
+    let entries: Vec<_> = [Some(id.0), mine]
+        .into_iter()
+        .flatten()
+        .filter_map(|k| c.get(&k))
+        .collect();
+    if entries.is_empty() {
         return Vec::new();
-    };
+    }
     // A visibility mark can name a method the overlay carries no body for
     // (`class_eval { private :compiled_method }`), so the marks contribute
     // names of their own rather than just annotating `methods`.
-    let named: HashSet<Symbol> = e
-        .methods
-        .keys()
-        .chain(e.prepended.keys())
-        .chain(e.methods_vis.keys())
+    let named: HashSet<Symbol> = entries
+        .iter()
+        .flat_map(|e| {
+            e.methods
+                .keys()
+                .chain(e.prepended.keys())
+                .chain(e.methods_vis.keys())
+        })
         .copied()
         // A `Class#dup` copy's inherited bodies are dispatch-only -- see
         // `OverlayEntry::inherited_names`.
-        .filter(|n| !e.undefs.contains(n) && !e.inherited_names.contains(n))
+        .filter(|n| {
+            !entries
+                .iter()
+                .any(|e| e.undefs.contains(n) || e.inherited_names.contains(n))
+        })
         .collect();
     // Intern-id order: hash-set order is RANDOM PER PROCESS (found by the
     // typed-diff leg -- two runs of one program listed `attr_accessor`'s
@@ -457,14 +474,16 @@ pub fn overlay_instance_method_names(
     // runtime-defined names, which is CRuby's listing order.
     let mut named: Vec<Symbol> = named.into_iter().collect();
     named.sort_unstable_by_key(|s| s.to_u32());
-    let mut undefs: Vec<Symbol> = e.undefs.iter().copied().collect();
+    let mut undefs: Vec<Symbol> = entries.iter().flat_map(|e| e.undefs.iter()).copied().collect();
     undefs.sort_unstable_by_key(|s| s.to_u32());
+    undefs.dedup();
     undefs
         .into_iter()
         .map(|n| (n, None))
         .chain(named.into_iter().map(|n| {
-            let vis = e.methods_vis.get(&n).copied();
-            let vis = vis.unwrap_or(crate::dispatch::MethodVisibility::Public);
+            // The box's own mark wins: it is the nearer record.
+            let vis = entries.iter().rev().find_map(|e| e.methods_vis.get(&n));
+            let vis = vis.copied().unwrap_or(crate::dispatch::MethodVisibility::Public);
             (n, Some(vis))
         }))
         .collect()

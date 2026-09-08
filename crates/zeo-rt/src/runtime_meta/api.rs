@@ -389,6 +389,7 @@ pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<R
         }
         if kind != AttrKind::Writer {
             let key: Arc<str> = Arc::from(name.name().as_str());
+            let value_key = Arc::clone(&key);
             let getter =
                 MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], _| {
                     if !args.is_empty() {
@@ -399,11 +400,28 @@ pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<R
                     }
                     Ok(recv.ivar_get_named(&key).unwrap_or(RubyValue::Nil))
                 }));
-            install_attr(id, name, getter);
+            // `self` is rebound per call (`call_value_body`), so the bound
+            // one here is a placeholder.
+            let value_getter = RProc::with_self(
+                move |slf: &RubyValue, args: &[RubyValue]| {
+                    if !args.is_empty() {
+                        return Err(arg_error!(
+                            "wrong number of arguments (given {}, expected 0)",
+                            args.len()
+                        ));
+                    }
+                    Ok(crate::dispatch::ivar_get_dyn(slf, &value_key))
+                },
+                RubyValue::Nil,
+                0,
+                true,
+            );
+            install_attr(id, name, getter, value_getter);
             defined.push(RubyValue::Symbol(name));
         }
         if kind != AttrKind::Reader {
             let key: Arc<str> = Arc::from(name.name().as_str());
+            let value_key = Arc::clone(&key);
             let setter_name = Symbol::intern(&format!("{}=", name.name()));
             let setter =
                 MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], _| {
@@ -416,7 +434,21 @@ pub fn runtime_attr(id: ClassId, args: &[RubyValue], kind: AttrKind) -> Result<R
                     recv.ivar_set_named(&key, v.clone());
                     Ok(v.clone())
                 }));
-            install_attr(id, setter_name, setter);
+            let value_setter = RProc::with_self(
+                move |slf: &RubyValue, args: &[RubyValue]| {
+                    let [v] = args else {
+                        return Err(arg_error!(
+                            "wrong number of arguments (given {}, expected 1)",
+                            args.len()
+                        ));
+                    };
+                    crate::dispatch::ivar_set_dyn(slf, &value_key, v.clone())
+                },
+                RubyValue::Nil,
+                1,
+                true,
+            );
+            install_attr(id, setter_name, setter, value_setter);
             defined.push(RubyValue::Symbol(setter_name));
         }
     }
@@ -496,10 +528,20 @@ fn singleton_attr(
     Ok(RubyValue::Array(crate::array_new(defined)))
 }
 
-fn install_attr(id: ClassId, name: Symbol, m: MethodImpl) {
+fn install_attr(id: ClassId, name: Symbol, m: MethodImpl, body: RProc) {
+    // The running box's own record, as `runtime_define_method` writes it: a
+    // box's `attr_accessor` on a SHARED class must not hand main the rows.
+    let key = crate::boxes::box_record_for_write(
+        crate::boxes::current_box(),
+        crate::boxes::overlay_root(id.0),
+    );
     let mut w = maps().classes.write().unwrap();
-    let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+    let e = w.entry(key).or_insert_with(OverlayEntry::delta);
     e.methods.insert(name, m);
+    // A BUILTIN's instances only ever reach the value-receiver road, which
+    // reads `value_bodies` -- so without this an `attr_accessor` on `Array`
+    // was listed by reflection and unreachable by dispatch.
+    e.value_bodies.insert(name, body);
     e.methods_vis.remove(&name);
     e.undefs.remove(&name);
     e.removed.remove(&name);
