@@ -76,7 +76,6 @@ matching `^##+@`. So any output round-trips.
 | `test/features/` | what a build of zeo answers about itself | zeo |
 | `test/divergences/` | programs zeo answers differently on purpose | zeo |
 | `test/milestones/` | whole require graphs; the `full` profile only | ruby |
-| `test/ze0/` | the Ruby front end's subset, three roads | ruby |
 | `test/bench/` | the benchmark bank's inputs | ruby |
 | `test/gaps/` | programs zeo does not get right yet; the verdict is inverted | ruby |
 

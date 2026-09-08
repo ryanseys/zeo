@@ -88,7 +88,6 @@ pub const MILESTONES: Suite = Suite {
     whole_graph: true,
     ..suite("milestones", "test/milestones", Depth::One)
 };
-pub const ZE0: Suite = suite("ze0", "test/ze0", Depth::One);
 /// Programs zeo does not get right yet. These run like any other case, but
 /// the verdict is inverted: a gap that still differs from ruby is green, and
 /// one that MATCHES is red, so the day a gap starts working the suite says
@@ -109,7 +108,6 @@ pub const SUITES: &[Suite] = &[
     FEATURES,
     DIVERGENCES,
     MILESTONES,
-    ZE0,
     GAPS,
 ];
 

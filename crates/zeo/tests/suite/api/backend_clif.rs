@@ -1,7 +1,7 @@
 //! `zeo backend`: a binary from CLIF text, with nothing of Ruby read.
 //!
 //! Two roads prove it. A program written BY HAND in the subset a front end
-//! outside this crate would emit (`ze0/`) links and runs -- that is the
+//! outside this crate would emit links and runs -- that is the
 //! reader, the name resolution and the sidecar with no Rust lowering in
 //! the loop. And the Rust emitter's own `--emit-clif --emit-zeodata` text
 //! rebuilds into a binary that prints what `zeo build` prints -- so every

@@ -10,7 +10,7 @@
 //! A program's contract is its DIRECTORY (`suites.rs`): `test/lang`,
 //! `test/core`, `test/stdlib` and `test/compiler` must match ruby; `errors`,
 //! `features` and `divergences` record zeo's own answer and must match it;
-//! `milestones` splice whole require graphs; `ze0` takes three roads.
+//! `milestones` splice whole require graphs.
 //! Anything deeper than a suite's depth is a fixture, not a test.
 //!
 //! A program zeo does NOT get right lives in `test/gaps/`, whose verdict is
@@ -34,7 +34,6 @@ mod oracle;
 mod run;
 #[allow(dead_code)]
 mod suites;
-mod ze0;
 
 use std::path::Path;
 
@@ -81,10 +80,6 @@ fn milestones(rb: &Path) -> datatest_stable::Result<()> {
     golden::run(rb, &suites::MILESTONES, Leg::Jit)
 }
 
-fn ze0(rb: &Path) -> datatest_stable::Result<()> {
-    ze0::run(rb)
-}
-
 fn gaps(rb: &Path) -> datatest_stable::Result<()> {
     golden::run(rb, &suites::GAPS, Leg::Jit)
 }
@@ -100,6 +95,5 @@ datatest_stable::harness! {
     { test = features, root = "../../test/features", pattern = r"^[^/]+\.rb$" },
     { test = divergences, root = "../../test/divergences", pattern = r"^[^/]+\.rb$" },
     { test = milestones, root = "../../test/milestones", pattern = r"^[^/]+\.rb$" },
-    { test = ze0, root = "../../test/ze0", pattern = r"^[^/]+\.rb$" },
     { test = gaps, root = "../../test/gaps", pattern = r"^[^/]+\.rb$" },
 }

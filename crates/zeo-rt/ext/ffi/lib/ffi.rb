@@ -443,7 +443,8 @@ module FFI
   # The proxy an INLINE array field of a struct reads back as: a view over
   # the struct's own bytes, so writing through it writes the struct. The
   # compiler synthesizes the field accessor that builds one -- both tiers,
-  # zeo's `lower/ffi/synth.rs` and ze0's `Ze0::Ffi` -- and the class itself
+  # zeo's `lower/ffi/synth.rs` and ze0's `Ze0::Ffi` (its own repository) --
+  # and the class itself
   # belongs here, where the gem keeps it.
   class Struct
     class InlineArray

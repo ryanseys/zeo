@@ -124,11 +124,9 @@ commands:
   gem             build the platform gem from a dist staging
   linux           run the suites in the linux container
   promote-gap     move a gap that started matching ruby into a topic directory
-  stage2          does ze0 still compile itself, to the same bytes?
   stage-crate     stage the artifacts the published crate ships
   test-gem        can zeo compile this gem? one row of TSV per gem
   timings         what the last test run cost, read back out of its JUnit
-  ze0-sweep       does ze0 answer what ruby answered, over a corpus glob?
 
 `cargo xtask <command> --help` describes one command.
 ";
@@ -154,11 +152,9 @@ fn main() -> std::process::ExitCode {
         "gem" => commands::gem::run(rest),
         "linux" => commands::linux::run(rest),
         "promote-gap" => commands::promote_gap::run(rest),
-        "stage2" => commands::stage2::run(rest),
         "stage-crate" => commands::stage_crate::run(rest),
         "test-gem" => commands::test_gem::run(rest),
         "timings" => commands::timings::run(rest),
-        "ze0-sweep" => commands::ze0_sweep::run(rest),
         other => Err(Error::new(format!("unknown command {other:?}\n\n{USAGE}"))),
     };
     match result {

@@ -38,7 +38,6 @@ $ cargo xtask bless core::string/upcase.rb
 | `features/` | what a build of zeo answers about itself |
 | `divergences/` | programs zeo answers differently on purpose |
 | `milestones/` | whole require graphs (the `full` profile) |
-| `ze0/` | the Ruby front end's subset, three roads |
 | `bench/` | the benchmark bank's inputs |
 | `fixtures/` | files several programs share |
 

@@ -57,7 +57,7 @@ subcommands:
                         the verbs above, so the handoff cannot drift
   backend <f.clif> -o <bin>
                         link a program from CLIF text another front end
-                        wrote (see ze0/). `--data <f.zeodata>` names the
+                        wrote. `--data <f.zeodata>` names the
                         sidecar carrying what the text cannot; without it,
                         the `.zeodata` beside the file, else an empty one
                         A script really named `build`, `gem`, `bundle`,

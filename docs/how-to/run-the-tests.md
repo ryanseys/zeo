@@ -65,42 +65,12 @@ $ cargo xtask test-gem nokogiri --aot --no-clean
 ```
 
 
-## Does ze0 still compile itself?
+## The Ruby implementation
 
-`ze0/` is a Ruby front end for the same backend, and it compiles itself: the
-ze0 that ze0-under-ruby writes, and the ze0 that binary then writes, are
-byte-identical. One verb checks that fixed point still holds, and then puts
-every `test/ze0/` program through both binaries:
-
-```console
-$ cargo xtask stage2
-$ cargo xtask stage2 --stage 1     # build ze0_1 and stop
-```
-
-**Nothing runs it for you**, for the same reason the gem tiers are opt-in:
-the two self-compiles are ze0 lowering about 45,000 lines of Ruby twice, and
-that is heavier than the rest of the suite put together. The ordinary
-`test(ze0::)` tier covers every FORM ze0 supports on three roads; this covers
-the one thing no golden can, which is that the compiler still reproduces
-itself. Run it after a change to `ze0/` that a golden would not notice --
-a new lowering, a change to how files are spliced, anything touching the
-order of a table.
-
-The `test(ze0::)` tier holds 76 programs to ruby's answer on three roads.
-It says nothing about the other five thousand corpus programs ze0 also
-compiles, and a refusal is honest where a wrong answer is not, so one more
-verb sweeps them:
-
-```console
-$ cargo xtask ze0-sweep --all
-$ cargo xtask ze0-sweep lang/classes/ --show 40
-```
-
-Each program costs one ze0 compile and one real link, and lands in one of
-four buckets -- `refused`, `backend`, `matched`, `diverged`. Only `diverged`
-is a defect: ze0 compiled the program and the binary said something other
-than what ruby said. The refusals are printed as a histogram by shape, which
-is what names the next gap.
+ze0, the Ruby implementation of the same compiler, lives in its own
+repository (`~/dev/ze0`). It consumes an installed `zeo` through
+`zeo backend`, and carries its own corpus, its self-compile check and its
+sweep. Nothing here runs it.
 
 ## What a run costs
 

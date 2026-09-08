@@ -137,7 +137,7 @@ fn steps() -> Result<Vec<Step>, Error> {
         // default one leaves the last feature set's binary sitting where the
         // suites spawn `target/debug/zeo`, and a corpus run right after this
         // command then measures a compiler nobody asked for. That cost three
-        // hours once: the ze0 roads timed out against a `pure-stdlib` zeo.
+        // hours once: the link roads timed out against a `pure-stdlib` zeo.
         step(
             "features-bare",
             "zeo-rt compiles with every optional feature off",
