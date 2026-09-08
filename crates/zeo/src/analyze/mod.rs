@@ -399,6 +399,10 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // class whose declaration has not run yet.
     conceal_observed_namespace_members(compiler);
 
+    // A constant read ABOVE the `class` statement that defines it is a
+    // NameError in ruby, so that class is not there yet either.
+    classes::conceal_classes_read_before_they_run(compiler, &main_statements);
+
     // Two static bodies for one BUILTIN-class name -- the host's and a
     // merged package's -- cannot hold their document order, so the shape
     // refuses by package name here, before materialization folds anything

@@ -1863,6 +1863,127 @@ pub(super) fn conceal_observed_namespace_members(compiler: &mut Compiler) {
     }
 }
 
+/// Conceal a class whose constant a top-level statement READS before its
+/// own `class` statement has run. Ruby answers `NameError` there, and a
+/// revealed row answers the class instead. `defined?` already folds to nil
+/// at such a position, so only the READ was wrong.
+///
+/// Only the reads a file's own statements make count. One written in a
+/// `def`, a class body or a block is not one this pass can place -- the
+/// method may be called anywhere -- and a class its own body names is
+/// already declared by the time the body runs.
+///
+/// A concealed class pays a runtime constant read
+/// (`ClassInfo::runtime_conditional`), so the set stays as small as the
+/// question: a program that names a class only after defining it -- nearly
+/// every program -- is untouched.
+pub(super) fn conceal_classes_read_before_they_run(
+    compiler: &mut Compiler,
+    main_statements: &[NodeId],
+) {
+    // A program that can mint a constant some other way -- an `eval`, a
+    // `const_set` -- may have created the class before the `class`
+    // statement this pass would key on, which is then a REOPEN and no
+    // evidence at all. Such a program keeps every class revealed.
+    if compiler
+        .hir
+        .iter_with_ids()
+        .any(|(_, n)| matches!(n, HirNode::Call { name, .. } if OPAQUE_CONST_MAKERS.contains(&name.as_str())))
+    {
+        return;
+    }
+    // Each class by the node that declares it, so a read is matched to a
+    // row rather than to every class sharing a leaf name.
+    let mut pending: Vec<(NodeId, ClassId, String)> = Vec::new();
+    for site in &compiler.class_body_sites {
+        let Some(def) = site.def_node else { continue };
+        let ci = compiler.class(site.class);
+        if ci.is_builtin || ci.is_bootstrap || ci.runtime_conditional {
+            continue;
+        }
+        if pending.iter().any(|&(_, c, _)| c == site.class) {
+            continue;
+        }
+        pending.push((def, site.class, ci.name.clone()));
+    }
+    if pending.is_empty() {
+        return;
+    }
+    let mut conceal: Vec<ClassId> = Vec::new();
+    for &stmt in main_statements {
+        // The reads come first: a statement that both reads a name and
+        // declares it (`class Missing < Missing`) read it too early.
+        let mut names = Vec::new();
+        top_level_const_reads(&compiler.hir, stmt, &mut names);
+        for name in &names {
+            conceal.extend(
+                pending
+                    .iter()
+                    .filter(|(_, _, n)| n == name)
+                    .map(|&(_, c, _)| c),
+            );
+        }
+        let mut declared = Vec::new();
+        top_level_class_defs(&compiler.hir, stmt, &mut declared);
+        pending.retain(|&(def, _, _)| !declared.contains(&def));
+    }
+    for cid in conceal {
+        compiler.classes[cid.0 as usize].runtime_conditional = true;
+    }
+}
+
+/// The verbs that can mint a constant this pass cannot place, so a program
+/// that writes one keeps every class revealed.
+const OPAQUE_CONST_MAKERS: &[&str] = &[
+    "eval",
+    "class_eval",
+    "module_eval",
+    "instance_eval",
+    "class_exec",
+    "module_exec",
+    "const_set",
+    "autoload",
+];
+
+/// Every constant name a statement reads WHEN IT RUNS. A `class` body runs
+/// at the statement's own position, so the walk goes into one; a `def`, a
+/// lambda and a block run when they are called, which this pass cannot
+/// place, so it stops there.
+fn top_level_const_reads(hir: &Hir, node: NodeId, out: &mut Vec<String>) {
+    if let Some(name) = leaf_const_name(hir, node) {
+        out.push(name);
+    }
+    each_running_child(hir, node, &mut |child| {
+        top_level_const_reads(hir, child, out);
+    });
+}
+
+/// Every `class`/`module` node a statement declares when it runs -- the
+/// nodes `pending` is keyed by. A nested one is declared by its enclosing
+/// body, so the walk carries on past the outer node.
+fn top_level_class_defs(hir: &Hir, node: NodeId, out: &mut Vec<NodeId>) {
+    if matches!(hir[node], HirNode::ClassDef { .. }) {
+        out.push(node);
+    }
+    each_running_child(hir, node, &mut |child| {
+        top_level_class_defs(hir, child, out);
+    });
+}
+
+/// The children of `node` that run when `node` does: everything under a
+/// control-flow form, and a `class`/`module` body. Nothing under a `def`,
+/// a lambda or a block, which run when they are called.
+fn each_running_child(hir: &Hir, node: NodeId, visit: &mut impl FnMut(NodeId)) {
+    if let HirNode::ClassDef { body, .. } = &hir[node] {
+        body.iter().copied().for_each(visit);
+        return;
+    }
+    if hir[node].scope_kind() != crate::hir::ScopeKind::None {
+        return;
+    }
+    hir[node].for_each_child(visit);
+}
+
 /// The bare constant NAME a node reads, for the leaf-name fallback above.
 fn leaf_const_name(hir: &Hir, node: NodeId) -> Option<String> {
     match &hir[node] {
