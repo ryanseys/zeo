@@ -985,6 +985,7 @@ fn for_each_nested_stmt(
         | HirNode::And(..)
         | HirNode::Or(..)
         | HirNode::Defined(_)
+        | HirNode::NotNil(_)
         | HirNode::ArrayLit(_)
         | HirNode::HashLit(_)
         | HirNode::RangeLit { .. }

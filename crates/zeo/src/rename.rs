@@ -194,6 +194,7 @@ impl Walker {
             | HirNode::Or(..)
             | HirNode::FlipFlop { .. }
             | HirNode::Defined(_)
+            | HirNode::NotNil(_)
             | HirNode::If { .. }
             | HirNode::CaseWhen { .. }
             | HirNode::While { .. }

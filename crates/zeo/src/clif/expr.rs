@@ -813,6 +813,26 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
             let v = *v;
             super::defined::lower_defined(fx, id, v)
         }
+        HirNode::NotNil(v) => {
+            let v = *v;
+            let op = lower_expr(fx, v)?;
+            let tag = op.tag();
+            if let TagInfo::Known(t) = tag {
+                ownership::discard(fx, op);
+                let known = fx.b.ins().iconst(types::I8, i64::from(t != 0));
+                return Ok(Operand::Bool(known));
+            }
+            let ptr = ownership::borrow_ptr(fx, &op);
+            if op.owned() {
+                ownership::pool_owned(fx, ptr, tag);
+            }
+            let tv =
+                fx.b.ins()
+                    .load(types::I8, MemFlagsData::trusted(), ptr, TAG_OFFSET as i32);
+            Ok(Operand::Bool(
+                fx.b.ins().icmp_imm_u(IntCC::NotEqual, tv, 0),
+            ))
+        }
         HirNode::LastMatchRef(which) => {
             use crate::hir::LastMatch;
             let (kind, n) = match which {

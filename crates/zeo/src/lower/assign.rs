@@ -285,6 +285,23 @@ pub(crate) fn build_call_target_write(
     )
 }
 
+/// `o&.v ||= 8` and its siblings run NOTHING when the receiver is nil --
+/// not the read, not the right-hand side -- and answer nil. The receiver
+/// is bound once by `bind_call_target_once` BEFORE the guard, so it runs
+/// exactly once either way.
+pub(crate) fn guard_safe_target(hir: &mut Hir, safe: bool, tmp: &str, body: NodeId) -> NodeId {
+    if !safe {
+        return body;
+    }
+    let recv = hir.push(HirNode::LocalRead(tmp.to_string()));
+    let cond = hir.push(HirNode::NotNil(recv));
+    hir.push(HirNode::If {
+        cond,
+        then_body: vec![body],
+        else_body: Vec::new(),
+    })
+}
+
 /// One evaluate-once index binding of `arr[...] op= rhs` -- the hidden
 /// local's name, and whether the source spelled it as a SPLAT (`self[*mask]
 /// += x`, where the bound value is the ARRAY and both `[]`/`[]=` re-splat
@@ -814,7 +831,8 @@ pub(crate) fn try_lower(
             safe: false,
         });
         let write_call = build_call_target_write(hir, &tmp, &write_name, combined);
-        return Ok(Some(hir.push(HirNode::Seq(vec![bind, write_call]))));
+        let body = guard_safe_target(hir, op.is_safe_navigation(), &tmp, write_call);
+        return Ok(Some(hir.push(HirNode::Seq(vec![bind, body]))));
     }
     if let Some(op) = node.as_call_and_write_node() {
         let recv = op
@@ -826,7 +844,8 @@ pub(crate) fn try_lower(
         let (bind, read_call, tmp) = bind_call_target_once(result, hir, &recv, &read_name)?;
         let write_call = build_call_target_write(hir, &tmp, &write_name, rhs);
         let and_node = hir.push(HirNode::And(read_call, write_call));
-        return Ok(Some(hir.push(HirNode::Seq(vec![bind, and_node]))));
+        let body = guard_safe_target(hir, op.is_safe_navigation(), &tmp, and_node);
+        return Ok(Some(hir.push(HirNode::Seq(vec![bind, body]))));
     }
     if let Some(op) = node.as_call_or_write_node() {
         let recv = op
@@ -838,7 +857,8 @@ pub(crate) fn try_lower(
         let (bind, read_call, tmp) = bind_call_target_once(result, hir, &recv, &read_name)?;
         let write_call = build_call_target_write(hir, &tmp, &write_name, rhs);
         let or_node = hir.push(HirNode::Or(read_call, write_call));
-        return Ok(Some(hir.push(HirNode::Seq(vec![bind, or_node]))));
+        let body = guard_safe_target(hir, op.is_safe_navigation(), &tmp, or_node);
+        return Ok(Some(hir.push(HirNode::Seq(vec![bind, body]))));
     }
 
     // `arr[i] += rhs` / `arr[i] ||= rhs` / `arr[i] &&= rhs` -- same

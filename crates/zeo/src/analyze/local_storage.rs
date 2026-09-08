@@ -105,7 +105,7 @@ pub(crate) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Locals) 
             collect_locals(compiler, *l, out);
             collect_locals(compiler, *r, out);
         }
-        HirNode::Defined(v) => collect_locals(compiler, *v, out),
+        HirNode::Defined(v) | HirNode::NotNil(v) => collect_locals(compiler, *v, out),
         HirNode::If {
             cond,
             then_body,

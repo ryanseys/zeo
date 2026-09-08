@@ -51,6 +51,7 @@ impl HirNode {
             | HirNode::And(..)
             | HirNode::Or(..)
             | HirNode::Defined(..)
+            | HirNode::NotNil(..)
             | HirNode::If { .. }
             | HirNode::CaseWhen { .. }
             | HirNode::ArrayLit(..)
@@ -293,6 +294,11 @@ pub enum HirNode {
     /// runtime check. See `clif/expr.rs`'s `lower_defined` for the
     /// scope-cut this approximates.
     Defined(NodeId),
+    /// True unless the value is nil -- the TAG test `&.` makes, not a
+    /// `nil?` send a program can redefine. It is the condition of the
+    /// guard `o&.v ||= 8` and its siblings wrap themselves in; see
+    /// `lower::assign`'s `guard_safe_target`.
+    NotNil(NodeId),
     /// `if`/`unless`/`elsif`/ternary all normalize to this at lowering time
     /// (`unless` swaps `then_body`/`else_body`; `elsif` is prism's own
     /// `IfNode::subsequent()` recursion, which lowering walks into a nested
@@ -1162,6 +1168,7 @@ impl HirNode {
             | HirNode::And(..)
             | HirNode::Or(..)
             | HirNode::Defined(_)
+            | HirNode::NotNil(_)
             | HirNode::If { .. }
             | HirNode::CaseWhen { .. }
             | HirNode::ArrayLit(_)
@@ -1282,7 +1289,7 @@ impl HirNode {
                 visit(*l);
                 visit(*r);
             }
-            HirNode::Defined(v) => visit(*v),
+            HirNode::Defined(v) | HirNode::NotNil(v) => visit(*v),
             HirNode::If {
                 cond,
                 then_body,

@@ -1298,6 +1298,7 @@ fn walk_class_body(
             | HirNode::And(..)
             | HirNode::Or(..)
             | HirNode::Defined(_)
+            | HirNode::NotNil(_)
             | HirNode::If { .. }
             | HirNode::CaseWhen { .. }
             | HirNode::ArrayLit(_)

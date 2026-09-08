@@ -766,6 +766,7 @@ fn walk(
         | HirNode::DynConstRead { .. }
         | HirNode::DynConstWrite { .. }
         | HirNode::Defined(_)
+        | HirNode::NotNil(_)
         | HirNode::And(..)
         | HirNode::Or(..)
         | HirNode::FlipFlop { .. }
