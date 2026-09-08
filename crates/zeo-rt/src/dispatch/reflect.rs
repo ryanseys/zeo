@@ -725,10 +725,22 @@ pub fn method_owner(recv_class: ClassId, name: Symbol) -> Option<ClassId> {
 /// `undef`'d, which the MRO walk treats as a lookup terminator. Sorted, so the
 /// listing is stable across runs (the set is a hash set).
 pub fn undefined_method_names(class: ClassId) -> Vec<Symbol> {
-    let Some(entry) = REGISTRY.get().and_then(|r| r.entries.get(&class.0)) else {
-        return Vec::new();
-    };
-    let mut names: Vec<Symbol> = entry.undefined_methods.iter().copied().collect();
+    let mut names: Vec<Symbol> = REGISTRY
+        .get()
+        .and_then(|r| r.entries.get(&class.0))
+        .map(|e| e.undefined_methods.iter().copied().collect())
+        .unwrap_or_default();
+    // A RUN-TIME `undef` leaves its tombstone in the overlay, which the
+    // frozen registry never sees -- and a front end that installs its
+    // definitions at run time writes every one of them there. A later
+    // definition clears the tombstone, so a live name is never listed.
+    if crate::runtime_meta::is_live() {
+        for (name, vis) in crate::runtime_meta::overlay_instance_method_names(class) {
+            if vis.is_none() && !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
     names.sort_by_key(|s| s.name_str());
     names
 }
