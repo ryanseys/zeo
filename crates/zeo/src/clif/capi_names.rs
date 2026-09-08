@@ -1180,6 +1180,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(U8),
     },
     CapiSig {
+        name: "zeo_rt_splat_any_truthy",
+        params: &[Ptr, Ptr],
+        ret: Some(I32),
+    },
+    CapiSig {
         name: "zeo_rt_stack_check",
         params: &[],
         ret: Some(I32),

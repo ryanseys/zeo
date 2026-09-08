@@ -1444,7 +1444,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
             else_body,
         } => {
             let (subject, arms, else_body) = (*subject, arms.clone(), else_body.clone());
-            case_when(fx, id, subject, &arms, &else_body)
+            case_when(fx, subject, &arms, &else_body)
         }
         HirNode::CaseIn {
             subject,
@@ -2468,7 +2468,6 @@ fn regexp_lit(
 /// value's truthiness, ruby's if-chain sugar.
 fn case_when(
     fx: &mut Fx,
-    id: NodeId,
     subject: Option<NodeId>,
     arms: &[(Vec<ArrayElem>, Vec<NodeId>)],
     else_body: &[NodeId],
@@ -2524,8 +2523,17 @@ fn case_when(
                     let op = lower_expr(fx, *v)?;
                     ownership::truthy(fx, op)
                 }
-                (ArrayElem::Splat(_), None) => {
-                    return fx.unsupported(id, "a subjectless `when *splat`");
+                (ArrayElem::Splat(v), None) => {
+                    let op = lower_expr(fx, *v)?;
+                    let tag = op.tag();
+                    let p = ownership::borrow_ptr(fx, &op);
+                    if op.owned() {
+                        ownership::pool_owned(fx, p, tag);
+                    }
+                    let status = fx.call_status("zeo_rt_splat_any_truthy", &[p, hit_ptr]);
+                    fx.fallible(status);
+                    fx.b.ins()
+                        .load(types::I8, MemFlagsData::trusted(), hit_ptr, 0)
                 }
             };
             let cont = fx.b.create_block();

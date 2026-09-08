@@ -751,14 +751,33 @@ pub unsafe extern "C" fn zeo_rt_method_capture_inherited(
 }
 
 /// `when *candidates`: the splat form -- `===` over every element of the
-/// (to_a-coerced) candidate list, short-circuiting on the first hit.
+/// spread candidate list, short-circuiting on the first hit.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_case_eq_any(
     candidates: *const RubyValue,
     subject: *const RubyValue,
     hit: *mut i8,
 ) -> i32 {
-    match crate::value::case_eq_any(unsafe { &*candidates }, unsafe { &*subject }) {
+    match crate::value::case_eq_any(unsafe { &*candidates }, Some(unsafe { &*subject })) {
+        Ok(b) => {
+            unsafe { hit.write(i8::from(b)) };
+            STATUS_OK
+        }
+        Err(sig) => {
+            crate::signal::set_pending(sig);
+            STATUS_SIGNAL
+        }
+    }
+}
+
+/// A SUBJECTLESS `case`'s `when *candidates`: each spread element's own
+/// truth is the test, not `===`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_splat_any_truthy(
+    candidates: *const RubyValue,
+    hit: *mut i8,
+) -> i32 {
+    match crate::value::case_eq_any(unsafe { &*candidates }, None) {
         Ok(b) => {
             unsafe { hit.write(i8::from(b)) };
             STATUS_OK

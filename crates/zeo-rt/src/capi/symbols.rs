@@ -268,6 +268,7 @@ capi_symbols!(
     signals::zeo_rt_signal_save,
     signals::zeo_rt_signal_set,
     signals::zeo_rt_signal_take,
+    dispatch::zeo_rt_splat_any_truthy,
     frames::zeo_rt_stack_check,
     frames::zeo_rt_stamp_backtrace,
     literals::zeo_rt_str_append_bytes,

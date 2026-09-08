@@ -1939,14 +1939,25 @@ pub fn case_eq(pattern: &RubyValue, subject: &RubyValue) -> Result<bool, crate::
     }
 }
 
-/// `when *candidates` -- `case_eq` against each element, short-circuiting on
-/// the first hit exactly as the listed `when a, b, c` form's `||` chain does.
-/// A free function rather than an `.any(..)` closure at the call site because
-/// each test is now fallible.
-pub fn case_eq_any(candidates: &RubyValue, subject: &RubyValue) -> Result<bool, crate::Signal> {
-    let elems = candidates.as_array_unchecked().lock().clone();
+/// `when *candidates` -- the list is spread the way a call site's splat is
+/// (`array_splat_into`: a non-Array is one element, `nil` is none), then
+/// each element is tested in turn, short-circuiting exactly as the listed
+/// `when a, b, c` form's `||` chain does. WITHOUT a subject -- a
+/// subjectless `case` -- each element's own truth is the test, which is
+/// ruby's if-chain sugar. A free function rather than an `.any(..)`
+/// closure at the call site because each test is fallible.
+pub fn case_eq_any(
+    candidates: &RubyValue,
+    subject: Option<&RubyValue>,
+) -> Result<bool, crate::Signal> {
+    let mut elems = Vec::new();
+    collections::array_splat_into(&mut elems, candidates)?;
     for candidate in elems.iter() {
-        if case_eq(candidate, subject)? {
+        let hit = match subject {
+            Some(s) => case_eq(candidate, s)?,
+            None => candidate.truthy(),
+        };
+        if hit {
             return Ok(true);
         }
     }
