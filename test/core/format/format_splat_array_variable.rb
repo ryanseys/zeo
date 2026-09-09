@@ -1,6 +1,9 @@
 # A splatted Array variable contributes its ELEMENTS to format/sprintf/printf:
 # it used to be pushed as one boxed array, so the conversions went unfed and the
 # call raised "too few arguments" (#3957).
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 args = ["a", "b"]
 p format("%s%s", *args)
 p sprintf("%s/%s", *args)
@@ -18,7 +21,7 @@ p format(fmt, *args)
 printf("%s|%s\n", *args)
 $stdout.printf("%s;%s\n", *args)
 
-path = "/tmp/spinel_format_splat_test.txt"
+path = File.join(ZTMP, "spinel_format_splat_test.txt")
 File.open(path, "w") { |f| f.printf("%s=%s\n", *args) }
 p File.read(path)
 File.delete(path)

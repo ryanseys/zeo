@@ -7,6 +7,9 @@
 # The second rule here is `external_encoding`'s: CRuby asks WRITABLE, not
 # write-only, so a stream opened `"w+"` (every Tempfile) answers nil until
 # something says what its bytes are to be read as.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 require "stringio"
 require "tempfile"
 s = StringIO.new("héllo")
@@ -28,15 +31,15 @@ f.rewind
 f.binmode
 p [f.external_encoding.to_s, f.internal_encoding.inspect, f.read.encoding.to_s, f.binmode?]
 f.close!
-g = File.open("/tmp/zeo_binmode_golden.bin", "wb")
+g = File.open(File.join(ZTMP, "zeo_binmode_golden.bin"), "wb")
 g.write("\xff\xfe".b)
 g.close
-p File.binread("/tmp/zeo_binmode_golden.bin").encoding.to_s
-h = File.open("/tmp/zeo_binmode_golden.bin")
+p File.binread(File.join(ZTMP, "zeo_binmode_golden.bin")).encoding.to_s
+h = File.open(File.join(ZTMP, "zeo_binmode_golden.bin"))
 h.binmode
 p [h.external_encoding.to_s, h.read.encoding.to_s]
 h.close
-File.delete("/tmp/zeo_binmode_golden.bin")
+File.delete(File.join(ZTMP, "zeo_binmode_golden.bin"))
 __END__
 ["UTF-8", "UTF-8"]
 ["ASCII-8BIT", "ASCII-8BIT", "ASCII-8BIT"]

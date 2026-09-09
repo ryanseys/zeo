@@ -3,9 +3,12 @@
 # "evaluate for effect, yield nil", so the payload slots have to keep the String
 # rendering for it -- optcarrot's ROM#save_battery is exactly this shape, and
 # boxing it wrote an empty file.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 require "stringio"
 
-dir = "/tmp/spinel_write_payload_untyped"
+dir = File.join(ZTMP, "spinel_write_payload_untyped")
 if Dir.exist?(dir)
   Dir.children(dir).each { |e| File.delete("#{dir}/#{e}") }
   Dir.rmdir(dir)

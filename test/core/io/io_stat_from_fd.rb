@@ -4,7 +4,10 @@
 # come from fstat(2) rather than from stat(path). And the stat accessors were
 # gated on the receiver still spelling `sp_file_stat_handle(...)`, so they were
 # lost the moment the stat was stored in a local.
-path = "/tmp/spinel_io_stat_from_fd.txt"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+path = File.join(ZTMP, "spinel_io_stat_from_fd.txt")
 File.write(path, "hello")
 
 f = File.open(path)

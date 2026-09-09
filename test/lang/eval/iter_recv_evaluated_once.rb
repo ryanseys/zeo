@@ -1,6 +1,9 @@
 # A fused loop must evaluate its receiver expression once, not once per
 # iteration: re-running a call mid-loop re-reads whatever it returns, so
 # `Dir.children(dir).each` deleting entries used to skip half of them.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 $n = 0
 def src
   $n += 1
@@ -24,7 +27,7 @@ chk("each_cons") { src.each_cons(2) { |a| a } }
 
 # a directory listing is a snapshot: deleting inside the block still visits
 # every entry the call returned
-root = "/tmp/spinel_iter_recv_once_t"
+root = File.join(ZTMP, "spinel_iter_recv_once_t")
 Dir.mkdir(root) unless Dir.exist?(root)
 File.write("#{root}/a.txt", "a")
 File.write("#{root}/b.txt", "b")

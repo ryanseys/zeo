@@ -1,7 +1,10 @@
 # File.foreach's return value with and without a block, Dir.open's block
 # children, Method objects for the boolean operators, a deferred handler's
 # captures, NoMethodError#args, and find_index with a destructured pair.
-path = "/tmp/sp_ff"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+path = File.join(ZTMP, "sp_ff")
 File.write(path, "hello\nworld\n")
 v = File.foreach(path) { |line| line }; p v
 fe = File.foreach(path).class;           p fe
@@ -9,7 +12,7 @@ acc = []
 File.foreach(path) { |l| acc << l }
 p acc
 File.delete(path)
-d = "/tmp/sp_dir34"
+d = File.join(ZTMP, "sp_dir34")
 Dir.mkdir(d) unless Dir.exist?(d)
 File.write("#{d}/x", "")
 a = []; Dir.open(d) { |dir| a = dir.children }

@@ -10,6 +10,9 @@
 # existing. winsize is only asserted to answer WITHOUT NoMethodError, because
 # a non-tty answer legitimately differs between the engines (CRuby raises
 # Errno::ENOTTY; Spinel reports zeroes from the ioctl).
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 require "io/console"
 
 def winsize_reachable?(stream)
@@ -21,13 +24,13 @@ rescue StandardError
   true           # ENOTTY and friends: reached the method, no tty to measure
 end
 
-File.write("/tmp/sp_ttyws.txt", "x")
+File.write(File.join(ZTMP, "sp_ttyws.txt"), "x")
 
 # A block parameter over a literal array: the shape that regressed.
 [STDOUT].each { |s| p s.tty?.class }
 
 # A file handle out of a container answers false, not NoMethodError.
-File.open("/tmp/sp_ttyws.txt") do |f|
+File.open(File.join(ZTMP, "sp_ttyws.txt")) do |f|
   [f].each { |s| p s.tty? }
   handles = [f, f]
   p handles[0].tty?
@@ -50,7 +53,7 @@ rescue StandardError
   nil
 end
 
-File.open("/tmp/sp_ttyws.txt") do |f|
+File.open(File.join(ZTMP, "sp_ttyws.txt")) do |f|
   p probe_tty(f)
   p winsize_reachable?(f)
 end
@@ -58,11 +61,11 @@ other = untyped
 p probe_tty(other).equal?(:no_method) == false || other.nil?
 
 # isatty is the same method under its second name.
-File.open("/tmp/sp_ttyws.txt") do |f|
+File.open(File.join(ZTMP, "sp_ttyws.txt")) do |f|
   [f].each { |s| p s.isatty }
 end
 
-File.delete("/tmp/sp_ttyws.txt")
+File.delete(File.join(ZTMP, "sp_ttyws.txt"))
 __END__
 FalseClass
 false

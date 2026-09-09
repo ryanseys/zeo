@@ -1,15 +1,18 @@
 # It answers the byte count, and the file holds them.
 # (spinel issue #3217)
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 require 'stringio'
 io = StringIO.new("hello world")
-File.open("/tmp/spinel_issue_3217_out.txt", "w") do |f|
+File.open(File.join(ZTMP, "spinel_issue_3217_out.txt"), "w") do |f|
   n = IO.copy_stream(io, f)
   p n
 end
-puts File.read("/tmp/spinel_issue_3217_out.txt")
-File.write("/tmp/spinel_issue_3217_in.txt", "abc123")
+puts File.read(File.join(ZTMP, "spinel_issue_3217_out.txt"))
+File.write(File.join(ZTMP, "spinel_issue_3217_in.txt"), "abc123")
 sink = StringIO.new
-File.open("/tmp/spinel_issue_3217_in.txt") do |f|
+File.open(File.join(ZTMP, "spinel_issue_3217_in.txt")) do |f|
   IO.copy_stream(f, sink)
 end
 puts sink.string

@@ -1,3 +1,6 @@
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 p File.join("a/", "b")
 p File.join("a", "", "b")
 p File.join("a", "/b")
@@ -16,11 +19,11 @@ p File.basename("/a/b/c.rb", ".rb")
 p File.basename("/a/b/c.rb", ".*")
 p File.basename("c.tar.gz", ".*")
 p File.basename("c.rb", ".py")
-File.write("/tmp/sp_file_zero_empty.txt", "")
-p File.size("/tmp/sp_file_zero_empty.txt")
-p File.zero?("/tmp/sp_file_zero_empty.txt")
-p File.empty?("/tmp/sp_file_zero_empty.txt")
-File.delete("/tmp/sp_file_zero_empty.txt")
+File.write(File.join(ZTMP, "sp_file_zero_empty.txt"), "")
+p File.size(File.join(ZTMP, "sp_file_zero_empty.txt"))
+p File.zero?(File.join(ZTMP, "sp_file_zero_empty.txt"))
+p File.empty?(File.join(ZTMP, "sp_file_zero_empty.txt"))
+File.delete(File.join(ZTMP, "sp_file_zero_empty.txt"))
 p File.zero?("/tmp")
 p File.zero?("/dev/null")
 p File.zero?("/nonexistent_zzz")

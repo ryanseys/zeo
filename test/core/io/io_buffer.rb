@@ -1,6 +1,9 @@
 # IO::Buffer: typed value access, slices over shared backing, masks, file
 # mapping, and direct IO transfer. Addresses are scrubbed (the one
 # nondeterminism); PAGE_SIZE is platform-dependent so only its shape prints.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 $stderr.reopen(IO::NULL)
 SCRUB = ->(s) { s.gsub(/0x\h{9,}/, "0xN") }
 
@@ -244,7 +247,7 @@ p big.inspect.lines.length
 p big.inspect.lines.last
 
 # ---- direct IO.
-path = "/tmp/zeo_io_buffer_fixture.txt"
+path = File.join(ZTMP, "zeo_io_buffer_fixture.txt")
 File.write(path, "ABCDEFGHIJKLMNOPQR")
 fh = File.open(path)
 rb = IO::Buffer.new(10)
@@ -254,7 +257,7 @@ rb2 = IO::Buffer.new(10)
 rb2.clear(0x2e)
 p rb2.pread(fh, 3, 4, 6)
 p rb2.get_string
-wpath = "/tmp/zeo_io_buffer_fixture_w.txt"
+wpath = File.join(ZTMP, "zeo_io_buffer_fixture_w.txt")
 File.write(wpath, "")
 wh = File.open(wpath, "r+")
 wsrc = IO::Buffer.for("0123456789").dup

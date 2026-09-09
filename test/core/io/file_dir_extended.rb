@@ -1,4 +1,7 @@
-base = "/tmp/zeo_w1i_example"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+base = File.join(ZTMP, "zeo_w1i_example")
 
 # Start clean without external requires: remove any leftover entries.
 if Dir.exist?(base)

@@ -1,9 +1,12 @@
 # Line-by-line file processing with File.open block
 # Tests: File.open, each_line, string split, Hash
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 
 # Write test data: word frequency file
 words = ["the", "quick", "brown", "fox", "jumps", "over", "lazy", "dog"]
-File.open("/tmp/spinel_io_wf.txt", "w") do |f|
+File.open(File.join(ZTMP, "spinel_io_wf.txt"), "w") do |f|
   i = 0
   while i < 5000
     w = words[i % 8]
@@ -14,7 +17,7 @@ end
 
 # Process: count word frequencies
 counts = {}
-File.open("/tmp/spinel_io_wf.txt", "r") do |f|
+File.open(File.join(ZTMP, "spinel_io_wf.txt"), "r") do |f|
   f.each_line do |line|
     parts = line.strip.split(" ")
     if parts.length >= 1
@@ -37,7 +40,7 @@ end
 i = 0
 while i < 20
   c = {}
-  File.open("/tmp/spinel_io_wf.txt", "r") do |f|
+  File.open(File.join(ZTMP, "spinel_io_wf.txt"), "r") do |f|
     f.each_line do |line|
       parts = line.strip.split(" ")
       if parts.length >= 1
@@ -53,7 +56,7 @@ while i < 20
   i = i + 1
 end
 
-File.delete("/tmp/spinel_io_wf.txt")
+File.delete(File.join(ZTMP, "spinel_io_wf.txt"))
 puts "done"
 __END__
 the: 625

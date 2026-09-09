@@ -1,3 +1,6 @@
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 s = "a\0b"
 puts s.length
 puts s.bytes.inspect
@@ -17,7 +20,7 @@ e = t[0, 3]
 puts e.bytes.inspect
 puts e.length
 puts s[2]
-f = "/tmp/spinel_nul_core_t.bin"
+f = File.join(ZTMP, "spinel_nul_core_t.bin")
 File.write(f, s)
 r = File.read(f)
 puts r.bytes.inspect

@@ -1,6 +1,9 @@
 # Each raises FrozenError rather than writing into it.
 # (spinel issue #3335)
-path = "/tmp/sp_frozen_outbuf.txt"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+path = File.join(ZTMP, "sp_frozen_outbuf.txt")
 File.write(path, "hello world")
 File.open(path) { |f| b = ""; r = (f.read(3, b) rescue $!.class); p r }
 File.open(path) { |f| b = ""; r = (f.pread(5, 0, b) rescue $!.class); p r }

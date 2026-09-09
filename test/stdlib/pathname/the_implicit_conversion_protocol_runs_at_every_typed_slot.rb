@@ -8,10 +8,13 @@
 # "Array[2] (held by Array[2], holds Array[2])" is a two-element array that
 # holds itself, and the only such array in the file.
 #@ gccheck: cycle leak: 1 objects (Array x1)
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 require "pathname"
 require "stringio"
 
-dir = "/tmp/spinel_implicit_conversion_protocol"
+dir = File.join(ZTMP, "spinel_implicit_conversion_protocol")
 if Dir.exist?(dir)
   Dir.children(dir).each { |e| File.delete("#{dir}/#{e}") }
   Dir.rmdir(dir)

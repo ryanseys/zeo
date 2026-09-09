@@ -1,12 +1,15 @@
 # FileUtils -- the vendored pure-Ruby stdlib gem (gems/fileutils), compiled
 # from its real upstream source, not reimplemented. Exercises the core file
 # operations rubygems/bundler rely on; every line is oracle-matched.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 require "fileutils"
 
 puts FileUtils::VERSION
 puts FileUtils.respond_to?(:mkdir_p)
 
-d = "/tmp/zeo_fileutils_example"
+d = File.join(ZTMP, "zeo_fileutils_example")
 FileUtils.rm_rf(d) # a clean slate, idempotent across runs
 
 FileUtils.mkdir_p("#{d}/a/b/c")

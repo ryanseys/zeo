@@ -1,5 +1,8 @@
 # IO.copy_stream / #rewind through a param that unions StringIO and File
 # dispatch on the runtime stream class (#3257). Uses temp files it creates.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 require 'stringio'
 
 def send_to(dst, io)
@@ -7,8 +10,8 @@ def send_to(dst, io)
   IO.copy_stream(io, dst)
 end
 
-src_path = "/tmp/spinel_test_copy_stream_src.txt"
-dst_path = "/tmp/spinel_test_copy_stream_dst.txt"
+src_path = File.join(ZTMP, "spinel_test_copy_stream_src.txt")
+dst_path = File.join(ZTMP, "spinel_test_copy_stream_dst.txt")
 io1 = StringIO.new("hello-sio ")
 io2 = File.open(src_path, "w+")
 io2.write("hello-file")

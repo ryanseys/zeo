@@ -1,3 +1,6 @@
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 require "yaml"
 
 # load_stream returns every document in a multi-document string.
@@ -17,7 +20,7 @@ Psych.load_stream(stream) { |doc| names << doc["name"] }
 p names
 
 # load_file reads and parses a file's first document.
-path = "/tmp/sp_psych_example.yaml"
+path = File.join(ZTMP, "sp_psych_example.yaml")
 File.write(path, "fruits:\n  - apple\n  - banana\ncount: 2\n")
 p Psych.load_file(path)
 File.delete(path)

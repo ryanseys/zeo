@@ -2,6 +2,9 @@
 # shapes below are the oracle's own dumps (type, location, children) for the
 # tier of constructs zeo maps faithfully. node_id values are zeo-numbered
 # (prism's ids are parse-internal), so only their presence is pinned.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 $stderr.reopen(IO::NULL)
 
 def dump(n)
@@ -69,8 +72,8 @@ rescue RuntimeError => e
   p [e.class, e.message]
 end
 p RubyVM::AbstractSyntaxTree.of(method(:puts))
-File.write("/tmp/zeo_ast_fixture.rb", "z = 42\n")
-pf = RubyVM::AbstractSyntaxTree.parse_file("/tmp/zeo_ast_fixture.rb")
+File.write(File.join(ZTMP, "zeo_ast_fixture.rb"), "z = 42\n")
+pf = RubyVM::AbstractSyntaxTree.parse_file(File.join(ZTMP, "zeo_ast_fixture.rb"))
 p [pf.type, pf.children.last.type]
 
 # ---- Location.
@@ -105,7 +108,7 @@ y = RubyVM::YJIT
 p [y.enabled?, y.stats_enabled?, y.log_enabled?, y.trace_exit_locations_enabled?]
 p [y.runtime_stats, y.exit_locations, y.log]
 begin
-  y.dump_exit_locations("/tmp/x")
+  y.dump_exit_locations(File.join(ZTMP, "x"))
 rescue ArgumentError => e
   p [e.class, e.message]
 end
@@ -132,8 +135,9 @@ end
 p RubyVM::InstructionSequence.compile("1", "myfile.rb").path
 p RubyVM::InstructionSequence.compile("1", "myfile.rb", "/abs/myfile.rb", 7).first_lineno
 p RubyVM::InstructionSequence.new("2 * 3").eval
-f = RubyVM::InstructionSequence.compile_file("/tmp/zeo_ast_fixture.rb")
-p [f.label, f.path]
+f = RubyVM::InstructionSequence.compile_file(File.join(ZTMP, "zeo_ast_fixture.rb"))
+# The path is a fresh scratch directory each run; its basename is stable.
+p [f.label, File.basename(f.path)]
 p f.eval
 __END__
 "1" => (SCOPE [1:0-1:1] [] nil (INTEGER [1:0-1:1] 1))
@@ -202,5 +206,5 @@ SyntaxError
 "myfile.rb"
 7
 6
-["<main>", "/tmp/zeo_ast_fixture.rb"]
+["<main>", "zeo_ast_fixture.rb"]
 42

@@ -1,3 +1,6 @@
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 class Sep
   def to_str
     "-"
@@ -161,7 +164,7 @@ def trace(label, value)
 end
 p trace("recv", [1]).product(trace("arg", [2]))
 
-path = "/tmp/spinel_typed_slot_conversion.txt"
+path = File.join(ZTMP, "spinel_typed_slot_conversion.txt")
 File.write(path, "x")
 p File.utime(nil, nil, path)
 File.delete(path)

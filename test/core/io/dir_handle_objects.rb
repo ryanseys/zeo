@@ -1,12 +1,15 @@
 # Dir.new/Dir.open handles: #read/#each/#each_child/#children/#entries/
 # #path/#rewind/#close, the block form, and Errno::ENOENT on a missing path.
-dir = "/tmp/sp_dirh"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+dir = File.join(ZTMP, "sp_dirh")
 Dir.mkdir(dir) unless Dir.exist?(dir)
 File.write("#{dir}/x", "")
 File.write("#{dir}/y", "")
 d = Dir.new(dir)
 p d.class
-p d.path
+p File.basename(d.path)
 e = []
 d.each { |n| e << n }
 p e.sort
@@ -28,7 +31,7 @@ Dir.rmdir(dir)
 puts "done"
 __END__
 Dir
-"/tmp/sp_dirh"
+"sp_dirh"
 [".", "..", "x", "y"]
 String
 Dir
