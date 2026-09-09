@@ -9,6 +9,7 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Proc-macros (ruby_class!/ruby_module!) that register built-in Ruby classes in the zeo-rt runtime"
+documentation = "https://docs.rs/zeo-macros"
 readme = "README.md"
 
 [lib]

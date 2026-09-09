@@ -1,7 +1,7 @@
 # zeo-rt
 
 The runtime for [zeo](https://github.com/ryanseys/zeo), an ahead-of-time Ruby
-compiler that emits Rust.
+compiler built on Cranelift.
 
 Every binary the `zeo` CLI produces statically links this crate. It implements
 Ruby's object model and built-in classes (String with full multi-encoding

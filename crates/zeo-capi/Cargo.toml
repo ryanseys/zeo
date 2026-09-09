@@ -9,6 +9,7 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "MRI's C extension API, implemented in Rust over the zeo-rt runtime"
+documentation = "https://docs.rs/zeo-capi"
 readme = "README.md"
 
 [dependencies]
@@ -27,13 +28,14 @@ tracing.workspace = true
 [dev-dependencies]
 # The unit tests dispatch into builtins; a test binary has no program
 # descriptor to install the tables from. Cargo unifies features per
-# invocation, so these tests run ALONE (`make test`): shared with the `zeo`
-# tests, the binary the goldens run would carry every table too.
+# invocation, so these tests run in their own `cargo nextest run -p
+# zeo-capi`: shared with the `zeo` tests, the binary the goldens run would
+# carry every table too.
 zeo-rt = { workspace = true, features = ["unit-tables"] }
 
 [build-dependencies]
 # `csrc/*.c`: the variadic entries Rust cannot write before 1.99 (`va_list`).
-cc = "1"
+cc.workspace = true
 
 [lints]
 workspace = true

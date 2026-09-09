@@ -9,6 +9,7 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "RubyGems formats in Rust: versions, platforms, Gemfile.lock, gemspecs, .gem packages and the store"
+documentation = "https://docs.rs/zeo-gem"
 readme = "README.md"
 
 [dependencies]

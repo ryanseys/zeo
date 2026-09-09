@@ -9,13 +9,42 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "An ahead-of-time Ruby compiler: compiles Ruby programs to self-contained native binaries through Cranelift"
-readme = "../../README.md"
-default-run = "zeo"
-# Packaging whitelist: the .crate ships only the compiler itself plus the
-# two publish-time artifacts `cargo xtask stage-crate` stages (the
-# pregen class surface rides inside /src). /tests -- the golden and e2e
-# suites, rooted at the repo corpus -- is deliberately outside it.
-include = ["/src", "/build.rs", "/README.md", "/gems.pregen.tar.gz"]
+documentation = "https://docs.rs/zeo"
+readme = "README.md"
+# Packaging whitelist: the .crate ships the compiler, the mkmf shim that
+# `include_str!`s from /tools-lib, and the two publish-time artifacts
+# `cargo xtask stage-crate` stages (the pregen class surface rides inside
+# /src). /tests -- the golden and e2e suites, rooted at the repo corpus --
+# is deliberately outside it.
+include = ["/src", "/build.rs", "/tools-lib", "/README.md", "/gems.pregen.tar.gz"]
+
+# docs.rs must not build the vendored-C heavyweights (OpenSSL, libffi) or
+# the C API. The feature list mirrors zeo-rt's docs.rs set.
+[package.metadata.docs.rs]
+no-default-features = true
+features = [
+    "ext-base64",
+    "ext-monitor",
+    "ext-stringio",
+    "ext-strscan",
+    "ext-cgi",
+    "ext-digest",
+    "ext-json",
+    "ext-date",
+    "ext-zlib",
+    "ext-psych",
+    "ext-socket",
+    "ext-etc",
+    "ext-fcntl",
+    "ext-io-console",
+    "ext-pty",
+    "ext-syslog",
+    "ext-nkf",
+    "ext-bigdecimal",
+    "ext-coverage",
+    "ext-tracepoint",
+    "ext-prism",
+]
 
 [dependencies]
 # RubyGems formats: `Gemfile.lock`, gemspecs, platforms, versions.
@@ -87,9 +116,8 @@ serde_json.workspace = true
 sha2.workspace = true
 # diagnostics.rs renders compile errors the way the CLI does.
 miette.workspace = true
-# The runtime performance bank (benches/programs.rs). Lean build: no
-# plotters/HTML -- saved baselines + `critcmp` are the comparison story.
-criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+# The runtime performance bank (benches/programs.rs).
+criterion.workspace = true
 
 # One nextest case per `.rb` under `test/` per leg, held to the answer
 # recorded under its `__END__` (tests/corpus/). `harness = false` hands the
@@ -154,8 +182,6 @@ default = [
     "ext-prism",
 ]
 capi = ["dep:zeo-capi"]
-# The old spelling of `capi`.
-cext = ["capi"]
 ext-base64 = ["zeo-rt/ext-base64"]
 ext-monitor = ["zeo-rt/ext-monitor"]
 ext-stringio = ["zeo-rt/ext-stringio"]

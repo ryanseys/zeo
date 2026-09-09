@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 /// is one library's own directory, not a directory of them.
 ///
 /// The dev tree draws on three tiers and an installed zeo on one, because
-/// `dist`/`stage-publish` flatten all of them into `share/zeo/lib/ruby/`.
+/// `dist`/`stage-crate` flatten all of them into `share/zeo/lib/ruby/`.
 /// [`crate::gems::bundled`] is where that list is decided and why.
 ///
 /// Memoized: the tiers are read once per process, and a run-time `eval` is a

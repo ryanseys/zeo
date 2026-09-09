@@ -65,7 +65,7 @@ against the running interpreter and write the serialized gemspecs
 
 ## The payload
 
-`dist` and `stage-publish` flatten all three shipped tiers into one
+`dist` and `stage-crate` flatten all three shipped tiers into one
 `share/zeo/lib/ruby/`, so an installed zeo has a single directory. Every
 path in it is `<name>-<version>` read out of the lock, and a library the
 lock names whose directory is missing is refused rather than quietly left

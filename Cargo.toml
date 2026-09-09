@@ -82,6 +82,11 @@ gimli = "0.33"
 # (conformance corpus, examples, gaps). By nextest-rs, same ecosystem as the
 # `cargo nextest` we already run.
 datatest-stable = "0.3"
+# The runtime performance bank (crates/zeo/benches). Lean build: no
+# plotters/HTML; saved baselines + `critcmp` are the comparison story.
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+# The one C build in the tree: zeo-capi's variadic entries (`csrc/*.c`).
+cc = "1"
 
 # Proc-macro toolkit for `zeo-macros`/`zeo-dsl` (`ruby_class!` parsing) and
 # the compiler's identifier checks.
@@ -142,7 +147,7 @@ unicode-normalization = "0.1"
 unicode-segmentation = "1"
 
 # The embedded-gems archive of a registry-installed zeo: tar + gzip (flate2's
-# pure-Rust miniz_oxide backend). `cargo xtask stage-publish` packs it; the zeo
+# pure-Rust miniz_oxide backend). `cargo xtask stage-crate` packs it; the zeo
 # binary extracts it on first run. serde_json also parses cargo's
 # --message-format=json stream for the registry runtime build.
 tar = "0.4"
@@ -209,26 +214,17 @@ opt-level = 2
 [profile.release.build-override]
 opt-level = 2
 
-# codegen-units 16 everywhere: at 1, zeo-rt (114k lines) was a single LLVM
-# module -- one thread for minutes, with a memory peak that forced the 6-job
-# caps in .cargo/config.toml and backend::job_cap. Registry installs already
-# built zeo-rt at 16 (in the anchor workspace it is a dependency, so the
-# package."*" override applied); the dev tree now matches.
+# codegen-units 16 in release: at 1, zeo-rt (114k lines) is a single LLVM
+# module -- one thread for minutes, with a memory peak that oversubscribes
+# a parallel build. The zeo-rt override below keeps the runtime at 1 so it
+# gets its cross-unit inlining without LTO.
 #
-# There is deliberately no `lto` here, and the reasoning that once demanded
-# one died with the rustc backend. That argument was about the GENERATED
-# binary's own `-C lto=thin` release link, which needed embedded bitcode in
-# the rlib to inline across the crate boundary; there is no generated crate
-# any more, and `zeo-rt` gets its cross-unit inlining from the cgu-1 override
-# below.
-#
-# Measured 2026-08-22, release/release over all 61 benches, three runs each:
-# thin LTO is **geomean -0.02%** -- a null result, with a scatter of +-3%
-# either way (`ruby_xor`, the old comment's own -290% headline, moves -3.7%).
-# It costs a 74s release build turning into 3m06s and `libzeo.a` growing
-# 78.5 MB -> 175.8 MB, which G12 pays six times over in per-triple archives.
-# `[profile.dist]` keeps it: paid once per release, where the build time does
-# not matter.
+# No `lto` here. Measured 2026-08-22, release/release over all 61 benches,
+# three runs each: thin LTO is geomean -0.02%, a null result with a scatter
+# of +-3% either way. It costs a 74s release build turning into 3m06s and
+# `libzeo.a` growing 78.5 MB -> 175.8 MB, paid once per shipped triple.
+# `[profile.dist]` keeps it: paid once per release, where the build time
+# does not matter.
 [profile.release]
 strip = "symbols"
 codegen-units = 16

@@ -9,7 +9,13 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "The Ruby runtime library statically linked into every binary the zeo compiler produces"
+documentation = "https://docs.rs/zeo-rt"
 readme = "README.md"
+# The .crate carries `ext/` and `gems/` because build.rs declares the
+# extension modules from that tree and the Ruby halves ship in the payload.
+# The upstream test suites the pure-Ruby ports run under `cargo nextest`
+# are repo-only.
+exclude = ["/ext/*/test", "/gems/*/test", "/gems/*/ruby"]
 
 # docs.rs must not build the vendored-C heavyweights: `ext-openssl` compiles
 # OpenSSL 3.x from source and `ext-ffi` builds libffi -- both are timeout

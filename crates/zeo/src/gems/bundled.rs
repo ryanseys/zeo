@@ -24,7 +24,7 @@
 //! zeo's own bundler fills.
 //!
 //! An installed or `cargo install`ed zeo has ONE directory, because `dist`
-//! and `stage-publish` flatten all three into `share/zeo/lib/ruby/`.
+//! and `stage-crate` flatten all three into `share/zeo/lib/ruby/`.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};

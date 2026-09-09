@@ -9,6 +9,7 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Shared ABI: the zero-dependency leaf crate both the zeo compiler and the zeo-rt runtime agree on"
+documentation = "https://docs.rs/zeo-abi"
 readme = "README.md"
 
 [dependencies]

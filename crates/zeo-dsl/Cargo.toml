@@ -9,6 +9,7 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "The shared ruby_class! DSL grammar for the zeo Ruby compiler and its runtime macros"
+documentation = "https://docs.rs/zeo-dsl"
 readme = "README.md"
 
 [dependencies]

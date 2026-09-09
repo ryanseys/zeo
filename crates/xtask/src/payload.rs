@@ -5,7 +5,7 @@
 //! `crates/zeo-rt/ext/`, the rubygems/bundler bootstrap under `vendor/ruby/`,
 //! and everything else in the gem store under `vendor/gems/` from
 //! `Gemfile.lock`. `zeo::gems::bundled` decides that list, and both `dist` and
-//! `stage-publish` read it from there, so neither they nor the compiler can
+//! `stage-crate` read it from there, so neither they nor the compiler can
 //! disagree about what ships.
 //!
 //! That makes `cargo xtask deps` a prerequisite of building a distribution.

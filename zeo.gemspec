@@ -72,6 +72,7 @@ Gem::Specification.new do |s|
     "source_code_uri" => s.homepage,
     "bug_tracker_uri" => "#{s.homepage}/issues",
     "changelog_uri" => "#{s.homepage}/blob/main/CHANGELOG.md",
+    "documentation_uri" => "#{s.homepage}/blob/main/docs/README.md",
     # Nothing here is loadable Ruby, so there is no point indexing it.
     "rubygems_mfa_required" => "true"
   }
@@ -88,8 +89,11 @@ Gem::Specification.new do |s|
 
   s.files = Dir.chdir(root) do
     docs = %w[README.md LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.md]
+    # FNM_DOTMATCH keeps `.keep`-style payload files; the editor and
+    # Finder droppings it would also sweep up are rejected by name.
     payload = Dir.glob("{libexec,share}/**/*", File::FNM_DOTMATCH)
                  .select { |f| File.file?(f) }
+                 .reject { |f| File.basename(f) == ".DS_Store" }
     docs.select { |f| File.file?(f) } + ["exe/zeo"] + payload
   end
 end

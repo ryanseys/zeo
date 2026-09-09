@@ -101,7 +101,48 @@ fn check_staged(
             )));
         }
     }
-    println!("stage-publish --check: staged artifacts match (or are absent).");
+    check_package_list(surface_dest.is_file(), gems_dest.is_file())?;
+    println!("stage-crate --check: staged artifacts match (or are absent), and the package lists every file the build reads.");
+    Ok(())
+}
+
+/// Every file `crates/zeo` reads at build time that lives outside `src/`
+/// has to be named by the manifest's `include`, or a registry install fails
+/// at an `include_str!`. `cargo package --list` says what the whitelist
+/// admits without building anything.
+fn check_package_list(surface_staged: bool, gems_staged: bool) -> Result<(), Error> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let out = exec::run(
+        &[cargo.as_str(), "package", "--list", "-p", "zeo", "--allow-dirty"],
+        root(),
+        &[],
+        Capture::Stdout,
+    )?;
+    if !out.success() {
+        return Err(Error::new(format!(
+            "cargo package --list -p zeo exited with {:?}",
+            out.code
+        )));
+    }
+    let text = out.stdout_text();
+    let listed: Vec<&str> = text.lines().map(str::trim).collect();
+    let mut required = vec!["build.rs", "README.md", "src/lib.rs", "tools-lib/mkmf.rb"];
+    if surface_staged {
+        required.push("src/class_surface.pregen.rs");
+    }
+    if gems_staged {
+        required.push("gems.pregen.tar.gz");
+    }
+    let missing: Vec<&str> = required
+        .into_iter()
+        .filter(|f| !listed.contains(f))
+        .collect();
+    if !missing.is_empty() {
+        return Err(Error::new(format!(
+            "the zeo .crate would not carry {}: extend `include` in crates/zeo/Cargo.toml",
+            missing.join(", ")
+        )));
+    }
     Ok(())
 }
 
