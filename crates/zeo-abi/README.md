@@ -1,7 +1,8 @@
 # zeo-abi
 
 The shared ABI for [zeo](https://github.com/ryanseys/zeo), an ahead-of-time
-Ruby compiler that emits Rust.
+Ruby compiler that lowers to Cranelift IR and links a runtime written in
+Rust.
 
 This is the zero-dependency leaf crate that both `zeo` (the compiler) and
 `zeo-rt` (the runtime) depend on. It defines the types they must agree on:

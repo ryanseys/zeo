@@ -31,8 +31,10 @@ Four kinds of page, and the kind tells you what to expect from it.
 | [Environment variables](reference/environment-variables.md) | every `ZEO_*` the code reads |
 | [Crates](reference/crates.md) | the workspace map |
 | [Feature flags](reference/feature-flags.md) | what a build can turn off |
+| [The C API and FFI surface](reference/ffi.md) | what an extension sees, and the whole `ffi` API |
 | [Compatibility](reference/compatibility.md) | library by library, against ruby 4.0.6 |
 | [Limitations](reference/limitations.md) | what zeo does not do |
+| [Glossary](reference/glossary.md) | the words this documentation uses in a sense of its own |
 
 ## Explanation — why it is built this way
 
@@ -41,6 +43,7 @@ Four kinds of page, and the kind tells you what to expect from it.
 | [Architecture](explanation/architecture.md) | parse, lower, analyze, clif, backend |
 | [The backend](explanation/backend.md) | Cranelift, the JIT, the link line |
 | [`eval`](explanation/eval.md) | why the compiler is the runtime's evaluator |
+| [Four divergences](explanation/divergences.md) | the mechanism behind the four that are structural |
 | [Gems and the payload](explanation/gems-and-payload.md) | the tiers, and why ruby is only for recording |
 | [Testing](explanation/testing.md) | the oracle model, and what the suite refuses to do |
 | [Performance](explanation/performance.md) | what the generated code costs, measured |

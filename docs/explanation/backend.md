@@ -124,7 +124,7 @@ nextest profile, which the Linux leg runs.
 spelling, and its arguments come first) appends `<arg>` to the `cc` line
 verbatim, after the platform libraries and before the dead-strip flag.
 Nothing is parsed or validated: a payload section
-(`-Wl,-sectcreate,__SOW,__wasm,file`), a carried object file, or a
+(`-Wl,-sectcreate,__SEG,__sect,file`), a carried object file, or a
 framework (`--link -framework --link AppKit`) all ride the same way. The
 arguments are part of `CompileOptions` (`link_args`), so the program cache
 keys on them; a run the in-process JIT takes warns that they apply to a

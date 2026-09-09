@@ -41,19 +41,20 @@ fn is_word(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
-/// Every whole `ZEO_*` word in `bytes`. Read as bytes because a `.tsv` in the
-/// corpus can hold sequences that are not UTF-8.
-fn names(bytes: &[u8]) -> Vec<(usize, String)> {
+/// Every whole word in `bytes` that starts with `prefix`. Read as bytes
+/// because a `.tsv` in the corpus can hold sequences that are not UTF-8.
+fn names_with(bytes: &[u8], prefix: &[u8]) -> Vec<(usize, String)> {
+    let n = prefix.len();
     let mut out = Vec::new();
     let mut i = 0;
-    while i + 4 <= bytes.len() {
-        let Some(at) = bytes[i..].windows(4).position(|w| w == b"ZEO_") else {
+    while i + n <= bytes.len() {
+        let Some(at) = bytes[i..].windows(n).position(|w| w == prefix) else {
             break;
         };
         let start = i + at;
         // `MYZEO_X` is not a mention of `ZEO_X`.
         if start > 0 && is_word(bytes[start - 1]) {
-            i = start + 4;
+            i = start + n;
             continue;
         }
         let end = start + bytes[start..].iter().take_while(|&&b| is_word(b)).count();
@@ -64,6 +65,10 @@ fn names(bytes: &[u8]) -> Vec<(usize, String)> {
         i = end;
     }
     out
+}
+
+fn names(bytes: &[u8]) -> Vec<(usize, String)> {
+    names_with(bytes, b"ZEO_")
 }
 
 fn collect(root: &Path, dirs: &[&str], loose: &[&str], exts: &[&str]) -> Vec<(PathBuf, Vec<u8>)> {
@@ -172,6 +177,72 @@ fn every_env_var_read_is_documented() {
     assert!(
         missing.is_empty(),
         "environment variables the tree reads that no page documents: {missing:?}\n\
+         Add a row to docs/reference/environment-variables.md."
+    );
+}
+
+/// `RUBY_*` names ruby itself owns, which the runtime honours and the docs
+/// must therefore state. These are the ones a user already knows from CRuby,
+/// so a reader who does not find them assumes zeo ignores them.
+///
+/// The scan looks only at string literals in the runtime, which is where a
+/// read has to be spelled; `RUBY_VERSION` and the other CONSTANTS are Ruby
+/// identifiers, not environment reads, and are skipped by name.
+const RUBY_NOT_ENV: &[&str] = &[
+    "RUBY_VERSION",
+    "RUBY_PLATFORM",
+    "RUBY_ENGINE",
+    "RUBY_ENGINE_VERSION",
+    "RUBY_PATCHLEVEL",
+    "RUBY_RELEASE_DATE",
+    "RUBY_REVISION",
+    "RUBY_COPYRIGHT",
+    "RUBY_DESCRIPTION",
+    "RUBY_BOX_CLASS",
+    "RUBY_BOX_ENTRY_CLASS",
+    "RUBY_BOX_LOADER_MODULE",
+];
+
+#[test]
+fn every_ruby_env_var_the_runtime_reads_is_documented() {
+    let root = repo_root();
+
+    let documented: BTreeSet<String> = collect(
+        &root,
+        &["docs"],
+        &["README.md", "CONTRIBUTING.md"],
+        &["md"],
+    )
+    .iter()
+    .flat_map(|(_, b)| names_with(b, b"RUBY_").into_iter().map(|(_, n)| n))
+    .collect();
+
+    let readers: BTreeSet<String> = collect(
+        &root,
+        &["crates/zeo-rt/src", "crates/zeo-rt/ext", "crates/zeo/src"],
+        &[],
+        &["rs"],
+    )
+    .iter()
+    .flat_map(|(_, b)| {
+        names_with(b, b"RUBY_")
+            .into_iter()
+            // A read spells the name inside a string literal.
+            .filter(|(at, _)| *at > 0 && b[at - 1] == b'"')
+            .map(|(_, n)| n)
+    })
+    .filter(|n| !RUBY_NOT_ENV.contains(&n.as_str()))
+    .collect();
+
+    // A floor, not a target: a scan that read nothing would pass forever.
+    assert!(
+        readers.contains("RUBY_BOX"),
+        "the scan did not find RUBY_BOX, which crates/zeo-rt/src/boxes.rs reads"
+    );
+    let missing: Vec<&String> = readers.iter().filter(|v| !documented.contains(*v)).collect();
+    assert!(
+        missing.is_empty(),
+        "RUBY_* environment variables the runtime reads that no page documents: {missing:?}\n\
          Add a row to docs/reference/environment-variables.md."
     );
 }

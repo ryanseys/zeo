@@ -76,7 +76,7 @@ Two things worth knowing before your first run:
   and a test fails any override that merely restates the parameter list. Add
   `cfunc` when CRuby declares the method `argc = -1`, which discards a
   signature the DSL can still express. A disagreement with ruby is found by
-  a golden, not a ledger.
+  a golden, not a declared table.
 - Declare a method on the class CRuby owns it on — that decides which receivers
   answer it: `flock` belongs to File, not IO, and `superclass` to Class, not
   Module. Write a golden that calls the method on a receiver only the

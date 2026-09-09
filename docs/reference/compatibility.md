@@ -8,13 +8,37 @@ only be stated, never inferred from a score.
 A compile run with `--report` also writes a machine-readable
 [`zeo-gems.json`](#the-per-compile-record) recording the same facts for the
 libraries a given program actually used. This document is the human-facing
-catalogue; that file is the per-program ledger.
+catalogue; that file is the per-program record.
 
 ## Contents
 
 - [Encodings](#encodings)
 - [Ractor, IO::Buffer, RubyVM, Ruby::Box](#ractor-iobuffer-rubyvm-rubybox)
 - [Satisfied, but divergent (a substitution)](#satisfied-but-divergent-a-substitution)
+  - [`Regexp`](#regexp)
+  - [`objspace`](#objspace)
+  - [`zlib`](#zlib)
+  - [`io/console`](#ioconsole)
+  - [`nkf`](#nkf)
+  - [`bigdecimal`](#bigdecimal)
+  - [`fiddle`](#fiddle)
+  - [`coverage`](#coverage)
+  - [`TracePoint`](#tracepoint)
+  - [`openssl`](#openssl)
+  - [`Binding`](#binding)
+  - [`Hash.ruby2_keywords_hash`](#hashruby2keywordshash)
+  - [`GC`](#gc)
+  - [`Fiber`](#fiber)
+  - [`IO#timeout`](#iotimeout)
+  - [`Module` reflection](#module-reflection)
+  - [`Thread`](#thread)
+  - [`#source_location` on a row ruby writes in Ruby](#sourcelocation-on-a-row-ruby-writes-in-ruby)
+  - [`Pathname`](#pathname)
+  - [`Kernel#block_given?`, `#iterator?`, `#binding`, `#local_variables` through `send`](#kernelblockgiven-iterator-binding-localvariables-through-send)
+  - [`Random::Formatter` carries its whole surface from the start](#randomformatter-carries-its-whole-surface-from-the-start)
+  - [`Ractor`](#ractor)
+  - [`GC::Profiler`](#gcprofiler)
+  - [`Process::Sys.setresuid` / `.setresgid`](#processsyssetresuid--setresgid)
 - [Satisfied faithfully (zeo-bundled gems)](#satisfied-faithfully-zeo-bundled-gems)
 - [The installed Ruby's own stdlib](#the-installed-rubys-own-stdlib)
 - [Not available (native gems)](#not-available-native-gems)
@@ -805,7 +829,7 @@ report arity 0, and raise `NotImplementedError: setresuid() function is
 unimplemented on this machine`. That is exactly CRuby's own behavior on a
 platform without the syscall (macOS among them), and a narrowing on the ones
 that have it (Linux, the BSDs), because the stub's arity is 0 while the real
-call's is 3 — one declaration cannot report both, and Zeo's arity ledger is
+call's is 3 — one declaration cannot report both, and Zeo's arity table is
 generated on one machine. `Process::Sys.setreuid` and
 `Process::UID.change_privilege` reach the same capability.
 
@@ -940,87 +964,40 @@ a class that file is still building. irb's `context.rb` requires
 
 ## Where a nested `require` lands
 
-A require the file's load reaches but that is not a top-level statement — one
-under a conditional, in a `begin`, in a class body, in a block — is spliced at
-the position of the **statement that holds it**:
+A `require` that is not a top-level statement -- one under a conditional, in
+a `begin`, in a class body, in a block -- is spliced at the position of the
+statement that holds it, and its file's top level runs at program start
+rather than at the call. A file that means to warn and bail on a missing
+optional dependency therefore does both at startup.
 
-```ruby
-require_relative "../minitest"          # first
-require_relative "spec"                 # second
-require_relative "hell" if ENV["MT_HELL"]   # third, here -- not at the top
-```
-
-The guard itself is not evaluated at compile time (only the platform-detection
-idioms `RUBY_ENGINE == "jruby"` and friends are), so a require in a branch that
-never runs is still compiled in and still executes. That is usually invisible —
-every extension links statically — but not always: `minitest/hell.rb` calls
-`parallelize_me!` and warns about a missing optional gem, neither of which
-CRuby does when `MT_HELL` is unset.
-
-A file loaded this way runs its top level at program START, not on the call, so
-a lazily-required file that only means to *warn and bail* on a missing optional
-dependency does both at startup instead. `irb/ext/tracer.rb` is one; see
-`crates/zeo/src/gems/bundled.rs` for where the bundled libraries come from,
-and `cargo xtask deps` for how they get there.
+See [the mechanism](../explanation/divergences.md#where-a-nested-require-lands).
 
 ## A class written in a `class << self` body
 
-```ruby
-module Color
-  class << self
-    class Visitor; end        # belongs to Color's SINGLETON class
-    def paint = Visitor.new   # ...which is what makes this bare name resolve
-  end
-end
-```
+A `class X` inside `class << self` belongs to the singleton class, which
+matches ruby. One thing does not: `X.name`. Ruby answers a string containing
+the singleton's address; zeo answers `nil`, because no constant path can
+spell the name it builds. The class itself is identical either way.
 
-`Visitor` belongs to `Color.singleton_class`, exactly as a constant written
-there does -- a `class X` IS a constant write with a body. The singleton
-methods beside it see it by bare name, `Color.constants` is empty, and
-`Color::Visitor` raises `NameError`. All of that now matches.
-
-One thing does not: `Visitor.name`. Real Ruby answers
-`"#<Class:0x00007f...>::Visitor"`, an address nobody can reproduce; zeo
-answers `nil`, because the qualified name it builds is `#<Class:Color>::Visitor`
-and `Module#name` reports nothing for a name no constant path can spell. The
-class itself is identical either way.
-
-A body compiled at RUN time (`eval` / `class_eval`) still hands both the
-constant and the class to the enclosing module -- there is no compile-time
-surrogate to file them on.
-
-`test/lang/singleton/singleton_body_class_and_self_path.rb` pins the behaviour.
+See [the mechanism](../explanation/divergences.md#a-class-written-in-a-class--self-body).
 
 ## A top-level `return` inside a required file
 
-`return` at the top level ends the program. In a file the main script
-`require`s, real Ruby ends only THAT file's load and carries on in the
-requirer; Zeo splices required files into their requirer, so the `return`
-reaches the top level of the whole program and ends it. Exit status stays 0 and
-`at_exit` handlers still run, both matching a top-level `return` in the main
-script.
+Ruby ends only that file's load and carries on in the requirer. Zeo splices
+required files into their requirer, so the `return` reaches the top level of
+the whole program and ends it. Exit status stays 0 and `at_exit` handlers
+still run.
+
+See [the mechanism](../explanation/divergences.md#a-top-level-return-inside-a-required-file).
 
 ## `extend` on a class, at runtime
 
-`Klass.extend M` written as a runtime call — as opposed to `extend M` in the
-class body — installs each of `M`'s methods as a class method of `Klass`. The
-body runs with `self` bound to the class, so an implicit-self class-method call
-and an `@ivar` write both land where Ruby says: `@x` is the class's own
-class-level slot, the same one a `def self.x` reads. The singleton gem depends
-on exactly this (`klass.extend SingletonClassMethods`, then
-`klass.instance_eval { set_mutex(Thread::Mutex.new) }`).
+`Klass.extend M` as a runtime call installs `M`'s methods as class methods,
+records `M` on the singleton chain, and copies the way ruby's does. This
+matches ruby; it is here because the singleton gem depends on the exact
+shape and it was a divergence until recently.
 
-The ancestry follows too: `M` is recorded on the receiver's singleton chain, so
-`Klass.is_a?(M)` and `Klass.singleton_class.ancestors` both report it, and a
-repeat `extend` leaves the module at the rank its first one gave it. The same
-holds for a per-object `obj.extend(M)`: `obj.is_a?(M)` is true while
-`obj.class` and every other instance of that class stay untouched.
-
-The copies carry it the way Ruby's do: an object's `clone` copies the
-singleton class (extended modules and `def obj.method` rows) and `dup` drops
-it; a class's `dup` and `clone` both keep it, because `rb_mod_init_copy`
-clones the singleton class either way. Pinned by
-`test/lang/singleton/an_extended_receiver_copies_like_ruby.rb`.
+See [the mechanism](../explanation/divergences.md#extend-on-a-class-at-runtime).
 
 ## `zeo bundle install` works; `bundle exec` and `bundler/setup` do not
 

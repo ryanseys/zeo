@@ -73,3 +73,10 @@ no reader fails the suite, and a reader with no row here fails it too.
 `-I`, `-w` and `-W`. `GEM_PATH` and `BUNDLE_GEMFILE` are the defaults for
 `--gem-path` and `--bundle-gemfile`. An ambient store alone never changes a
 compile.
+
+Two more of ruby's own knobs the runtime honours:
+
+| Variable | Effect |
+|---|---|
+| `RUBY_BOX` | `1` enables `Ruby::Box`. Without it the class raises, as CRuby's does. |
+| `RUBY_IO_BUFFER_DEFAULT_SIZE` | The default size of an `IO::Buffer`. |

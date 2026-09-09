@@ -35,14 +35,14 @@ recorded; what is not yet right lives in [`test/gaps/`](../../test/gaps).
 ---
 
 zeo holds every library name it implements under three **mirror
-conditions**, and this file is the ledger those conditions require.
+conditions**, and this file is the record those conditions require.
 
 The tree tracks no C of its own, with one gated exception: three files
 under `crates/zeo-capi/csrc/` carry the variadic C API entry points
 (`rb_raise`, `rb_funcall`, `rb_scan_args`) that Rust cannot write before
 `c_variadic` stabilises in Rust 1.99. `checks::no_c` holds that set exact.
 
-1. **Divergences are ledgered.** Anything zeo answers differently from
+1. **Divergences are written down.** Anything zeo answers differently from
    CRuby is written down -- here, in
    [`docs/reference/compatibility.md`](compatibility.md), or as a committed
    divergence golden under
@@ -91,7 +91,7 @@ Real gaps with a named road; each closes when its road is walked.
   builds every locked gem that ships a C extension from its own source,
   runs a smoke program against ruby's recorded answer, and holds the
   rows below (`crates/zeo/tests/fixtures/capi_sweep/XFAIL.json` is the
-  ledger; a row that starts passing fails the run until it is
+  record; a row that starts passing fails the run until it is
   removed). Nothing runs the sweep for you -- see
   [Run the tests](../how-to/run-the-tests.md#the-tests-that-build-a-real-gem).
   For a gem OUTSIDE the lock, `cargo xtask test-gem <gem>` asks the narrower
@@ -124,12 +124,12 @@ Real gaps with a named road; each closes when its road is walked.
 
 ## By design
 
-Deliberate answers, each with its reasoning ledgered where it lives.
+Deliberate answers, each with its reasoning recorded where it lives.
 
 - **Ruby regular expressions compile and match under Oniguruma** -- the
   one engine, the one CRuby's own Onigmo forked from -- and a pattern it
   refuses is refused. The handful of rows where the two forks answer
-  differently are ledgered in `docs/reference/compatibility.md` (`### Regexp`).
+  differently are listed in `docs/reference/compatibility.md` (`### Regexp`).
 - **`racc` runs its own pure-Ruby runtime**: the C accelerator is a pure
   speed-up with a complete in-gem fallback, so zeo declines the build
   and `Racc_Runtime_Type` answers `"ruby"`

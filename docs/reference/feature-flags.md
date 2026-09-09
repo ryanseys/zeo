@@ -21,8 +21,29 @@ there is none — never a silent stub.
 $ cargo build -p zeo --no-default-features --features pure-stdlib
 ```
 
-`pure-stdlib` is the named subtraction set: the gems that have a pure-Ruby
-lane. `cargo xtask check` builds it, so the C-extension-free build cannot rot.
+`pure-stdlib` is the named subtraction set: the gems that ship a pure-Ruby
+half. `cargo xtask check` builds it, so the C-extension-free build cannot rot.
+
+`ext-all` is the umbrella that turns every `ext-*` on, and it is what
+`default` enables. Nothing reads it directly.
+
+## `ambient-*` — what a program starts with
+
+Three libraries can be loaded into every compiled program before its own
+first line. Each feature is only the DEFAULT of the matching `--enable=` /
+`--disable=` dial (`crates/zeo/src/cli/features.rs`), so a command line
+overrides it either way.
+
+| Feature | Dial | What it loads |
+|---|---|---|
+| `ambient-gems` | `--enable=gems` | `rubygems` |
+| `ambient-did-you-mean` | `--enable=did_you_mean` | `did_you_mean` |
+| `ambient-error-highlight` | `--enable=error_highlight` | `error_highlight` |
+
+All three are off in the stock build for one reason: an ambient
+`require "rubygems"` compiles 241 files into every program, whether or not
+it names `Gem`. The default flips once those files are compiled once
+instead of once per program.
 
 ## `capi`
 

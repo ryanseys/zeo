@@ -399,3 +399,73 @@ fn every_xtask_verb_named_in_the_source_exists() {
         verbs.iter().cloned().collect::<Vec<_>>().join(", ")
     );
 }
+
+/// GitHub's own slug for a heading: lowercased, punctuation dropped, spaces
+/// hyphenated. Good enough for the headings this repo writes.
+fn heading_slug(title: &str) -> String {
+    let mut out = String::new();
+    for c in title.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.extend(c.to_lowercase());
+        } else if c == ' ' || c == '-' {
+            out.push('-');
+        }
+    }
+    out
+}
+
+/// A page that offers a Contents list promises it is complete. The
+/// compatibility page listed its eighteen sections and none of its
+/// twenty-four subsections, so half the page was reachable only by scrolling
+/// eleven hundred lines.
+#[test]
+fn a_contents_list_names_every_heading_on_its_page() {
+    let root = repo_root();
+    let mut bad = Vec::new();
+    for page in pages() {
+        if page.extension().is_none_or(|e| e != "md") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&page) else {
+            continue;
+        };
+        if !text.contains("\n## Contents\n") {
+            continue;
+        }
+        let rel = page.strip_prefix(&root).unwrap_or(&page).to_string_lossy().into_owned();
+        let listed: BTreeSet<String> = text
+            .lines()
+            .filter_map(|l| l.split("](#").nth(1))
+            .filter_map(|r| r.split(')').next())
+            .map(String::from)
+            .collect();
+        let mut fenced = false;
+        for line in text.lines() {
+            if line.starts_with("```") {
+                fenced = !fenced;
+                continue;
+            }
+            if fenced {
+                continue;
+            }
+            let Some(title) = line
+                .strip_prefix("### ")
+                .or_else(|| line.strip_prefix("## "))
+            else {
+                continue;
+            };
+            if title == "Contents" {
+                continue;
+            }
+            let slug = heading_slug(title);
+            if !listed.contains(&slug) {
+                bad.push(format!("{rel}: `{title}` (#{slug}) is not in Contents"));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "headings missing from a page's own Contents list:\n  {}",
+        bad.join("\n  ")
+    );
+}

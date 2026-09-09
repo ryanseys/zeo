@@ -2,7 +2,7 @@
 
 The shared `ruby_class!` / `ruby_module!` DSL grammar for
 [zeo](https://github.com/ryanseys/zeo), an ahead-of-time Ruby compiler that
-emits Rust.
+lowers to Cranelift IR and links a runtime written in Rust.
 
 One grammar, parsed with `syn`, serves two consumers: the `zeo-macros`
 proc-macro (which expands the DSL into runtime code) and the `zeo` build

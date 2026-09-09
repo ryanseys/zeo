@@ -1,7 +1,8 @@
 # zeo-macros
 
-The proc-macros behind [zeo](https://github.com/ryanseys/zeo)'s runtime, an
-ahead-of-time Ruby compiler that emits Rust.
+The proc-macros behind the runtime of [zeo](https://github.com/ryanseys/zeo),
+an ahead-of-time Ruby compiler that lowers to Cranelift IR and links a
+runtime written in Rust.
 
 `ruby_class! { ... }` and `ruby_module! { ... }` let each built-in Ruby class
 in `zeo-rt` declare its methods and constants once. The macro parses the

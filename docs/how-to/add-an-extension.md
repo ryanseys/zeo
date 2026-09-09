@@ -80,7 +80,7 @@ oracle-matched `examples/` fixture.
 | pty | `pty` | `ext-pty` | **done** | `PTY.open`/`spawn`/`getpty`/`check` over `openpty(3)`, the child under a real controlling terminal; `ChildExited` is the gem's Ruby half, and a `check(pid, true)` raise carries only the message — its `#status` answers nil (a by-name raise can't attach one) |
 | syslog | `syslog`, `syslog/logger` | `ext-syslog` | **done** | `Syslog` over `syslog(3)` — `open`/`log`/`mask` lifecycle, priority shortcuts, the full constant set, `LOG_MASK`/`LOG_UPTO`; the `Constants`/`Level`/`Option`/`Facility`/`Macros` submodules are the gem's Ruby half, and `Syslog::Logger` is vendored upstream |
 | io/console | `io/console` | `ext-io-console` | **done** | the terminal modes (`raw`/`cooked`/`echo=`/`getch`/`getpass` over `termios(3)`), `winsize` over `ioctl`, the cursor escapes, and `IO::ConsoleMode`; the rows live on `IO` itself, gated on the require |
-| ffi | `ffi` | `ext-ffi` | **done** | `FFI::Library`/`attach_function`, structs, pointers, callbacks and variadics over libffi; see [Build a C-extension gem](build-a-c-extension-gem.md) |
+| ffi | `ffi` | `ext-ffi` | **done** | `FFI::Library`/`attach_function`, structs, pointers, callbacks and variadics over libffi; see [the FFI surface](../reference/ffi.md) |
 | fiddle | `fiddle` | *(rides `ext-ffi`)* | **done** | the gem's own pure-Ruby backend over the ffi API, vendored; `Importer` is not vendored |
 | nkf | `nkf`, `kconv` | `ext-nkf` | **subset** | `NKF.nkf`/`.guess` rebuilt over Zeo's own encoding engine (which grew ISO-2022-JP and the dummy UTF-16/32 rows for it) — the conversion option subset (`-j/-e/-s/-w*`, `-J/-E/-S/-W*`, `--ic/--oc`, `-m[0]` MIME-word decode, `-x/-X` kana folding, `-Z0-2`, `-L[uwm]`), with `Kconv` the gem's vendored Ruby half. NOT nkf's whole grammar; `guess` is a reimplemented heuristic — see `docs/reference/compatibility.md` |
 | bigdecimal | `bigdecimal`, `bigdecimal/*` | `ext-bigdecimal` | **done** | `BigDecimal` over a BigUint coefficient — bigdecimal 4.x's C slice (exact add/sub/mult, division to the documented precision rule, the rounding engine, mode/limit state, conversions, `Kernel#BigDecimal`); `**`/`power`/`sqrt`/`BigMath`/`to_d` are the gem's own Ruby, vendored in `crates/zeo-rt/ext/bigdecimal` and compiled like user code |
@@ -100,11 +100,8 @@ the build target's platform facts and spliced by
 `parse/loader/splice.rs::splice_synthetic_shim`). The shim's remaining
 limitation is a synthesized FHS install prefix, not a real install layout.
 
-## Deferred (catalogued, no module yet)
-
-| Extension | `require` | Why deferred |
-|---|---|---|
-| _(none currently)_ | | |
+No extension is catalogued and waiting: every one ruby 4.0.6 ships either has
+a module here or is out of scope below.
 
 ## Out of scope (VM internals / tooling)
 

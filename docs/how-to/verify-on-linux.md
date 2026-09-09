@@ -35,7 +35,7 @@ $ cargo xtask linux all        # build test units natlibs valgrind
 | `gate` | the full profile, at a release boundary |
 | `units` | the zeo, zeo-rt and zeo-capi unit suites |
 | `natlibs` | does `link.rs`'s glibc table match what rustc says |
-| `valgrind` | does a linked program leak underneath the runtime's own ledger |
+| `valgrind` | does a linked program leak underneath the runtime's own ownership ledger |
 | `cross` | does the x86_64 cross-compile still link |
 | `dist` | does a linux release tarball build |
 | `shell` | an interactive prompt in the image |
