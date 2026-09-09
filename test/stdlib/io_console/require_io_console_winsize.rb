@@ -5,6 +5,6 @@ require "io/console"
 p STDOUT.winsize
 __END__
 #@ stderr
-stdlib/io_console/require_io_console_winsize.rb:11:in 'IO#winsize': Inappropriate ioctl for device - <STDOUT> (Errno::ENOTTY)
-	from stdlib/io_console/require_io_console_winsize.rb:11:in '<main>'
+stdlib/io_console/require_io_console_winsize.rb:5:in 'IO#winsize': Inappropriate ioctl for device - <STDOUT> (Errno::ENOTTY)
+	from stdlib/io_console/require_io_console_winsize.rb:5:in '<main>'
 #@ exit 1
