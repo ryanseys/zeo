@@ -228,13 +228,9 @@ pub fn class_ids(modules_too: bool) -> Vec<ClassId> {
 
 /// `recv_class.is_a?(target)` -- a real ancestry check against the SAME
 /// linearized `ancestors` list `super`/reflection uses at compile time (see
-/// `analyze::mro::compute_ancestors`'s docs), not zeo's own two-tier
-/// "transplant for dispatch, shallower list for reflection" split (confirmed
-/// to diverge on a module-of-module diamond -- see the plan). The one
-/// runtime surface this needs for `Signal::Raise`/`rescue` matching:
-/// there's no first-class `Class`/`Module` runtime VALUE (can't be stored in
-/// a variable or reflected on generally), just this narrow "is this concrete
-/// class id ancestor-compatible with that one" check.
+/// `analyze::mro::compute_ancestors`'s docs). A separate, shallower list
+/// for reflection would diverge on a module-of-module diamond. This is the
+/// check `Signal::Raise`/`rescue` matching runs.
 pub fn is_a(recv_class: ClassId, target: ClassId) -> bool {
     ancestors_of_value(recv_class).contains(&target)
 }

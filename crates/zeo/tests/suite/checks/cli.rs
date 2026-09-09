@@ -450,9 +450,10 @@ fn the_cache_can_be_turned_off() {
 
 /// A rebuilt RUNTIME ARCHIVE misses the cache. A zeo-rt body fix can leave
 /// the compiler binary untouched (the projected class surface is identical,
-/// so cargo never relinks `zeo`), and a key on the exe alone kept serving
-/// programs linked against the OLD runtime -- the one staleness no source
-/// manifest can see. The archive's identity is in the key now; this pins it.
+/// so cargo never relinks `zeo`), and a key on the exe alone would keep
+/// serving programs linked against the stale runtime -- the one staleness
+/// no source manifest can see. The archive's identity is in the key; this
+/// pins it.
 #[test]
 fn a_rebuilt_runtime_archive_misses_the_cache() {
     let dir = scratch("cache-archive");

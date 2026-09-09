@@ -10,9 +10,8 @@
 //!
 //! The end-to-end behavioural proof is the gem probe's and `bundler_parity`'s
 //! (the compile-side inputs `tests/bench/rubygems.rb` and `tests/bench/
-//! bundler.rb` are the same whole-graph programs; their golden runs cost
-//! minutes each and were retired from the suite, and so was a shared
-//! whole-graph compile that asserted class names). What lives here is only
+//! bundler.rb` are the same whole-graph programs; a golden run of either
+//! costs minutes, so none lives in the suite). What lives here is only
 //! what costs milliseconds: the vendoring is intact and the two trees agree
 //! with the lock.
 

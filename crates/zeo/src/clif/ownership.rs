@@ -1,4 +1,4 @@
-//! The ownership lowering (plan §1.4): heap temporaries move into the
+//! The ownership lowering: heap temporaries move into the
 //! frame's release pool at their last use site, values written into slots
 //! move or retain, and the `verify` ledger counts every owned emission
 //! site against its one consumption site.
@@ -156,9 +156,9 @@ pub(crate) fn pool_owned(fx: &mut Fx, addr: ir::Value, tag: TagInfo) {
 /// Release the value at `addr` iff its runtime tag is a heap tag -- an
 /// assignment's release of the old value. `zeo_rt_release` is already a
 /// no-op for an immediate, so the guard buys nothing but the CALL, which
-/// is the whole point: a loop that reassigns an Int local made one per
-/// iteration. A released slot's poison byte is itself above the heap
-/// boundary, so a double release still reaches the runtime's check.
+/// is the whole point: a loop that reassigns an Int local would otherwise
+/// make one per iteration. A released slot's poison byte is itself above
+/// the heap boundary, so a double release still reaches the runtime's check.
 pub(crate) fn release_if_heap(fx: &mut Fx, addr: ir::Value) {
     let fl = MemFlagsData::trusted();
     let t = fx.b.ins().load(types::I8, fl, addr, TAG_OFFSET as i32);

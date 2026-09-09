@@ -434,7 +434,7 @@ pub fn getch(
 /// into stdin put a prompt where nobody could see it. The newline is written
 /// from an `ensure`, so a failed read still ends the line. And the answer is
 /// `chomp!(rb_default_rs)`, which strips a trailing `"\n"` IN PLACE and
-/// leaves a `"\r"` alone; the old plain `chomp` made a new String and ate
+/// leaves a `"\r"` alone; a plain `chomp` would make a new String and eat
 /// `"\r\n"` too.
 pub fn getpass(
     recv: &RubyValue,
@@ -851,8 +851,8 @@ pub fn cursor(
             send0(recv, "flush")?;
             // `read_vt_response`: exactly two prefix BYTES, then digits and
             // `;` separators, ending at the first byte that is neither. A
-            // stream that does not answer the escape is nil, not a guess --
-            // the old parser reported `[0, 0]`, "cursor at home", for a pipe.
+            // stream that does not answer the escape is nil, not a guess
+            // such as `[0, 0]`, "cursor at home", for a pipe.
             let byte = || -> Result<Option<u8>, Signal> {
                 Ok(match send0(recv, "getbyte")? {
                     RubyValue::Int(b) => Some(b as u8),
@@ -934,10 +934,9 @@ static CONSOLE_DEV: std::sync::Mutex<Option<RubyValue>> = std::sync::Mutex::new(
 ///   * `IO.console(:close)` closes it, drops the cache and answers nil.
 ///   * `IO.console(meth, *args)` sends `meth` to the console.
 ///
-/// The old body opened a FRESH `/dev/tty` per call and refused unless one of
-/// the standard streams was a terminal. Neither is io-console's rule: it
-/// tests the open alone, so a program with piped stdio still reaches its
-/// terminal.
+/// io-console's rule is to test the open alone -- not whether a standard
+/// stream is a terminal -- so a program with piped stdio still reaches its
+/// terminal, and one `/dev/tty` is cached rather than opened per call.
 pub fn io_class_console(
     _recv: &RubyValue,
     args: &[RubyValue],
@@ -1284,8 +1283,8 @@ mod tests {
         (slave >= 0).then(|| io::file_value(unsafe { std::fs::File::from_raw_fd(slave) }, None))
     }
 
-    /// The wave's core promise, on a real terminal: the mode changes, and it
-    /// is back to what it was once the block returns.
+    /// The core promise, on a real terminal: the mode changes, and it is
+    /// back to what it was once the block returns.
     #[test]
     fn a_scoped_mode_change_is_undone_on_the_way_out() {
         let Some(pty) = a_pty() else { return };

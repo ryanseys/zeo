@@ -5,9 +5,8 @@
 //! `File < IO` (see the ABI table), so a File INSTANCE answers IO's instance
 //! methods through the ordinary MRO walk -- nothing is duplicated here.
 //!
-//! Every path is handled as bytes-as-String. Once the encoding engine lands
-//! (plan E1+), paths become a real encoding concern; today they round-trip
-//! through `String` and non-UTF-8 paths are out of reach.
+//! Every path is handled as bytes-as-String: a path round-trips through
+//! `String`, and a non-UTF-8 path is out of reach.
 
 use crate::builtins::{arg_error, block_or_enum, type_error};
 use crate::dispatch::raise_error;
@@ -120,8 +119,8 @@ pub fn path_arg(v: &RubyValue, _method: &str) -> Result<String, Signal> {
 /// path component; an Array is recursively flattened.
 ///
 /// An array holding itself is `ArgumentError: recursive array`, as CRuby's
-/// `rb_check_array_type` walk reports it -- the descent used to run until the
-/// machine stack died.
+/// `rb_check_array_type` walk reports it; an unguarded descent would run
+/// until the machine stack died.
 fn collect_join_parts(v: &RubyValue, parts: &mut Vec<String>) -> Result<(), Signal> {
     join_parts(v, parts, &mut crate::value::recursion::Visited::default())
 }
@@ -1064,9 +1063,9 @@ pub(crate) fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
 /// `mode:` keyword in `opts`, or absent (`"r"`) -- plus the PERM bits a newly
 /// created file is given.
 ///
-/// Shared so the two entry points cannot drift: `IO.sysopen` used to open
-/// read-only whatever it was opened for, and both dropped `perm`, so
-/// `File.open(path, "w", 0o600)` left a 0644 file behind.
+/// Shared so the two entry points cannot drift: `IO.sysopen` and `File.open`
+/// honour the same mode and the same `perm`, so `File.open(path, "w",
+/// 0o600)` leaves a 0600 file behind.
 ///
 /// A Hash in the POSITIONAL `mode` slot is not options -- keywords have
 /// already been peeled -- so it converts to a String and raises, which is

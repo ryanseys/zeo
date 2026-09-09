@@ -1052,8 +1052,7 @@ unsafe fn refine_candidates(ids: *const u32, n: usize) -> Vec<(ClassId, ClassId,
 /// A call at a site some `using` covers, on a name one of the covering
 /// refinements defines. Whether the refinement APPLIES depends on the
 /// receiver's runtime class, so the whole call goes through one entry that
-/// tries the refined bodies and then falls back to an ordinary send --
-/// exactly what the rustc backend's `refined_send_in` does.
+/// tries the refined bodies and then falls back to an ordinary send.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_refined_send_in(
     box_id: u32,

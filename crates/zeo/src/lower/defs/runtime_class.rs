@@ -101,8 +101,8 @@ pub(crate) fn const_holds_runtime_class(hir: &Hir, name: &str) -> bool {
 ///   neither can be either of those.
 ///
 /// `ZEO_DEBUG=runtime-struct` turns the whole thing off.
-/// Legal `Struct` member names that cannot be spelled as a Rust-side parameter
-/// or `def` name in the synthesized source. `Struct.new(:class)` is real code
+/// Legal `Struct` member names that cannot be spelled as a parameter or
+/// `def` name in the synthesized source. `Struct.new(:class)` is real code
 /// -- it even shadows `Kernel#class`, which `issue_2975.rb` pins.
 const RUBY_KEYWORDS: &[&str] = &[
     "alias", "and", "begin", "break", "case", "class", "def", "defined", "do", "else", "elsif",
@@ -169,13 +169,13 @@ pub(crate) fn synthesize_struct_class(
     // `rstruct::bind_members` -- the one semantic kernel -- and the class
     // inherits it.
     //
-    // It used to be spelled here as Ruby, for the speed of a compiled body.
-    // That body counted its own arguments with `args.size` and reached nine
-    // more user-visible sends besides, so ANY program that patched one of them
-    // broke every Struct and Data construction: `module M; def size = super *
-    // 10; end; class Array; prepend M; end` made `Struct.new(:a).new(1)` raise
-    // `struct size differs`. CRuby's `rb_struct_initialize` is C and reads
-    // `argc`, which no monkeypatch can reach. See #128.
+    // Not spelled here as Ruby, whatever a compiled body would gain: such a
+    // body counts its own arguments with `args.size` and reaches nine more
+    // user-visible sends besides, so ANY program that patches one of them
+    // breaks every Struct and Data construction: `module M; def size = super
+    // * 10; end; class Array; prepend M; end` makes `Struct.new(:a).new(1)`
+    // raise `struct size differs`. CRuby's `rb_struct_initialize` is C and
+    // reads `argc`, which no monkeypatch can reach.
     // The `def` is still needed: a compiled class's method table is FLATTENED
     // from ancestors that carry a user `Scope`, and `Struct#initialize` is a
     // native row -- an omitted `initialize` resolved all the way to

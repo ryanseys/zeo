@@ -4,8 +4,9 @@
 //! `Delegator` and on the `WeakMap` here. The `ObjectSpace` module
 //! itself is next door in `objspace.rs`, which stands on the registry here.
 //!
-//! zeo's memory model is `Arc` refcounting, not a tracing collector (the
-//! plan's accepted trade -- cycles leak). That shapes what this module can
+//! zeo's memory model is `Arc` refcounting, not a tracing collector (a
+//! cycle is reclaimed only by the trial-deletion pass in `crate::gc`, see
+//! its docs). That shapes what this module can
 //! honestly offer: a `WeakMap` holds `Arc::downgrade`d handles to its keys and
 //! values, so an entry vanishes once the last STRONG reference elsewhere
 //! drops. Dead entries are pruned lazily on access and eagerly at `GC.start`.
@@ -411,8 +412,8 @@ pub fn register_weakmap_subclass(
 /// takes no arguments), then the standard `run_initialize` tail -- so a
 /// subclass's own `initialize` RUNS, with `super()` bottoming out on
 /// `BasicObject#initialize`. Registering the root's own constructor directly
-/// skipped the user body, and the answer was silently wrong (an ivar the
-/// `initialize` was supposed to write simply read back nil).
+/// would skip the user body, silently (an ivar the `initialize` was
+/// supposed to write would read back nil).
 fn weakmap_subclass_construct(
     class: ClassId,
     args: &[RubyValue],

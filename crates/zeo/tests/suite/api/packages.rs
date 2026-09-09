@@ -1048,8 +1048,8 @@ fn a_zeopkg_bundle_builds_links_and_runs() {
 
 #[test]
 fn a_package_build_is_reproducible_across_directories() {
-    // Decision 6, CI-asserted: the same gem compiled from two different
-    // checkouts answers byte-identical artifacts. The virtual-root
+    // CI-asserted: the same gem compiled from two different checkouts
+    // answers byte-identical artifacts. The virtual-root
     // respelling is what keeps the build directory out of the object's
     // rodata and the manifest's meta rows.
     let dir = scratch("repro");
@@ -1154,8 +1154,8 @@ fn a_refused_artifact_drops_to_the_source_splice() {
     // The fallback tier: the same foreign-target artifact that REFUSES
     // when it is the only copy compiles from source when the gem is
     // resolvable -- with a warning naming the package, never silently.
-    // (A host reopen no longer triggers a drop: it installs at run time
-    // and composes with the artifact.)
+    // (A host reopen does not trigger a drop: it installs at run time and
+    // composes with the artifact.)
     let dir = scratch("drop");
     let artifact = dir.join("pureleaf.zeopkg");
     ok(zeo()
@@ -1546,9 +1546,9 @@ fn a_precompiled_platform_gem_ships_its_artifact_to_a_consumer() {
 /// A packaged feature that is ALSO a builtin name, under an active store: the
 /// require must stay a call the merged unit rows answer. `tmpdir` is the
 /// shape -- zeo provides it natively, the lock names it, and an installed
-/// artifact makes it a packaged feature -- and the builtin arm of the
-/// resolvability scan used to claim a compile-time verdict for it, sending
-/// the require down a splice road where the store override had already
+/// artifact makes it a packaged feature. If the builtin arm of the
+/// resolvability scan claimed a compile-time verdict for it, the require
+/// would go down a splice road where the store override had already
 /// dismissed the builtin: `cannot load such file -- tmpdir`.
 #[test]
 fn a_packaged_builtin_feature_defers_to_the_merged_unit() {

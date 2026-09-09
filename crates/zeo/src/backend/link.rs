@@ -1,9 +1,8 @@
 //! The AOT link driver's fixed knowledge: where the prebuilt runtime
 //! archive lives and which native system libraries a program link must
-//! name. The driver itself (object emission + the `cc` invocation) lands
-//! with the `--backend aot` path; the pieces here have their contract
-//! pinned now -- the archive location by `runtime_archive`'s presence
-//! rule, the library lists by the `natlibs_table_matches_rustc` diff test.
+//! name. Each piece has its contract pinned -- the archive location by
+//! `runtime_archive`'s presence rule, the library lists by the
+//! `natlibs_table_matches_rustc` diff test.
 
 use std::path::PathBuf;
 
@@ -269,15 +268,14 @@ fn registry_archive(cache: &std::path::Path) -> Result<PathBuf, String> {
 /// `natlibs_table_matches_rustc` below, which the full nextest profile runs.
 const NATLIBS_MACOS: &[&str] = &["-liconv", "-lSystem", "-lc", "-lm"];
 /// What rustc reports on glibc, VERBATIM -- captured live by the diff test
-/// below on 2026-08-20, replacing a list seeded from documentation that had
-/// never been checked on the platform it describes.
+/// below, never seeded from documentation.
 ///
 /// The head of it is not std's: `-lcrypt` and the first `-lutil` come from
 /// zeo-rt's own `#[link(name = ..)]` attributes (`String#crypt`, `PTY`),
 /// which rustc honours for its own link and reports here, but which nothing
-/// tells a hand-written table about -- so the AOT link on Linux failed with
-/// `undefined reference to 'crypt'` while every macOS run stayed green
-/// (libSystem carries both). `-lutil` appearing twice is rustc's own output
+/// tells a hand-written table about -- without them the AOT link on Linux
+/// fails with `undefined reference to 'crypt'` while every macOS run stays
+/// green (libSystem carries both). `-lutil` appearing twice is rustc's own output
 /// and is kept: the assert is equality with what rustc says, and a
 /// de-duplicated list would fail it while changing nothing about the link.
 ///

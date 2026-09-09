@@ -9,7 +9,7 @@
 //! store that has only the precompiled variant means the gem is unusable, and
 //! that is a recorded exclusion, not a silent miss.
 //!
-//! Three ways a gem turns out native, and they no longer share an answer.
+//! Three ways a gem turns out native, each with its own answer.
 //!
 //! | Signal | Means | zeo |
 //! |---|---|---|

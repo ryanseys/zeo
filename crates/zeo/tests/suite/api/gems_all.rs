@@ -141,7 +141,7 @@ fn colliding_unit_features(a: &zeo::analyze::Analyzed) -> Vec<(String, String, S
     hits
 }
 
-/// A skip entry naming a gem that no longer exists would drop that gem out of
+/// A skip entry naming a gem that does not exist would drop that gem out of
 /// the sweep instead of failing it.
 #[test]
 fn the_skip_list_names_real_gems() {

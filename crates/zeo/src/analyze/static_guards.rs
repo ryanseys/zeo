@@ -114,7 +114,7 @@ fn body_cannot_raise(compiler: &Compiler, body: &[NodeId]) -> bool {
         | HirNode::SymbolLit(_) => true,
         // The record a resolved `require` of a native feature leaves at its
         // own line: an array append and two flags, and it is exactly what a
-        // guarded `require` now lowers to beside its load result.
+        // guarded `require` lowers to beside its load result.
         //
         // `CExtLoaded` is deliberately NOT here: it dlopens and runs the
         // extension's `Init_`, and either can raise.

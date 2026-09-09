@@ -88,8 +88,7 @@ pub fn load(path: &str, init: &str) -> Result<bool, Signal> {
 /// `RTLD_NOW` rather than MRI's `RTLD_LAZY`, and the difference is the whole
 /// value of `cext/stubs.rs`. Lazily, a `rb_*` zeo does not export binds to
 /// nothing and the extension SIGSEGVs at the call -- no symbol name, no
-/// backtrace, no way to tell a zeo gap from a bug in the gem. `fast_blank`
-/// did exactly that when the census had not seen `ruby/encoding.h`.
+/// backtrace, no way to tell a zeo gap from a bug in the gem.
 /// Resolving eagerly turns the same gap into a `LoadError` naming the
 /// symbol, which is the promise the stub file exists to keep.
 ///

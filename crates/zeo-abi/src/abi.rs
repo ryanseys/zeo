@@ -340,10 +340,10 @@ pub struct ParamC {
 }
 
 /// One block literal's PROC SHAPE: every compile-time constant a proc
-/// creation used to hand over as nine separate call arguments (plus a
-/// stack-built [`ParamC`] array per creation), baked once into the
-/// program's `zeo_proc_shapes` table. `params` points at the shape's own
-/// rows inside the same table.
+/// creation needs, baked once into the program's `zeo_proc_shapes` table
+/// rather than passed as call arguments (plus a stack-built [`ParamC`]
+/// array) per creation. `params` points at the shape's own rows inside the
+/// same table.
 #[repr(C)]
 pub struct ProcShapeC {
     /// The block's arity (`Proc#arity`).
@@ -487,7 +487,7 @@ pub const REG_SINGLETON_SUPER_TARGET: u8 = 5;
 pub const REG_ACCESSOR_SLOT: u8 = 18;
 
 /// `RegRow.kind`: class method `a` on `class` is a MATERIALIZED copy of an
-/// `extend`ed module's row, retired until the `extend` statement seats the
+/// `extend`ed module's row, dormant until the `extend` statement seats the
 /// module. CRuby has no such copy -- `rb_extend_object` puts the module in
 /// the singleton chain where the statement stands -- so the name must not
 /// answer, and a hook it supplies must not fire, above the `extend`.
@@ -627,9 +627,9 @@ pub struct CovFile {
 
 /// The one table of tables an emitted program hands `zeo_rt_main`.
 /// Registration order inside each table -- and the table walk order -- is
-/// today's generated `main` order. (The rustc backend's `__FILES`/`__SYMS`
-/// pools have no row here: CLIF programs reference `.rodata` strings
-/// directly and `unit_init` interns its own symbol table.)
+/// the generated `main` order. (No file or symbol pool has a row here: a
+/// program references `.rodata` strings directly and `unit_init` interns
+/// its own symbol table.)
 /// One embedded source file: the load-path-relative spelling it answers to,
 /// and its text.
 #[repr(C)]
@@ -777,9 +777,8 @@ pub struct FfiCallC {
 /// [`FfiSymMode`] as a byte: resolve the symbol in the named libraries only.
 pub const FFI_SYM_LIB: u8 = 0;
 /// Resolve in the named libraries, falling back to the process image -- the
-/// tier a build-time `#[link(name = ..)]` served for the rustc backend,
-/// where the library is linked into the program and its symbols are simply
-/// present.
+/// tier for a library linked into the program itself, where its symbols are
+/// simply present.
 pub const FFI_SYM_LIB_OR_PROCESS: u8 = 1;
 /// Resolve in the process image only (no `ffi_lib`, or `FFI::CURRENT_PROCESS`).
 pub const FFI_SYM_PROCESS: u8 = 2;

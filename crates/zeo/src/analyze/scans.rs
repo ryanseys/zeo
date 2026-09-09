@@ -318,19 +318,17 @@ fn collect_shell_kinds_node(
 /// Whether any node under `id` satisfies `hit`, descending through
 /// `HirNode::for_each_child` and stopping where a new Ruby scope begins.
 ///
-/// The two callers below are the whole reason this exists. Each carried its
-/// own copy of the 81-variant match -- ~270 lines apiece, byte-identical
-/// except for the arms that answer the question -- which is precisely the
-/// drift `for_each_child`'s own docs describe: "each used to carry their own
-/// copy of this walk, and the copies drifted." The copies here had drifted
-/// too. Both skipped a `New`'s block and keyword arguments, so
-/// `def f; Hash.new { |h, k| yield k }; end` reported no bare block use and
-/// the method never got its `__blk` parameter; and both treated a bare
-/// `Block` node as a stop while special-casing a call's block argument to
-/// descend into it, so the same block was walked or skipped depending on how
-/// the walk arrived at it.
+/// The two callers below are the whole reason this exists. A per-caller
+/// copy of the 81-variant match -- ~270 lines apiece, byte-identical except
+/// for the arms that answer the question -- is precisely the drift
+/// `for_each_child`'s own docs describe. Such copies skip a `New`'s block
+/// and keyword arguments, so `def f; Hash.new { |h, k| yield k }; end`
+/// reports no bare block use and the method never gets its `__blk`
+/// parameter; or treat a bare `Block` node as a stop while special-casing a
+/// call's block argument to descend into it, so the same block is walked or
+/// skipped depending on how the walk arrived at it.
 ///
-/// The stops are the same three both copies had. `Ffi` is a synthesized
+/// Three stops. `Ffi` is a synthesized
 /// wrapper body with none of this in it. `ClassDef` and `DefMethod` open a
 /// fresh Ruby scope, so a `yield` or `super` inside one belongs to that
 /// scope, not to the body being scanned. `Block` and `Lambda` are NOT stops:

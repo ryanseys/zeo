@@ -1,8 +1,7 @@
 //! The link ledger: what the AOT link must KEEP, and what it must DROP.
 //!
-//! Both facts were asserted only implicitly until now -- the M0/M0.5 gates
-//! recorded them as owed. They are opposite halves of the same link line
-//! (`backend/link.rs`), and a regression in either is silent:
+//! They are opposite halves of the same link line (`backend/link.rs`), and
+//! a regression in either is silent:
 //!
 //! - **Keep.** A program names the builtin class tables it can reach
 //!   (`zeo_ctable_<ID>`), and the link uses `-force_load` / `--whole-archive`
@@ -11,7 +10,7 @@
 //!   for whatever class went missing, which reads as a dispatch bug rather
 //!   than a link bug.
 //! - **Drop.** `libzeo.a` carries the COMPILER as well as the runtime
-//!   (one staticlib, plan decision 9), and `-dead_strip` / `--gc-sections`
+//!   (one staticlib), and `-dead_strip` / `--gc-sections`
 //!   is what keeps an eval-free program from shipping Cranelift. Lose that
 //!   and nothing fails; the binary just doubles.
 //!
@@ -210,10 +209,10 @@ fn a_linked_program_keeps_the_tables_it_names() {
 /// An always-on builtin's table is carried only when the program can REACH
 /// the class.
 ///
-/// The always-on set used to be unconditional -- `puts :ok` shipped `Ractor`,
-/// `Marshal`, `TracePoint` and `Pathname`. `analyze::class_reach` answers
-/// which of them a value can arrive as. `cargo xtask size --check` is the gate
-/// on what that saves.
+/// `analyze::class_reach` answers which of the always-on classes (`Ractor`,
+/// `Marshal`, `TracePoint`, `Pathname`, ...) a value can arrive as, so
+/// `puts :ok` ships none of them. `cargo xtask size --check` is the gate on
+/// what that saves.
 ///
 /// Asserted through the exported `zeo_ctable_*` symbols rather than bytes,
 /// because that names WHICH class went.
@@ -270,9 +269,9 @@ fn an_unreachable_always_on_class_leaves_its_table_behind() {
 }
 
 /// The dead-strip half: a program that cannot `eval` does not carry the
-/// compiler. `libzeo.a` holds compiler and runtime alike (one staticlib,
-/// plan decision 9) and `-force_load`/`--whole-archive` pulls in every
-/// member, so `-dead_strip`/`--gc-sections` is the only thing standing
+/// compiler. `libzeo.a` holds compiler and runtime alike (one staticlib)
+/// and `-force_load`/`--whole-archive` pulls in every member, so
+/// `-dead_strip`/`--gc-sections` is the only thing standing
 /// between an eval-free program and a copy of Cranelift.
 ///
 /// Measured against the `zeo` binary, which links the same archive and
@@ -336,9 +335,9 @@ fn a_program_with_its_own_load_dead_strips_the_compiler() {
 /// The call stays a runtime `Kernel#require` on purpose -- CRuby loads such a
 /// file when the method runs -- and `dynamic_require` asks
 /// `features::load_feature` before the on-disk tier that needs a compiler. So
-/// the unit answers it, and the compiler is not owed. It used to be: the
-/// predicate matched the call's NAME, and this program linked Cranelift and
-/// all 170 class tables.
+/// the unit answers it, and the compiler is not owed. A predicate that
+/// matched the call's NAME alone would link Cranelift and all 170 class
+/// tables for this program.
 ///
 /// The two shapes that still carry the compiler are the point of the second
 /// half: a feature that resolved to NO unit, and a COMPUTED target. Both are

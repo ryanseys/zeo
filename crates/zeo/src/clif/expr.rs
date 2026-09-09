@@ -132,8 +132,8 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
         HirNode::NilLit => Ok(Operand::Nil),
         // The bignum / rational / imaginary literals: digits baked into
         // rodata, assembled by the runtime at the use site (no
-        // compile-time bigint dependency, no string parsing) -- rustc's
-        // shape. `int_from_u32_digits` demotes to `Int` when it fits, so
+        // compile-time bigint dependency, no string parsing).
+        // `int_from_u32_digits` demotes to `Int` when it fits, so
         // one Ruby Integer class covers both payloads.
         HirNode::BigIntegerLit { negative, digits } => {
             let (negative, digits) = (*negative, digits.clone());
@@ -190,8 +190,8 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
         HirNode::StringLit(parts) => {
             let parts = parts.clone();
             // A `# encoding:` magic comment tags EVERY literal in the file
-            // with that encoding, byte-built -- and, as rustc's does, skips
-            // the frozen pool. Otherwise a raw-byte segment forces the byte
+            // with that encoding, byte-built -- and skips the frozen pool.
+            // Otherwise a raw-byte segment forces the byte
             // builder at the SOURCE encoding (an invalid `\xNN` literal
             // stays UTF-8-and-invalid, matching CRuby), and a purely-UTF-8
             // literal takes the readable path.
@@ -401,7 +401,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
         }
         // A `def` in EXPRESSION position is a RUNTIME method install: its
         // body becomes a method-body proc and the install answers the
-        // method-name Symbol (rustc's `emit_expr` DefMethod arm).
+        // method-name Symbol.
         HirNode::DefMethod {
             name,
             params,
@@ -440,9 +440,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
                 // and `class << obj` desugars, so this IS a real `def`'s
                 // body: its bare `yield` reaches the installed method's
                 // call-site block, and a bare `super` forwards the
-                // parameter list a `def` actually wrote (rustc marks
-                // `runtime_super_params` here and leaves
-                // `defined_by_define_method` alone).
+                // parameter list a `def` actually wrote.
                 // A per-object singleton `def` labels its frame after the
                 // METHOD, bare (`m`), where a `def self.x` in a class body is
                 // qualified (`C.x`). Anything else reaching here really is a
@@ -475,7 +473,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
         // The `alias new old` KEYWORD (lowering's marker call): it installs
         // on the frame's DEFAULT DEFINEE, which is the cref's class unless
         // an `*_eval`/`instance_exec` re-homed the block -- so the runtime
-        // decides, from the same two candidates rustc hands it.
+        // decides, from the two candidates the emitter hands it.
         HirNode::Call {
             receiver: None,
             name,
@@ -569,7 +567,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
         }
         // `X ||= v`'s read half: an absent constant -- or a scope the
         // compiler never registered -- is nil, so the write half can
-        // define it (rustc's `const_owner_id_opt` miss arm).
+        // define it.
         HirNode::ConstReadOrNil(scope, name) => {
             let (scope, name) = (scope.clone(), name.clone());
             // A run-time cref owns the constant a snippet writes bare, and
@@ -718,8 +716,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
                 ArrayElem::Single(_) | ArrayElem::Splat(_) => None,
             });
             // `yield(*a)`: the length is a runtime question, so the list is
-            // built as an Array and the block binds from its contents
-            // (rustc's `__args` vector twin).
+            // built as an Array and the block binds from its contents.
             if kw_tail.is_some() || args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
                 let fixed = &args[..args.len() - usize::from(kw_tail.is_some())];
                 let arr = super::call::build_array(fx, fixed)?;
@@ -1013,11 +1010,11 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
                 ownership::discard(fx, init);
                 return Ok(borrowed());
             }
-            // A plain compiled class allocates DIRECTLY: `Foo.new` walked
-            // the singleton chain looking for a `new` that is served by the
-            // constructor rather than a class-method row, so the site's
-            // cache could only ever remember the miss. The gate is the
-            // rustc emitter's `statically_constructed`, term for term --
+            // A plain compiled class allocates DIRECTLY: a `Foo.new` that
+            // walks the singleton chain looks for a `new` that is served by
+            // the constructor rather than a class-method row, so the site's
+            // cache could only ever remember the miss. The gate is
+            // "statically constructed", term for term --
             // a generated-struct class (which is what `CompiledObject`'s
             // layout table holds), not runtime-conditional, with neither
             // `initialize` nor `new` patchable at run time, and no own
@@ -1053,7 +1050,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
             }
             // A statically-known class is a Class immediate; a constant
             // holding a RUNTIME class (`Struct.new`/`Data.define`) is read
-            // at the call, exactly the rustc `__rtclass` shape.
+            // at the call.
             let recv = super::consts::const_read(fx, id, &class_name)?;
             let elems: Vec<ArrayElem> = args.iter().map(|&a| ArrayElem::Single(a)).collect();
             match (block, kwargs.is_empty()) {
@@ -1321,10 +1318,9 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
             })
         }
         // `@name = v` in VALUE position answers the value ASSIGNED, not a
-        // read-back: rustc binds the rhs once (`let __v = ..`) and hands
-        // the write a clone. The park-then-write shape is the cvar/const
-        // twin -- the write's frozen check can raise, so an owned rhs is
-        // pooled first and the store takes a moved COPY.
+        // read-back. The park-then-write shape is the cvar/const twin --
+        // the write's frozen check can raise, so an owned rhs is pooled
+        // first and the store takes a moved COPY.
         HirNode::IvarWrite(name, value) => {
             let (name, value) = (name.clone(), *value);
             let op = lower_expr(fx, value)?;
@@ -1375,7 +1371,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
                 .and_then(|c| c.chain.first().copied())
                 .filter(|_| scope.is_none());
             // An explicit `Scope::NAME = ..` whose scope isn't a registered
-            // class takes rustc's runtime-scope path -- not lowered yet.
+            // class needs a runtime-scope path -- not lowered yet.
             let owner_class = match scope.as_deref() {
                 Some(s) => match super::boxes::resolve_class_here(fx, s) {
                     Some(cid) => cid,
@@ -1392,7 +1388,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
                 },
                 // A bare `NAME =` is owned by the lexically enclosing
                 // class/module (the emitting context); the box's top level
-                // otherwise -- rustc's `const_owner_id_opt` fallback.
+                // otherwise.
                 None => fx.method_class.unwrap_or_else(|| super::boxes::box_top(fx)),
             };
             let owner = match eval_owner {
@@ -1480,7 +1476,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
 /// `recv&.name(...)`: the nil-test diamond. A nil receiver answers nil
 /// without evaluating the arguments or building the block (ruby's rule,
 /// oracle-verified) -- so the whole argument build sits in the call arm.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 fn safe_nav_call(
     fx: &mut Fx,
     id: NodeId,
@@ -1751,10 +1747,10 @@ fn plain_call(
     {
         return super::consts::symbol_value(fx, &origin);
     }
-    // `__callee__`'s half. The frame label now carries the name the body was
+    // `__callee__`'s half. The frame label carries the name the body was
     // BORN as, which is what a backtrace shows -- so the runtime row's frame
-    // read answers `__method__` and can no longer answer this. The emitter
-    // knows the called name: an alias is emitted as its own body, whose
+    // read answers `__method__` and cannot answer this. The emitter knows
+    // the called name: an alias is emitted as its own body, whose
     // `method_name` IS the alias.
     if receiver.is_none()
         && args.is_empty()
@@ -1838,8 +1834,7 @@ fn plain_call(
             }
             // Unknown names and arity mismatches go through the
             // implicit-self dynamic send (the runtime raises the
-            // NoMethodError/ArgumentError, exactly where rustc's
-            // fallback does).
+            // NoMethodError/ArgumentError).
             Some(_) | None => super::call::implicit_send(fx, id, &name, &args),
         },
     }
@@ -1933,7 +1928,7 @@ fn nil_p_call(fx: &mut Fx, id: NodeId, recv: NodeId) -> CResult<Option<Operand>>
 
 /// A keyword-carrying send: the all-required direct-fill shape first,
 /// then the kw/splat entries with the block on its usual channel.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 fn keyword_call(
     fx: &mut Fx,
     id: NodeId,
@@ -1952,8 +1947,6 @@ fn keyword_call(
     // A receiverless keyword call naming a compiled method whose
     // keywords are ALL required, covered exactly by literal keys,
     // fills the slots itself: no Hash, no dynamic send, no binder.
-    // The deleted rustc backend routed this shape statically all
-    // along; CLIF once sent every keyword call the long way round.
     if receiver.is_none()
         && block_arg.is_none()
         && !args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
@@ -2154,7 +2147,7 @@ pub(crate) fn pure_literal(parts: &[StrPart]) -> Option<String> {
 /// INHERITED entry and a by-name capture would recurse forever through
 /// the later override (rspec-support's `NEW_MUTEX_METHOD =
 /// Mutex.method(:new)` / `def self.new = NEW_MUTEX_METHOD.call` pair).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 fn method_capture_intrinsic(
     fx: &mut Fx,
     receiver: Option<NodeId>,
@@ -2225,7 +2218,7 @@ fn write_bool(fx: &mut Fx, dst: cranelift_codegen::ir::Value, v: bool) {
 
 /// One flip-flop evaluation: the latch decides, and either operand may
 /// raise, so both are ordinary lowered expressions guarded by the latch's
-/// own branches (rustc's `emit_flip_flop`, branch for branch).
+/// own branches.
 fn flip_flop(
     fx: &mut Fx,
     state: u32,
@@ -2349,8 +2342,8 @@ pub(crate) fn rodata_name(
     (ptr, len)
 }
 
-/// A regexp literal. Static parts (raw-byte segments rendered lossily,
-/// rustc's rule) fold into one source string served by a per-site cache
+/// A regexp literal. Static parts (raw-byte segments rendered lossily)
+/// fold into one source string served by a per-site cache
 /// (`zeo_rt_regexp_lit` -- one frozen object per site); an interpolated
 /// pattern builds a fresh string through the to_s dispatch, then
 /// `zeo_rt_regexp_interp` compiles it, frozen at birth. Both raise
@@ -2669,8 +2662,7 @@ pub(crate) fn method_class_shadows(fx: &Fx, name: &str) -> bool {
 
 /// `Kernel#binding` -- this frame, captured. A builtin row cannot answer it:
 /// it would have to see its CALLER's locals. The emitter can, so it builds
-/// the value here, from the names `binding_scope_names` promoted to cells
-/// (rustc's `emit_binding_value`).
+/// the value here, from the names `binding_scope_names` promoted to cells.
 ///
 /// `None` when the scope reports no names -- a `binding` reached through a
 /// runtime-computed send, say -- and the ordinary dynamic send raises the
@@ -2748,7 +2740,7 @@ pub(crate) fn binding_value_with_self(
 /// A `def` in EXPRESSION position -- a RUNTIME method install whose value
 /// is the method-name Symbol.
 ///
-/// Three shapes, exactly the rustc emitter's split: `def self.x` is always
+/// Three shapes: `def self.x` is always
 /// `define_singleton_method` on `self`; a real `def` installs on the
 /// DEFAULT DEFINEE (the cref's, unless an `*_eval`/`Class.new` on the
 /// stack replaced it -- only the runtime can say, so both candidates go);

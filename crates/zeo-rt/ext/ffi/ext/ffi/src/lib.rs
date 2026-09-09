@@ -21,9 +21,9 @@
 //! accesses, so the same code serves an owned Ruby buffer and foreign C memory.
 //!
 //! The unsigned 64-bit boundary is a filed gap, not a decision:
-//! `tests/gaps/ffi_unsigned_64_bit_values.rb`. Integer HAS a Bignum tier
-//! now, so the old note's reason ("no Bignum tier, so it wraps negative")
-//! no longer holds -- and the write side does not wrap, it refuses.
+//! `tests/gaps/ffi_unsigned_64_bit_values.rb`. Integer has a Bignum tier,
+//! so the read side has no reason to wrap negative -- and the write side
+//! does not wrap, it refuses.
 //!
 //! `#address`/`#inspect` expose a real heap address for an owned buffer, so
 //! they are non-deterministic and never golden-tested.

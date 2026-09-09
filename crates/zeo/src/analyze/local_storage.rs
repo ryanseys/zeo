@@ -18,12 +18,11 @@ use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 /// An ORDERED, deduped local-name accumulator -- [`collect_locals`]' output.
 ///
 /// The order is load-bearing (it is the hoisting prelude's declaration
-/// order), so the `Vec` stays; what rides beside it is a set, because the
-/// dedup used to be `Vec::contains` -- a linear scan per assignment over a
-/// list that grows to the scope's local count, run 4+ times per (class x
-/// method) across the FLATTENED ancestry. Callers that then asked "is this
-/// name in there?" per parameter were paying the same scan again, and now
-/// ask the set.
+/// order), so the `Vec` stays; what rides beside it is a set, because a
+/// `Vec::contains` dedup is a linear scan per assignment over a list that
+/// grows to the scope's local count, run 4+ times per (class x method)
+/// across the FLATTENED ancestry. Callers that ask "is this name in there?"
+/// per parameter ask the set.
 #[derive(Default)]
 pub(crate) struct Locals {
     seen: FSet<String>,
@@ -54,7 +53,8 @@ impl Locals {
 /// The locals a SPLICED block body contributes to the scope around it:
 /// everything it mentions EXCEPT the names that are its own.
 ///
-/// A splice shares the enclosing Rust scope but not the enclosing Ruby one.
+/// A splice shares the enclosing function's frame but not the enclosing
+/// Ruby scope.
 /// A name the block first assigns is block-local in ruby, and
 /// `clif::iter::lower_counted` gives it storage of its own for the loop's
 /// extent, so it must not be declared out here as well: a hoisted one is
@@ -216,7 +216,7 @@ pub(crate) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Locals) 
             }
             if let Some(b) = block {
                 // An ESCAPING block (anything but the `.times` inline fast
-                // path) is a genuinely separate Ruby scope now --
+                // path) is a genuinely separate Ruby scope --
                 // a local first introduced INSIDE one is fresh per
                 // invocation (confirmed against real Ruby: a Proc's own
                 // internal local resets on every separate `.call()`, it

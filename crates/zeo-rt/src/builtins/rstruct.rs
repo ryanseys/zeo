@@ -600,13 +600,13 @@ ruby_class! {
     // the two halves of the call shape, already separated by the calling
     // convention, handed to the one kernel.
     //
-    // The compiled class used to bind its members in synthesized RUBY, which
-    // counted its own arguments with `args.size` and reached nine more
-    // user-visible sends -- so a program that patched any of them broke every
-    // Struct construction (#128). It cannot forward to `initialize` directly
-    // either: that row reads the call shape off a kw-MARKED trailing hash, and
-    // the mark does not survive the fused `Klass.new` path. Taking the halves
-    // apart removes the question.
+    // Binding the members in synthesized RUBY would count the arguments
+    // with `args.size` and reach nine more user-visible sends -- so a
+    // program that patched any of them would break every Struct
+    // construction. Forwarding to `initialize` directly is out too: that
+    // row reads the call shape off a kw-MARKED trailing hash, and the mark
+    // does not survive the fused `Klass.new` path. Taking the halves apart
+    // removes the question.
     private def "__zeo_struct_init"(recv, args, kw) {
         let (RubyValue::Array(args), RubyValue::Hash(kw)) = (args, kw) else {
             return Err(type_error!("__zeo_struct_init takes an Array and a Hash"));

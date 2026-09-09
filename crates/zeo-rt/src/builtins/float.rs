@@ -2,8 +2,8 @@
 //! the one tower matrix in `numeric.rs` (a Float receiver joins any real
 //! operand in the Float lane; `Complex` operands lift higher). Ordering
 //! (`<`/`>`/...) comes from Comparable driving `<=>` -- Float's chain runs
-//! `[Float, Numeric, Comparable, ...]`. The Tier A breadth
-//! (`nan?`/`round(n)`/`to_r`/...) lands with stage C's generics pass.
+//! `[Float, Numeric, Comparable, ...]`. The rest of the instance surface
+//! (`nan?`/`round(n)`/`to_r`/...) follows.
 
 use crate::builtins::{arg_error, inherited_row, type_error};
 use crate::{RubyValue, Signal};

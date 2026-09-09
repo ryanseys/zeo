@@ -149,8 +149,8 @@ fn a_payload_without_the_archive_cannot_compile() {
 }
 
 /// `zeo -e` takes the JIT path, which needs no archive at all. Pinned because
-/// it is exactly why the old smoke test passed while `zeo -o` was broken: a
-/// green `-e` says nothing about whether an install can compile.
+/// a smoke test built on it passes while `zeo -o` is broken: a green `-e`
+/// says nothing about whether an install can compile.
 #[test]
 fn a_payload_without_the_archive_still_runs_a_program() {
     let dir = scratch("jit");

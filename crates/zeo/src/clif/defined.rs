@@ -10,7 +10,7 @@ use crate::hir::{HirNode, NodeId};
 use cranelift_codegen::ir::{InstBuilder, types};
 use zeo_abi::abi::{TAG_OFFSET, ValueTag};
 
-/// `defined?(s)` -- a FRESH string answer (rustc's `string_new`) or nil.
+/// `defined?(s)` -- a FRESH string answer or nil.
 fn defined_str(fx: &mut Fx, dst: cranelift_codegen::ir::Value, s: &str) {
     let off = fx.em.intern_rodata(s.as_bytes());
     let ptr = fx.rod(off);
@@ -104,7 +104,8 @@ fn defined_static(fx: &mut Fx, s: Option<&str>) -> Operand {
     }
 }
 
-/// `is_predefined_global`'s list, verbatim from the rustc emitter.
+/// The globals ruby predefines, which `defined?($x)` answers for at
+/// compile time.
 fn is_predefined_global(name: &str) -> bool {
     matches!(
         name,
@@ -135,9 +136,8 @@ fn is_predefined_global(name: &str) -> bool {
     )
 }
 
-/// `defined?(expr)` -- rustc's `emit_defined`, branch for branch. The
-/// runtime-probing forms call one capi each; everything else classifies
-/// statically. The collection-literal recursion and dynamic-scope const
+/// `defined?(expr)`. The runtime-probing forms call one capi each;
+/// everything else classifies statically. The collection-literal recursion and dynamic-scope const
 /// forms still refuse.
 pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
     // `defined?(yield)`: runtime -- the block channel is or isn't there.
@@ -300,8 +300,8 @@ pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult
                 let zero = fx.b.ins().iconst(types::I8, 0);
                 fx.call("zeo_rt_defined_method", &[p, sym, zero, hit_ptr]);
                 fx.b.ins().jump(check, &[]);
-                // The swallow landing: drop the pending signal (rustc's
-                // `unwrap_or(Nil)` drops the Err) and answer nil.
+                // The swallow landing: drop the pending signal and answer
+                // nil.
                 fx.b.switch_to_block(swallow);
                 let sig_ss = fx.temp_slot();
                 let sig_dst = fx.slot_addr(sig_ss, 0);
@@ -649,7 +649,7 @@ fn defined_rest(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
             }
         }
     }
-    // The static classification tail -- rustc's, in its order.
+    // The static classification tail. Order is load-bearing.
     let classification: Option<&str> = match &fx.an.compiler.hir[inner] {
         HirNode::LocalRead(name) => fx.locals.contains_key(name).then_some("local-variable"),
         HirNode::ClassRef(_) => {

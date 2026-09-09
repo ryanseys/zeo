@@ -1,5 +1,5 @@
-//! `register_program`: walk a [`ProgramDesc`]'s tables in today's generated
-//! `main` order, calling exactly the registrars the rustc backend calls.
+//! `register_program`: walk a [`ProgramDesc`]'s tables in the generated
+//! `main`'s order, calling the registrars in that same sequence.
 //! Table strings are the program's `.rodata` (the boundary contract), so
 //! they borrow as `&'static str`; the few structures the runtime keeps by
 //! `'static` reference (`ClassLayout`, the meta-row table) are leaked once
@@ -198,7 +198,7 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
     for r in unsafe { rows(desc.vm_rows, desc.n_vm_rows) } {
         assert!(
             r.flags == 0,
-            "register_program: VmRow flags ({}) are not yet emitted (G8)",
+            "register_program: VmRow flags ({}) are not yet emitted",
             r.flags
         );
         registry.define_value_method_c(

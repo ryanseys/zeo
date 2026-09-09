@@ -163,11 +163,10 @@ pub(crate) fn map_io_err(e: &std::io::Error, ctx: &str) -> Signal {
 /// [`map_io_err`] naming the TARGET, in CRuby's shape:
 /// `Connection refused - connect(2) for "127.0.0.1" port 8080`.
 ///
-/// Both halves of the old version were wrong. It hardcoded `ECONNREFUSED`,
-/// so a TIMEOUT also reported "connection refused"; and it interpolated
-/// Rust's own text, which is where `(os error 61)` leaked from. The class
-/// comes from the errno and the description from the shared strerror the
-/// file layer already builds.
+/// The class comes from the errno (a TIMEOUT must not report "connection
+/// refused") and the description from the shared strerror the file layer
+/// already builds, never from Rust's own text (which carries an `(os error
+/// 61)` suffix CRuby does not print).
 pub(crate) fn map_io_err_for(e: &std::io::Error, ctx: &str, target: &str) -> Signal {
     let (class, desc) = crate::builtins::file::errno_class_and_desc_of(e);
     let suffix = match target.is_empty() {

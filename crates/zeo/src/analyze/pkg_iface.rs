@@ -44,9 +44,8 @@ pub(super) fn refuse_host_spine_redefinitions(compiler: &Compiler) -> Result<(),
             .unwrap_or_else(|| "?".into())
     };
     // The registration walk records each displacement at its one
-    // replacement site (`add_own_method_at`): the host's def took the
-    // list slot the package's body held, so a scan here could no longer
-    // see both.
+    // replacement site (`add_own_method_at`): the host's def takes the
+    // list slot the package's body held, so a scan here cannot see both.
     if let Some((class, name, class_side)) = compiler.pkg_spine_redefs.first() {
         let sep = if *class_side { "." } else { "#" };
         return Err(format!(
@@ -110,7 +109,7 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
             };
             // By QUALIFIED name: an earlier package's nested class carries a
             // leaf name plus a lexical parent (pass 1b), so the raw `name`
-            // field no longer spells the manifest's qualified string.
+            // field does not spell the manifest's qualified string.
             let taken_at = (0..compiler.classes.len()).find(|&i| {
                 let c = &compiler.classes[i];
                 if mc.name.contains("::") {

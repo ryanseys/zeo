@@ -73,11 +73,9 @@ pub fn mark_sole_thread() {
 /// second Ruby thread clears it for good ([`note_cext_loaded`]). So this is
 /// that cost with no gem in the way -- the alternative is to A/B a Rust ext
 /// against its real gem, where the two implementations differ by far more
-/// than the GVL and the number means nothing. (One such attempt, 2026-08-29,
-/// compared 340ms against 344ms and was invalid for a worse reason still:
-/// both runs had loaded zeo's builtin.)
+/// than the GVL and the number means nothing.
 ///
-/// MEASURED 2026-08-30, release bank, one subprocess per iteration:
+/// Measured 2026-08-30, release bank, one subprocess per iteration:
 /// attr_accessor 510->856ms (+68%), getivar 53.6->88.4ms (+65%), setivar and
 /// setivar_object +17%, inline +9%. Every program that does not touch an ivar
 /// or a container is flat. So the cost is not diffuse -- it is the four

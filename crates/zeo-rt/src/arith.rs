@@ -1,10 +1,9 @@
 //! Native numeric helpers backing codegen's generalized numeric-operator
-//! dispatch. The `Integer` family moved to `builtins::integer` with the
-//! bignum migration (operands/results are `&RubyValue` now --
-//! an `Int`-typed value may carry either payload); this module keeps the
-//! plain `f64` family (`Float` stays a single-payload type) and re-exports
-//! the Integer core so generated programs and codegen keep one flat
-//! `zeo_rt::int_*` namespace.
+//! dispatch. The `Integer` family lives in `builtins::integer` (operands
+//! and results are `&RubyValue`, since an `Int`-typed value may carry a
+//! fixnum or a bignum payload); this module holds the plain `f64` family
+//! (`Float` is a single-payload type) and re-exports the Integer core so
+//! generated programs and codegen see one flat `zeo_rt::int_*` namespace.
 
 pub use crate::builtins::integer::{
     int_add, int_band, int_bnot, int_bor, int_bxor, int_cmp, int_div, int_eq, int_from_u32_digits,
@@ -72,9 +71,6 @@ pub fn float_pow(a: f64, b: f64) -> f64 {
 /// `rb_dbl_complex_new_polar_pi(pow(-dx, dy), dy)`, whose modulus is the
 /// positive base's power and whose argument is `dy * pi`. A whole-valued
 /// exponent (`(-2.0) ** 2.0`) still takes the ordinary real power.
-///
-/// This used to raise `Math::DomainError` instead, which was a divergence
-/// rather than a limit: the Complex tower it needed was already here.
 pub fn float_pow_checked(a: f64, b: f64) -> Result<crate::RubyValue, crate::Signal> {
     // CRuby's own test is `dy != round(dy)`, which a NaN exponent SATISFIES
     // (`NaN != NaN`) while an infinite one does not (`inf == inf`) -- so a

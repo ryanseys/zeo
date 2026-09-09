@@ -1744,9 +1744,9 @@ fn defer_positional_mixin(compiler: &mut Compiler, site_idx: usize, stmt: NodeId
 /// An ancestry edit written in a reopen is a runtime event with a position:
 /// `class Thing; end; p Thing.new.respond_to?(:tag); class Thing; include
 /// Extra; end` must answer `false` first. Recording the edit at compile time
-/// applied it from program start. The `Include`/`Prepend` node stays in the
-/// site's statements either way, so the splice happens where it is written;
-/// what changes is that the compile-time tables no longer carry it.
+/// would apply it from program start. The `Include`/`Prepend` node stays in
+/// the site's statements either way, so the splice happens where it is
+/// written; for a reopen the compile-time tables simply do not carry it.
 fn is_reopen_site(compiler: &Compiler, class_id: ClassId, site_idx: usize) -> bool {
     compiler.class_body_sites[..site_idx]
         .iter()
@@ -1993,7 +1993,7 @@ fn leaf_const_name(hir: &Hir, node: NodeId) -> Option<String> {
     }
 }
 
-/// A mixin whose module overrides the PRIMITIVE is no longer a compile-time
+/// A mixin whose module overrides the PRIMITIVE is not a compile-time
 /// ancestry fact: whether it happens at all is decided at run time. The
 /// ancestry itself is handled -- `splice_mixin` writes the overlay chain that
 /// `ancestors_of_value` prefers -- but a call folded at COMPILE time would

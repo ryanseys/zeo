@@ -1,9 +1,9 @@
 //! `zeo backend`: a binary from CLIF text another front end wrote.
 //!
-//! The Rust emitter lowers Ruby to Cranelift IR in memory. A front end
-//! written in something else (ze0, the Ruby one, in its own repository)
-//! writes the same IR as TEXT, one function per Ruby body, naming the runtime's entry points
-//! and the program's data symbols by name. This reads that text back with
+//! The Rust emitter lowers Ruby to Cranelift IR in memory. A front end that
+//! is not this crate's writes the same IR as TEXT, one function per Ruby
+//! body, naming the runtime's entry points and the program's data symbols
+//! by name. This reads that text back with
 //! `cranelift-reader`, resolves every name against the same emitter the
 //! Rust path uses, materialises the registration-shaped half a `.zeodata`
 //! sidecar describes (`super::sidecar`), and links the result exactly as

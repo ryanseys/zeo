@@ -74,7 +74,7 @@ p [c.value, c.has_struct?]
 p [a.class, b.class, c.class]
 "#;
 
-/// ruby 4.0.6's answer, recorded 2026-08: a copy runs the class's alloc
+/// ruby 4.0.6's answer: a copy runs the class's alloc
 /// function and gets a fresh zeroed struct of its own -- not the original's,
 /// and not none.
 #[test]

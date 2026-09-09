@@ -1,15 +1,13 @@
 //! The `ruby_class!` header vs `zeo_abi::BUILTINS`: one class's shape, spelled
 //! twice.
 //!
-//! A migrated builtin names its identity three times -- the header identifier
+//! A builtin names its identity three times -- the header identifier
 //! (`String`), its `ClassId` const, and the `BUILTINS` row the compiler seeds
-//! its class arena from. `build.rs` used to read only the const, so the header's
-//! `< SUPER` and `include` lines were decoration: nothing compared them to the
-//! ABI they restate, and seven had already drifted.
+//! its class arena from. The header's `< SUPER` and `include` lines restate
+//! the ABI, and without this comparison they are decoration that drifts.
 //!
-//! This closes that. `CLASS_SURFACE` now carries the header's shape
-//! symbolically (rustc resolves each `zeo_abi::` const), so the two can be
-//! compared row for row.
+//! `CLASS_SURFACE` carries the header's shape symbolically (rustc resolves
+//! each `zeo_abi::` const), so the two can be compared row for row.
 //!
 //! Accepted mismatches live in [`ALLOWED`], each with the reason -- a header
 //! identifier is a Rust `Ident` and cannot spell `ARGF.class` or

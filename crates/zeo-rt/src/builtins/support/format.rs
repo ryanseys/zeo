@@ -1,7 +1,7 @@
-//! The sprintf engine (CRuby sprintf.c) backing `String#%` and, in stage
-//! G, `Kernel#format`/`sprintf`/`printf`. Directives: `%s %d %i %f %x %o
-//! %b %e %g %c %%`, flags `- + 0 space`, width, precision. `%<name>s`-style
-//! hash references and `%*d` star-widths are Tier B.
+//! The sprintf engine (CRuby sprintf.c) backing `String#%` and
+//! `Kernel#format`/`sprintf`/`printf`. Directives: `%s %d %i %f %x %o
+//! %b %e %g %c %%`, flags `- + 0 space`, width, precision, `%<name>s`/
+//! `%{name}` hash references and `%*d` star-widths.
 
 use crate::{RubyValue, Signal};
 
@@ -639,7 +639,7 @@ fn star_int(args: &[RubyValue], next_arg: &mut usize) -> Result<i64, Signal> {
 /// One recorded step of a directive's flag/width/precision/reference
 /// loop, replayed IN OCCURRENCE ORDER at render time -- which is what
 /// keeps `*` argument consumption, style notes, and overwrite semantics
-/// byte-identical to the old single-pass engine.
+/// byte-identical to CRuby's single-pass `sprintf`.
 enum Op {
     Minus,
     Plus,

@@ -353,8 +353,8 @@ pub enum AttrKind {
 /// typed field or `__overflow` map, a `ValueSubclass` -- so one implementation
 /// serves a runtime class and a `class_eval` over a compiled one alike.
 /// CRuby's `rb_check_id`+`rb_is_local_id` guard on an accessor name, with
-/// its own message shape. `attr_accessor :"1bad"` used to mint a `:"1bad"`
-/// row that then showed up in `instance_methods`.
+/// its own message shape. Without it, `attr_accessor :"1bad"` would mint a
+/// `:"1bad"` row that then shows up in `instance_methods`.
 fn check_attr_name(name: Symbol) -> Result<(), Signal> {
     if crate::dispatch::names::is_local_or_const_name(name.name_str()) {
         return Ok(());
@@ -820,7 +820,7 @@ pub(crate) fn class_method_undefined(id: ClassId, name: Symbol) -> bool {
     // end` retires it for `Sub < Multi` too.
     let ancestors = crate::dispatch::ancestors_of_value(id);
     // Where the nearest tombstone sits, under ONE guard which is then let go.
-    // The definition walk below re-enters `classes`, and this used to run
+    // The definition walk below re-enters `classes`, so it must not run
     // under this guard -- see `runtime_meta::lock` for what that costs.
     let tomb = {
         let c = maps().classes.read().unwrap();
@@ -2072,7 +2072,7 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
 /// Shared with the singleton-class path, which sends a different hook.
 fn extend_object_or_primitive(recv: &RubyValue, module_val: &RubyValue) -> Result<(), Signal> {
     // `extend` IS `singleton_class.include`, so it takes the same guard: a
-    // Class passes the `RubyValue::Class` test and used to be accepted.
+    // Class passes the `RubyValue::Class` test below and must be refused.
     check_module_arg(module_val)?;
     let RubyValue::Class(mid) = module_val else {
         return Err(type_error!(
@@ -2390,13 +2390,12 @@ fn prepend_into_class_singleton(owner: ClassId, module_val: &RubyValue) -> Resul
         }
         entry.singleton_prepends.push(*mid);
     }
-    // A prepend is NOT recorded as an extend. It used to be, so that `is_a?`
-    // and `singleton_class.ancestors` would see it -- and that is exactly what
-    // made a module reached BOTH ways (`extend M; singleton_class.prepend M`)
+    // A prepend is NOT recorded as an extend: that would make a module
+    // reached BOTH ways (`extend M; singleton_class.prepend M`)
     // indistinguishable from one reached only by prepending. Ruby gives the
     // first TWO chain positions and the second one, so the two verbs are
-    // recorded apart now: `singleton_prepends` above for the prepend area,
-    // the extended list for the include side. `value_extends` reads both.
+    // recorded apart: `singleton_prepends` above for the prepend area, the
+    // extended list for the include side. `value_extends` reads both.
     //
     // The gate still arms: it says "some singleton chain has been mixed
     // into", and the readers behind it must run.

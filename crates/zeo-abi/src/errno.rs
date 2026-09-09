@@ -519,8 +519,8 @@ pub const ERRNO_ALIASES: &[(&str, &str)] = &[
 ];
 
 /// The Linux set, derived from `libc`'s `asm-generic` values -- the ones
-/// x86_64, aarch64, riscv64 and loongarch64 share. It is NOT oracle-verified
-/// (the oracle runs on macOS), and the architectures that renumber errno
+/// x86_64, aarch64, riscv64 and loongarch64 share. It is not oracle-verified
+/// on Linux, and the architectures that renumber errno
 /// (mips, sparc, parisc, alpha) would need a table of their own.
 #[cfg(not(target_vendor = "apple"))]
 pub const ERRNO_CLASSES: &[ErrnoClass] = &[

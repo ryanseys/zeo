@@ -38,9 +38,10 @@ const HOOKS: [&str; 7] = [
 /// a definition at all.
 ///
 /// A unit's body runs when its `require` runs, so "installed first" cannot be
-/// read off raw offsets across two files, and [`fires`] used to refuse every
-/// such pairing. But a file that requires another AT ITS TOP LEVEL, ABOVE the
-/// definition, has run that file whole by the time the definition executes --
+/// read off raw offsets across two files, and without this graph [`fires`]
+/// refuses every such pairing. But a file that requires another AT ITS TOP
+/// LEVEL, ABOVE the definition, has run that file whole by the time the
+/// definition executes --
 /// whenever, and however often, this file itself runs. That is a fact rather
 /// than an ordering guess, and it is what bundler needs: `bundler/cli.rb`
 /// opens with `require_relative "vendored_thor"` and declares `class CLI <
@@ -49,9 +50,9 @@ const HOOKS: [&str; 7] = [
 /// DELIBERATELY INCOMPLETE, always in the direction of refusing. Only a bare
 /// top-level `require`/`require_relative` with a literal name counts: one
 /// under a guard, in a `begin`/`rescue`, in a class body or in a method body
-/// may never run, and a method-body `require` is exactly the shape that once
-/// killed `require "rake"` (see [`global_hooks`]). Anything this graph cannot
-/// prove keeps the old answer.
+/// may never run, and a method-body `require` is exactly the shape that
+/// breaks `require "rake"` when trusted (see [`global_hooks`]). Anything this
+/// graph cannot prove is refused.
 #[derive(Default)]
 struct RequireGraph {
     /// Per FILE (`Span::file`), its top-level requires as
@@ -395,7 +396,7 @@ impl Future {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 fn surviving(
     compiler: &Compiler,
     class: ClassId,

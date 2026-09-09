@@ -213,8 +213,8 @@ fn read_matching_manifest(path: &Path) -> Option<crate::packages::package::Manif
 }
 
 /// Whether the artifact at `path` was built by THIS compiler for THIS
-/// target -- the whole acceptance contract (decision 7: exact match, no
-/// stable tag). Unreadable or unparseable answers false.
+/// target -- the whole acceptance contract (exact match; no stable ABI
+/// across compiler versions). Unreadable or unparseable answers false.
 pub fn artifact_matches(path: &Path) -> bool {
     read_matching_manifest(path).is_some()
 }

@@ -6,17 +6,16 @@
 //! `u64` kept exact, `max_nesting`, and `object_class:`/`array_class:`/
 //! `decimal_class:` construction. There is no event layer low enough to fix
 //! those from above, so this owns the whole parse -- and owning it means
-//! owning CRuby's own error texts, which were the "decided substitution"
-//! the module doc used to record.
+//! owning CRuby's own error texts.
 //!
 //! Every rule here was probed against ruby 4.0.6's json 2.21.2 rather than
 //! read from a spec, and `tests/json_parser_edge_cases.rb` is the probe made
 //! permanent. The ones worth naming:
 //!
 //!   * A STRING IS BYTES. Invalid UTF-8 inside a string passes THROUGH --
-//!     `JSON.parse("[\"\\xFF\"]")` answers a String holding that byte. An
-//!     earlier draft built a Rust `String` and replaced it with U+FFFD,
-//!     which is silent corruption of exactly the shape this project forbids.
+//!     `JSON.parse("[\"\\xFF\"]")` answers a String holding that byte.
+//!     Building a Rust `String` would replace it with U+FFFD, which is
+//!     silent corruption of exactly the shape this project forbids.
 //!   * A lone LOW surrogate is legal and encodes as its three bytes; a lone
 //!     HIGH surrogate is `incomplete surrogate pair`. The asymmetry is the
 //!     gem's, and it is what `"\udc00"` answering `"\xED\xB0\x80"` means.

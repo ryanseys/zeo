@@ -176,9 +176,9 @@ fn send_in_reason_inner(
     //
     // The method's TEXT is fetched only where a by-name builtin table or the
     // value-subclass rewrap needs it; the flat one-probe hit below resolves
-    // on the `Symbol` alone. (`name_str` is two lock-free slab indexes now,
+    // on the `Symbol` alone. (`name_str` is two lock-free slab indexes,
     // so the ordering is tidiness, not a lock.)
-    // Value-subclass payload bridge (D3): `class Stack < Array` carries a
+    // Value-subclass payload bridge: `class Stack < Array` carries a
     // `RubyValue::Array` payload; at its payload root the inherited builtin
     // method runs against that value, not the boxed object. `None` for every
     // ordinary object, so this costs one field read on the miss path.

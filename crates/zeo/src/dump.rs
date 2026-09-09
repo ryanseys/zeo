@@ -65,7 +65,7 @@ pub fn units(a: &Analyzed) -> String {
 /// stream reaches can never be revealed, so every read of it raises
 /// `uninitialized constant` for a class the program plainly defines, while
 /// `const_get` and `constants` still find it. That divergence is invisible
-/// from Ruby and was worth an afternoon of bisection before this existed.
+/// from Ruby; this dump is the way to see it.
 ///
 /// `only` filters by a substring of the fully-qualified name, because a
 /// program that loads bundler has 1,600 classes.
@@ -212,13 +212,11 @@ pub fn unrevealable_classes(a: &Analyzed) -> Vec<String> {
 /// per class.
 ///
 /// That is the monomorphization trade, and it is the largest single term in a
-/// compiled program's size. Nothing reported it, so every figure about it so
-/// far has been a division rather than a count.
+/// compiled program's size, and this dump is the count of it.
 ///
-/// A group is the classes sharing one `MethodEntry::def`, which is exactly
-/// what the deleted rustc-era `analyze::share` bucketed. The closing tally is
-/// the point; the rows above it name the widest `def`s, which is where any
-/// sharing work would have to start.
+/// A group is the classes sharing one `MethodEntry::def`. The closing tally
+/// is the point; the rows above it name the widest `def`s, which is where
+/// any sharing work would have to start.
 pub fn methods(a: &Analyzed, top: usize) -> String {
     let compiler = &a.compiler;
     let mut by_def: std::collections::HashMap<u32, Vec<crate::compiler::ClassId>> =

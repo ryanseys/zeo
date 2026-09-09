@@ -1,7 +1,7 @@
 //! Which always-on builtin classes a program can reach.
 //!
-//! An always-on builtin's method table is tens of kilobytes, and the
-//! smallest program there is used to carry every one of them. A `puts 1`
+//! An always-on builtin's method table is tens of kilobytes, so the
+//! smallest program there is must not carry every one of them. A `puts 1`
 //! that ships `Ractor`, `Marshal`, `TracePoint` and `Pathname` pays for
 //! classes nothing in it can name. `cargo xtask size` prices them;
 //! `docs/explanation/binary-size.md` carries the numbers.

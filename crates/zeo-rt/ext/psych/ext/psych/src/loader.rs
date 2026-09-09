@@ -1,9 +1,8 @@
 //! The load half: a parsed [`Node`] tree walked into Ruby values.
 //!
-//! This used to read yaml-rust2's events directly and build values as they
-//! arrived. It reads [`nodes`](super::nodes) now, for the reason that module
-//! explains: `Psych.parse` needs the tree, and one walk over one tree beats
-//! two walks that have to agree.
+//! This reads [`nodes`](super::nodes) rather than yaml-rust2's events
+//! directly, for the reason that module explains: `Psych.parse` needs the
+//! tree, and one walk over one tree beats two walks that have to agree.
 //!
 //! Three rules shape the code:
 //!

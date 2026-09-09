@@ -164,7 +164,7 @@ fn str_val(s: String) -> RubyValue {
 mod tests {
     /// `ARGF.class`'s `ruby_class!` table self-registers via linkme; this pins
     /// that its instance surface (including the pipe-aliases) resolves through
-    /// the registry, the path real dispatch uses now the fn names are mangled.
+    /// the registry, the path real dispatch uses (the fn names are mangled).
     #[test]
     fn the_table_resolves_the_argf_surface() {
         let tbl = crate::builtins::registered_table(zeo_abi::ARGF_CLASS)

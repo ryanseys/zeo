@@ -142,7 +142,7 @@ pub struct ProcData {
     /// A compiled block's captured environment, held BESIDE the closure and
     /// handed to it per call rather than captured inside it.
     ///
-    /// It used to live inside the `Arc<dyn Fn>`, where nothing could see it.
+    /// Inside the `Arc<dyn Fn>` nothing could see it.
     /// The cycle collector has to enumerate the captured cells --
     /// `obj.callback = -> { obj }`, the canonical ruby leak, closes through
     /// exactly those -- and no reflection opens a Rust closure. Passing it as
@@ -383,11 +383,10 @@ impl RProc {
 
     /// The one place a `Proc` value is built.
     ///
-    /// Registering here is what forced [`ProcBuilder`] into being:
-    /// `Arc::downgrade` makes `Arc::get_mut` fail FOREVER, and the metadata
-    /// setters this type used to expose were all `Arc::get_mut` on a
-    /// refcount-1 handle. Taking a weak handle here would have turned every
-    /// one of them into a silent no-op.
+    /// Registering here is why the metadata is set on a [`ProcBuilder`]
+    /// first: `Arc::downgrade` makes `Arc::get_mut` fail FOREVER, so a
+    /// setter on this type that relied on `Arc::get_mut` of a refcount-1
+    /// handle would be a silent no-op once the weak handle exists.
     fn of(data: ProcData) -> RProc {
         let p = RProc(Arc::new(data));
         crate::gc::record_proc(&p);
@@ -730,9 +729,9 @@ impl RProc {
     }
 }
 
-// No `Deref` to the inner closure (it existed to keep bare `p(&args)` call
-// sites working): the closure now takes `self` first, so a call expression
-// can't stand in for a decision about WHICH receiver to run under. Every
+// No `Deref` to the inner closure: the closure takes `self` first, so a
+// bare `p(&args)` call expression can't stand in for a decision about
+// WHICH receiver to run under. Every
 // invocation goes through `call` (lexical self) or `call_with_self`
 // (rebound) and thereby states which one it means.
 

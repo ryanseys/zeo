@@ -380,7 +380,7 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
     }
     // A literal block's body runs at a different escaping-ness than its
     // siblings, and it is the ONLY child that does -- which is what lets one
-    // descent replace the arm-per-variant match this used to be. An escaping
+    // descent stand in for an arm-per-variant match. An escaping
     // (non-inline) block's body runs as a proc homed to this method, so a
     // `return` anywhere inside it needs the catch; an inline `.times` block
     // shares this scope, so its `return` is literal and only counts if the
@@ -496,7 +496,7 @@ fn contains_return(compiler: &Compiler, id: NodeId) -> bool {
         // A `return` inside a nested `def` belongs to that def, so counting it
         // here over-approximates -- which only ever installs a catch that is
         // never entered. Kept as-is rather than tightened blind; the shape is
-        // now visible next to the policies that do stop there.
+        // visible next to the policies that do stop there.
         ScopeKind::Definition | ScopeKind::Block | ScopeKind::None => {}
     }
     let mut found = false;
@@ -510,8 +510,7 @@ fn contains_return(compiler: &Compiler, id: NodeId) -> bool {
 /// the enclosing method must install its own catch.
 ///
 /// Descends through `for_each_child` -- the same shape as `contains_return`
-/// above -- rather than re-listing every `HirNode` variant, which is what
-/// this used to do across 256 lines.
+/// above -- rather than re-listing every `HirNode` variant.
 fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
     let node = &compiler.hir[id];
     // The whole subtree is searched for the `return` this `begin` would

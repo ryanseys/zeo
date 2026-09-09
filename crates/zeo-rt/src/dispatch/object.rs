@@ -377,8 +377,8 @@ pub fn downcast_robj_ref<T: RubyObject>(recv: &RObj) -> Option<&T> {
 }
 
 /// The frozen-receiver raise every ivar WRITE guards itself with, as one
-/// out-of-line call instead of the `format!` + `construct_by_class_id`
-/// codegen this used to inline at every ivar write -- thousands of them in a
+/// out-of-line call instead of `format!` + `construct_by_class_id` inlined
+/// at every ivar write -- thousands of them in a
 /// program like prism. `#[cold]` so the caller's guard stays a
 /// predictable never-taken branch around a single relaxed atomic load, and by
 /// VALUE so the `Arc` bump the handle needs happens only on the raise path.

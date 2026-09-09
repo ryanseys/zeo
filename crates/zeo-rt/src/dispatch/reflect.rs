@@ -1,7 +1,7 @@
 //! Reflection over the method tables: `respond_to?`, owner scans,
 //! `instance_methods`/visibility, class-method names/privacy -- every
-//! "which rows exist and who owns them" question. The census and
-//! `builtins::side_of` read through here.
+//! "which rows exist and who owns them" question. `builtins::side_of`
+//! reads through here.
 
 use super::*;
 

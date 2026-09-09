@@ -323,9 +323,9 @@ fn digest(parts: &[&[u8]]) -> String {
 ///
 /// `export_results` runs ONCE, after the last benchmark. A bank is 40+
 /// minutes, so anything that stops it early -- a timeout, a Ctrl-C, a
-/// laptop lid -- used to discard every number it had already paid for.
-/// This run died at 95 of 122 and left nothing. The journal is the durable
-/// half: appended and flushed per benchmark, in `target/bench/journal.tsv`.
+/// laptop lid -- would discard every number it had already paid for. The
+/// journal is the durable half: appended and flushed per benchmark, in
+/// `target/bench/journal.tsv`.
 ///
 /// `key` is what makes a row reusable rather than merely readable. It
 /// hashes the program, its `.expected`, and the IDENTITY of what was timed
@@ -470,7 +470,7 @@ fn zeo_identity(zeo: &Path) -> String {
 ///
 /// `RECIPE` covers the other half: HOW the oracle is invoked. Changing the
 /// command line changes the timing without changing the interpreter, so a
-/// journal row measured under the old recipe must not look reusable. Bump
+/// journal row measured under a different recipe must not look reusable. Bump
 /// it whenever [`oracle_cmd`] changes.
 fn ruby_identity(ruby: &str) -> String {
     const RECIPE: &str = "bare-ruby-no-bundler-v2";

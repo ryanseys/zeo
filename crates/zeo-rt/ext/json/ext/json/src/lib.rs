@@ -2,13 +2,11 @@
 //! module.
 //!
 //! Both halves are zeo's own: [`parser`] is a recursive descent straight into
-//! `RubyValue` and [`generator`] carries the option state. serde_json used to
-//! serve the parse half and could not express what the gem does -- comments,
-//! a trailing comma, `NaN`, `-0` as an Integer, an integer past `u64`,
-//! `max_nesting`, `object_class:` construction -- and there was no event
-//! layer low enough to fix that from. Owning the parse also means owning
-//! CRuby's own error texts, which retires the "decided serde_json
-//! substitution" this doc used to record.
+//! `RubyValue` and [`generator`] carries the option state. serde_json cannot
+//! express what the gem does -- comments, a trailing comma, `NaN`, `-0` as
+//! an Integer, an integer past `u64`, `max_nesting`, `object_class:`
+//! construction -- and it has no event layer low enough to fix that from.
+//! Owning the parse also means owning CRuby's own error texts.
 //!
 //! Semantics probed against ruby 4.0.6 (json 2.21.2): objects -> `Hash` with
 //! String keys (Symbols with `symbolize_names: true`), arrays -> `Array`,

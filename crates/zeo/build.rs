@@ -17,9 +17,8 @@
 //!   `cargo xtask stage-crate` generated from the exact zeo-rt this zeo
 //!   version pins (`=X.Y.Z`), staged into the crate at publish time.
 //!
-//! NEITHER source resolving is a hard error. It used to degrade silently to
-//! an empty surface, which quietly broke every fold -- worse than any build
-//! failure.
+//! NEITHER source resolving is a hard error: an empty surface would quietly
+//! break every fold, which is worse than any build failure.
 //!
 //! It emits `$OUT_DIR/class_surface.rs`: a `CLASS_SURFACE` table written
 //! SYMBOLICALLY (`id: zeo_abi::COMPARABLE_CLASS`), so the build script never
@@ -276,16 +275,15 @@ struct Surface {
 
 /// Does every `#[cfg]` on this item hold for the target `zeo` is built for?
 ///
-/// The projection used to push every row, so the surface was the UNION of
-/// every platform -- and `respond_to?` folded TRUE for a method the target
-/// does not compile (`Etc::Passwd#expire` claimed on Linux,
-/// `Process::CLOCK_UPTIME_RAW` on both). A fold miss only degrades to runtime
-/// dispatch, but a fold HIT on an absent row is an answer ruby does not give.
+/// Pushing every row would make the surface the UNION of every platform, and
+/// `respond_to?` would fold TRUE for a method the target does not compile
+/// (`Etc::Passwd#expire` on Linux, `Process::CLOCK_UPTIME_RAW` on both). A
+/// fold miss only degrades to runtime dispatch, but a fold HIT on an absent
+/// row is an answer ruby does not give.
 ///
 /// Cargo hands a build script the target's own configuration, and today the
 /// target IS the host, so this makes the surface exact. When `--target`
-/// arrives (G12) the same predicate reads `TargetSpec` instead, in this one
-/// place.
+/// arrives the same predicate reads `TargetSpec` instead, in this one place.
 fn cfg_holds(attrs: &[syn::Attribute]) -> bool {
     attrs
         .iter()
@@ -345,8 +343,7 @@ fn eval_cfg(m: &syn::Meta) -> bool {
             // features, and this build script reads `zeo-rt`'s SOURCE rather
             // than its resolved feature set. Every one of them is in the
             // shipped `ext-all` default, so they hold; a build that disables
-            // an ext gets an over-approximate surface for that ext alone,
-            // which is what every row got before this function existed.
+            // an ext gets an over-approximate surface for that ext alone.
             if key == "feature" {
                 return true;
             }

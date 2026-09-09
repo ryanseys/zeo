@@ -11,9 +11,8 @@
 //!
 //! **No accessor returns a borrow.** [`IvarCell::get`] answers an owned
 //! `RubyValue`; nothing hands out a guard. The rule that a lock must not be
-//! held across a Ruby call -- which every ivar read site used to satisfy by
-//! convention, through a `{ let __g = ...; __g.clone() }` shape and a comment
-//! explaining the temporary-lifetime hazard -- is now a property of the type.
+//! held across a Ruby call is a property of the type, not a convention each
+//! read site has to honour with a `{ let __g = ...; __g.clone() }` shape.
 //! A `parking_lot::Mutex` is not re-entrant, so breaking that rule is a silent
 //! permanent hang; under `debug_assertions` this module turns it into a named
 //! panic instead (see [`IvarCell::held`]).
@@ -35,12 +34,12 @@
 //! dependency-free probe crate built with `-Zsanitizer=thread` segfaults before
 //! its first test, so the failure is the toolchain's rather than anything here.
 //!
-//! Assignment ORDER is recorded, which the old `Option`-per-slot could not do.
-//! `Option` distinguished "never assigned" from "assigned nil" -- and it was
-//! free, because the niche made it the same 24 bytes -- but Ruby reports
-//! `instance_variables` in FIRST-ASSIGNMENT order, not declaration order, and
-//! only a stamp can say that. The stamp carries the definedness too, so the
-//! read path loses a branch.
+//! Assignment ORDER is recorded as a stamp per slot, not an `Option`. An
+//! `Option` would distinguish "never assigned" from "assigned nil" for free
+//! (the niche keeps it at 24 bytes), but Ruby reports `instance_variables`
+//! in FIRST-ASSIGNMENT order, not declaration order, and only a stamp can
+//! say that. The stamp carries the definedness too, so the read path loses
+//! a branch.
 
 use crate::RubyValue;
 use parking_lot::Mutex;
@@ -145,7 +144,7 @@ pub struct IvarCellCore<V: Store<RubyValue>, Q: Store<Seq>> {
 }
 
 /// The compiled-class cell `ruby_class!` structs embed -- the name and
-/// shape generated programs spell (`zeo_rt::IvarCell<3>`), now an alias
+/// shape generated programs spell (`zeo_rt::IvarCell<3>`), an alias
 /// over the storage-generic core.
 pub type IvarCell<const N: usize> = IvarCellCore<[RubyValue; N], [Seq; N]>;
 

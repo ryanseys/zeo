@@ -142,11 +142,10 @@ struct Decl {
 /// Every public header a gem may include, not just what `<ruby.h>` pulls in
 /// transitively.
 ///
-/// This was `#include <ruby.h>` alone, and the gap was not academic:
-/// `ruby/encoding.h` is included by `fast_blank`, `rb_enc_codepoint_len` was
-/// therefore absent from the census, no stub was generated for it, and the
-/// gem linked and then SIGSEGVd on its first call. A symbol the census cannot
-/// see is a symbol nothing promises.
+/// `#include <ruby.h>` alone would miss `ruby/encoding.h`, which `fast_blank`
+/// includes: `rb_enc_codepoint_len` would be absent from the census, no stub
+/// generated for it, and the gem would link and then SIGSEGV on its first
+/// call. A symbol the census cannot see is a symbol nothing promises.
 ///
 /// The Windows and Oniguruma headers are excluded: `win32.h` does not parse
 /// on a POSIX host, and `onigmo.h`/`oniguruma.h`/`regex.h` declare the regexp

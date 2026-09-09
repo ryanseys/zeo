@@ -139,7 +139,7 @@ impl BinOp {
     }
 }
 
-/// `a op b`, the rustc emitter's exact three arms. Both operands are
+/// `a op b`, in three arms. Both operands are
 /// materialized (owned ones handed to the pool -- the arms only borrow),
 /// the result is a fresh owned slot -- or, when this call IS the condition
 /// a branch site is lowering (`fx.branch_cond`) and the operator is a

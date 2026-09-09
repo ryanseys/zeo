@@ -13,12 +13,12 @@
 //! `strdup` gets zeo's allocator and then writes `free(p)`. On MRI that
 //! works: `ruby_xmalloc` IS `malloc` plus accounting, with no header.
 //!
-//! This used to wrap Rust's global allocator, which needs the `Layout` back
-//! at `dealloc` and therefore needs the size stored somewhere -- a header
-//! word before the payload. A libc `free` on that pointer is 16 bytes past
-//! the real block, and libmalloc aborts. `bcrypt` did exactly that, at
+//! Rust's global allocator cannot serve here: it needs the `Layout` back at
+//! `dealloc` and therefore needs the size stored somewhere -- a header word
+//! before the payload. A libc `free` on that pointer is 16 bytes past the
+//! real block, and libmalloc aborts. `bcrypt` does exactly that, at
 //! `free(salt)` on the result of a `strdup` it never knew was rewritten, and
-//! the abort named neither the gem nor the allocator.
+//! the abort names neither the gem nor the allocator.
 //!
 //! `malloc` needs no size to free, so there is no header, and the two
 //! spellings are the same operation. That is the property an extension

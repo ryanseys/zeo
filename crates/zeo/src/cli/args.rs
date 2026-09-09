@@ -53,9 +53,8 @@ pub(crate) struct Args {
     /// extension stripped) instead of running.
     ///
     /// Running is the DEFAULT: a bare `zeo foo.rb` compiles and executes,
-    /// exactly like `ruby foo.rb` (a deliberate reversal of the original
-    /// opt-in-run decision -- ruby's mental model won). An artifact is what
-    /// needs asking for now: `-o <path>` or this flag.
+    /// exactly like `ruby foo.rb` -- ruby's mental model. An artifact is
+    /// what needs asking for: `-o <path>` or this flag.
     pub(crate) compile: bool,
     /// ARGV for an immediately-run program (`-e`, or a file that runs):
     /// positionals and everything after `--`, exactly ruby's
@@ -883,7 +882,7 @@ mod tests {
         // some installs.
         assert!(matches!(ok(&["bundler", "-v"]).source, Source::Eval(_)));
 
-        // `zeo install` is zeo's OWN verb now (precompile the project's
+        // `zeo install` is zeo's OWN verb (precompile the project's
         // gems); Bundler's install is spelled `zeo bundle install`.
         match parse(&["install", "rack", "--gem-path", "/s"]).expect("parses") {
             Parsed::Install(cmd) => {
@@ -924,16 +923,15 @@ mod tests {
     #[test]
     pub(crate) fn a_bare_file_runs_and_an_artifact_needs_asking_for() {
         // ruby's mental model: naming a file runs it. An artifact is the
-        // opt-in now -- `-o <path>`, or `--compile` for the default name.
+        // opt-in -- `-o <path>`, or `--compile` for the default name.
         let a = ok(&["t.rb"]);
         assert!(!a.compile && a.output.is_none());
         assert!(ok(&["--compile", "t.rb"]).compile);
         assert!(ok(&["--compile", "t.rb"]).compile);
         // --compile can't name a binary for -e.
         assert!(err(&["-e", "1", "--compile"]).contains("use -o"));
-        // The old opt-in spelling is gone with the rest of the dead flags.
-        // BEFORE the file name, where zeo's own options live -- after it,
-        // `--run` would be the program's ARGV.
+        // `--run` is not an option. BEFORE the file name, where zeo's own
+        // options live -- after it, `--run` would be the program's ARGV.
         assert!(err(&["--run", "t.rb"]).contains("invalid option"));
     }
 
@@ -997,8 +995,8 @@ mod tests {
 
     #[test]
     pub(crate) fn dead_flag_spellings_get_the_generic_rejection() {
-        // The pointed migration errors served their year; old spellings now
-        // fail like any other unknown option.
+        // No pointed migration errors: a spelling zeo does not have fails
+        // like any other unknown option.
         for old in ["--packages", "--nowarn", "--lockfile", "--no-report"] {
             assert!(err(&[old, "t.rb"]).contains("invalid option"), "{old}");
         }
@@ -1174,7 +1172,7 @@ mod tests {
             Some(EmitTarget::File(p)) => assert_eq!(p, PathBuf::from("out.clif")),
             other => panic!("expected a file target, got {:?}", other.is_some()),
         }
-        // The retired Rust emitter's flags are gone, and say so.
+        // A flag zeo does not have is rejected by name, never ignored.
         assert!(err(&["--emit-rust", "t.rb"]).contains("invalid option"));
         assert!(err(&["--pretty", "t.rb"]).contains("invalid option"));
         assert!(err(&["--dump=rust", "t.rb"]).contains("not a dump zeo knows"));

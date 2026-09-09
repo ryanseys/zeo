@@ -1,9 +1,8 @@
-//! `String` (CRuby string.c) -- the Tier A surface: case family, strip
+//! `String` (CRuby string.c) -- the instance surface: case family, strip
 //! family, split/chars/lines, sub/gsub (String AND Regexp patterns, with
 //! block forms), indexing forms, tr/delete/squeeze/count, conversions,
-//! succ, padding, `%` formatting. Strings are UTF-8 (`char`-indexed like
-//! modern CRuby); the bytes/encoding surface is Tier C, documented in the
-//! plan.
+//! succ, padding, `%` formatting, and the bytes/encoding surface
+//! (`encode.rs`, over `crate::encoding`'s registry).
 
 pub(crate) mod encode;
 mod split;
@@ -1117,8 +1116,8 @@ ruby_class! {
                         // Distinct strings: hold BOTH locks, acquired in
                         // ADDRESS order (the rb_eq rule, so a concurrent
                         // `b << a` cannot deadlock this `a << b`), and
-                        // append borrowed bytes. The old shape cloned the
-                        // whole argument on every append.
+                        // append borrowed bytes, with no clone of the
+                        // whole argument per append.
                         let (s_ptr, a_ptr) = (
                             std::sync::Arc::as_ptr(s) as usize,
                             std::sync::Arc::as_ptr(&addition) as usize,
@@ -1414,7 +1413,7 @@ ruby_class! {
         // By BYTES, like `#lstrip`: the separator is ASCII and an explicit
         // suffix is compared verbatim, so nothing here needs decoding -- and
         // decoding would both rewrite an invalid byte as U+FFFD and lose the
-        // receiver's encoding (this row used to answer UTF-8 whatever it got).
+        // receiver's encoding.
         let sep = chomp_separator(arg)?;
         let buf = rstr.lock();
         let b = buf.bytes();

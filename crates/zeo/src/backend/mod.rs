@@ -4,12 +4,8 @@
 //! Cranelift output into this process and runs it in place -- the default for
 //! run mode. [`object`] + [`link`] write a Cranelift object file and link it
 //! against `libzeo.a` -- the default for `-o`/`--compile`, and what ships.
-//!
-//! There was a third, which emitted Rust text and shelled out to `rustc`. It
-//! was zeo's original backend, then its differential oracle, and it was
-//! retired on 2026-08-21 once the Cranelift path had been the product for a
-//! release and the corpus agreed with CRuby on both. The branch
-//! `archive/rustc-backend` keeps it readable.
+//! Both modes lower the same HIR through the same Cranelift emitter; only
+//! where the machine code lands differs.
 
 pub mod clif_text;
 pub mod jit;
@@ -24,11 +20,6 @@ use std::path::Path;
 /// `Aot`: HIR -> CLIF -> object file (`clif/`), linked against `libzeo.a`
 /// (`link.rs`). `Jit`: the same CLIF finalized into THIS process's memory and
 /// run in place (`jit.rs`) -- run mode only, no artifact.
-///
-/// There was a third, `Rustc`, which emitted Rust text and shelled out to
-/// `rustc`. It was the original backend and then the differential oracle, and
-/// it was retired on 2026-08-21; the branch `archive/rustc-backend` keeps it
-/// readable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Backend {
     Aot,

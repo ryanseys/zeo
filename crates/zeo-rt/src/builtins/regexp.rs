@@ -1,7 +1,6 @@
-//! `Regexp` (CRuby re.c) -- stage B carries only `===` (pattern-match
-//! case equality; Kernel's equality default would silently never match).
-//! The dynamic-path breadth (`match`/`=~`/`source`/...) rides stage D with
-//! String's, sharing `crate::regexp`'s helpers with the static paths.
+//! `Regexp` (CRuby re.c) -- the instance surface (`===`, `match`, `=~`,
+//! `source`, ...), sharing `crate::regexp`'s helpers with the statically
+//! compiled paths so the two cannot drift.
 
 use crate::RubyValue;
 use crate::builtins::inherited_row;

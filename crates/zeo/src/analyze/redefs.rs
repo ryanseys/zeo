@@ -3,7 +3,8 @@
 //! Ruby installs each `def` where it stands: code running between two
 //! same-name `def`s -- a call before a reopen, a `method_added` hook body --
 //! dispatches to the FIRST body. zeo's static tables carry only the
-//! last-`def`-wins winner, so that window used to see the final body.
+//! last-`def`-wins winner, which alone would show that window the final
+//! body.
 //!
 //! This pass keeps every compile-time fact on the final body (the live
 //! `own_methods` row is untouched, so super inlining and materialization

@@ -1,16 +1,14 @@
 //! `ruby/encoding.h`: the encoding an extension reads bytes through.
 //!
-//! # Why this file exists at all, and it is not a good reason
+//! # Why this file exists
 //!
-//! `cargo xtask check-c-headers api` scanned `<ruby.h>` alone, so nothing here was in the
-//! census, no stub was generated, and a gem that included `ruby/encoding.h`
-//! LINKED and then jumped to a null address on its first call.
-//! `fast_blank` -- 40 lines of C -- did exactly that. A symbol the census
-//! cannot see is a symbol nothing promises, and the promise is the whole
-//! point of `cext/stubs.rs`.
-//!
-//! The census reads every public header now, and `cext/load.rs` opens with
-//! `RTLD_NOW`, so the same gap next time is a `LoadError` naming the symbol.
+//! `cargo xtask check-c-headers api` reads every public header, not
+//! `<ruby.h>` alone. A gem that includes `ruby/encoding.h` -- `fast_blank`
+//! is 40 lines of C that does -- would otherwise LINK and then jump to a
+//! null address on its first call. A symbol the census cannot see is a
+//! symbol nothing promises, and the promise is the whole point of
+//! `cext/stubs.rs`. `cext/load.rs` opens with `RTLD_NOW`, so a symbol that
+//! is missing all the same is a `LoadError` naming it.
 //!
 //! # `rb_encoding *` is a token, not a struct
 //!

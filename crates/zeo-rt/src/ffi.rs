@@ -859,11 +859,10 @@ impl FfiSymSite {
 }
 
 /// Every symbol a Cranelift-emitted call site has already resolved, keyed
-/// by the emitter-assigned site id. The rustc backend gets a `.bss`
-/// [`FfiSymSite`] per site; CLIF sites carry an id and share this table,
-/// the same shape `zeo_rt_regexp_lit` uses for its per-site literals. Like
-/// `FfiSymSite`, only SUCCESS is cached -- a failed resolution re-raises on
-/// every call.
+/// by the emitter-assigned site id. Sites carry an id and share this
+/// table, the same shape `zeo_rt_regexp_lit` uses for its per-site
+/// literals. Like [`FfiSymSite`], only SUCCESS is cached -- a failed
+/// resolution re-raises on every call.
 #[cfg(feature = "ext-ffi")]
 static SITE_ADDRS: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<u32, usize>>> =
     std::sync::OnceLock::new();

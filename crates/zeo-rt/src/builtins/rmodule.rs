@@ -517,12 +517,11 @@ pub fn run_pending_autoload(owner: u32, name: &str) -> Result<(), crate::Signal>
 /// constant it defined.
 ///
 /// READING A CONSTANT IS WHAT RUNS AN AUTOLOAD, and this is the only place a
-/// general one fires. It used to be reachable for a concealed BUILTIN class
-/// and nowhere else, so `autoload :Dependency, "..."` recorded a target that
-/// nothing ever ran: touching the constant went straight to `const_missing`,
-/// which read the record and raised the `LoadError` the load was never given
-/// a chance to avoid. rubygems registers every one of its classes that way,
-/// so nothing could open a `.gem`.
+/// general one fires. It has to fire for every owner, not only a concealed
+/// BUILTIN class: otherwise `autoload :Dependency, "..."` records a target
+/// that nothing runs, touching the constant goes straight to
+/// `const_missing`, and that raises a `LoadError` the load was never given a
+/// chance to avoid. rubygems registers every one of its classes that way.
 ///
 /// `None` means there was no autoload, or it ran and defined nothing -- and
 /// in the second case the record is spent, so a second read reports the miss

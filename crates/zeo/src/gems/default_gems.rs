@@ -235,7 +235,7 @@ mod tests {
     }
 
     /// The store key has to move when an edge does, or a bumped lock reuses
-    /// a store whose specs state the old dependencies.
+    /// a store whose specs state stale dependencies.
     #[test]
     fn the_store_key_sees_a_changed_dependency() {
         let dir = Path::new("/nowhere");

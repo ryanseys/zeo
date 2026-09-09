@@ -101,9 +101,9 @@ fn err(msg: impl Into<String>) -> Signal {
 ///   * Everything else writes raw bytes and pins the answer at ASCII-8BIT.
 ///
 /// So an empty template is US-ASCII, `"Um"` is UTF-8, and one `C` anywhere
-/// makes the whole result binary. zeo used to answer UTF-8 only for an
-/// all-`U` template and ASCII-8BIT for everything else, which got `"m"`,
-/// `"Um"` and the empty template wrong.
+/// makes the whole result binary. (A simpler "UTF-8 only for an all-`U`
+/// template, else ASCII-8BIT" rule gets `"m"`, `"Um"` and the empty template
+/// wrong.)
 pub fn result_encoding(template: &str) -> crate::encoding::EncodingId {
     let mut enc = crate::encoding::US_ASCII;
     for c in template.chars() {

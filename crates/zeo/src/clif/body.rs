@@ -270,9 +270,8 @@ fn bind_deferred(fx: &mut Fx, deferred: &[DeferredOpt]) -> CResult<()> {
 }
 
 /// One compiled method body: `(self, p1..pn, out) -> i32`. Params are
-/// copied into owned slots (the M0 rule -- borrow-through is a perf-pass
-/// lever); the tail value moves into `out`; `return` jumps to the shared
-/// ok-exit.
+/// copied into owned slots (borrow-through is a perf lever left unpulled);
+/// the tail value moves into `out`; `return` jumps to the shared ok-exit.
 pub(super) fn define_method_body(
     em: &mut Emitter,
     analyzed: &Analyzed,
@@ -285,10 +284,9 @@ pub(super) fn define_method_body(
     // frame label: CRuby names where the `def` was written (`M#mixed`,
     // never `Bar#mixed`), read off `scope.defining_class`.
     //
-    // A SUPERCLASS is the same rule and used to be excluded, so every
-    // backtrace through an inherited method named the receiver's class:
-    // `S1#boom` where ruby says `Base#boom`. That also made two carriers'
-    // copies of one body differ in nothing but this string.
+    // A SUPERCLASS is the same rule: a backtrace through an inherited method
+    // names the defining class, `Base#boom`, never the receiver's `S1#boom`.
+    // Two carriers' copies of one body then agree on this string too.
     // Only a real ANCESTOR renames the label. A `def self.x` written in a
     // `class << self` body has the singleton SURROGATE as its defining
     // class, and ruby still calls that frame `Config.direct` -- the

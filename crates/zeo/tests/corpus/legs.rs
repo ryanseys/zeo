@@ -2,9 +2,9 @@
 //!
 //! There are two, and almost every program takes only the first. A program
 //! is compiled ONCE per leg -- the corpus is not re-run under variations.
-//! What used to be separate passes is folded in instead: the ownership
-//! ledger and the cycle census ride on the ordinary run, because they are
-//! switches on the same process rather than a different execution.
+//! The ownership ledger and the cycle census ride on the ordinary run,
+//! because they are switches on the same process rather than a different
+//! execution.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

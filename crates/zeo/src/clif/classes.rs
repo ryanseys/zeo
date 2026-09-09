@@ -1414,10 +1414,10 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             // A SUPERCLASS is the same argument as a module. Its own body is
             // emitted against ITS OWN slots, so a carrier may name it only
             // where the two agree about every `@x` the body touches --
-            // which `ivar_slots_agree` decides per body. What used to differ
-            // was the frame label, and that named the wrong class (see
-            // `an_inherited_frame_names_the_defining_class`); with it fixed
-            // the copies differ only in per-site cache offsets.
+            // which `ivar_slots_agree` decides per body. The frame label
+            // names the defining class on every copy (see
+            // `an_inherited_frame_names_the_defining_class`), so the copies
+            // differ only in per-site cache offsets.
             let shared_tramp = if universal_spine.contains(&scope.defining_class) {
                 // By NAME for a top-level `def` (what `collect_methods`
                 // emits), then by scope for one written inside

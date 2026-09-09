@@ -608,17 +608,14 @@ pub(super) fn superclass_mismatch(
 /// [`register_class`], with a refusal ruby has an exception for turned into
 /// that exception. Every registration site goes through here.
 ///
-/// The rewrite used to be offered only where a `rescue` was lexically visible
-/// inside the definition's own subtree, on the reasoning that an uncatchable
-/// raise aborts and a compile error naming the same problem is the better
-/// version of aborting. Both halves of that were wrong. The scan could not see
-/// the `rescue TypeError` a CALLER wraps the `require` in, which catches these
-/// perfectly well; and four of the five registration sites never consulted it,
-/// so a top-level `class Foo` after `module Foo` -- the whole of the `hola_*`
-/// gem family -- was a compile error rather than the `TypeError: Foo is not a
-/// class` ruby raises with that exact string. Compiling the program and
-/// aborting where ruby aborts is the same observable behaviour and one fewer
-/// way to be wrong.
+/// The rewrite is unconditional, not gated on a `rescue` lexically visible
+/// inside the definition's own subtree: no scan can see the `rescue
+/// TypeError` a CALLER wraps the `require` in, which catches these perfectly
+/// well, and a top-level `class Foo` after `module Foo` -- the whole of the
+/// `hola_*` gem family -- must be the `TypeError: Foo is not a class` ruby
+/// raises with that exact string, never a compile error. Compiling the
+/// program and aborting where ruby aborts is the same observable behaviour
+/// and one fewer way to be wrong.
 pub(super) fn register_class_or_raise(
     compiler: &mut Compiler,
     reg: &ClassRegistration<'_>,

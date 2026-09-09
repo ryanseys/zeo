@@ -8,12 +8,12 @@
 # (`-lruby.3.x`) and the symbol resolves. zeo has no shared runtime library:
 # the runtime lives inside the compiled program, and an extension resolves
 # against the host binary's export table when it is `dlopen`ed. So
-# `LIBRUBYARG` is empty, conftest links against nothing, and every probe for a
-# ruby symbol used to answer "no".
+# `LIBRUBYARG` is empty, conftest links against nothing, and a plain link
+# probe for a ruby symbol answers "no".
 #
 # That is not a small wrong answer. Every C extension uses these probes to
 # choose between a modern path and a compatibility fallback, so every gem
-# compiled its oldest branch. Three in the Gemfile then failed to build on the
+# would compile its oldest branch, and several fail to build on the
 # collision that follows -- json's `static rb_hash_bulk_insert`, io-console's
 # `static rb_io_closed_p`, strscan's `static rb_reg_onig_match` -- each a
 # fallback definition clashing with zeo's real, non-static one.

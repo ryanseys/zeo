@@ -57,11 +57,12 @@ pub(super) fn exception_class_label(id: ClassId) -> &'static str {
 /// open-ended minimum -- `"1..3"`, `"2+"` -- already spelled by codegen.
 ///
 /// `#[cold]`, and deliberately not `#[inline]`: every trampoline and every
-/// lambda emits a call to this on its error leg, and each used to carry ~35
-/// tokens of `format!` machinery that can only run when the program is about
-/// to raise. `emit_dynamic_trampoline` runs once per (class x visible method)
-/// over the FLATTENED ancestry -- 22,623 entries behind 3,624 definitions for
-/// activemodel -- so the machinery was multiplying through inheritance.
+/// lambda emits a call to this on its error leg; an inlined body would put
+/// ~35 tokens of `format!` machinery at each one, and that code can only
+/// run when the program is about to raise. `emit_dynamic_trampoline` runs
+/// once per (class x visible method) over the FLATTENED ancestry -- 22,623
+/// entries behind 3,624 definitions for activemodel -- so any per-site
+/// machinery multiplies through inheritance.
 #[cold]
 pub fn wrong_arity(given: usize, expected: &str) -> Signal {
     raise_error_id(
@@ -71,7 +72,7 @@ pub fn wrong_arity(given: usize, expected: &str) -> Signal {
 }
 
 /// The fixed-arity `ArgumentError` (`zeo_tramp!`'s error leg): one call in
-/// the generated program where a `format!` used to be.
+/// the generated program instead of an inlined `format!`.
 pub fn arity_error(given: usize, expected: usize) -> Signal {
     raise_error_id(
         zeo_abi::ARGUMENT_ERROR_CLASS,

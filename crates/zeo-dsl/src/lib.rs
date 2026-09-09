@@ -1561,9 +1561,9 @@ mod tests {
         assert_eq!(spec.methods[0].names[0].arity, None);
     }
 
-    /// Two bare parameters mean two required arguments. They used to be read as
-    /// the legacy `(recv, args, block)` triple, which is why every header was
-    /// swept to the explicit `(recv, *args, &block)` before that branch went.
+    /// Two bare parameters mean two required arguments, never a
+    /// `(recv, args, block)` triple; the variadic header is spelled
+    /// explicitly as `(recv, *args, &block)`.
     #[test]
     fn two_bare_parameters_are_two_required_arguments() {
         let spec = parse_module(quote! {

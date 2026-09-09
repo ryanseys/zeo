@@ -607,14 +607,14 @@ mod tests {
     }
 
     /// `rb_call_super` names no receiver, so it reads the running frame's --
-    /// and only the trampoline can park one. It used to hard-code `main`,
-    /// which walked `main`'s ancestors instead of the receiver's.
+    /// and only the trampoline can park one. A hard-coded `main` would walk
+    /// `main`'s ancestors instead of the receiver's.
     ///
     /// io-console writes `IO#tty?` as a C body that is nothing but
     /// `rb_call_super(0, 0)`, in a module PREPENDED to `IO`. With `main` as
-    /// the receiver that raised `no superclass method 'tty?' for main`. What
-    /// the frame carries is the whole of the fix, so that is what is checked
-    /// here; the end-to-end half needs a loaded extension (task #79).
+    /// the receiver that raises `no superclass method 'tty?' for main`. What
+    /// the frame carries is the whole of the rule, so that is what is
+    /// checked here; the end-to-end half needs a loaded extension.
     #[test]
     fn a_c_method_frame_carries_its_receiver_for_rb_call_super() {
         unsafe extern "C-unwind" fn seen(this: Value) -> Value {
@@ -628,8 +628,7 @@ mod tests {
         );
         let p = unsafe { method_proc(seen as MethodPtr, 0) }.expect("argc 0 is legal");
         assert!(p.call(&[]).is_ok(), "the trampoline refused");
-        // The trampoline's own receiver, NOT `main` -- which is what
-        // `rb_call_super` used to walk from no matter who was called.
+        // The trampoline's own receiver, NOT `main`.
         assert!(
             SEEN.with_borrow(Option::is_some),
             "the body found no receiver on the frame"

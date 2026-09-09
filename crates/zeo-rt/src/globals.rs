@@ -2,9 +2,9 @@
 //! every `Ruby::Box` gets a fully SEPARATE global table with no fallback
 //! layer at all, which is empirically faithful to CRuby's box model (a box
 //! reads `nil` for a `$g` main set: its clone-on-first-read pulls from the
-//! ROOT entry, which user code never writes -- variable.c:1050, verified in
-//! the plan's research contract). Box 0 is the root/main program. Same
-//! `LazyLock<Mutex<_>>` pattern as `cvars`/`constants`/the Symbol interner.
+//! ROOT entry, which user code never writes -- variable.c:1050). Box 0 is
+//! the root/main program. Same `LazyLock<Mutex<_>>` pattern as
+//! `cvars`/`constants`/the Symbol interner.
 
 use crate::FMap;
 use crate::RubyValue;
@@ -302,8 +302,8 @@ fn store(box_id: u32, target: Cow<'_, str>, value: RubyValue) {
     let mut globals = GLOBALS.lock();
     let slot = globals.entry(box_id).or_default();
     // Probe before inserting: a global is REASSIGNED far more often than it is
-    // first created, and `insert` minted a fresh `Box<str>` key on every write
-    // only to drop the old one.
+    // first created, and `insert` would mint a fresh `Box<str>` key on every
+    // write only to drop the existing one.
     match slot.get_mut(target.as_ref()) {
         Some(existing) => *existing = value,
         None => {

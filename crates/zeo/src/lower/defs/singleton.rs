@@ -79,7 +79,7 @@ fn desugar_singleton_items(
     // A short-lived local `Vec<Item>` built and consumed in this one function;
     // boxing the wide `Def` variant to shave the enum would trade a real
     // allocation per def for a lint that doesn't matter at this lifetime.
-    #[allow(clippy::large_enum_variant)]
+    #[allow(clippy::large_enum_variant)] // built once per definition; never stored in bulk
     enum Item {
         Def(String, Params, Vec<NodeId>, crate::hir::Visibility),
         /// `def self.x` in a `class << obj` body -- see its emission arm.
@@ -173,12 +173,10 @@ fn desugar_singleton_items(
             // the 98 corpus rows behind it. The `alias` arm's twin, and the
             // same runtime primitive: `recv.singleton_class.undef_method(:close)`.
             //
-            // It was left to the `Passthrough` catch-all below (an `undef`
-            // names no `self`), which emitted a definition-level node where a
-            // value belongs, so codegen refused the whole program. The refusal
-            // was the right answer while there was nowhere for the retirement
-            // to be recorded; there is a per-object tombstone now, and every
-            // lookup consults it.
+            // Not the `Passthrough` catch-all below (an `undef` names no
+            // `self`): that emits a definition-level node where a value
+            // belongs, and codegen refuses the whole program. A per-object
+            // tombstone records the retirement, and every lookup consults it.
             HirNode::Undef(names) => Item::Undef(names.clone()),
             // `include M` / `prepend M` inside `class << obj` mixes M into the
             // OBJECT's singleton class -- which is CRuby's own definition of
@@ -603,9 +601,9 @@ fn names_an_ivar(hir: &Hir, id: NodeId) -> bool {
 ///
 /// An `@x` named in a `class << X` body belongs to X's SINGLETON CLASS, which
 /// is a different object from X -- so the `attr_accessor` written beside it
-/// does NOT read what the body wrote (oracle-verified). Only the two bare
-/// statement forms used to be mapped, so `@echo = @seen` read the wrong
-/// object and `@n += 1` raised on nil.
+/// does NOT read what the body wrote (oracle-verified). Every ivar form is
+/// mapped, not only the two bare statement forms: otherwise `@echo = @seen`
+/// reads the wrong object and `@n += 1` raises on nil.
 ///
 /// `build_recv` mints a fresh receiver per site, the same rule (and the same
 /// side-effecting-receiver caveat) as every other rebinding here.

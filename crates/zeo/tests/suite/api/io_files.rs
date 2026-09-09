@@ -97,7 +97,7 @@ fn a_directory_without_a_manifest_is_not_a_gem() {
 
 // ---- Wave-1 in-tree extensions (stringio/strscan/cgi/digest) + json/yaml/zlib ----
 
-// --- plan P-B: the core classes (File, Dir, Time, Process, ENV) ------------
+// --- the core classes (File, Dir, Time, Process, ENV) ----------------------
 
 /// A LITERAL require whose feature can't be found is a clean compile error
 /// even off top level (a RESOLVABLE feature is spliced there instead).
@@ -114,9 +114,9 @@ fn require_of_a_missing_feature_off_top_level_defers_to_runtime() {
 
 // --- Binary output fidelity (print/puts/putc/write/<<) ----------------
 //
-// The display pipeline used to promote a BINARY string's high bytes to
-// UTF-8 on the way to the fd (`0xB4` -> `0xC2 0xB4`), corrupting
-// bm_ao_render's and bm_so_mandelbrot's image output byte streams. The
-// whole print family now accumulates and writes RAW bytes; these tests
-// pin the byte streams through a File round-trip (assertions stay ASCII
-// via `bytes`), all outputs oracle-verified.
+// The whole print family accumulates and writes RAW bytes: a BINARY
+// string's high bytes must reach the fd as they are (`0xB4`, not the UTF-8
+// `0xC2 0xB4`), or bm_ao_render's and bm_so_mandelbrot's image output byte
+// streams corrupt. These tests pin the byte streams through a File
+// round-trip (assertions stay ASCII via `bytes`), all outputs
+// oracle-verified.

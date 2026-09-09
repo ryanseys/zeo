@@ -13,8 +13,7 @@ use super::*;
 pub type MethodFn = fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
 /// A method body no bare `fn` pointer can represent: a closure carrying
-/// captured state (a runtime `define_method` block today; interpreted eval-VM
-/// bodies when that phase lands).
+/// captured state (a runtime `define_method` block).
 pub type DynMethodFn =
     Arc<dyn Fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal> + Send + Sync>;
 
@@ -129,8 +128,7 @@ impl ValueImpl {
     }
 
     /// The closure shape `RProc::with_self_and_block` and friends take --
-    /// for the wrap sites where a bare `ValueMethodFn` used to pass as an
-    /// `impl Fn` directly.
+    /// for the wrap sites that hand a `ValueMethodFn` over as an `impl Fn`.
     pub(crate) fn into_fn(
         self,
     ) -> impl Fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal> {

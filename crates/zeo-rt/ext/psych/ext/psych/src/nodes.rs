@@ -3,11 +3,10 @@
 //!
 //! # Why the tree exists at all
 //!
-//! `Psych.load` used to build Ruby values straight out of yaml-rust2's event
-//! stream. That works and it is fast, but it cannot answer `Psych.parse`,
-//! which hands a caller the DOCUMENT rather than the data -- and a gem that
-//! walks the tree to read a tag, rewrite a scalar and emit it again has no
-//! other way in.
+//! Building Ruby values straight out of yaml-rust2's event stream works and
+//! is fast, but it cannot answer `Psych.parse`, which hands a caller the
+//! DOCUMENT rather than the data -- and a gem that walks the tree to read a
+//! tag, rewrite a scalar and emit it again has no other way in.
 //!
 //! So the event stream builds a [`Node`] tree, and everything else reads
 //! THAT: `Psych.load` walks it into Ruby values, `Psych.parse` mirrors it

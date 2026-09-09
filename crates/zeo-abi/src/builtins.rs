@@ -86,15 +86,15 @@ pub fn is_instanceless(id: ClassId) -> bool {
 /// Whether `id` is a value-builtin payload root: a built-in CLASS whose
 /// user subclass is a generic `ValueSubclass` wrapping the native value.
 ///
-/// Every built-in class is one unless [`NOT_PAYLOAD_ROOTS`] says otherwise.
-/// It used to be the other way round -- an opt-in allowlist -- which meant a
-/// gem subclassing any native class zeo had not thought of got a compile
-/// error naming zeo rather than a program. The two halves a root needs are
-/// both generic now: the runtime's `empty_payload` falls back to `nil` (the
-/// `File` shape -- the subclass's own `initialize` seats the real payload
-/// through `super`), and `construct_root_payload` answers rather than
-/// panicking when a root has no `new` row. A hand-written `empty_payload`
-/// arm is now only an IMPROVEMENT on that default, not a prerequisite.
+/// Every built-in class is one unless [`NOT_PAYLOAD_ROOTS`] says otherwise;
+/// an opt-in allowlist would give a gem subclassing a native class zeo had
+/// not thought of a compile error naming zeo rather than a program. The two
+/// halves a root needs are both generic: the runtime's `empty_payload`
+/// falls back to `nil` (the `File` shape -- the subclass's own `initialize`
+/// seats the real payload through `super`), and `construct_root_payload`
+/// answers rather than panicking when a root has no `new` row. A
+/// hand-written `empty_payload` arm is only an IMPROVEMENT on that default,
+/// not a prerequisite.
 pub fn is_payload_root(id: ClassId) -> bool {
     if NOT_PAYLOAD_ROOTS.contains(&id) {
         return false;
@@ -509,9 +509,9 @@ pub const BUILTINS: &[BuiltinClass] = &[
     // In-tree `ext/` extensions -- CRuby's ext/ model. Each is require-gated
     // (its constant is invisible until its `require` fires) AND compile-gated
     // by a per-extension cargo feature on `zeo-rt` (see that crate's
-    // `[features]` and `ext/mod.rs`). Some carry real implementations, others
-    // are scaffolded (a couple methods, the rest `todo!`) -- see
-    // `docs/how-to/add-an-extension.md` for the per-extension status.
+    // `[features]` and `ext/mod.rs`). Every declared method is implemented
+    // and oracle-matched -- see `docs/how-to/add-an-extension.md` for how
+    // one is added.
     BuiltinClass {
         id: STRINGIO_CLASS,
         name: "StringIO",

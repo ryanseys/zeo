@@ -1482,10 +1482,9 @@ mod tests {
 
     /// Oracle-verified against real `ruby` (see the corpus's recorded
     /// `split_*` tests for the e2e-visible half of this behavior) -- tested
-    /// directly here too since `puts` on an EMPTY `Array` result can't
-    /// currently distinguish "empty array" from "array of one empty string"
-    /// (a separate, pre-existing, unrelated `Kernel#puts` gap), so this is
-    /// the one place the empty-haystack case is actually verified.
+    /// directly here too, because `puts` prints an empty Array and an Array
+    /// of one empty string identically, so a golden cannot pin the
+    /// empty-haystack case; this is the one place it is verified.
     #[test]
     fn split_matches_real_ruby_leniency() {
         let comma = regexp_new(",", false, false, false).unwrap();

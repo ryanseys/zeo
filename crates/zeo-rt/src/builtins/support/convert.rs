@@ -15,9 +15,10 @@
 //! fall through" probe -- while a present-but-wrong-typed answer still
 //! raises (a lying `to_x` is a bug worth surfacing, CRuby's own rule).
 //!
-//! Replaces the per-module coerce helpers that grew up before this module
-//! existed. NOTE the numeric tower's `X can't be coerced into Y` operator
-//! errors are a DIFFERENT protocol (`coerce`, `numeric.rs`) and stay there.
+//! The one home for implicit conversion; no class module carries its own
+//! coerce helpers. NOTE the numeric tower's `X can't be coerced into Y`
+//! operator errors are a DIFFERENT protocol (`coerce`, `numeric.rs`) and
+//! live there.
 
 use crate::builtins::{convert_name_of, type_error};
 use crate::dispatch::{responds_to_value, send_value};

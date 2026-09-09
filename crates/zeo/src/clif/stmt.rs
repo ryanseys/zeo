@@ -16,7 +16,7 @@ pub(crate) fn lower_stmts(fx: &mut Fx, stmts: &[NodeId]) -> CResult<()> {
         // A `class << self` body's statements are SPLICED into the
         // enclosing class body, tagged with the marker they came from
         // (`Hir::singleton_frame_stmts`). Each contiguous run gets its own
-        // `singleton class` backtrace frame, rustc's `emit_singleton_frame`.
+        // `singleton class` backtrace frame.
         if let Some(&origin) = fx.an.compiler.hir.singleton_frame_stmts.get(&stmts[i]) {
             let mut j = i + 1;
             while j < stmts.len()
@@ -1936,9 +1936,9 @@ fn class_body_site_run(
     }
     // `alias`'s builtin source validates as this body finishes -- CRuby's
     // timing, run at the CALL site so an alias-only (empty-statement) body
-    // still checks (rustc emits the check even for an otherwise empty
-    // body). Only THIS site's own aliases: a class-wide check here validated
-    // a lazy unit's alias rows before that unit's installer ran (#166).
+    // still checks. Only THIS site's own aliases: a class-wide check here
+    // would validate a lazy unit's alias rows before that unit's installer
+    // runs.
     let validate = |fx: &mut Fx| {
         for old in &call.alias_checks {
             let cid = fx.cid_value(call.class);

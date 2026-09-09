@@ -18,8 +18,8 @@
 //! # Why the stack is split in two
 //!
 //! A thread-local whose TYPE needs dropping registers a destructor and
-//! checks for it on every single access, and that check -- not the `Vec`
-//! bookkeeping it was hiding behind -- was most of the old cost. Measured
+//! checks for it on every single access, and that check -- not `Vec`
+//! bookkeeping -- is most of a `Vec`-backed stack's cost. Measured
 //! on an M-series laptop, push+pop: `RefCell<Vec<Frame>>` 4.48 ns, the same
 //! bump-pointer stack behind a drop-needing TLS 4.06 ns, and a
 //! `Cell<*mut Frame>` trio that owns nothing 0.84 ns. `set_line` moves
@@ -64,9 +64,7 @@ pub struct Frame {
     pub end_line: u32,
     /// The release-pool watermark this frame's pop drains to, or
     /// [`Frame::NO_MARK`] for a frame that brackets no pool scope (a
-    /// synthetic C frame, a Rust-side `FrameGuard`). Rode a parallel
-    /// `marks` stack while the rustc backend shared the frame struct;
-    /// that constraint died with the backend.
+    /// synthetic C frame, a Rust-side `FrameGuard`).
     pub pool_mark: u32,
 }
 
@@ -331,9 +329,9 @@ fn grow_and_push(fr: Frame) {
 }
 
 /// Pop, reading back only the popped frame's `pool_mark` (or
-/// [`Frame::NO_MARK`] on an empty stack). The old code's `Drop` moved the
-/// whole popped `Frame` out unconditionally and that cost bm_fib ~8%;
-/// only the tracing path needs more than the mark.
+/// [`Frame::NO_MARK`] on an empty stack). Moving the whole popped `Frame`
+/// out unconditionally costs bm_fib ~8%; only the tracing path needs more
+/// than the mark.
 #[inline]
 fn pop_frame_discard() -> u32 {
     STACK.with(|s| {
@@ -369,8 +367,8 @@ fn with_frames<R>(f: impl FnOnce(&[Frame]) -> R) -> R {
 /// Install `new` as this context's frame stack, returning the previous one
 /// -- the fiber ec-swap's slice of this cell (see `crate::ec`).
 ///
-/// Copies, where the old `Vec`-backed stack could hand the buffer over
-/// whole. A fiber switch is a coroutine stack switch either side of this
+/// Copies, rather than handing a buffer over whole as a `Vec`-backed stack
+/// could. A fiber switch is a coroutine stack switch either side of this
 /// call, so a memcpy of the live frames does not register; an ordinary
 /// method call, which is what the split above is protecting, never gets
 /// here at all.

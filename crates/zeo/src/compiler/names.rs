@@ -52,10 +52,6 @@ impl Names {
     }
 }
 
-/// Whether `ZEO_DEBUG=verify-class-index` is set: every `class_in_scope`
-/// answer is then shadow-compared against the original linear scan -- the
-/// drift detector for the index's settle-before-lookup registration
-/// invariant.
 /// Whether `cid` is a require-gated builtin slot whose implementation this
 /// build does not provide (its cargo feature is off, or `ZEO_DISABLE_BUILTIN`
 /// retired it). Such a slot never resolves by name: without a native half
@@ -65,6 +61,9 @@ fn unprovided_gated_slot(cid: ClassId) -> bool {
     zeo_abi::feature_of_gated_class(cid).is_some_and(|f| !crate::lower::features::zeo_provides(f))
 }
 
+/// Whether `ZEO_DEBUG=verify-class-index` is set: every `class_in_scope`
+/// answer is then shadow-compared against a linear scan -- the drift
+/// detector for the index's settle-before-lookup registration invariant.
 fn verify_class_index() -> bool {
     crate::debug_flags::debug(crate::debug_flags::DebugFlag::VerifyClassIndex)
 }
@@ -147,7 +146,7 @@ impl Compiler {
             // name; builtins and bootstrap classes register before any user
             // class, so when a builtin/bootstrap of this name exists it is
             // that first entry -- and when the entry is a user class, no
-            // builtin of the name exists and the old scan also missed.
+            // builtin of the name exists.
             if let Some(cid) = self
                 .class_in_scope(None, name, 0)
                 .filter(|&c| {
@@ -190,8 +189,8 @@ impl Compiler {
         let mut index = self.class_index.borrow_mut();
         let upto = self.indexed_upto.get();
         if upto < self.classes.len() {
-            // First-registered wins within one scope (`or_insert`), exactly
-            // the old scan's `position` semantics. A require-gated builtin
+            // First-registered wins within one scope (`or_insert`), the
+            // same answer a forward `position` scan gives. A require-gated builtin
             // slot this build cannot provide (its cargo feature is off, or
             // `ZEO_DISABLE_BUILTIN` retired it) is invisible to name
             // resolution: it can never attach and never activate, and a user
@@ -251,8 +250,8 @@ impl Compiler {
     /// under a scope the reference spells differently (`Psych::Visitors` from
     /// inside `module Psych`). Neither may answer "not defined" then.
     ///
-    /// One implementation because it was two, keyed and suffixed identically,
-    /// in files that do not otherwise share code.
+    /// One implementation for both callers, which sit in files that do not
+    /// otherwise share code.
     pub fn class_shaped_anywhere(&self, box_id: u32, name: &str) -> bool {
         let suffix = format!("::{name}");
         self.shell_kinds
@@ -263,11 +262,11 @@ impl Compiler {
     /// The `#<Class:self>` surrogate standing in for `owner`'s `class << self`
     /// body, if it has one.
     ///
-    /// Both callers used to scan every registered class for it, from inside
-    /// per-class loops -- the same scan written twice, quadratic in the class
-    /// count. `class_in_scope` answers it with the same first-registered-wins
-    /// rule, and the surrogate shares its owner's box because a `class <<
-    /// self` body is lexically inside the owner.
+    /// Both callers ask from inside per-class loops, so a scan of every
+    /// registered class here would be quadratic in the class count.
+    /// `class_in_scope` answers it with the first-registered-wins rule, and
+    /// the surrogate shares its owner's box because a `class << self` body is
+    /// lexically inside the owner.
     pub(crate) fn singleton_surrogate_of(&self, owner: ClassId) -> Option<ClassId> {
         self.class_in_scope(Some(owner), SINGLETON_SURROGATE, self.class(owner).box_id)
     }

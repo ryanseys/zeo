@@ -398,8 +398,7 @@ pub(crate) fn build_index_target_write(
 
 /// One `MultiTarget` -- a `MultiWriteNode`/nested `MultiTargetNode`'s own
 /// `lefts`/`rest`/`rights` entry, or a `for`-loop's `index()`. See
-/// `MultiTarget`'s docs for the full generalized shape this now covers
-/// (beyond the original plain-local-only restriction): local/ivar/cvar/
+/// `MultiTarget`'s docs for the full shape this covers: local/ivar/cvar/
 /// global/bare-constant/`obj.attr`/`arr[i]`/nested-group targets.
 pub(crate) fn lower_multi_target(
     result: &ParseResult,

@@ -80,7 +80,7 @@ pub const SEEDED_OBJECT_CONSTANTS: &[&str] = &[
     "ARGV",
     // CRuby sets it at the VM level, `nil` for an ordinary build; mkmf
     // gates on it at module-body level. Missing from this list, every
-    // `defined?(CROSS_COMPILING)` folded to nil (task #133).
+    // `defined?(CROSS_COMPILING)` folds to nil.
     "CROSS_COMPILING",
     "ENV",
     "RUBY_COPYRIGHT",
@@ -457,8 +457,8 @@ pub const DIGEST_SHA512_CLASS: ClassId = ClassId(54);
 /// `Digest::SHA384`, and `Digest::SHA2` -- the BIT-LENGTH-parameterized
 /// class, which is a real class of its own rather than an alias for one of
 /// the fixed-width rows.
-/// (These two hold the 107/108 slots retired by the readline deletion --
-/// `BUILTINS` must stay contiguous, so the then-highest ids moved down.)
+/// (These two sit at 107/108 because `BUILTINS` must stay contiguous and
+/// those ids are free.)
 pub const DIGEST_SHA384_CLASS: ClassId = ClassId(107);
 pub const DIGEST_SHA2_CLASS: ClassId = ClassId(108);
 /// The `digest` framework's ancestry, exactly ruby's: every fixed-width
@@ -476,18 +476,18 @@ pub const DIGEST_BASE_CLASS: ClassId = ClassId(178);
 /// sees a site.
 pub const ZEO_MODULE: ClassId = ClassId(179);
 pub const ZEO_EVAL_MODULE: ClassId = ClassId(180);
-/// `json`: the `JSON` module (parser/generator). Scaffolded (see docs/how-to/add-an-extension.md).
+/// `json`: the `JSON` module (parser/generator). Behind `ext-json`.
 pub const JSON_MODULE: ClassId = ClassId(55);
-/// `date`: `Date`/`DateTime`. Scaffolded.
+/// `date`: `Date`/`DateTime`. Behind `ext-date`.
 pub const DATE_CLASS: ClassId = ClassId(56);
 pub const DATETIME_CLASS: ClassId = ClassId(57);
-/// `zlib`: the `Zlib` compression module. Scaffolded.
+/// `zlib`: the `Zlib` compression module. Behind `ext-zlib`.
 pub const ZLIB_MODULE: ClassId = ClassId(58);
-/// `psych`: the `Psych` YAML module. Scaffolded.
+/// `psych`: the `Psych` YAML module. Behind `ext-psych`.
 pub const PSYCH_MODULE: ClassId = ClassId(59);
-/// `socket`: the `Socket` class. Scaffolded.
+/// `socket`: the `Socket` class. Behind `ext-socket`.
 pub const SOCKET_CLASS: ClassId = ClassId(60);
-/// `openssl`: the `OpenSSL` module. Scaffolded.
+/// `openssl`: the `OpenSSL` module. Behind `ext-openssl`.
 pub const OPENSSL_MODULE: ClassId = ClassId(61);
 /// `yaml`: the `YAML` module -- an alias for `Psych` (Ruby's `yaml.rb` does
 /// `YAML = Psych`), so it shares the `psych` feature and dispatch.

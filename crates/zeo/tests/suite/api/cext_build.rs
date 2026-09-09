@@ -63,11 +63,10 @@ void Init_nested_probe(void) {
 /// `RbConfig.ruby` names the zeo that is running, and that file exists.
 ///
 /// rubygems spawns exactly this string to run a gem's `extconf.rb`
-/// (`Gem.ruby` is `RbConfig.ruby`). The shim used to synthesize
-/// `/usr/local/bin/ruby` from a hardcoded FHS prefix, so every gem with a C
-/// extension died at `extconf failed: No such file or directory` while
-/// pure-ruby gems installed fine -- a failure that names a path nobody in the
-/// repo ever wrote.
+/// (`Gem.ruby` is `RbConfig.ruby`). A shim that synthesized the path from a
+/// hardcoded FHS prefix would make every gem with a C extension die at
+/// `extconf failed: No such file or directory` while pure-ruby gems install
+/// fine -- a failure that names a path nobody in the repo ever wrote.
 ///
 /// The three keys are asserted separately because `bindir` and
 /// `ruby_install_name` are what mkmf and rubygems read directly; a fix that
@@ -117,14 +116,12 @@ puts File.executable?(RbConfig.ruby)
     assert_eq!(lines[3], "true", "RbConfig.ruby names a file that runs");
 }
 
-/// FLAKY under a loaded machine, observed 2026-08-31: one full `-p zeo` run
-/// failed here with "extconf.rb did not produce a Makefile" after 1.5s, where
-/// a passing run takes 8-19s. It passes on its own every time, and the same
-/// run's other 6,104 tests passed. Cause NOT established -- note the scratch
-/// directory is keyed on the pid alone, which is the shape of the collision
-/// that caused this repo's long-standing one-random-failure-per-run flake
-/// before, so that is where to look first. Re-run before believing a failure
-/// here names a real defect.
+/// FLAKY under a loaded machine: a full `-p zeo` run can fail here with
+/// "extconf.rb did not produce a Makefile" after 1.5s, where a passing run
+/// takes 8-19s. It passes on its own every time. Cause NOT established --
+/// the scratch directory is keyed on the pid alone, which is the shape of a
+/// collision, so that is where to look first. Re-run before believing a
+/// failure here names a real defect.
 #[test]
 fn an_extension_configures_compiles_and_links() {
     // `make` and a C compiler are what an extension build IS. A machine
@@ -192,19 +189,18 @@ fn an_extension_configures_compiles_and_links() {
 
 /// A COMPUTED `require` reaches a compiled extension on `$LOAD_PATH`.
 ///
-/// The literal spelling has always worked: the compile-time loader maps the
-/// feature onto a store gem, builds it, and splices a `CExtLoaded` node. A
-/// computed one names a feature no compile can see, so it has to resolve and
-/// dlopen at RUN time -- and the run-time resolver used to be Ruby-source
-/// only, trying `.rb` and the verbatim name and reading every hit as text.
-/// `%w[...].each { |f| require f }` over a native name raised `LoadError`,
-/// and the explicit `require "probe.bundle"` failed with "stream did not
-/// contain valid UTF-8", which reads like a corrupt file rather than a
-/// loader that took the wrong branch.
+/// The literal spelling is the compile-time loader's: it maps the feature
+/// onto a store gem, builds it, and splices a `CExtLoaded` node. A computed
+/// one names a feature no compile can see, so it has to resolve and dlopen
+/// at RUN time, and the run-time resolver must try the native suffix, not
+/// only `.rb` and the verbatim name read as text. A resolver that reads a
+/// bundle as text fails with "stream did not contain valid UTF-8", which
+/// reads like a corrupt file rather than a loader that took the wrong
+/// branch.
 ///
-/// Four things are asserted together because each of them was separately
-/// wrong: the resolve, the load, the SECOND require answering `false`, and
-/// one `$LOADED_FEATURES` entry naming the library.
+/// Four things are asserted together because each of them can be
+/// separately wrong: the resolve, the load, the SECOND require answering
+/// `false`, and one `$LOADED_FEATURES` entry naming the library.
 #[test]
 fn a_computed_require_loads_a_compiled_extension() {
     if !have("make") || !have("cc") {

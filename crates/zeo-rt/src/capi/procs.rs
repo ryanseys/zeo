@@ -571,8 +571,8 @@ pub unsafe extern "C" fn zeo_rt_binding_new(
 /// dispatch row, which is what keeps a `break` inside an iterator's block
 /// a `Signal::Break` for the iterator to catch instead of the
 /// `LocalJumpError` a proc-closure's break raises (`Enumerable#first`
-/// driving a user `each` that forwards its block). It is the same fold the
-/// rustc backend applies wherever it can type the receiver as a Proc.
+/// driving a user `each` that forwards its block). It is the same fold
+/// codegen applies wherever it can type the receiver as a Proc.
 ///
 /// Anything else -- `nil` when no block was given -- takes the ordinary
 /// explicit send, so the miss is ruby's own `NoMethodError`.

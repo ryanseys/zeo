@@ -165,7 +165,7 @@ pub fn resolve(compiler: &mut Compiler) {
 /// the statement stream at the `def`'s own place. The `at` bump matches
 /// `redefs`': `def_hooks` reads these records afterwards and its report has
 /// to land after the install.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 fn splice(
     compiler: &mut Compiler,
     cid: ClassId,

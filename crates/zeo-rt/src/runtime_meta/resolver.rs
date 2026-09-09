@@ -77,8 +77,8 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
             // the next ancestor answers. A later definition clears the
             // tombstone, so a live row is never behind one.
             let tomb = |pick: &dyn Fn(&super::OverlayEntry) -> bool| {
-                mine.and_then(|k| c.get(&k)).is_some_and(|e| pick(e))
-                    || c.get(&shared).is_some_and(|e| pick(e))
+                mine.and_then(|k| c.get(&k)).is_some_and(pick)
+                    || c.get(&shared).is_some_and(pick)
             };
             if tomb(&|e: &super::OverlayEntry| e.undefs.contains(&name)) {
                 return None;

@@ -31,7 +31,7 @@ use zeo_rt::dispatch::ClassId;
 use zeo_rt::{RubyValue, Signal, Symbol};
 
 /// A C extension loads into the main program, so its globals are the main
-/// program's. A box gets its own extension only when G7 B2 lands.
+/// program's. A box does not get an extension of its own.
 const MAIN_BOX: u32 = 0;
 
 /// # Safety

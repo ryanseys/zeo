@@ -37,17 +37,14 @@ pub fn infer_locals(
 /// Widens to `Poly` every `Object`-typed local this scope assigns somewhere
 /// OTHER than one of its own top-level statements.
 ///
-/// `TyKind::Object` is what makes a local `LocalStorage::Shadowed`, whose
-/// whole point is that the binding comes from a natural Rust `let` at the
-/// assignment itself rather than from a hoisted declaration. That only works
-/// when the `let` lands in the same Rust block as the reads. Write it inside
-/// an `if` arm -- `if c; ws = W.new; else; ws = W.new; end; ws.show`, fifteen
-/// lines of ordinary Ruby -- and the `let` is scoped to the arm, so every
-/// read after the `if` names a binding that does not exist there (E0425).
-/// Widening puts the local back on hoisted `RubyValue` storage, which is
-/// declared once at the top of the scope and therefore always in scope. The
-/// cost is dynamic dispatch on reads, the same trade `Params::bound_names`
-/// takes for a rebound parameter.
+/// A `TyKind::Object` local's typed binding is established at the
+/// assignment itself, so it holds only when every read follows that
+/// assignment in the same statement list. Write it inside an `if` arm --
+/// `if c; ws = W.new; else; ws = W.new; end; ws.show`, fifteen lines of
+/// ordinary Ruby -- and a read after the `if` has no single binding to
+/// name. Widening puts the local on `RubyValue` storage, which is declared
+/// once at the top of the scope. The cost is dynamic dispatch on reads, the
+/// same trade `Params::bound_names` takes for a rebound parameter.
 fn widen_nested_writes(compiler: &Compiler, body: &[NodeId], locals: &mut FMap<String, TyKind>) {
     let mut nested = FSet::default();
     for &stmt in body {
@@ -333,10 +330,10 @@ fn track_node(
                 if let Some(name) = &r.binding {
                     // OVERWRITES rather than fills in: inside the handler the
                     // slot holds the exception, whatever the name meant before.
-                    // Leaving an earlier concrete type in place emitted the
-                    // handler's `e.message` as a call on that type while the
-                    // value was a runtime exception -- rustc caught it, but a
-                    // name reused across a `rescue =>` is ordinary ruby.
+                    // Leaving an earlier concrete type in place would emit
+                    // the handler's `e.message` as a typed call while the
+                    // value is a runtime exception; a name reused across a
+                    // `rescue =>` is ordinary ruby.
                     b.insert(name.clone(), TyKind::Poly);
                 }
                 for &n in &r.body {

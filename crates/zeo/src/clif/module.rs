@@ -432,7 +432,7 @@ impl Emitter {
                     })?;
             builder.per_function_section(true);
             // `.eh_frame` is free on ELF; Mach-O emission panics in
-            // cranelift-object 0.134 and is not load-bearing (decision 13).
+            // cranelift-object 0.134 and is not load-bearing.
             builder.unwind_info(elf);
             ClifModule::Object(ObjectModule::new(builder))
         };
@@ -970,6 +970,17 @@ impl Emitter {
     }
 }
 
+/// What a cranelift failure says. `CodegenError`'s own `Display` answers a
+/// bare "Verifier errors" for the one kind that carries detail, and the
+/// detail -- which instruction, which value, which block -- is the whole
+/// message.
+fn codegen_failure(err: &cranelift_codegen::CodegenError) -> String {
+    match err {
+        cranelift_codegen::CodegenError::Verifier(errs) => format!("{errs:#?}"),
+        other => other.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use cranelift_module::Module;
@@ -1020,16 +1031,5 @@ mod tests {
             on.is_empty(),
             "the object path enabled host-inferred CPU features: {on:?}"
         );
-    }
-}
-
-/// What a cranelift failure says. `CodegenError`'s own `Display` answers a
-/// bare "Verifier errors" for the one kind that carries detail, and the
-/// detail -- which instruction, which value, which block -- is the whole
-/// message.
-fn codegen_failure(err: &cranelift_codegen::CodegenError) -> String {
-    match err {
-        cranelift_codegen::CodegenError::Verifier(errs) => format!("{errs:#?}"),
-        other => other.to_string(),
     }
 }

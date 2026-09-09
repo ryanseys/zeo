@@ -31,7 +31,7 @@ pub(super) fn bundled_libraries() -> &'static [Library] {
 }
 
 /// Whether `ZEO_DEBUG=strict-ambiguous-require` is set: a feature found in
-/// multiple gems becomes the old hard compile error instead of resolving to
+/// multiple gems becomes a hard compile error instead of resolving to
 /// the precedence-first provider with a warning. Real Ruby never errors here
 /// (see `resolve_require_uncached`'s multi-hit arm), so strictness is opt-in.
 pub(super) fn strict_ambiguous_require() -> bool {

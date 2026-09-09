@@ -29,7 +29,7 @@ pub(crate) fn call_user_method(
     {
         return Some(m.call(recv, args, None));
     }
-    // A RUNTIME-RESIDENT class (`Time`, `File`, ... -- plan P-B) is an
+    // A RUNTIME-RESIDENT class (`Time`, `File`, ...) is an
     // `Object(RObj)` with no registry entry, but it does have a builtin
     // table. Without this probe its own `to_s`/`inspect`/`hash` would be
     // invisible to every caller here -- stringifying a Time would answer
@@ -38,7 +38,7 @@ pub(crate) fn call_user_method(
     // The receiver's OWN class only, deliberately NOT its ancestors: this is
     // called from `display_with`/`inspect_with`, and `Kernel`'s own `to_s`
     // row renders via `to_display_string` -- walking up to it would recurse
-    // until the stack died (it did). The ancestor walk belongs to `send_in`,
+    // until the stack died. The ancestor walk belongs to `send_in`,
     // which has no such reentrancy; what this needs is only "does THIS class
     // define the method itself".
     if let Some(f) = crate::builtins::class_table(id).and_then(|lookup| lookup(name.name_str())) {
@@ -164,7 +164,7 @@ pub fn run_initialize(
         return Ok(());
     }
     // No user `initialize` at all, so the inherited `Object#initialize`
-    // takes no arguments. A RAISE, not a panic (plan G1): real Ruby resolves
+    // takes no arguments. A RAISE, not a panic: real Ruby resolves
     // arity at runtime and the error is rescuable -- `rescue ArgumentError`
     // around a bad `.new` is a corpus idiom, and a panic is uncatchable.
     // Message shape oracle-verified: CRuby says "wrong number of arguments

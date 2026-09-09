@@ -60,7 +60,7 @@ zeo-macros.workspace = true
 linkme.workspace = true
 # The parse-only surfaces (`RubyVM::AbstractSyntaxTree`,
 # `InstructionSequence.compile`'s SyntaxError gate, the prism gem's native
-# half). A run-time `eval` no longer reaches it here: zeo COMPILES a
+# half). A run-time `eval` does not reach it here: zeo COMPILES a
 # snippet, and the compiler links its own copy. Not optional -- the shipped
 # runtime is one variant.
 ruby-prism.workspace = true
@@ -79,7 +79,7 @@ onig.workspace = true
 # subscriber installed an event is one relaxed load of a global, so a shipped
 # program pays nothing measurable and the runtime can be instrumented freely.
 # The compiler's own `--log-level`/`ZEO_LOG` already names `zeo_rt` in its
-# filter (`main.rs` `widen_bare_level`), so a JIT run prints these today.
+# filter (`main.rs` `widen_bare_level`), so a JIT run prints these.
 #
 # The SUBSCRIBER is `runtime-logging`, off by default, because
 # tracing-subscriber + env-filter is far larger than the binary-size gate's
@@ -141,11 +141,11 @@ libffi = { workspace = true, optional = true }
 # extension binds, so behavior matches by construction. Pulled in only by
 # `ext-openssl`.
 openssl = { workspace = true, optional = true }
-# The P-B core classes: `Process.clock_gettime`'s clock ids, and (for Time)
-# `localtime_r`/`timegm`/`tzset` -- the zone database and DST rules the OS
-# already owns. Deliberately libc rather than chrono: Time's strftime and
+# The OS-backed core classes: `Process.clock_gettime`'s clock ids, and (for
+# Time) `localtime_r`/`timegm`/`tzset` -- the zone database and DST rules the
+# OS already owns. Deliberately libc rather than chrono: Time's strftime and
 # zone semantics are CRuby-specific enough that a datetime crate's own
-# opinions would have to be fought, not used (see the plan's P-E note).
+# opinions would have to be fought, not used.
 libc.workspace = true
 
 # One cargo feature per `ext/` library (CRuby's ext/ model). Each feature

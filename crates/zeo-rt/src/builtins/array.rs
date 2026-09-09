@@ -1,6 +1,5 @@
-//! `Array` (CRuby array.c) -- stage B carries the rows migrated from the
-//! old curated table (arg-type mismatches upgraded from silent fall-through
-//! to CRuby's real TypeError); the Tier A breadth lands in stage E.
+//! `Array` (CRuby array.c) -- the instance surface. An argument of the
+//! wrong type is CRuby's real TypeError, never a silent fall-through.
 
 use crate::RubyValue;
 use crate::builtins::enumerable::{self, own_row};
@@ -1355,9 +1354,9 @@ ruby_class! {
         let p = block_or_enum!(recv, &[], block);
         // Live view, one lock round-trip per element: appending from inside
         // the block iterates the appended tail and shrinking stops early --
-        // CRuby's own rule -- and the old whole-Vec snapshot per call (which
-        // made every Enumerable method driving `each` quadratic in a loop)
-        // is gone. The lock is never held across the block call.
+        // CRuby's own rule -- with no whole-Vec snapshot per call (which
+        // would make every Enumerable method driving `each` quadratic in a
+        // loop). The lock is never held across the block call.
         let arr = rary;
         let mut i = 0usize;
         loop {

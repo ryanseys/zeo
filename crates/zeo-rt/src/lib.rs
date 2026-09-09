@@ -8,13 +8,12 @@ pub type FMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomStat
 pub(crate) type FSet<T> = std::collections::HashSet<T, foldhash::fast::RandomState>;
 /// A two-level `box -> name -> value` map: the OUTER key is a box id
 /// (`0` = main). `Box<str>` inner keys so every read probes with its
-/// borrowed `&str`. Only the globals family is box-keyed today; Track 7
-/// widens the set.
+/// borrowed `&str`. Only the globals family is box-keyed.
 pub(crate) type BoxScopedMap<V> = FMap<u32, FMap<Box<str>, V>>;
 /// A two-level `owner class -> name -> value` map: the OUTER key is the
-/// owning `ClassId`'s raw `u32` -- NOT a box id, which the old shared
-/// `ScopedMap` alias let readers confuse. Constants/cvars/civars key this
-/// way and are deliberately box-blind (the documented divergence).
+/// owning `ClassId`'s raw `u32` -- NOT a box id, which the same shape
+/// invites readers to confuse. Constants/cvars/civars key this way and are
+/// deliberately box-blind (a decided divergence from CRuby).
 pub(crate) type ClassScopedMap<V> = FMap<u32, FMap<Box<str>, V>>;
 
 mod arith;
@@ -320,31 +319,8 @@ pub(crate) fn errno_ptr() -> *mut libc::c_int {
 /// implementation detail of this runtime crate.
 pub use parking_lot;
 
-/// Mirrors CRuby's `Kernel#puts` for the single scalar-argument case (the
-/// only form the original examples used): print the value, adding a trailing
-/// newline only if it doesn't already end in one.
-pub fn puts(value: RubyValue) {
-    let s = value.to_display_string();
-    if s.ends_with('\n') {
-        print!("{s}");
-    } else {
-        println!("{s}");
-    }
-}
-
-/// `Kernel#p`, single-argument form: prints the INSPECT
-/// rendering (`p [1, "x"]` -> `[1, "x"]`, `p Widget` -> `Widget`) and
-/// returns its argument (real Ruby's contract; `puts` returns nil).
-/// Multi-argument/zero-argument forms are separate breadth.
-pub fn p(value: RubyValue) -> RubyValue {
-    println!("{}", value.inspect_string());
-    value
-}
-
 /// One declarative macro absorbs the struct/trait-impl/registration ceremony
-/// zeo's codegen hand-emits as raw C text per class (`emit_class_struct`,
-/// `emit_class_new`, etc.) -- see the plan's "The `ruby_class!` macro"
-/// section for the full rationale. Each ivar becomes an individually
+/// a runtime-resident class needs. Each ivar becomes an individually
 /// interior-mutable field (`parking_lot::Mutex<RubyValue>`, not `RefCell`)
 /// so every generated method can uniformly take a receiver, and so every
 /// generated struct is genuinely `Send + Sync`.
@@ -356,18 +332,15 @@ pub fn p(value: RubyValue) -> RubyValue {
 /// can never provide. Every call site already hands over an `Arc<Concrete>`
 /// (`New`'s result, and every local/ivar holding an object, are `Arc`-wrapped
 /// from the moment they're built -- see `new_handle`'s docs below), so this
-/// costs nothing at ordinary call sites; it only removes a capability
-/// (capturing `self` into a closure) that didn't exist before.
+/// costs nothing at ordinary call sites.
 ///
-/// `$slf` (not a hardcoded `self`) is still captured from the caller's own
-/// tokens, exactly as before the `Rc<Self>` -> `Arc<Self>` migration --
-/// confirmed the hard way: a `self` written directly in THIS template is
-/// hygienically distinct from a `self` written inside the caller's `$body`,
-/// so `rustc` rejects it (`E0424`, "self value is a keyword only available
-/// in methods with a self parameter") the moment `$body` references
-/// `self.some_ivar`. Only the TYPE annotation is now fixed to `Arc<Self>`
-/// (rather than varying, since `&self` never varied either -- `$slf:tt`
-/// only ever captured the single token `self`, never its type).
+/// `$slf` (not a hardcoded `self`) is captured from the caller's own
+/// tokens: a `self` written directly in THIS template is hygienically
+/// distinct from a `self` written inside the caller's `$body`, so `rustc`
+/// rejects it (`E0424`, "self value is a keyword only available in methods
+/// with a self parameter") the moment `$body` references `self.some_ivar`.
+/// Only the TYPE annotation is fixed to `Arc<Self>` (`$slf:tt` captures
+/// the single token `self`, never its type).
 ///
 /// `ancestors` is the full, real linearized MRO (this class first, then
 /// prepends/includes/superclass in resolution order -- see
@@ -580,8 +553,8 @@ macro_rules! ruby_class {
             }
             // `Kernel#remove_instance_variable` -- empties the slot and returns
             // the old value, or `None` for a name that was never assigned (the
-            // caller raises `NameError`), which is now a real distinction
-            // rather than the approximation the old always-present slot forced.
+            // caller raises `NameError`). Assigned-then-removed and
+            // never-assigned are distinct slot states.
             fn ivar_remove_named(&self, name: &str) -> Option<$crate::RubyValue> {
                 self.__ivars.remove_named(Self::__IVAR_BASE, Self::__IVAR_NAMES, name)
             }

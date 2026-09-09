@@ -3,8 +3,8 @@
 //! recorders whose messages `NoMatchingPatternError` renders.
 //!
 //! The control flow itself is emitted (a chain of checks with one failure
-//! landing per pattern); everything here is a thin wrapper over the same
-//! helpers the rustc backend calls inline, so the two cannot drift.
+//! landing per pattern); everything here is a thin wrapper over the
+//! runtime's own pattern helpers, so the two cannot drift.
 
 use super::dispatch::status_out;
 use crate::{RubyValue, Symbol};

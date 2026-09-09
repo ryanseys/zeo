@@ -248,9 +248,8 @@ pub struct ClassInfo {
     /// The full MRO-resolved set `clif::classes` registers one method
     /// row per entry for -- own ∪ every name reachable via
     /// `ancestors` (superclass, `include`, `prepend`). Always populated by
-    /// `analyze::mro::materialize`, even for a class with no mixins at all
-    /// (closes a latent gap: the compiler never generated a Rust method for a
-    /// purely-inherited, non-overridden method at all).
+    /// `analyze::mro::materialize`, even for a class with no mixins at all,
+    /// so a purely-inherited, non-overridden method gets its row too.
     ///
     /// Read it through [`methods_of`](Compiler::methods_of) /
     /// [`lookup_method`](Compiler::lookup_method), never directly: the backing
@@ -400,10 +399,10 @@ impl ClassInfo {
 /// them the same way and for the same reason -- `rb_method_definition_t` is
 /// refcounted and shared, and the per-class entry is 5 fields.
 ///
-/// zeo used to fuse the two, so `mro::materialize` minted a fresh `Scope` with
-/// a cloned body for every (class, inherited method) pair. That is quadratic in
+/// Fusing the two would make `mro::materialize` mint a fresh `Scope` with a
+/// cloned body for every (class, inherited method) pair. That is quadratic in
 /// classes x visible methods, which is invisible until a Rails-sized graph and
-/// then fatal: `require "active_record"` ran 845s and died past 5GB.
+/// then fatal (`require "active_record"` measured 845 s and past 5 GB).
 #[derive(Clone, Copy, Debug)]
 pub struct MethodEntry {
     /// CRuby's `called_id` -- the name this class answers to, interned. Equal
@@ -580,7 +579,7 @@ impl Compiler {
     /// each of which is instead a boxed `RubyValue` dispatched dynamically:
     /// MODULES (no instances), BUILT-INs (their repr is a `RubyValue` variant),
     /// `Object` (the runtime root, name-keyed ivars), BOOTSTRAP classes (the
-    /// built-in exceptions, now in `zeo-rt`), and every
+    /// built-in exceptions, in `zeo-rt`), and every
     /// NATIVE-BACKED user subclass: an exception subclass (`class MyErr <
     /// StandardError`, the native `RubyException`) or a value-builtin subclass
     /// (`class Stack < Array`, the native `ValueSubclass`), both constructed via
@@ -671,9 +670,8 @@ impl Compiler {
         }
         // Superclass-chain walk, not `ancestors` -- see `superclass_chain`.
         // The rule is `zeo_abi::is_payload_root`, shared with the runtime and
-        // analyze's subclassable gate. This function was the THIRD
-        // hand-synced copy, and it was the one that drifted: a root the
-        // other two knew and this one didn't made codegen emit direct
+        // analyze's subclassable gate. Never a hand-synced copy: a root the
+        // other two know and this one does not makes codegen emit direct
         // builtin-table calls with the BOXED subclass, panicking the row's
         // receiver downcast at runtime.
         //
@@ -708,7 +706,7 @@ impl Compiler {
     }
 
     /// Whether the program defines ANY `class P < Proc`. A `RubyValue::Proc`
-    /// then no longer implies the class `Proc`, so `.class` cannot be folded
+    /// then does not imply the class `Proc`, so `.class` cannot be folded
     /// for a Proc-typed receiver.
     pub fn has_proc_subclass(&self) -> bool {
         (0..self.classes.len() as u32).any(|i| self.is_proc_subclass(ClassId(i)))

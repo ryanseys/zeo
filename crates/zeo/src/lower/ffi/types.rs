@@ -67,13 +67,11 @@ pub(super) fn ffi_symbol_str(node: &Node<'_>) -> PResult<String> {
 /// A callback ARGUMENT naming a struct class degrades to a pointer, which is
 /// what the Proc really receives.
 ///
-/// This used to be a clean rejection, on the belief that ruby-ffi hands the
-/// Proc a Struct instance there. It does not. `StructByReference#from_native`
-/// would build one, but the callback path never routes an argument through the
-/// Ruby data converter -- oracle-verified with `qsort` over a `[Pair, Pair]`
-/// comparator, whose block receives an `FFI::Pointer`. The old rejection even
-/// told the author to "take `:pointer` and wrap it yourself", which is exactly
-/// what the gem does for them.
+/// ruby-ffi does NOT hand the Proc a Struct instance there.
+/// `StructByReference#from_native` would build one, but the callback path
+/// never routes an argument through the Ruby data converter --
+/// oracle-verified with `qsort` over a `[Pair, Pair]` comparator, whose block
+/// receives an `FFI::Pointer`. Wrapping the pointer is the gem's own job.
 ///
 /// A RETURN in that position stays rejected: nothing here measured it, and a
 /// silently wrong conversion is worse than a refusal.

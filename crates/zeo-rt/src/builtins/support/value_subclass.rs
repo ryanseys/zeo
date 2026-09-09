@@ -1,4 +1,4 @@
-//! Value-builtin subclasses (D3): `class Stack < Array`, `class Tag < String`,
+//! Value-builtin subclasses: `class Stack < Array`, `class Tag < String`,
 //! `class Counter < Hash`.
 //!
 //! A subclass of an instantiable value builtin is ONE generic `ValueSubclass`
@@ -168,11 +168,11 @@ impl RubyObject for ValueSubclass {
     }
 }
 
-/// Whether `id` is an instantiable value-builtin payload root (D3) --
+/// Whether `id` is an instantiable value-builtin payload root --
 /// EVERY built-in class except the shapes `zeo_abi::NOT_PAYLOAD_ROOTS`
 /// names, which is where the rule and its exceptions live (one list, shared
-/// with the compiler's subclassable gate, because two hand-maintained copies
-/// had already drifted).
+/// with the compiler's subclassable gate, so two hand-maintained copies
+/// cannot drift).
 ///
 /// Nothing about the bridge is Array/String/Hash-specific -- the payload is
 /// just a `RubyValue`, and for `StringScanner` it is the `RubyValue::Object`
@@ -256,7 +256,7 @@ pub fn value_root_of(class_id: ClassId) -> Option<ClassId> {
         .find(|&a| is_payload_root(a))
 }
 
-/// Register a user value-builtin subclass (D3): just the name + linearized
+/// Register a user value-builtin subclass: just the name + linearized
 /// ancestors + the shared `value_subclass_construct` constructor. It installs NO
 /// methods -- inherited builtin behavior comes through the `send_in` payload
 /// bridge, and the subclass's own `def`s register as `define_method` deltas.
@@ -584,7 +584,7 @@ pub fn value_subclass_construct(
     }
 }
 
-/// `super` from a value-subclass method into the inherited builtin (D3). A
+/// `super` from a value-subclass method into the inherited builtin. A
 /// `super` in `initialize` REBUILDS the payload from the args (`super(3)` ==
 /// `Array.new(3)`); any other `super` runs the root builtin method against the
 /// payload and re-wraps a self-return back to the subclass. The runtime
@@ -629,9 +629,10 @@ const DEMOTING_CONVERSIONS: &[&str] = &["to_s", "to_str", "to_a", "to_h"];
 /// `concat`/`replace`) -- so `stack.push(1)` is a `Stack`, while `stack.map { }`
 /// (a NEW array) stays a plain `Array`, matching CRuby with almost no method
 /// allowlist: `DEMOTING_CONVERSIONS` is the one exception the handle identity
-/// genuinely can't distinguish. Rewrapping those was not merely a wrong class
-/// -- a subclass whose `<=>` read `o.to_s <=> to_s` never reached a plain
-/// String, so the user method re-dispatched until the stack overflowed.
+/// genuinely can't distinguish. Rewrapping those would not merely be a wrong
+/// class -- a subclass whose `<=>` reads `o.to_s <=> to_s` would never reach
+/// a plain String, and the user method would re-dispatch until the stack
+/// overflowed.
 pub fn rewrap_self_return(
     result: RubyValue,
     payload: &RubyValue,
@@ -663,12 +664,12 @@ mod tests {
     use crate::RubyValue;
 
     /// A payload root with no constructor at all must ANSWER, not panic.
-    /// Every built-in class is a root now, and several have no way to build
+    /// Every built-in class is a root, and several have no way to build
     /// an instance from nothing (`Ractor`, the abstract sockets,
     /// `OpenSSL::X509::Certificate`) -- those take the `File` shape, where
     /// the subclass's own `initialize` seats the payload through `super`.
-    /// The old allowlist made this a panic at a user program's first
-    /// `Sub.new`, far from the list that caused it.
+    /// A panic here would surface at a user program's first `Sub.new`, far
+    /// from the list that caused it.
     #[test]
     fn a_root_without_a_constructor_has_no_empty_form() {
         for &root in &[zeo_abi::RACTOR_CLASS, zeo_abi::BASIC_SOCKET_CLASS] {

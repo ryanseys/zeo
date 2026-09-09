@@ -76,9 +76,8 @@ pub struct SourceFile {
 
 impl SourceFile {
     /// The 1-based line containing byte offset `byte`: exactly
-    /// `1 + newlines strictly before byte`, the same count the old linear
-    /// scan produced (a start `s = i + 1` satisfies `s <= byte` iff the
-    /// newline at `i` sits strictly before `byte`).
+    /// `1 + newlines strictly before byte` (a start `s = i + 1` satisfies
+    /// `s <= byte` iff the newline at `i` sits strictly before `byte`).
     pub fn line_at(&self, byte: u32) -> u32 {
         let counted = self.line_starts.partition_point(|&s| s <= byte) as i64;
         // A line at or below zero is ruby's own "no line number" frame:

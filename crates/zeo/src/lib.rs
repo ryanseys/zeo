@@ -11,11 +11,10 @@
 //! only unavoidable for the final `cc` link of an AOT artifact (and for
 //! running the resulting binary).
 
-// `clippy::wildcard_enum_match_arm` is OFF (user-directed 2026-08-20): the
-// lint fired on far more probes and folds -- where every unlisted variant is
-// answered by its children or by one honest default -- than on walks that
-// genuinely had to decide, so the 106 `allow`s it collected were noise around
-// the handful of real cases. A walk that must name every variant still spells
+// `clippy::wildcard_enum_match_arm` is OFF: a wildcard arm is the right
+// spelling for the many probes and folds over enums with a long tail of
+// irrelevant variants -- every unlisted variant is answered by its children
+// or by one honest default. A walk that must name every variant still spells
 // them out; one that asks "may I descend through this?" uses
 // `HirNode::scope_kind`, which is exhaustive in one place.
 

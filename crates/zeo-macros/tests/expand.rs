@@ -207,9 +207,9 @@ fn a_module_function_is_private_as_an_instance_method() {
 
 #[test]
 fn a_protected_def_is_its_own_state_not_a_flavour_of_private() {
-    // The table carried ONE bit for years, so `protected` collapsed into
-    // public: the row answered an outside caller and reflection listed it as
-    // public. It is a third state now, and `private` must not absorb it.
+    // `protected` is a third state: a one-bit table would collapse it into
+    // public (the row answers an outside caller and reflection lists it as
+    // public), and `private` must not absorb it either.
     assert!(comparable::lookup_is_protected("guarded"));
     assert!(!comparable::lookup_is_private("guarded"));
     // ...and neither of the other two shapes is protected.

@@ -1,12 +1,9 @@
 //! One dial for the compiler's debug escape hatches and verification nets:
 //! `ZEO_DEBUG=<flag>[,<flag>...]`, parsed once per process.
 //!
-//! This replaced seven single-purpose variables with three different
-//! conventions among them -- one spelling, discoverable in one place. An
-//! unknown flag warns rather than erroring: a debug dial must never make a
-//! production compile fail, but a typo silently doing nothing already cost
-//! real debugging time elsewhere. Flags whose subsystems died with the
-//! rustc backend were deleted with it.
+//! One spelling, discoverable in one place. An unknown flag warns rather
+//! than erroring: a debug dial must never make a production compile fail,
+//! but a typo silently doing nothing costs real debugging time.
 
 use std::sync::OnceLock;
 
@@ -18,7 +15,7 @@ pub(crate) enum DebugFlag {
     /// more than one gem, instead of first-wins with a warning.
     StrictAmbiguousRequire,
     /// `verify-class-index`: shadow-compare every `class_in_scope` answer
-    /// against the linear scan it replaced.
+    /// against a linear scan of every class.
     VerifyClassIndex,
     /// `no-typed-calls`: turn off every TyKind-driven emission (typed
     /// direct calls, unboxed locals) -- the differential-oracle kill
@@ -102,12 +99,11 @@ pub(crate) fn debug(flag: DebugFlag) -> bool {
 /// A VALUE rather than a bit, so it sits beside [`debug`] rather than in it.
 /// It exists for one job: `cargo xtask size` links `puts 1` once per table
 /// with that table dropped and diffs the binary, which is exact per-table
-/// attribution and cannot be got any other way -- every size figure in the
-/// docs before this was prose. A LIST prices a whole set at once, which is
-/// the only way to see what the columns share: they overlap, because two
-/// tables can root the same code.
+/// attribution and cannot be got any other way. A LIST prices a whole set
+/// at once, which is the only way to see what the columns share: they
+/// overlap, because two tables can root the same code.
 ///
-/// Safe precisely because a missing table is now LOUD: `builtins::
+/// Safe precisely because a missing table is LOUD: `builtins::
 /// registered_table` aborts naming the class rather than answering
 /// `NoMethodError` for every row it has. Dropping one cannot produce a
 /// quietly wrong program.
@@ -276,8 +272,7 @@ mod tests {
     use super::disabled_builtins_from;
 
     /// The dial keys on the feature; a user reads the GEM name off the
-    /// lockfile. `io-console` used to match nothing and retire nothing, and
-    /// said so nowhere.
+    /// lockfile. Both spellings must retire the same builtin.
     #[test]
     fn the_gem_spelling_and_the_feature_spelling_both_name_one_builtin() {
         assert_eq!(

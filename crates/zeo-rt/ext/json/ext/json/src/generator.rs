@@ -77,13 +77,11 @@ impl State {
 
     fn enter(&mut self) -> Result<(), Signal> {
         self.depth += 1;
-        // No ceiling beyond `max_nesting`. There used to be a hard 2,000,
-        // because a recursive generator had nothing but the machine stack
-        // between it and a cycle -- and a depth count cannot tell a deep
-        // document from a circular one, so it refused both. The emit is a
-        // loop over a heap stack now and the cycle is caught by ancestry, so
-        // `max_nesting: false` means what it says here as it already did in
-        // the parser.
+        // No ceiling beyond `max_nesting`. The emit is a loop over a heap
+        // stack and a cycle is caught by ancestry, so no hard depth cap is
+        // needed to keep a circular value off the machine stack, and
+        // `max_nesting: false` means what it says here as it does in the
+        // parser.
         match self.max_nesting {
             Some(max) if self.depth > max => Err(raise_error(
                 "JSON::NestingError",
@@ -140,18 +138,18 @@ fn container_id(v: &RubyValue) -> Option<usize> {
 ///
 /// # Why this is a loop
 ///
-/// It used to recurse, and a self-referential structure had nothing but the
-/// machine stack between it and a dead process -- which is what a hard
-/// 2,000-deep ceiling was for. Two separate problems shared one number:
-/// a document that is legitimately DEEP, and one that is CYCLIC. A depth
-/// ceiling refuses both, and it has to, because it cannot tell them apart.
+/// A recursive emit has nothing but the machine stack between a
+/// self-referential structure and a dead process, and the hard depth
+/// ceiling that guards against it makes two separate problems share one
+/// number: a document that is legitimately DEEP, and one that is CYCLIC. A
+/// depth ceiling refuses both, because it cannot tell them apart.
 ///
 /// They are told apart here. Depth costs heap, so a deep document emits at
 /// whatever depth `max_nesting` allows; and a container that appears inside
 /// ITSELF is caught by ancestry rather than by counting, so a cycle is
 /// refused at the point it closes rather than thousands of levels later.
-/// The message still names circular references, because that is now exactly
-/// what it found.
+/// The message names circular references, because that is exactly what it
+/// found.
 pub(super) fn generate_into(v: &RubyValue, st: &mut State, out: &mut String) -> Result<(), Signal> {
     // The containers currently open, innermost last -- this value's own
     // ancestry, and the only thing a cycle can repeat.
@@ -557,11 +555,9 @@ mod tests {
     /// A document 3,000 levels deep emits with the limit off, on an ORDINARY
     /// stack.
     ///
-    /// This used to need a 64 MiB thread to reach its own assertion, because
-    /// the generator recursed and the test was about the ceiling that
-    /// stopped it. There is no ceiling and no recursion now, so the default
-    /// stack is the point -- 3,000 is past the old 2,000 and the emit does
-    /// not touch the machine stack at all.
+    /// There is no ceiling and no recursion, so the default stack is the
+    /// point: the emit does not touch the machine stack at all, and a
+    /// recursive one would need a 64 MiB thread here.
     ///
     /// The depth is 3,000 rather than something larger because BUILDING and
     /// DROPPING the value recurses, and a test thread's stack is small. A

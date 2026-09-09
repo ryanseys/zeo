@@ -109,7 +109,7 @@ pub struct Params {
     /// the explicit `;`-block-locals above). Ruby re-initializes them to nil on
     /// EVERY invocation, so a conditional first-assignment (`x = v if cond`)
     /// must not leak into the next iteration. The inline `.times`/range-each
-    /// splice (which shares the enclosing Rust scope rather than allocating a
+    /// splice (which shares the enclosing frame rather than allocating a
     /// closure) resets them per iteration; escaping blocks reset via their
     /// own-locals prelude instead. Empty for methods.
     pub implicit_block_locals: Vec<String>,
@@ -201,10 +201,10 @@ impl Params {
     }
 
     /// Just the names bound INSIDE destructuring params (`b`/`c` of
-    /// `|a, (b, c)|`) -- the part of `bound_names` that the Rust fn signature
-    /// does NOT bind, since only the `__destr_<i>` slot has a signature
-    /// parameter. Callers that mean "the names arriving as real Rust
-    /// parameters" want `bound_names` minus this.
+    /// `|a, (b, c)|`) -- the part of `bound_names` that the emitted
+    /// function's signature does NOT bind, since only the `__destr_<i>` slot
+    /// has a signature parameter. Callers that mean "the names arriving as
+    /// real parameters" want `bound_names` minus this.
     pub fn destructured_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         for (_, group) in &self.destructures {

@@ -68,7 +68,7 @@ mod tests {
     }
 
     /// A nested `class Status = ... { .. }` is a class in its own right; the
-    /// projection used to stop at the outer header and skip it entirely.
+    /// projection must not stop at the outer header and skip it.
     #[test]
     fn a_nested_class_gets_its_own_surface_row() {
         let s = surface_for(zeo_abi::PROCESS_STATUS_CLASS).expect("Process::Status is nested");

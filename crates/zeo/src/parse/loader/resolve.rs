@@ -37,8 +37,8 @@ impl Loader {
     /// Whether a plain `require "feature"` is answered by zeo's OWN
     /// implementation rather than by a file.
     ///
-    /// [`is_builtin_feature`] alone used to decide this, and it is only half
-    /// the question. zeo reimplements a number of default gems -- `psych`,
+    /// [`is_builtin_feature`] alone is only half the question. zeo
+    /// reimplements a number of default gems -- `psych`,
     /// `strscan`, `json` -- and a project whose lockfile names one, against a
     /// store that actually holds it, asked for THAT release: the version it
     /// pinned is the version it expects to run. So a store gem wins its own
@@ -352,10 +352,10 @@ impl Loader {
             // `find_by_path` order without one). That is what real Ruby does
             // with a squatted feature name; its "found in multiple gems"
             // error is unreachable for top-level requires and disabled
-            // outright under Bundler. The old unconditional error survives
-            // behind `ZEO_STRICT_AMBIGUOUS_REQUIRE=1` for callers who want
-            // squatting surfaced loudly; everyone else gets a warning at the
-            // require site (via `ambiguous_features`).
+            // outright under Bundler. `ZEO_DEBUG=strict-ambiguous-require`
+            // makes it a hard error for callers who want squatting surfaced
+            // loudly; everyone else gets a warning at the require site (via
+            // `ambiguous_features`).
             _ => {
                 if strict_ambiguous_require() {
                     let names: Vec<&str> = hits.iter().map(|(_, g)| g.name.as_str()).collect();

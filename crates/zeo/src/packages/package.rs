@@ -6,8 +6,8 @@
 //! `ProgramDesc` would have carried, with function pointers named by
 //! SYMBOL. A host compile (`--with-package`) rewrites the rows into
 //! its own single desc and links the package object beside its own, so the
-//! runtime still registers exactly one program. See the plan's Part III
-//! (decision 9: link-time merge, one desc, an untouched runtime).
+//! runtime still registers exactly one program: a link-time merge, one
+//! desc, an untouched runtime.
 //!
 //! Class ids in a manifest are LOCAL: the package minted them densely
 //! right after the shared bootstrap band, and the host remaps them onto
@@ -26,8 +26,8 @@ pub const MANIFEST_VERSION: u32 = 8;
 pub struct Manifest {
     pub manifest_version: u32,
     pub abi_version: u32,
-    /// The compiler that built this artifact. Decision 7: no stable ABI
-    /// tag is promised yet, so the version string stands in and an exact
+    /// The compiler that built this artifact. No stable ABI across compiler
+    /// versions is promised, so the version string stands in and an exact
     /// match is the contract.
     pub compiler: String,
     /// The ISA triple the object was compiled for; the host refuses a
@@ -318,9 +318,9 @@ pub fn store_install(home: &std::path::Path, artifact: &std::path::Path) -> std:
     }
 }
 
-/// The identity a manifest's `compiler` field carries. Decision 7: no
-/// stable ABI tag exists yet, so an EXACT match on this string is the
-/// whole acceptance contract.
+/// The identity a manifest's `compiler` field carries. No stable ABI across
+/// compiler versions exists, so an EXACT match on this string is the whole
+/// acceptance contract.
 pub fn compiler_identity() -> String {
     format!("zeo {}", env!("CARGO_PKG_VERSION"))
 }
@@ -438,8 +438,8 @@ pub struct PackageBuild {
 }
 
 impl PackageBuild {
-    /// The reproducible spelling for a package-owned source path
-    /// (decision 6): `/zeopkg/<feature>/<path relative to the entry's
+    /// The reproducible spelling for a package-owned source path:
+    /// `/zeopkg/<feature>/<path relative to the entry's
     /// directory>`. Two checkouts of one gem then emit byte-identical
     /// artifacts. Every consumer of the spelling stays consistent by
     /// derivation -- frame files, the unit's absolute feature row,

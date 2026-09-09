@@ -25,9 +25,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// `Mutex`-guarded payload plus its `.freeze` flag, mirroring
 /// how CRuby keeps `FL_FREEZE` as one bit on the object header next to the
 /// data rather than as a separate registry. `lock()` is deliberately an
-/// inherent method with the exact signature `Mutex::lock` had when
-/// `RArray`/`RHash`/`RStr` were bare `Arc<Mutex<_>>` aliases, so every
-/// pre-existing call site keeps compiling unchanged.
+/// inherent method with `Mutex::lock`'s exact signature, so a call site
+/// reads as if `RArray`/`RHash`/`RStr` were bare `Arc<Mutex<_>>` aliases.
 ///
 /// `Ordering::Relaxed` is sufficient for the flags: freezing only needs to
 /// prevent FUTURE mutations observed through ordinary program order (CRuby's
@@ -684,7 +683,7 @@ pub(crate) fn hash_key(v: &RubyValue) -> HashKey {
 
 /// CRuby's `ary_make_hash`: a list of values as the key set every SET
 /// operation compares through -- `eql?` plus `hash`, never `==`. It is one
-/// half of a split ruby makes and zeo used to miss: `[1.0] - [1]` answers
+/// half of a split ruby makes: `[1.0] - [1]` answers
 /// `[1.0]` because a set operation asks `eql?`, while `[1.0].include?(1)`
 /// answers true because a SEARCH asks `==`. Building the set once also
 /// makes the operations linear rather than quadratic.
@@ -812,7 +811,7 @@ fn hash_key_rec(v: &RubyValue, by_identity: bool, seen: &mut Seen) -> HashKey {
                     park_key_raise(sig);
                     HashKey::Identity(Arc::as_ptr(o) as *const () as usize)
                 }
-                // A value-builtin subclass (D3) with no `hash` override keys by its
+                // A value-builtin subclass with no `hash` override keys by its
                 // payload -- `Tag.new("k")` is the same Hash key as `"k"`.
                 None => match o.builtin_payload() {
                     Some(p) => hash_key_rec(&p, by_identity, seen),
@@ -1421,11 +1420,11 @@ pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
     hash_lookup(h, key).unwrap_or(RubyValue::Nil)
 }
 
-/// One probe answering presence AND value. `Hash#fetch` asked
-/// `hash_has_key` then `hash_get`, projecting the key twice -- and for an
-/// Object key whose class defines its own `#hash`, that second projection
-/// DISPATCHED the user's `#hash` a second time, which is observable if the
-/// method counts its calls.
+/// One probe answering presence AND value. `Hash#fetch` runs this rather
+/// than `hash_has_key` then `hash_get`: that pair projects the key twice,
+/// and for an Object key whose class defines its own `#hash` the second
+/// projection DISPATCHES the user's `#hash` again, which is observable if
+/// the method counts its calls.
 #[inline]
 pub fn hash_lookup(h: &RHash, key: &RubyValue) -> Option<RubyValue> {
     let g = h.lock();
@@ -1461,8 +1460,8 @@ pub fn hash_index(h: &RHash, key: &RubyValue) -> Result<RubyValue, crate::Signal
         }
     }
     // A hash with no default proc -- which is nearly all of them -- answers
-    // from this one lock. It used to take a second lock and clone BOTH the
-    // default value and the (absent) proc before deciding.
+    // from this one lock, with no second lock and no clone of the default
+    // value or the (absent) proc before deciding.
     let proc = {
         let g = h.lock();
         match &g.default_proc {
@@ -1613,7 +1612,7 @@ pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
 }
 
 /// `Hash#delete`: removes the entry, returning its value (`nil` when the
-/// key was absent -- the no-default-block scope-cut, same as `hash_get`).
+/// key was absent, same as `hash_get`; no default block runs here).
 /// `shift_remove` (not plain `swap_remove`) preserves the remaining
 /// entries' insertion order, Ruby's own guarantee.
 pub fn hash_delete(h: &RHash, key: &RubyValue) -> RubyValue {

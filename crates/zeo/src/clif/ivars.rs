@@ -8,7 +8,7 @@ use crate::hir::NodeId;
 use cranelift_codegen::ir::InstBuilder;
 
 /// The receiver for a NAME-KEYED ivar access: `self`, or the `main`
-/// object at the toplevel (rustc's `ivar_get_dyn(&main_object(), ..)`).
+/// object at the toplevel.
 pub(crate) fn dyn_ivar_recv(fx: &mut Fx) -> cranelift_codegen::ir::Value {
     // Every scope's prologue seats its own `self`: `main` for the toplevel,
     // the receiver for a runtime-installed body, the class for a class
@@ -19,8 +19,7 @@ pub(crate) fn dyn_ivar_recv(fx: &mut Fx) -> cranelift_codegen::ir::Value {
 }
 
 /// `@name` read into a fresh owned temp -- slot-indexed for a compiled
-/// class; NAME-KEYED (fallible: the Ractor guard) for a native-backed one,
-/// the rustc `ivar_get_dyn_isolated` shape.
+/// class; NAME-KEYED (fallible: the Ractor guard) for a native-backed one.
 pub(crate) fn ivar_read_op(fx: &mut Fx, name: &str) -> CResult<super::operand::Operand> {
     use super::operand::{Operand, TagInfo};
     if fx.dyn_ivars || fx.self_is_dynamic || fx.self_is_class || fx.method_class.is_none() {
@@ -31,7 +30,7 @@ pub(crate) fn ivar_read_op(fx: &mut Fx, name: &str) -> CResult<super::operand::O
         // A DYNAMIC self has no statically-known layout to take a slot
         // from at all: an `*_eval` or a `Ractor.new` block rebinds the
         // receiver, and the name-keyed entry carries CRuby's Ractor guard
-        // with it (rustc asks `self_is_dynamic` first for the same reason).
+        // with it.
         return name_keyed_ivar_read(fx, name);
     }
     let Some(slot) = ivar_slot_of(fx, name) else {
@@ -112,9 +111,9 @@ pub(super) fn lower_ivar_write(fx: &mut Fx, name: &str, value: NodeId) -> CResul
 
 /// The compiled slot `@name` occupies on this body's class, or `None` for
 /// an ivar the class's list does not carry -- one a body only ever reads,
-/// or one written on a receiver of another class. rustc keeps those in the
-/// same object's name-keyed overflow (`set_named`/`get_named`); the CLIF
-/// twin is the name-keyed capi, which reaches the identical storage.
+/// or one written on a receiver of another class. Those live in the same
+/// object's name-keyed overflow (`set_named`/`get_named`), reached through
+/// the name-keyed capi.
 pub(super) fn ivar_slot_of(fx: &Fx, name: &str) -> Option<usize> {
     let class = fx.method_class?;
     // Only a COMPILED class carries a slot layout at run time. The
@@ -128,8 +127,8 @@ pub(super) fn ivar_slot_of(fx: &Fx, name: &str) -> Option<usize> {
     crate::analyze::class_query::slot_of(&fx.an.compiler, class, name)
 }
 
-/// The class that OWNS `@@name` at this lowering site -- the rustc
-/// emitter's `cvar_owner_id` rule: the lexically enclosing class (`Object`
+/// The class that OWNS `@@name` at this lowering site: the lexically
+/// enclosing class (`Object`
 /// at the toplevel), looked through a `class << self` surrogate, then
 /// resolved through the analyzer's `cvar_owners` claim map (a subclass
 /// writing a parent-declared cvar stores on the parent).

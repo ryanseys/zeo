@@ -1,8 +1,8 @@
 //! The in-process JIT run path (`--backend jit`): the same CLIF lowering
 //! as AOT finalized straight into this process's memory and entered
 //! through the emitted C `main` -- no object file, no linker, no on-disk
-//! binary. The runtime is the one already linked into `zeo` (decision 9);
-//! emitted imports resolve through `zeo_rt::capi::symbols`.
+//! binary. The runtime is the one already linked into `zeo`; emitted
+//! imports resolve through `zeo_rt::capi::symbols`.
 
 use crate::diagnostics::CompileError;
 use std::ffi::CString;

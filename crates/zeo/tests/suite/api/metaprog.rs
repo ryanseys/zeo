@@ -54,10 +54,10 @@ fn needs_prism_runtime_selects_the_runtime_variant() {
 
     // No eval anywhere -> lean.
     assert!(!needs("puts 1"));
-    // EVERY eval is a run-time one: the compile-time splice a literal
-    // source once took was retired, because it reported the enclosing file
-    // for `__FILE__` and every backtrace row and ignored a magic comment
-    // written in the string.
+    // EVERY eval is a run-time one, a literal source included: a
+    // compile-time splice would report the enclosing file for `__FILE__`
+    // and every backtrace row and ignore a magic comment written in the
+    // string.
     assert!(needs(r#"puts eval("1 + 2")"#));
     // A block-form `instance_eval` runs a real block, never the VM -> lean.
     assert!(!needs("o = Object.new\no.instance_eval { 1 + 2 }\n"));
@@ -68,9 +68,9 @@ fn needs_prism_runtime_selects_the_runtime_variant() {
     assert!(needs(r#"eval("class Foo; end")"#));
     // A string-form `instance_eval` reaches the VM -> needs it.
     assert!(needs("o = Object.new\no.instance_eval(\"@x = 1\")\n"));
-    // A string-form `class_eval`/`module_eval` reaches it the same way -- the
-    // verdict already said so, but the runtime row used to ignore its argument
-    // and report "tried to create Proc object without a block" instead.
+    // A string-form `class_eval`/`module_eval` reaches it the same way, and
+    // the runtime row must read its string argument rather than demand a
+    // block.
     assert!(needs("class Foo; end\nFoo.class_eval(\"1 + 2\")\n"));
     assert!(needs("module M; end\nM.module_eval(\"1 + 2\")\n"));
     // The BLOCK form of either still runs a real block -> lean.

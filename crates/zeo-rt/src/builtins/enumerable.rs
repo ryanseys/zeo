@@ -619,9 +619,9 @@ struct Element {
     /// when the source yielded anything other than exactly one value.
     /// `pack` already answers `args[0].clone()` for the single-value case,
     /// which is every element of an Array, a Range, and anything driven
-    /// through `Own::List`, so the common element is now one `RubyValue` and
-    /// no `Vec` at all. It used to allocate a one-element `Vec` per element,
-    /// on every `sort_by`/`min_by`/`max_by`/`group_by`/`each_slice`.
+    /// through `Own::List`, so the common element is one `RubyValue` and
+    /// no `Vec` at all -- no one-element `Vec` per element on every
+    /// `sort_by`/`min_by`/`max_by`/`group_by`/`each_slice`.
     multi: Option<Vec<RubyValue>>,
     packed: RubyValue,
 }
@@ -728,7 +728,7 @@ pub(crate) fn slice_size(args: &[RubyValue], method: &str) -> Result<usize, Sign
     check_arity(args.len(), 1, Some(1))?;
     // Through the conversion protocol, not a panic: a non-Integer here is
     // ruby's ordinary `no implicit conversion` TypeError, and anything with a
-    // `to_int` is accepted. This used to take the process down.
+    // `to_int` is accepted.
     let n = &crate::builtins::convert::to_index(
         args.first()
             .ok_or_else(|| crate::builtins::arity_err(0, 1, Some(1)))?,
@@ -1266,8 +1266,8 @@ pub(crate) fn sum_own(
             }
         },
         // `SumAcc::add` consumes `self`, so the value still has to be taken
-        // out and put back -- but that is now a move through a local, where
-        // it used to be TWO lock acquisitions per element.
+        // out and put back -- a move through a local, not two lock
+        // acquisitions per element.
         |acc: &mut Option<SumAcc>, elem| {
             let current = acc.take().expect("accumulator always present");
             *acc = Some(current.add(elem)?);
@@ -1726,9 +1726,9 @@ ruby_module! {
     }
     // each_slice / each_cons stream a rolling buffer rather than collecting the
     // whole source and then calling `.chunks`/`.windows` on it. The blockless
-    // forms were always lazy (`block_or_enum!` returns an Enumerator before any
-    // collect), but that Enumerator re-invokes THIS block form, so
-    // `(1..).each_slice(2).first(2)` used to hang here.
+    // forms are lazy (`block_or_enum!` returns an Enumerator before any
+    // collect), but that Enumerator re-invokes THIS block form, so a
+    // collecting body would hang `(1..).each_slice(2).first(2)`.
     def "each_slice" arity 1 (recv, *args, &block) {
         let n = slice_size(args, "each_slice")?;
         let blk = block_or_enum!(recv, args, block);

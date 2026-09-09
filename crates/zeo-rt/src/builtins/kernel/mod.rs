@@ -3,13 +3,11 @@
 //! `rb_mKernel`). Reached on every receiver through the MRO walk, since
 //! every chain ends `..., Object, Kernel, BasicObject`.
 //!
-//! Rows migrated from `send`/`send_value`'s old hardwired universal arms:
-//! `class`, `dup`/`clone`, `hash`, `to_s`/`inspect`, `is_a?`/`kind_of?`,
-//! `instance_of?` -- plus the CRuby-owned additions `nil?`, `itself`,
-//! `frozen?`/`freeze`, `eql?`, `===`, `respond_to?`, `tap`, `then`.
-//! `Kernel#<=>` (identity-or-nil default) is deliberately ABSENT until the
-//! numeric operator rows move into `integer.rs`/`float.rs` (stage C) -- it
-//! would shadow the post-walk numeric `<=>` today.
+//! The universal rows live here, not as hardwired arms in `send`/
+//! `send_value`: `class`, `dup`/`clone`, `hash`, `to_s`/`inspect`,
+//! `is_a?`/`kind_of?`, `instance_of?`, `nil?`, `itself`, `frozen?`/`freeze`,
+//! `eql?`, `===`, `respond_to?`, `tap`, `then`, and the `<=>` default that
+//! answers only for the un-ordered types.
 
 mod convert;
 mod exit;

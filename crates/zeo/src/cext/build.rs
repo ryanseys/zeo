@@ -342,8 +342,8 @@ fn nonempty(wrapper: String, cc: String, fallback: &str) -> String {
     let wrapper = wrapper.trim();
     if wrapper.is_empty() {
         // `CC` may itself carry arguments; only the first word is the
-        // program, and the rest are already in `CFLAGS` for every mkmf
-        // Makefile in the census.
+        // program, and the rest are already in `CFLAGS` in every mkmf
+        // Makefile seen so far.
         return base
             .split_whitespace()
             .next()
@@ -391,8 +391,8 @@ mod tests {
     use super::*;
 
     /// A scratch build directory holding `files`, so the suffix search has
-    /// something to find. The plan reads the FILESYSTEM now -- which is what
-    /// `make` does, and what the `x86.S` case forced.
+    /// something to find. The plan reads the FILESYSTEM -- which is what
+    /// `make` does, and what the `x86.S` case needs.
     struct Dir(PathBuf);
 
     impl Dir {
@@ -495,8 +495,7 @@ $(TARGET_SO): $(OBJS) Makefile
 
     /// The `bcrypt` case. `$objs` names `x86.o`, whose source is `x86.S`;
     /// mkmf still writes `x86.c` into `SRCS`. Pairing `SRCS` and `OBJS`
-    /// positionally asks the compiler for a file that does not exist, which
-    /// is exactly what this used to do.
+    /// positionally would ask the compiler for a file that does not exist.
     #[test]
     fn an_object_finds_its_source_by_suffix_not_by_position() {
         let dir = Dir::with("suffix", &["one.c", "x86.S", "two.cpp"]);

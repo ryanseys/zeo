@@ -228,7 +228,7 @@ fn int_mod_slow(a: &RubyValue, b: &RubyValue) -> RubyValue {
 /// (`2 ** -2 == (1/4)`, oracle-verified), `0 ** -n` raises
 /// ZeroDivisionError, and an exponent beyond u32 range mirrors CRuby's
 /// "may be too big" posture by answering Float::INFINITY for |a| > 1
-/// (the warning itself is a documented scope-cut).
+/// (without the warning).
 pub fn int_pow(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
     // A base of 1 or -1 answers an INTEGER whatever the exponent's sign --
     // CRuby tests both before it looks at the sign at all, which is why

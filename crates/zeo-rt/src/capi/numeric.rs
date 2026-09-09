@@ -1,8 +1,7 @@
 //! The numeric SLOW paths -- what the emitted inline `sadd_overflow`/
 //! `fcmp` fast paths fall back to for overflow and bignum operands. The
 //! fully dynamic arm (a mixed pair, a user numeric) goes through
-//! `zeo_rt_send_value_in` instead, exactly as the rustc backend's match
-//! arms do.
+//! `zeo_rt_send_value_in` instead.
 
 use crate::RubyValue;
 use crate::builtins::integer;

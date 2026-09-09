@@ -824,11 +824,11 @@ fn dynamic_send_argv(
 /// nomination proved the method compile-time public, and a runtime
 /// `private :m` patches the class, which the bit test routes away.
 ///
-/// The third question used to be part of the second: the guard tested the
-/// whole gate word for ZERO, so one `define_method` on an unrelated class
-/// -- one `attr_accessor`, one `alias_method` -- sent every typed call in
+/// The third question is per-class on purpose: a guard that tests the
+/// whole gate word for ZERO lets one `define_method` on an unrelated class
+/// -- one `attr_accessor`, one `alias_method` -- send every typed call in
 /// the program down dispatch for good, measured at +54%. The bit test
-/// costs no more than the zero test did: `zeo_rt_patched_bits` is a fixed
+/// costs no more than a zero test: `zeo_rt_patched_bits` is a fixed
 /// static array, so the word's address and the mask are both settled at
 /// compile time.
 ///
@@ -1035,13 +1035,13 @@ pub(crate) fn typed_direct_send(
 /// clear. Both rows sit in `SPECIALIZED` (no synthetic frame), so the
 /// frameless core is backtrace-identical.
 ///
-/// The last two used to be one test for a ZERO gate word, with a capi call
-/// to `iter_inline_ok_for` behind it -- so a program that ran any runtime
-/// definition paid a CALL on every array index, measured at +14%. The two
-/// inline tests cost the same as the zero test did.
+/// The last two are inline tests, never one test for a ZERO gate word with
+/// a capi call to `iter_inline_ok_for` behind it -- that makes a program
+/// that ran any runtime definition pay a CALL on every array index,
+/// measured at +14%. The two inline tests cost the same as a zero test.
 ///
 /// A boxed site declines outright rather than emitting a guard that can
-/// never pass: `iter_inline_ok_for` refused a nonzero box anyway, and the
+/// never pass: `iter_inline_ok_for` refuses a nonzero box anyway, and the
 /// box is a per-site constant.
 ///
 /// Every operand is evaluated ONCE, in ruby's order, into the same argv
@@ -1254,7 +1254,7 @@ pub(crate) fn build_zsuper_args(
 /// (`value_super`). Bare `super` forwards the current method's own params
 /// by NAME (splat rest, keywords as one marked hash); the current
 /// block forwards unless the site writes one.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 pub(crate) fn lower_super(
     fx: &mut Fx,
     site: NodeId,
@@ -1268,7 +1268,7 @@ pub(crate) fn lower_super(
     // zsuper forwards the CURRENT values of the method's parameters, and a
     // block-shaped body has no parameter list to forward from, so ruby
     // refuses rather than guessing. Raised at DISPATCH time (the method may
-    // never be called), like rustc's.
+    // never be called).
     if zsuper && fx.define_method_body {
         let msg = "implicit argument passing of super from method defined by \
                    define_method() is not supported. Specify all arguments explicitly.";
@@ -1320,7 +1320,7 @@ pub(crate) fn lower_super(
         None => crate::hir::Params::default(),
     };
 
-    // The argument Array (rustc's `__super_args` Vec) + kw hash + unmark.
+    // The argument Array + kw hash + unmark.
     let (args_ptr, kw_ptr, unmark) = if zsuper {
         build_zsuper_args(fx, &params)?
     } else {
@@ -1387,7 +1387,7 @@ pub(crate) fn lower_super(
 
     // A RUNTIME-installed body's defining class is minted at run time, so
     // the walk resumes from the (class, name) pair the method-frame stack
-    // recorded when the body was entered -- rustc's `send_super_dynamic`.
+    // recorded when the body was entered.
     if fx.runtime_method_body || fx.method_name.is_none() {
         let self_ptr = fx.self_ptr.expect("self_ptr is set in the prologue");
         let ss = fx.temp_slot();
@@ -1474,8 +1474,8 @@ pub(crate) fn lower_super(
     }
 
     // Channel: a value-builtin subclass whose walk above `def_class` finds
-    // no user definition targets the native root (rustc's `value_channel`
-    // predicate, verbatim); everything else is the per-position MRO walk.
+    // no user definition targets the native root; everything else is the
+    // per-position MRO walk.
     let compiler = &fx.an.compiler;
     let ancestors = &compiler.class(owner).ancestors;
     let pos = ancestors.iter().position(|&a| a == def_class);
@@ -1527,8 +1527,8 @@ pub(crate) fn lower_super(
 
 /// `super` with no enclosing method at all -- top level, a top-level block,
 /// a class body. Real Ruby raises at RUNTIME and the raise is rescuable
-/// (`vm_insnhelper.c`), so emit it instead of refusing to compile; rustc's
-/// `super_calls` arm does the same, message verbatim.
+/// (`vm_insnhelper.c`), so emit it instead of refusing to compile, message
+/// verbatim.
 fn super_outside_a_method(fx: &mut Fx) -> CResult<Operand> {
     let cid = fx.b.ins().iconst(
         cranelift_codegen::ir::types::I32,

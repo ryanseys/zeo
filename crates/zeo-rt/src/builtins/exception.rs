@@ -1936,8 +1936,8 @@ pub(crate) fn register_errno_class(registry: &mut ClassRegistry, id: ClassId) {
 /// (see the module docs) is that every program pays for ONE compiled
 /// implementation of these methods, however many classes carry them.
 ///
-/// Each row states in one place what the old imperative install spread over
-/// the install body and two side tables: the Ruby name, the Rust body, where
+/// Each row states in one place everything about one method, with no side
+/// tables: the Ruby name, the Rust body, where
 /// the row installs (`gate`), which classes CRuby files it on for reflection
 /// (`owners`), its declared signature (`params`), and its visibility.
 struct ExcRow {

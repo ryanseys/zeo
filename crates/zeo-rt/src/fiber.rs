@@ -39,8 +39,8 @@
 //! release through ordinary `Result` propagation -- never a native stack
 //! unwind, which Cranelift-compiled frames cannot support. `ensure` bodies
 //! are skipped and rescue never matches (see [`Signal::Terminate`]), so no
-//! Ruby code observably executes -- the same "no ensure on never-finished
-//! fibers" behaviour the old corosensei force-unwind had. Deterministic
+//! Ruby code observably executes -- CRuby's own "no ensure on
+//! never-finished fibers" behaviour. Deterministic
 //! cleanup, no GC-finalizer dependence (the leak JRuby's thread-backed
 //! fibers were notorious for). The TLS destructor itself only ever
 //! `force_reset`s (see [`CoroTable`]).

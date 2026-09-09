@@ -462,9 +462,8 @@ fn a_definition_on_one_class_leaves_another_class_cached() {
         r.define_method(a, ping, row_1);
         r.define_method(b, ping, row_2);
     });
-    // A redefines its own `ping`. That arms the overlay, which USED to turn
-    // every cache in the process off; the question each site asks is about
-    // its OWN class now, and nothing has touched B.
+    // A redefines its own `ping`. That arms the overlay, but the question
+    // each site asks is about its OWN class, and nothing has touched B.
     crate::runtime_meta::runtime_define_method(
         a,
         ping,

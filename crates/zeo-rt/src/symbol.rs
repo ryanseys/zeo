@@ -7,8 +7,7 @@
 //! Symbol table is shared across every `Thread`/`Ractor` -- two threads
 //! interning `:foo` must get the SAME id, which a `thread_local!` interner
 //! could never guarantee (each thread would build its own independent
-//! table). Migrated to a `LazyLock<Mutex<_>>` static for this reason, not
-//! just as a mechanical `Rc`->`Arc` swap.
+//! table). Hence a `LazyLock<Mutex<_>>` static.
 //!
 //! Names are LEAKED, once per distinct symbol: Ruby symbols are immortal
 //! (never garbage collected), so the leak is the intended lifetime -- and it
@@ -48,11 +47,11 @@ struct SymEntry {
 /// guarantee, and the table is CHUNKED so growth never moves an entry a
 /// reader is looking at the way a `Vec` reallocation would.
 ///
-/// `INTERNER`'s mutex still serializes WRITERS (it owns the two by-name
-/// maps); it is simply no longer on the read path. That read path is
+/// `INTERNER`'s mutex serializes WRITERS (it owns the two by-name maps)
+/// and is not on the read path. That read path is
 /// `instance_method_visibility`, `responds_to` and `class_method_is_private`
-/// -- all of which ask per ANCESTOR -- so it was a global mutex acquired
-/// several times per dynamic call.
+/// -- all of which ask per ANCESTOR -- so a mutex there would be a global
+/// lock acquired several times per dynamic call.
 const SYM_CHUNK: usize = 4096;
 const SYM_CHUNKS: usize = 1024;
 type SymChunk = Box<[OnceLock<&'static SymEntry>]>;

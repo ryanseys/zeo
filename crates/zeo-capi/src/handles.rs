@@ -58,8 +58,8 @@ use zeo_rt::dispatch::ClassId;
 /// withheld: `T_FILE` promises C that `RFILE(v)->fptr` reads an `rb_io_t`,
 /// and zeo has no `rb_io_t` to put there. A wrong `RB_TYPE_P(v, T_FILE)` is
 /// an answer a gem can branch on; a garbage `fptr` is a read through a
-/// pointer that was never written. The entries that used to need the tag ask
-/// `builtins::io::as_rio` instead -- see `rb_io_check_io`.
+/// pointer that was never written. The entries that need an IO ask
+/// `builtins::io::as_rio` instead of the tag -- see `rb_io_check_io`.
 mod t {
     pub const OBJECT: usize = 0x01;
     pub const CLASS: usize = 0x02;

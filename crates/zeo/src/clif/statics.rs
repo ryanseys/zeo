@@ -294,8 +294,8 @@ pub(crate) fn define_proc_shapes(em: &mut Emitter) -> CResult<()> {
 /// when the program has none of them.
 ///
 /// Every array goes through ONE bulk capi call over a rodata table --
-/// the old per-symbol/per-site unrolled bodies were the largest cold
-/// text in small programs (~4 instructions per symbol).
+/// per-symbol/per-site unrolled bodies would be the largest cold text in
+/// small programs (~4 instructions per symbol).
 pub(crate) fn define_unit_init(
     em: &mut Emitter,
     extra_inits: &[String],
@@ -1708,8 +1708,7 @@ pub(crate) fn define_desc(
     }
     // The compiler installs itself as the runtime's evaluator -- named
     // ONLY by a program that can `eval`, which is what lets `-dead_strip`
-    // drop the whole compiler from every program that cannot (plan
-    // decision 17).
+    // drop the whole compiler from every program that cannot.
     if eval_install {
         let sig = em.module.make_signature();
         let f = em

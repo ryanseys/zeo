@@ -396,8 +396,9 @@ pub(super) fn parse_enum_members<'a>(
         i += 1;
         // The next element is a VALUE unless it reads as a member name (a
         // literal symbol/string). Deciding by shape first keeps the error
-        // honest: an unfoldable value used to be re-read as the next member
-        // and rejected as "expected a literal symbol", naming the wrong rule.
+        // honest: deciding by foldability would re-read an unfoldable value
+        // as the next member and reject it as "expected a literal symbol",
+        // naming the wrong rule.
         let value = match elems.get(i) {
             Some(n) if n.as_symbol_node().is_none() && n.as_string_node().is_none() => {
                 i += 1;

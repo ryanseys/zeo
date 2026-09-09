@@ -68,7 +68,7 @@ pub fn build_carries_class(id: zeo_abi::ClassId) -> bool {
 
 /// Whether `feature` names a stdlib feature the runtime compiles in, so
 /// `require`ing it is a no-op (nothing to splice). `tmpdir` (`Dir.mktmpdir`)
-/// and `set` (the `Set` core class) are both compiled in -- `Set` is now an
+/// and `set` (the `Set` core class) are both compiled in -- `Set` is an
 /// autoloaded core class in real Ruby, so `require "set"` is a no-op there too.
 /// In-tree `ext/` modules (`base64`, ...) are recognized straight from the
 /// ABI table (`zeo_abi::is_ext_feature`) so the loader and the constant
@@ -86,7 +86,7 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // pure ceremony. Same shape of divergence as `time` above. `io/wait` is
     // identical: `IO#wait_readable`/`#wait_writable` are unconditional rows on
     // the IO table (real `poll(2)`), so its require is pure ceremony too.
-    // `ffi` is now an `is_ext_feature` (the `FFI` module + `Pointer`/
+    // `ffi` is an `is_ext_feature` (the `FFI` module + `Pointer`/
     // `MemoryPointer`/`Struct` rows carry `feature: Some("ffi")`), so
     // `require "ffi"` activates that feature and those constants resolve. The
     // compile-time frontend (`extend FFI::Library` / `attach_function`, the
@@ -100,7 +100,7 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // being core there as well. `thread` is the same story one step further
     // on: CRuby folded it into core long ago and keeps the name only so old
     // code still loads, answering `false` for the require -- which is what
-    // zeo does now too (minitest/parallel.rb opens with it).
+    // zeo does too (minitest/parallel.rb opens with it).
     // `pathname` is the same shape once more: ruby 4.0 loads `pathname.so`
     // before the first line, so `Pathname` and 96 of its methods are there
     // whatever the program does, and the require only reopens the class to

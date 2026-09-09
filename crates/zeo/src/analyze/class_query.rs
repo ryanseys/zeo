@@ -1,12 +1,9 @@
 //! Questions about the class a method body is being emitted FOR.
 //!
-//! Two survive: where an ivar sits in the receiver's slot layout, and whether
-//! a bare name resolves to a real method or falls through to a Kernel free
-//! function. The rest of this module was the record-and-replay mechanism that
-//! decided whether 152 classes inheriting one `def` could share a single
-//! emitted Rust function; the Cranelift backend emits per-class bodies and
-//! asks the questions directly, so it went with the rustc emitter on
-//! 2026-08-21.
+//! Two questions: where an ivar sits in the receiver's slot layout, and
+//! whether a bare name resolves to a real method or falls through to a
+//! Kernel free function. The Cranelift backend emits per-class bodies and
+//! asks them directly; no record-and-replay of shared bodies is needed.
 
 use crate::compiler::{ClassId, Compiler, OBJECT_CLASS};
 
@@ -130,7 +127,7 @@ pub(crate) fn extended_singleton_super(
             .find(|&&s| compiler.scope(s).name == mname)
             .map(|&sid| {
                 // A class's OWN `def self.x` that a singleton PREPEND shadows is
-                // no longer in the live class-methods row (the prepend won), so
+                // not in the live class-methods row (the prepend won), so
                 // `super` must reach it through the super-TARGET table -- the
                 // `module_instance` side of `call_singleton_super_target`, which
                 // `mro::materialize_class_methods` populated with the shadowed

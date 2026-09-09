@@ -1,4 +1,4 @@
-//! Keyword binding for DYNAMIC calls (the G2 trailing-kwargs-hash
+//! Keyword binding for DYNAMIC calls (the trailing-kwargs-hash
 //! convention): `bind_dynamic_kwargs`, the `**nil` reject, and the shared
 //! missing/unknown-keyword error shape.
 
@@ -14,14 +14,14 @@ pub type BoundKwargs<'a> = (
 );
 
 /// Binds a DYNAMIC call's keyword arguments for a keyword-declaring callee
-/// (the G2 trailing-kwargs-hash convention): when the last argument is a
+/// (the trailing-kwargs-hash convention): when the last argument is a
 /// Hash, it's the keyword set; otherwise there are no keywords. Returns
 /// `(positional, required_values, optional_values, rest_pairs)` for the
 /// generated trampoline to splice into the direct call -- optional `None`s
 /// let the callee's own prologue lazily evaluate defaults, exactly like
-/// Path 1.
+/// a static direct call.
 ///
-/// Documented approximation (plan G2): no `ruby2_keywords` flagging, so a
+/// Approximation: no `ruby2_keywords` flagging, so a
 /// bare trailing Hash passed positionally through `send` to a
 /// keyword-declaring method binds as keywords.
 pub fn bind_dynamic_kwargs<'a>(

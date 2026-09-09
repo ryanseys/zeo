@@ -81,7 +81,9 @@ fn names_data(line: &str) -> bool {
 }
 
 /// A recorded answer that names this machine is not portable: another
-/// machine records a different one and the case fails there.
+/// machine records a different one and the case fails there. The markers
+/// are the home directory, one version manager's install root, and the
+/// ruby-install layout it and others share.
 #[test]
 fn no_answer_embeds_a_machine_specific_path() {
     let home = std::env::var("HOME").unwrap_or_default();

@@ -7,8 +7,8 @@
 //! restating the body, because two copies of `readable?` would drift.
 //!
 //! `FileTest` is deliberately NOT the whole of `File`'s class surface -- it
-//! carries no `read`, `open` or `join`. It used to share `File`'s entire lookup
-//! table, which made `FileTest.read` answer where CRuby raises NoMethodError.
+//! carries no `read`, `open` or `join`. Sharing `File`'s entire lookup table
+//! would make `FileTest.read` answer where CRuby raises NoMethodError.
 
 use crate::builtins::file::file_test_forward;
 use crate::{RubyValue, Signal};
@@ -97,7 +97,7 @@ mod tests {
     fn file_test_is_not_the_whole_of_files_surface() {
         install_core();
         // `FileTest.read` must be the NoMethodError CRuby raises -- the module
-        // no longer shares File's entire table.
+        // does not share File's entire table.
         let err = ask(zeo_abi::FILE_TEST_MODULE, "read", "/etc/hosts");
         let Err(crate::Signal::Raise(exc)) = err else {
             panic!("expected a NoMethodError raise");

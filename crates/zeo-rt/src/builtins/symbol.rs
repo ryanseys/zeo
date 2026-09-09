@@ -1,4 +1,4 @@
-//! `Symbol` (CRuby symbol.c/string.c) -- the Tier A surface. The
+//! `Symbol` (CRuby symbol.c/string.c) -- the instance surface. The
 //! case/succ rows delegate to `string.rs`'s shared helpers and re-intern;
 //! `to_proc` builds the `&:name` block (one dynamic dispatch per call).
 

@@ -391,12 +391,13 @@ const GATE_MOVED: u16 = 4;
 /// already loads, per the standing rule: a second flag word beside the gates
 /// measured 2.6% on dispatch.
 const GATE_ARITY_DEBUG: u16 = 8;
-/// The four latches below used to be separate `AtomicBool`s, which put FOUR
-/// acquire loads in `iter_inline_ok_for` -- a fused loop's entry test, i.e.
-/// the check every inlined `each`/`map` pays before it may splice. They ride
-/// the gate word for exactly the reason the pending and moved gates do: the
-/// word is loaded once and masked. The ninth gate widened `GATES` to a
-/// `u16` -- a new gate widens the word, never adds a second one.
+/// The four latches below ride the gate word rather than being separate
+/// `AtomicBool`s, which would put FOUR acquire loads in
+/// `iter_inline_ok_for` -- a fused loop's entry test, i.e. the check every
+/// inlined `each`/`map` pays before it may splice. Same reason the pending
+/// and moved gates ride it: the word is loaded once and masked. A new gate
+/// widens the word (`GATES` is a `u16`), never adds a second one.
+///
 /// Some class body's `extend` has not been seated yet, so a class method
 /// materialized from it must not answer and must not be CACHED as the answer.
 ///
@@ -451,10 +452,10 @@ const GATE_LIVE_MASK: u16 =
 /// `GATE_MOVED` alone: a fused body reads its receiver's payload directly
 /// and would iterate a husk's gutted storage instead of raising
 /// `Ractor::MovedError`. [`GATE_ANY_SINGLETONS`] and
-/// [`GATE_ANCESTRY_MUTATED`] used to ride here and are answered per class
-/// now -- `def some_array.each` marks `Array`, an `include` marks the class
-/// it splices into and its descendants -- so a program that puts a singleton
-/// on one unrelated object keeps its fused loops.
+/// [`GATE_ANCESTRY_MUTATED`] are deliberately absent: those are answered per
+/// class -- `def some_array.each` marks `Array`, an `include` marks the
+/// class it splices into and its descendants -- so a program that puts a
+/// singleton on one unrelated object keeps its fused loops.
 const GATE_ITER_BLOCKED: u16 = GATE_MOVED;
 /// What turns an inline cache off no matter WHICH class the site is keyed on
 /// -- [`gates_cache_off`]'s wide half.
@@ -1083,8 +1084,8 @@ fn extend_key(recv: &RubyValue) -> Option<usize> {
 /// [`runtime_singleton_class`]).
 ///
 /// Every heap value, not only an `Object`: `v.singleton_class` has to answer
-/// the SAME object every time, and a `String`/`Array`/`Hash`/`Range` used to
-/// get a fresh one per call -- so `equal?` was false and a `class << str`
+/// the SAME object every time, for a `String`/`Array`/`Hash`/`Range` too --
+/// a fresh one per call would make `equal?` false and a `class << str`
 /// body's ivar read back nil. Identical to [`extend_key`], because the two
 /// answer the same question about the same receiver.
 fn singleton_class_key(recv: &RubyValue) -> Option<usize> {

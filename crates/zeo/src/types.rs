@@ -1,7 +1,7 @@
-//! `TyKind` mirrors the predecessor's `types.h` -- deliberately trimmed
-//! (no `Array`/`Hash`/`Float`/`Bignum` variants yet). See the plan's stated
-//! scope-cut: only `Int` gets a real unboxed native representation for now
-//! (literal arithmetic); everything else uses `RubyValue` (`Poly`)
+//! `TyKind`: the static types the one-pass inference tracks (no
+//! `Array`/`Hash`/`Float`/`Bignum` variants). Only `Int` gets a real
+//! unboxed native representation (literal arithmetic); everything else uses
+//! `RubyValue` (`Poly`)
 //! uniformly. `Object` monomorphization (knowing a receiver's concrete
 //! class) is what drives the static-vs-dynamic dispatch decision in
 //! `codegen`, even though the *value* itself stays boxed either way.
@@ -44,10 +44,8 @@ pub enum TyKind {
     Ractor,
     /// The result of a successful `Regexp#match`/`String#match`. Nothing in
     /// `infer_type_with_locals` itself seeds this; a local holding a match
-    /// result stays `Poly`
-    /// (a documented, narrower-than-`New`/literal-driven inference scope-cut,
-    /// matching this module's existing "no dataflow through arbitrary method
-    /// calls" posture).
+    /// result stays `Poly` (this module does no dataflow through arbitrary
+    /// method calls).
     MatchData,
     Poly,
 }
@@ -77,7 +75,7 @@ pub const FLOAT_RESULT_BINARY_OPS: &[&str] = &["+", "-", "*", "/", "%", "**"];
 /// Whether a REOPENED builtin class overrides `name` for a
 /// receiver of static type `recv_ty` -- the guard every builtin-receiver
 /// result-narrowing arm below must consult: `class String; def length;
-/// "long"; end` makes the old `length -> Int` narrowing unsound (the
+/// "long"; end` makes the builtin `length -> Int` narrowing unsound (the
 /// override's result is whatever it returns, so the call types `Poly`).
 /// Free for un-reopened builtins: their materialized method table is empty.
 pub(crate) fn builtin_override(
@@ -243,9 +241,9 @@ pub fn infer_type_with_locals(
         // (see `parse`'s `New` lowering; a `&block` stays a `Call`, not a
         // `New`) -- it dispatches dynamically through `send_value`, which
         // answers a `RubyValue`, so it must type as `Poly`, not the concrete
-        // class. Typing it `Object(cid)` made a chained method call take the
-        // static struct-method path (`.run(..)`) against a boxed `RubyValue`,
-        // emitting invalid Rust.
+        // class. Typing it `Object(cid)` would make a chained method call
+        // take the static struct-method path (`.run(..)`) against a boxed
+        // `RubyValue`.
         HirNode::Call {
             receiver: Some(_),
             name,
@@ -312,8 +310,8 @@ pub fn infer_type_with_locals(
             },
         },
         // An assignment's own VALUE is the local's binding read back, so it is
-        // unboxed only when the local itself is (`LocalStorage::Shadowed`, i.e.
-        // the whole-scope type is that same class). A local widened to `Poly`
+        // unboxed only when the local itself is (the whole-scope type is
+        // that same class). A local widened to `Poly`
         // -- by a second assignment of another class, or by sitting in a
         // `begin` -- reads back as a `RubyValue`, and claiming `Object` here
         // would have the caller box an already-boxed value.

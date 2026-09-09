@@ -12,7 +12,7 @@
 //!
 //! THE RULE: any thread-local whose value can outlive a call that may reach
 //! `Fiber.yield` belongs in this bundle. `Ec`'s fields are the joined set;
-//! the AUDITED EXEMPTIONS (2026-08-18) are:
+//! the AUDITED EXEMPTIONS are:
 //!
 //! * `dispatch::CURRENT_METHOD` -- the `ZEO_ARITY_DEBUG` attribution
 //!   breadcrumb. Diagnostic-only; a cross-fiber misattribution mislabels a

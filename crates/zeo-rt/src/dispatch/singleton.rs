@@ -124,7 +124,7 @@ fn singleton_walk(recv_class: ClassId) -> Vec<SingletonPos> {
 /// What one position holds for `name`, or nothing.
 ///
 /// The three sources an `Own` position answers from are the three
-/// `send_value_in_reason`'s Class arm probes, minus the copies that are now
+/// `send_value_in_reason`'s Class arm probes, minus the copies that are
 /// positions of their own: `prepended_class_methods` sits ABOVE this position
 /// and the `extend` copies BELOW it, so reading the host's flattened table
 /// here would answer at the wrong place -- and, for a prepended module, would
@@ -237,12 +237,13 @@ pub(crate) fn swap_class_mro_resume(v: Option<ClassResume>) -> Option<ClassResum
 /// onto every class in the chain, and such a copy bakes the class it was
 /// materialized ONTO as its `defining_class` while sitting at the MODULE's
 /// position further down -- `Sub.inspect` runs a copy that says `Base` and
-/// belongs after `NameDSL`. Resuming after `Own(Base)` re-entered the module
-/// and ran its body twice.
+/// belongs after `NameDSL`. Resuming after `Own(Base)` would re-enter the
+/// module and run its body twice.
 ///
 /// So the occupied position is the first one at or after `defining_class`'s
 /// own layer that really answers `name`. When that layer answers itself --
-/// every ordinary `def self.x` -- this is exactly the old rule.
+/// every ordinary `def self.x` -- that is the position after
+/// `defining_class` itself.
 fn class_super_resume(
     walk: &[SingletonPos],
     recv_class: ClassId,

@@ -362,7 +362,7 @@ fn unpack_gems(cached: &[Cached], refresh: bool) -> Result<(), Error> {
             .map_err(|e| Error::new(e.message()))?;
         installed += 1;
     }
-    // A name in the store that the lock no longer resolves would keep serving
+    // A name in the store that the lock does not resolve would keep serving
     // a require nothing pinned. The store is ours to state completely.
     let wanted: std::collections::BTreeSet<&str> =
         cached.iter().map(|g| g.full_name.as_str()).collect();

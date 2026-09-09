@@ -442,11 +442,10 @@ pub fn reserve_regexp_sites(n: u32) -> u32 {
     NEXT_EVAL_SITE.fetch_add(n, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// A NON-INTERPOLATED regexp literal: ONE frozen object per SITE (the
-/// rustc backend's per-site `RegexpSite` static, keyed here by the
-/// emitter-assigned site id). A bad pattern raises `RegexpError` with the
-/// backtrace stamped at the literal -- rustc's `emit_boxed_new` shape
-/// (no cause chaining; that is `raise`'s own semantics).
+/// A NON-INTERPOLATED regexp literal: ONE frozen object per SITE, keyed
+/// by the emitter-assigned site id. A bad pattern raises `RegexpError`
+/// with the backtrace stamped at the literal (no cause chaining; that is
+/// `raise`'s own semantics).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_regexp_lit(
     site: u32,
@@ -552,7 +551,7 @@ fn regexp_encoding(b: u8) -> zeo_abi::RegexpEncoding {
 }
 
 /// The `$~` family: `kind` selects Data(0) / Group(1, `n`) / Pre(2) /
-/// Post(3) / LastGroup(4) -- each the rustc backend's `last_match*` call.
+/// Post(3) / LastGroup(4) -- one entry for the whole `last_match*` family.
 /// Infallible; absent state answers nil.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_last_match_ref(kind: u8, n: usize, out: *mut RubyValue) {

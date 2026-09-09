@@ -247,7 +247,7 @@ fn stage(name: &str, script: &str) -> Result<(), Error> {
 /// the harness, not the program.
 ///
 /// `-it` only when there IS a terminal: the same command runs from a non-tty
-/// caller (CI, an agent), where podman refuses the flag.
+/// caller (CI), where podman refuses the flag.
 fn run_in_container(script: &str, tag: &str) -> Result<i32, Error> {
     let engine = env_or("ZEO_CONTAINER_ENGINE", "podman");
     let mut argv = vec![engine.clone(), "run".into(), "--rm".into()];

@@ -2348,7 +2348,7 @@ mod tests {
 
     /// The two hooks the INHERITED struct protocol (`to_a`, `to_h`, `==`,
     /// `each`, `[]`, `dig`, `deconstruct`, `Marshal`) reads a member by. None
-    /// of those rows lives on `Process::Tms` any more -- they are `Struct`'s,
+    /// of those rows lives on `Process::Tms` -- they are `Struct`'s,
     /// and reaching them needs a class registry, so the goldens cover them and
     /// this covers the bridge.
     #[test]

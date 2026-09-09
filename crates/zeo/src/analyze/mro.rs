@@ -205,20 +205,19 @@ pub fn materialize(
     // DEFINITION rather than once per (class, ancestor, method).
     //
     // `materialize_methods` needs, for every class, the union over its whole
-    // ancestry -- and it used to get there by re-walking each ancestor's bodies
-    // from scratch for every descendant. That is O(classes x visible methods x
-    // HIR nodes), the last superlinear term the entry/definition split left
-    // behind, and on a Rails-sized graph it is millions of node visits with a
-    // `String` compare at each one. The union is a concatenation, so computing
-    // the pieces once and composing them gives the identical answer: see
+    // ancestry. Re-walking each ancestor's bodies from scratch for every
+    // descendant is O(classes x visible methods x HIR nodes), and on a
+    // Rails-sized graph that is millions of node visits with a `String`
+    // compare at each one. The union is a concatenation, so computing the
+    // pieces once and composing them gives the identical answer: see
     // `own_ivars`.
     let own_ivars = own_ivars(compiler);
-    // Interned ONCE per definition and per override row. `materialize_methods`
-    // used to clone each ancestor's override list (String and all) and
-    // re-intern each inherited scope's name for every descendant -- a
-    // per-(class x ancestor x method) String hash that this pair of tables
-    // turns into an index read. The scope set is stable through the loop
-    // below (aliases resolved above are the last scope-minting step).
+    // Interned ONCE per definition and per override row, so
+    // `materialize_methods` reads an index instead of cloning each
+    // ancestor's override list (String and all) and re-interning each
+    // inherited scope's name for every descendant -- a per-(class x
+    // ancestor x method) String hash. The scope set is stable through the
+    // loop below (aliases resolved above are the last scope-minting step).
     let scope_name_ids: Vec<NameId> = {
         let Compiler { scopes, names, .. } = &mut *compiler;
         scopes.iter().map(|s| names.intern(&s.name)).collect()
@@ -322,9 +321,9 @@ pub fn materialize(
     compiler.index_methods();
 
     // The shape of the program the rest of the compiler works over, and the one
-    // number this pass exists to keep small: `entries` is what used to be
-    // `defs` -- one cloned Scope per (class, visible method) -- and the ratio
-    // between them is how much the entry/definition split is buying.
+    // number this pass exists to keep small: `entries` counts (class, visible
+    // method) pairs, and its ratio to the definition count is how much the
+    // entry/definition split is buying.
     let (entries, super_targets) = totals(compiler);
     tracing::info!(
         classes = compiler.classes.len(),
@@ -376,8 +375,8 @@ fn totals(compiler: &Compiler) -> (usize, usize) {
 fn reinfer_local_types(compiler: &mut Compiler) {
     // Infer-all-then-write: `method_local_types` never reads another scope's
     // `local_types` (nothing does until codegen), so the two phases see the
-    // same picture and the per-scope params/body clones the interleaved
-    // mutable write used to force disappear entirely.
+    // same picture and no per-scope params/body clone is needed to satisfy
+    // the borrow checker.
     let all_types: Vec<_> = compiler
         .scopes
         .iter()
@@ -594,19 +593,6 @@ fn resolve_module_functions(compiler: &mut Compiler, class_id: ClassId) -> Resul
     Ok(())
 }
 
-/// One clean rule handles override precedence for prepend/include/plain
-/// inheritance uniformly, with no special-casing: walk `ancestors(class_id)`
-/// in strict MRO order; the FIRST ancestor with an `own_methods` entry for a
-/// given name wins. A prepended module sits BEFORE the class in the list
-/// (so it naturally wins over the class's own definition); an included
-/// module sits AFTER (so the class's own definition naturally wins over
-/// it); plain inheritance is just "nothing closer defines it". Reusing the
-/// SAME `register_method` pipeline an ordinary `def` goes through means a
-/// materialized method's ivars/local-types/bare-block-use are all correctly
-/// (re)computed against `class_id` as the owner, with ZERO aliasing/casting
-/// trick needed (unlike zeo's C "common initial sequence" struct-prefix
-/// hack) -- `self.#ivar` inside it is trivially valid Rust, since the body
-/// is freshly re-typechecked against `class_id`'s own concrete struct.
 /// The `@ivar` names each class's own method bodies touch, in first-encounter
 /// order, indexed by class id.
 ///
@@ -614,8 +600,7 @@ fn resolve_module_functions(compiler: &mut Compiler, class_id: ClassId) -> Resul
 /// class's slot list is the concatenation of its ancestors' lists furthest-first
 /// with duplicates dropped, and dropping the LATER duplicate is what keeps
 /// `ivars(C) == ivars(parent(C)) ++ C's own new names`. Collecting per class in
-/// the same order the old nested walk did, then concatenating, reproduces that
-/// sequence exactly.
+/// body order, then concatenating furthest-first, produces that sequence.
 fn own_ivars(compiler: &Compiler) -> Vec<Vec<String>> {
     compiler
         .classes
@@ -636,6 +621,11 @@ fn own_ivars(compiler: &Compiler) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// One rule handles override precedence for prepend/include/plain
+/// inheritance uniformly: walk `ancestors(class_id)` in strict MRO order,
+/// and the FIRST ancestor with an `own_methods` entry for a name wins. A
+/// prepended module sits BEFORE the class in the list, an included module
+/// AFTER; plain inheritance is just "nothing closer defines it".
 fn materialize_methods(
     compiler: &mut Compiler,
     class_id: ClassId,
@@ -669,9 +659,9 @@ fn materialize_methods(
         if compiler.class(class_id).is_builtin && anc_id == crate::compiler::OBJECT_CLASS {
             continue;
         }
-        // A shared borrow is enough for the whole body now: the name is a
+        // A shared borrow is enough for the whole body: the name is a
         // precomputed `NameId` read, not an intern, so nothing here needs
-        // `&mut` and the old per-ancestor `own_methods` clone is gone.
+        // `&mut` or a per-ancestor `own_methods` clone.
         for sid_ix in 0..compiler.class(anc_id).own_methods.len() {
             let sid = compiler.class(anc_id).own_methods[sid_ix];
             // A `def` under a guard zeo cannot decide contributes nothing to
@@ -712,7 +702,7 @@ fn materialize_methods(
             // copy it. A pristine exception body stays pristine when inherited
             // (`register_exceptions` serves the subclass's too, so codegen
             // skips it), while a reopen/override body propagates as a real
-            // delta onto each descendant -- which is now just the entry
+            // delta onto each descendant -- which is just the entry
             // carrying the definition's own flag.
             let mut entry = entry_for(compiler, name_id, sid, class_id);
             // What this class inherits is the ancestor's ENTRY, whose
@@ -725,12 +715,12 @@ fn materialize_methods(
         }
         // A NATIVE row on this ancestor claims the name too. `Array#none?` and
         // `Array#size` are Rust builtins with no `Scope`, so `Array`
-        // contributes nothing to `own_methods` for them and the walk used to
-        // fall through to the first ancestor that DOES have a user scope --
-        // handing a `module Enumerable; def none?; end` reopen a name `Array`
-        // owns. Ruby puts `Array` first in the ancestry and its own definition
-        // wins, so the claim is exactly the `seen.insert` an `undef` already
-        // performs.
+        // contributes nothing to `own_methods` for them; without this claim
+        // the walk falls through to the first ancestor that DOES have a user
+        // scope -- handing a `module Enumerable; def none?; end` reopen a
+        // name `Array` owns. Ruby puts `Array` first in the ancestry and its
+        // own definition wins, so the claim is exactly the `seen.insert` an
+        // `undef` already performs.
         //
         // AFTER the own-method loop, deliberately: a user REOPEN of the same
         // builtin (`class Array; def none?; end`) is in that ancestor's
@@ -738,7 +728,7 @@ fn materialize_methods(
         //
         // No row is materialized -- the native body is not a `Scope` and the
         // dynamic walk finds it in `class_table(ancestor)` after the
-        // (now absent) `value_method(ancestor)` probe misses.
+        // `value_method(ancestor)` probe misses.
         for name in crate::builtin_surface::surface_for(anc_id)
             .map(|s| s.instance_methods)
             .unwrap_or(&[])
@@ -773,12 +763,11 @@ fn materialize_methods(
     // parent's `ancestors` is a suffix of its child's (MRO keeps the relative
     // order of everything it inherits), reversing is all the property needs.
     //
-    // Nothing consumes that prefix property today. It was the precondition for
-    // the rustc backend's body-sharing pass -- one body serving a base and its
-    // descendants can index a slot by a compile-time constant only if the
-    // base's names sit at the same indices on every one of them -- and that
-    // pass went with the backend. Keeping the layout is what would let a
-    // Cranelift-side pass be written without re-deriving it. Slot ORDER is
+    // Nothing consumes that prefix property today. It is the precondition
+    // for a body-sharing pass -- one body serving a base and its descendants
+    // can index a slot by a compile-time constant only if the base's names
+    // sit at the same indices on every one of them -- so keeping the layout
+    // lets such a pass be written without re-deriving it. Slot ORDER is
     // otherwise unobservable: `instance_variables` and `inspect` report
     // FIRST-ASSIGNMENT order, which `IvarCell`'s per-slot stamp carries
     // independently of the layout.
@@ -925,10 +914,10 @@ fn apply_visibility_overrides(compiler: &mut Compiler, class_id: ClassId) {
 }
 
 /// `scope_name_ids` is the same table `materialize_methods` takes: every
-/// scope's name, interned once for the whole pass. This side used to clone
-/// each ancestor's method list and each scope's name `String`, then re-intern
-/// that name, for every descendant that inherited it -- the per-(class x
-/// ancestor x method) hash the instance side had already been fixed to avoid.
+/// scope's name, interned once for the whole pass, so this side never
+/// clones an ancestor's method list or re-interns a scope's name for every
+/// descendant that inherits it -- the same per-(class x ancestor x method)
+/// hash the instance side avoids.
 fn materialize_class_methods(
     compiler: &mut Compiler,
     class_id: ClassId,
@@ -1003,7 +992,7 @@ fn materialize_class_methods(
                     materialized.push(entry_for(compiler, name_id, sid, class_id));
                 } else {
                     // SHADOWED by a singleton prepend above: this class's own
-                    // `def self.x` is no longer the dispatched method, but the
+                    // `def self.x` is not the dispatched method, but the
                     // prepended module's `super` resolves to it. Keep it as a
                     // super TARGET keyed under this class's OWN id (the
                     // module_instance-side lookup `call_singleton_super_target`
@@ -1056,8 +1045,8 @@ fn materialize_class_methods(
 /// silently allocated fresh, WRONG per-class storage) and bare-constant
 /// ownership (the exact same scheme -- see `const_owner_of` for its extra
 /// lexical/`Object` steps), resolved together: both families' name sets come
-/// out of ONE walk over each class's own bodies, where they previously each
-/// traversed every body in the program. A bare `@@x` or `NAME = ...` written
+/// out of ONE walk over each class's own bodies, not one traversal of every
+/// body in the program per family. A bare `@@x` or `NAME = ...` written
 /// outside any class/module body lives on `Object` (real Ruby stores
 /// top-level constants on `Object` itself), so `main_statements` -- otherwise
 /// never scanned by anything in this module -- seeds it first, making

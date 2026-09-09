@@ -95,8 +95,8 @@ pub fn fusable_block_params(compiler: &Compiler, block: NodeId, max_required: us
 
 /// The DESCEND decision for the hoisting/exception scans: any spliced block
 /// body -- literal shape or typed-site nomination -- shares the enclosing
-/// Rust scope, so its assigned locals hoist there and its loop jumps compile
-/// against labels in that scope. Wider than `is_inline_block_fast_path`
+/// function's frame, so its assigned locals hoist there and its loop jumps
+/// land on blocks in that frame. Wider than `is_inline_block_fast_path`
 /// (see its docs for why the capture scans keep the narrow answer).
 pub fn is_spliced_block_body(
     compiler: &Compiler,

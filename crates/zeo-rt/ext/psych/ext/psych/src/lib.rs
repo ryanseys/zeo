@@ -9,18 +9,16 @@
 //! reproduce Psych's block style, which the yaml-rust2 emitter does not
 //! match.
 //!
-//! This doc used to call four things "documented divergences". THREE OF
-//! THEM WERE BUGS, and they are fixed: an alias resolved to `nil` (silent
-//! data loss), a tag was ignored outright (a wrong type AND a defeated
-//! `safe_load` gate), and a `<<` merge key stayed literal. A
-//! `Psych::SyntaxError` now carries the six marks CRuby's does, and its
-//! message is built the same way -- what still differs is the WORDING
-//! yaml-rust2 and libyaml choose for the same complaint, and the position a
+//! An alias resolves to its anchor, a tag is honoured (both for the type
+//! and for the `safe_load` gate), and a `<<` merge key merges. A
+//! `Psych::SyntaxError` carries the six marks CRuby's does, and its message
+//! is built the same way -- what differs is the WORDING yaml-rust2 and
+//! libyaml choose for the same complaint, and the position a
 //! block-indentation error is attributed to.
 //!
 //! # One tree, three entry points
 //!
-//! Every load now goes through the [`nodes`] tree: the events build it,
+//! Every load goes through the [`nodes`] tree: the events build it,
 //! [`loader`] walks it into Ruby values, and [`tree_api`] mirrors it into the
 //! `Psych::Nodes::*` objects `Psych.parse` answers. `Nodes::Node#to_ruby`
 //! reads those objects back and walks the same walk, so a hand-built tree and

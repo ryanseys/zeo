@@ -631,7 +631,7 @@ fn leading_integer(s: &str) -> Option<i64> {
 /// class/module is `Some(true)`; one the whole program never defines -- not a
 /// `class`/`module` anywhere (`shell_kinds`), never the target of a `NAME = ...`
 /// (`assigned_const_names`) -- is `Some(false)`, which is what lets a branch
-/// depending on a capability zeo doesn't have drop out before it reaches Rust.
+/// depending on a capability zeo doesn't have drop out before codegen.
 ///
 /// Anything in between stays `None`. Both tables are whole-program sweeps taken
 /// BEFORE registration, so the answer doesn't depend on how far the walk has

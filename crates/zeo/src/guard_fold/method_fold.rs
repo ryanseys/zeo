@@ -137,8 +137,8 @@ fn respond_to_fold(
     let m = probe_name(compiler, args)?;
     if let Some(cls) = instance_class(compiler, cref, box_id, receiver) {
         // Walk-time safe: see `compiled_method_in_chain` -- the materialized
-        // table this used to read directly is empty while analyze's own
-        // guard folds still run.
+        // table is empty while analyze's own guard folds still run, so it
+        // cannot be read directly here.
         if let Some(sid) = compiled_method_in_chain(compiler, cls, &m) {
             return Some(compiler.scope(sid).visibility == Visibility::Public);
         }

@@ -573,7 +573,7 @@ impl RubyValue {
             RubyValue::Object(o) => {
                 match crate::dispatch::call_user_method(o, crate::symbol::wk::to_s(), &[]) {
                     Some(v) => v?.display_with(seen)?,
-                    // A value-builtin subclass (D3) with no `to_s` override
+                    // A value-builtin subclass with no `to_s` override
                     // renders as its payload (`Array#to_s` etc.).
                     None => match o.builtin_payload() {
                         Some(p) => p.display_with(seen)?,
@@ -753,7 +753,7 @@ impl RubyValue {
             RubyValue::Object(o) => {
                 match crate::dispatch::call_user_method(o, crate::symbol::wk::inspect(), &[]) {
                     Some(v) => v?.display_with(seen)?,
-                    // A value-builtin subclass (D3) with no `inspect` override
+                    // A value-builtin subclass with no `inspect` override
                     // inspects as its payload (`[1, 2, 3]`).
                     None => match o.builtin_payload() {
                         Some(p) => p.inspect_with(seen)?,
@@ -853,7 +853,7 @@ impl RubyValue {
     /// `send`) needs to become the plain `Symbol` `send`'s own signature
     /// expects. Panics (not silently-wrong) if the value isn't actually a
     /// Symbol at runtime -- this compiler has no static type-checker to catch
-    /// this earlier (see the plan's scope-cut).
+    /// this at compile time.
     pub fn as_symbol_unchecked(&self) -> Symbol {
         match self {
             RubyValue::Symbol(s) => *s,
@@ -866,8 +866,8 @@ impl RubyValue {
     /// once codegen has proven an operand is statically `Int`, this recovers
     /// the native `i64` to hand to `zeo_rt::int_*`. Panics (not
     /// silently-wrong) if that proof was ever unsound -- it shouldn't be
-    /// reachable, but this isn't a real type-checker (see the plan's
-    /// scope-cut), so a loud failure beats a silent one.
+    /// reachable, but this isn't a real type-checker, so a loud failure
+    /// beats a silent one.
     pub fn as_int_unchecked(&self) -> i64 {
         match self {
             RubyValue::Int(i) => *i,
@@ -1137,7 +1137,7 @@ impl RubyValue {
         if let Some(eq) = crate::builtins::numeric::num_eq(self, other) {
             return eq;
         }
-        // A value-builtin subclass (D3) compares by its wrapped payload, so
+        // A value-builtin subclass compares by its wrapped payload, so
         // `Tag.new("a")` equals `"a"` (symmetrically) and two subclass instances
         // with equal payloads are equal -- what structural `==` and Hash-key
         // `eql?` need. A `==` EXPRESSION dispatches a user override first (via
@@ -1405,8 +1405,8 @@ impl RubyValue {
             // `rb_cmp` rather than dispatching `Array#<=>`.
             (RubyValue::Array(a), RubyValue::Array(b)) => {
                 // Per-element lock round-trips: an element's `<=>` can run
-                // user code (never under a lock), and the old whole-array
-                // snapshots allocated two Vecs per comparison -- one per
+                // user code (never under a lock), and a whole-array
+                // snapshot would allocate two Vecs per comparison -- one per
                 // PAIR under a sort.
                 // Same array both sides: 0, without a walk. CRuby answers
                 // 0 here even for elements that do not compare at all
@@ -1512,7 +1512,7 @@ impl RubyValue {
 
     /// `Kernel#freeze`: SHALLOW (sets only this value's own flag, never
     /// recursing into elements -- deep freeze is `Ractor.make_shareable`'s
-    /// job, a later phase), returns self (a cheap handle clone), and is a
+    /// job), returns self (a cheap handle clone), and is a
     /// silent no-op on anything already/always frozen -- all three verified
     /// against CRuby's `rb_obj_freeze` (`object.c:1360`). Fallible because
     /// `Queue`/`SizedQueue` REFUSE to freeze (`cannot freeze #<Thread::Queue:

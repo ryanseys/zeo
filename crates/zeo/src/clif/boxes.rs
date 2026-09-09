@@ -11,7 +11,7 @@ use cranelift_codegen::ir::{InstBuilder, types};
 
 /// The lexical cref chain enclosing the current body, outermost first --
 /// `Compiler::cref_of`'s frozen answer for the emitting class; empty at
-/// the top level (rustc's `Ctx::cref_chain`).
+/// the top level.
 pub(super) fn cref_chain<'a>(fx: &'a Fx) -> &'a [crate::compiler::ClassId] {
     lexical_class(fx)
         .map(|c| fx.an.compiler.cref_of_ref(c))
@@ -57,8 +57,7 @@ pub(crate) fn box_handle(fx: &mut Fx, box_id: u32) -> CResult<Operand> {
 
 /// The class a cref-less constant belongs to: `Object`, or -- inside a BOX
 /// -- the box's own SURROGATE. A box is a copy of MASTER, so its top-level
-/// constants must not land in (or be read from) main's `Object` table;
-/// rustc's `box_top_owner` draws the same line.
+/// constants must not land in (or be read from) main's `Object` table.
 pub(crate) fn box_top(fx: &Fx) -> crate::compiler::ClassId {
     if fx.box_id == 0 {
         return crate::compiler::OBJECT_CLASS;
@@ -71,8 +70,8 @@ pub(crate) fn box_top(fx: &Fx) -> crate::compiler::ClassId {
 
 /// The class a LEXICAL question resolves against: the singleton surrogate
 /// when the body was written in a constant-bearing `class << self`, else the
-/// class the body was WRITTEN in. `Scope::lexical_home`'s rule over rustc's
-/// `cref_chain`, which reads `defining_class`.
+/// class the body was WRITTEN in; `defining_class` is read only when no
+/// `lexical_home` is recorded.
 ///
 /// The owner is the last resort, not the first: a method materialized onto
 /// a subclass or an includer keeps the cref it was written in, so `rescue
@@ -81,8 +80,6 @@ pub(crate) fn lexical_class(fx: &Fx) -> Option<crate::compiler::ClassId> {
     fx.lexical_home.or(fx.defining_class).or(fx.method_class)
 }
 
-/// Resolve a class name against the current cref and BOX (rustc's
-/// `Ctx::resolve_class`).
 /// A compile-time fold under the run-time-redefinition gate: the fold on one
 /// arm, the ordinary dispatch on the other, joined through a temp slot the
 /// way [`if_expr`] joins an `if`. One call to `zeo_rt_is_live` and a branch.
@@ -343,8 +340,8 @@ pub(super) fn box_current(
 /// `Module.nesting` -- the lexical class/module chain at THIS call site,
 /// innermost first. It is compile-time knowledge and nothing else: a builtin
 /// row runs with no view of its caller's lexical scope, so folding here is
-/// the only way to answer anything but `[]` (rustc folds it the same way).
-/// `cref_chain` is outermost-first.
+/// the only way to answer anything but `[]`. `cref_chain` is
+/// outermost-first.
 pub(super) fn module_nesting(
     fx: &mut Fx,
     receiver: Option<NodeId>,

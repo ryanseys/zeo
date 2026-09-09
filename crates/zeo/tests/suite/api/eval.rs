@@ -1,9 +1,6 @@
-//! A run-time `eval`, which zeo COMPILES (plan G6).
+//! A run-time `eval`, which zeo COMPILES.
 //!
-//! Every case carries CRuby's own output. A prism-walking interpreter
-//! answered these until 2026-08-21, as the differential oracle each
-//! widening of the compiled path was measured against; the cases it never
-//! covered say so where they are.
+//! Every case carries CRuby's own output.
 
 use crate::support::{RunResult, run_ruby};
 
@@ -22,10 +19,7 @@ fn agree(source: &str, expected: &str) {
 
 #[test]
 fn a_rescue_clause_binds_inside_the_source() {
-    // The compiler answers CRuby here where the INTERPRETER cannot: a
-    // A `rescue => e` inside an eval is one of the nodes the retired
-    // interpreter never covered. The compiled path lowers it like any
-    // other body.
+    // A `rescue => e` inside an eval lowers like any other body.
     let source = r#"
         rescued = "begin; Integer('x'); rescue ArgumentError => e; e.class; end"
         p eval(rescued)
@@ -37,8 +31,7 @@ fn a_rescue_clause_binds_inside_the_source() {
 fn a_def_installs_at_its_document_position() {
     // `CompileMode::Eval` registers nothing, so the `def` reaches the
     // emitter's run-time install arm -- and installs PRIVATE on Object,
-    // which is what a top-level `def` is. The retired interpreter got the
-    // visibility wrong here (it answered `false`).
+    // which is what a top-level `def` is.
     let source = r#"
         src = "def evaled; 41 + 1; end; evaled"
         p eval(src)
@@ -65,8 +58,7 @@ fn a_block_in_the_source_writes_the_callers_local() {
     // it could not see the caller's declaration. The name the eval's own
     // scope holds came from the Binding, so the caller assigned it first
     // and ruby shares it -- both the capture and the per-invocation nil
-    // fill have to agree about that -- a shape the retired interpreter
-    // never covered (a block with a parameter inside an eval).
+    // fill have to agree about that.
     let source = r#"
         total = 5
         src = "[1,2].each { |x| total += x }; total"
@@ -80,9 +72,7 @@ fn a_block_in_the_source_writes_the_callers_local() {
 fn defined_calls_a_callers_local_a_local() {
     // prism could only call it a vcall (it parsed the snippet alone), so
     // `defined?` reported an undefined method for a name the caller
-    // holds. The retired interpreter answered `nil` here; CRuby and the
-    // compiler agree
-    // on "local-variable".
+    // holds. CRuby and the compiler agree on "local-variable".
     let source = r#"
         loc = 5
         here = "defined?(loc)"

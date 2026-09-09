@@ -4,12 +4,10 @@ use crate::support::{compile_project, run_ruby};
 // variables, minimal raise/exception foundation -- oracle-verified against
 // real `ruby` first, per this project's established convention.
 
-// --- Bugs found via a comprehensive sweep (fixed, not deferred) ---
+// --- Defects found by a sweep over adjacent constructs ---
 //
-// Found by testing constructs adjacent to earlier work, not
-// by design review -- each is a real, previously-undetected defect, not a
-// documented scope-cut. Every test here was run against real `ruby` first,
-// per this project's established convention.
+// Every test here was run against real `ruby` first, per this project's
+// established convention.
 
 // -- Correctness fixes (reopening, bare-super forwarding, cycle
 // guards, dup/clone). Every positive expectation below is oracle-verified

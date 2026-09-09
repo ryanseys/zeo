@@ -232,7 +232,7 @@ pub(crate) fn run_gem_precompile() -> Result<(), MainError> {
         .current_dir(&dir)
         .status()
         .map_err(|e| format!("running the gem build: {e}"))?;
-    // The artifact travels INSIDE the .gem now; the loose copy goes.
+    // The artifact travels INSIDE the .gem; the loose copy goes.
     let _ = std::fs::remove_file(&artifact);
     let _ = std::fs::remove_dir(dir.join("zeo"));
     if !status.success() {

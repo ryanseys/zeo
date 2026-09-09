@@ -1,12 +1,9 @@
-//! The minimal analyze pass: walks the top-level `Hir::Program` statements
-//! once (no fixpoint loop -- see the plan's stated scope-cut) and registers
-//! every `ClassDef`/`DefMethod` into a `Compiler`, mirroring zeo's
-//! `walk_scope`/`register_locals`/`resolve_parents` (a tiny slice of them).
-//! Structured as a single pass function rather than the predecessor's
-//! 128-iteration fixpoint loop because nothing yet needs mutual
-//! recursion between inference results -- but the shape (one function that
-//! walks the whole program and mutates a `Compiler`) is exactly what a real
-//! fixpoint would wrap in `for iter in 0..128 { ... }` later.
+//! The analyze pass: walks the top-level `Hir::Program` statements once (no
+//! fixpoint loop) and registers every `ClassDef`/`DefMethod` into a
+//! `Compiler`. A single pass function because nothing needs mutual recursion
+//! between inference results -- but the shape (one function that walks the
+//! whole program and mutates a `Compiler`) is exactly what a fixpoint would
+//! wrap in `for iter in 0..N { ... }`.
 
 pub(crate) mod captures;
 pub(crate) mod class_query;
@@ -518,9 +515,8 @@ fn mark_inline_iter_sites(
     /// param counts it can bind.
     ///
     /// One table, two consumers: `scan` nominates from it and the suppression
-    /// pass below filters by it. They used to be a match and a hand-written
-    /// `Vec` of `reopened(..) || reopened(..)` unions -- two lists of the same
-    /// twelve methods, which is exactly the shape that drifts.
+    /// pass below filters by it. Two lists of the same twelve methods would
+    /// be exactly the shape that drifts.
     struct Fused {
         kind: InlineIterKind,
         ty: TyKind,
@@ -1004,8 +1000,8 @@ mod tests {
             .unwrap_or_else(|| panic!("class `{name}` not registered"))
     }
 
-    /// Reopening merges into ONE `ClassInfo` (an earlier version pushed a
-    /// shadowed duplicate whose members never dispatched).
+    /// Reopening merges into ONE `ClassInfo`; a shadowed duplicate would
+    /// carry members that never dispatch.
     #[test]
     fn reopening_merges_into_the_existing_class() {
         let a = analyze_src(

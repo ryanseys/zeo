@@ -2,15 +2,14 @@
 //! extension is built FROM ITS OWN SOURCE through zeo's C-API route and run
 //! against the answer ruby 4.0.6 recorded for the same program.
 //!
-//! This is the C-API's health gate. `docs/reference/limitations.md` names it; until
-//! this file existed nothing performed it, and the API's only runtime
-//! evidence was 69 lines of purpose-built test C.
+//! This is the C-API's health gate. `docs/reference/limitations.md` names
+//! it.
 //!
 //! Per gem: `crates/zeo/tests/fixtures/capi_sweep/<gem>/smoke.rb` is a short
 //! program hitting the gem's C entry points, and `smoke.expected` beside it
 //! is ruby's stdout, recorded by `cargo xtask capi-sweep bless <gem>` under
 //! the same `Gemfile.lock`. zeo runs the program with its own copy of the
-//! library RETIRED (`ZEO_DISABLE_BUILTIN`) and the store gem resolving, so
+//! library DISABLED (`ZEO_DISABLE_BUILTIN`) and the store gem resolving, so
 //! the `require` reaches the gem's `extconf.rb`, `cc`, `dlopen` and `Init_`.
 //!
 //! A pass needs three things at once: exit 0, byte-identical stdout, and

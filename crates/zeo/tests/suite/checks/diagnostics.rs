@@ -33,24 +33,17 @@ fn a_parse_failure_renders_without_an_excerpt() {
     insta::assert_snapshot!(render(err));
 }
 
-/// Every construct the Cranelift emitter used to refuse now compiles.
+/// Constructs the Cranelift emitter must compile, never refuse.
 ///
-/// This test replaced `an_unsupported_construct_is_an_error_not_a_panic`,
-/// which asserted that a refusal renders as a typed diagnostic rather than a
-/// panic. That test had to be pointed at a LIVE refusal, and it was re-pointed
-/// four times on 2026-08-21 as each one was fixed -- at which point no
-/// reachable user-facing emitter refusal was left to point it at. Every
-/// `Fx::unsupported` site that remains guards an internal invariant (a
-/// non-literal block where the walk proves one is literal, a marker shape
-/// `lower::ffi` always writes) or a construct ruby itself rejects.
-///
-/// So the coverage moves from "a refusal reports well" to "these do not
-/// refuse". The lowering stage still proves the first, in the two tests
-/// below.
+/// No reachable user-facing emitter refusal exists: every `Fx::unsupported`
+/// site guards an internal invariant (a non-literal block where the walk
+/// proves one is literal, a marker shape `lower::ffi` always writes) or a
+/// construct ruby itself rejects. So the coverage here is "these do not
+/// refuse"; the lowering stage proves "a refusal reports well" in the two
+/// tests below.
 #[test]
 fn every_shape_the_emitter_once_refused_now_compiles() {
     for (what, src) in [
-        // Refused by the retired rustc emitter only; CLIF always lowered it.
         (
             "safe navigation on a class method",
             "class F\n  def self.b = 1\nend\np F&.b\n",
@@ -84,11 +77,11 @@ fn every_shape_the_emitter_once_refused_now_compiles() {
 /// file that spells it.
 #[test]
 fn an_analyze_error_is_coded_with_its_stage() {
-    // A singleton-class `prepend` of a module carrying the hook. Two probes
-    // have retired from this slot: a kind collision (ruby RAISES on one, so
-    // it compiles into that raise now) and subclassing a built-in class
-    // (every built-in class is subclassable now -- see
-    // `zeo_abi::NOT_PAYLOAD_ROOTS`).
+    // A singleton-class `prepend` of a module carrying the hook. Neither a
+    // kind collision (ruby RAISES on one, so it compiles into that raise)
+    // nor subclassing a built-in class (every built-in class is
+    // subclassable -- see `zeo_abi::NOT_PAYLOAD_ROOTS`) is a refusal, so
+    // neither can serve as the probe.
     let err = zeo::check_program_with(
         "module M\n  def self.prepend_features(base)\n    super\n  end\nend\nclass K\n  class << self\n    prepend M\n  end\nend\n",
         &Default::default(),
@@ -99,11 +92,11 @@ fn an_analyze_error_is_coded_with_its_stage() {
 
 /// A class-body statement gets a frame of its OWN, so a rejection raised while
 /// lowering it names that line rather than the enclosing `class`/`module`
-/// header. The FFI directives are the case that made it necessary: they never
-/// reach `lower_node` (nor `lower_class_body_statement`), so every one of the
-/// ledger's FFI rows used to point at `module Native`, and triaging them
-/// meant re-parsing the files to recover what they said. (A computed
-/// `ffi_lib` no longer rejects -- it defers to class-body time -- so the
+/// header. The FFI directives are the case that needs it: they never reach
+/// `lower_node` (nor `lower_class_body_statement`), so without the frame
+/// every FFI rejection would point at `module Native`, and triaging one
+/// would mean re-parsing the file to recover what it said. (A computed
+/// `ffi_lib` does not reject -- it defers to class-body time -- so the
 /// probe is an `attach_function` naming an undeclared type.)
 #[test]
 fn a_class_body_directive_names_its_own_line() {

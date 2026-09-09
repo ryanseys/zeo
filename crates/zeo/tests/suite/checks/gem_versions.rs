@@ -35,8 +35,8 @@ const NO_SOURCE: &[&str] = &["monitor", "pty", "socket"];
 /// and what `ZEO_DISABLE_BUILTIN` makes it possible to run.
 ///
 /// Exempt from the equality, NOT from the lock: each still has to appear
-/// there, so a name that stops being released is still caught. Which of these
-/// zeo keeps is task #116; every one that goes drops a row from here.
+/// there, so a name that stops being released is still caught. Every one
+/// that goes drops a row from here.
 const REIMPLEMENTED: &[&str] = &["psych", "strscan"];
 
 /// Every `name (version)` in the lock's `specs:` block. A gem resolved for

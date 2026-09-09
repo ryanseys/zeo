@@ -252,7 +252,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     //
     // Multiple statements (`(a; b)`) lower to a `Seq`: evaluate each in
     // order, answer the last. That is exactly `Seq`'s existing codegen (one
-    // tail-value Rust block expression), and it needs no scope of its own --
+    // tail-value block), and it needs no scope of its own --
     // a local assigned inside leaks out, oracle-verified: `y = (a = 5; a *
     // 2)` leaves `a == 5` visible afterwards, so these are ordinary
     // statements in the enclosing scope, not a nested one.

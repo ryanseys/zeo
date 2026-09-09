@@ -149,7 +149,7 @@ pub(crate) enum BodyTail {
     /// The body fn computes it: its last statement IS an expression.
     Own,
     /// Analyze CONSUMED the body's last source statement, so the emitted
-    /// statements no longer end where ruby's value comes from -- a `def`
+    /// statements do not end where ruby's value comes from -- a `def`
     /// answers its name, `private_constant` the module it hid it on.
     Sym(String),
     OwnClass,
@@ -485,10 +485,10 @@ pub(super) fn collect_reopen_flags(em: &mut Emitter, analyzed: &Analyzed) {
     // A LAZY unit's file gets a flag too, MARKED as a unit's. Its body runs
     // on require rather than at a document position this compile can point
     // at, so a unit that is never required leaves the byte at zero for the
-    // whole program. That used to turn a working reopen into `undefined
-    // method`, which is why the flag was skipped -- and skipping it made
-    // rubygems' `def require` live from BOOT, before the `module Kernel`
-    // body that declares the constant it reads.
+    // whole program. A plain flag would turn a working reopen into
+    // `undefined method`, and no flag at all would make rubygems' `def
+    // require` live from BOOT, before the `module Kernel` body that
+    // declares the constant it reads.
     //
     // A unit's flag reads the other way instead: at zero, forward to the
     // native row IF THERE IS ONE, and otherwise run the body. A name the

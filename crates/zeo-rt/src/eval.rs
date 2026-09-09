@@ -1,24 +1,21 @@
 //! Runtime string `eval`, and the seam it reaches the compiler through.
 //!
 //! A snippet is COMPILED, by the same front end and the same Cranelift
-//! emitter a whole program is (plan G6). The compiler cannot be a plain
+//! emitter a whole program is. The compiler cannot be a plain
 //! dependency -- the runtime must not depend on it -- so the runtime
 //! declares the seam here and the `zeo` library reaches down and fills it
 //! through [`install`]. An AOT program carries the installer only when it
 //! can eval at all, which is what lets the linker drop the compiler from
 //! every program that cannot.
 //!
-//! There is no second implementation of Ruby behind this any more. A
-//! prism-walking interpreter answered here until 2026-08-21, as the
-//! differential oracle each widening of the compiled path was measured
-//! against; what it declined, it declined LOUDLY, and so does this.
+//! There is no second implementation of Ruby behind this. What the
+//! compiler declines, it declines LOUDLY.
 
 pub use crate::builtins::binding::RBinding;
 use crate::{RubyValue, Signal};
 use std::sync::OnceLock;
 
-/// Everything an evaluator needs about one `eval` call. Mirrors the
-/// interpreter's own `Env`, which is what proves the list is complete.
+/// Everything an evaluator needs about one `eval` call.
 pub struct EvalRequest<'a> {
     /// The source text.
     pub src: &'a str,

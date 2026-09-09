@@ -169,8 +169,8 @@ pub unsafe extern "C" fn zeo_rt_ffi_invoke(
         unsafe { std::slice::from_raw_parts(argv, argc) }
     };
     // This frame is `extern "C"`: a Rust panic reaching it aborts the
-    // process ("panic in a function that cannot unwind"), which is how an
-    // FFI marshaling bug used to end a program instead of raising. Caught
+    // process ("panic in a function that cannot unwind"), so an FFI
+    // marshaling bug would end the program instead of raising. Caught
     // here, it is the RuntimeError the Ruby caller can rescue.
     let call = std::panic::AssertUnwindSafe(|| unsafe {
         invoke(&*desc, addr as *const std::os::raw::c_void, args)
@@ -514,7 +514,7 @@ unsafe fn sub_types(ty: &FfiTypeC) -> &'static [FfiTypeC] {
 
 /// Every by-value struct descriptor this program has already converted,
 /// keyed by its `.rodata` address. [`crate::ffi::marshal_struct`] wants a
-/// `&'static [FfiElem]` (the rustc backend hands it a `const` slice), so
+/// `&'static [FfiElem]`, so
 /// the converted list is leaked -- once per DESCRIPTOR, of which a program
 /// has as many as it has by-value struct positions.
 #[cfg(feature = "ext-ffi")]

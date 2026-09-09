@@ -1,8 +1,8 @@
 use super::*;
 
 /// A single multi-assignment target slot (`a, b = ...`'s `a`/`b`, or a
-/// nested `(a, b), c = ...`'s `(a, b)`) -- generalizes the original
-/// plain-local-only shape to every real Ruby assignment target kind, mirrored
+/// nested `(a, b), c = ...`'s `(a, b)`) -- every real Ruby assignment
+/// target kind, mirrored
 /// directly from `MultiWriteNode`/`MultiTargetNode`'s own recursive
 /// `lefts`/`rest`/`rights` grammar (see `MultiTargetGroup`). `Call` covers
 /// BOTH `obj.attr = ...` and `arr[i] = ...` targets uniformly: both are
@@ -15,7 +15,7 @@ use super::*;
 /// the call lowering (`clif/call.rs`) already provides for every other call,
 /// with no bespoke attr/index-write codegen of its own.
 /// See `lower/assign.rs`'s `lower_multi_target`.
-// `Clone` because `Params` is `Clone` and now carries destructuring groups
+// `Clone` because `Params` is `Clone` and carries destructuring groups
 // (`Params::destructures`); the targets themselves are small, owned data.
 #[derive(Debug, Clone)]
 pub enum MultiTarget {

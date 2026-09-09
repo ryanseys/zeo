@@ -1,5 +1,5 @@
-//! `begin/rescue/else/ensure/retry` -- the landing-chain lowering (plan
-//! §1.4). The begin body lowers against its OWN landing; a `Raise` is
+//! `begin/rescue/else/ensure/retry` -- the landing-chain lowering. The
+//! begin body lowers against its OWN landing; a `Raise` is
 //! taken, pooled, and matched against the clause chain (`$!` bracketed per
 //! clause); everything else propagates outward. An `ensure` body runs
 //! inline on the normal path and under the signal-save bracket on the
@@ -209,8 +209,8 @@ pub(crate) fn lower_begin(
         // (CRuby: the newer signal wins), propagate its own.
         fx.b.switch_to_block(propagate);
         // `Signal::Terminate` (fiber/enumerator teardown) SKIPS the user
-        // ensure body: the old force-unwind ran no ruby `ensure` either, and
-        // the whole point of the teardown signal is that only releases run.
+        // ensure body: the whole point of the teardown signal is that only
+        // releases run.
         {
             use cranelift_codegen::ir::condcodes::IntCC;
             let kind = fx.call_status("zeo_rt_signal_kind", &[]);

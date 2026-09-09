@@ -31,7 +31,7 @@ mod oracle;
 #[allow(dead_code)]
 mod suites;
 
-/// The names the test modules grew up with.
+/// The names the test modules use for the shared helpers.
 mod paths {
     pub use crate::common::{profile_dir, runtime_archive, workspace_root};
 

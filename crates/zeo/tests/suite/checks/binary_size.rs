@@ -10,13 +10,8 @@ use std::process::Command;
 
 use crate::paths::workspace_root;
 
-/// The committed size of `puts 1`, in bytes of the whole binary. Re-recorded
+/// The committed size of `puts 1`, in bytes of the whole binary. Measured
 /// 2026-09-01 on aarch64-apple-darwin, release profile.
-///
-/// It moved -1,462,320 from the 7,974,792 recorded on 2026-08-27, the day
-/// Oniguruma became the only regex engine and the `regex` and `fancy-regex`
-/// crates left the runtime. The 2026-08-27 figure itself carried +465,072 of
-/// UNATTRIBUTED drift from 2026-08-24 (the gate was not run in between).
 const SIZE_BASELINE: u64 = 6_512_472;
 
 /// Allowed drift. Wide enough that a toolchain bump does not fail the gate,
@@ -108,6 +103,6 @@ fn a_linked_binary_stays_within_the_size_baseline() {
         drift <= TOLERANCE,
         "`puts 1` links to {bytes} bytes, {drift} from the {SIZE_BASELINE} baseline \
          (tolerance {TOLERANCE}). If this is intended, move SIZE_BASELINE in \
-         crates/zeo/tests/checks/binary_size.rs and say why in the commit."
+         crates/zeo/tests/suite/checks/binary_size.rs and say why in the commit."
     );
 }

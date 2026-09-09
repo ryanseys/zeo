@@ -286,11 +286,10 @@ pub(crate) fn try_lower(
 /// end
 /// ```
 ///
-/// which emitted a method body naming `original_warn` and stopped bundler at
-/// rustc with E0425. A capturing block falls through to the generic call
-/// instead, where `Module#define_method` installs a real closure -- the same
-/// path a `define_method` inside a method body already took, and the reason
-/// that one always worked.
+/// where a compiled method body naming `original_warn` has nothing to bind
+/// it to. A capturing block falls through to the generic call instead,
+/// where `Module#define_method` installs a real closure -- the same path a
+/// `define_method` inside a method body takes.
 ///
 /// Prism answers this directly: a local-variable node carries the number of
 /// scopes it reaches UP, and only `Block`/`Lambda` share the chain -- a
@@ -451,15 +450,13 @@ pub(super) fn lower_call_node(
                 .is_some_and(|c| String::from_utf8_lossy(c.name().as_slice()) == "Kernel"))
     });
 
-    // The arm chain, in the order the old single-function body ran it --
-    // load-bearing, do not sort:
+    // The arm chain. Its order is load-bearing, do not sort:
     // - every arm reads the REBOUND `receiver` above (only `lower_new_call`
     //   spells `call.receiver()`, which is identical for `new`);
     // - `lower_send_rewrite` sits before the direct `block_given?` family:
     //   it recognizes the literal-symbol `send(:block_given?)` spellings of
-    //   the same caller-scope queries (historically it REBOUND `name` and
-    //   fell through to them; today each recognized shape answers directly,
-    //   so `name` is never rewritten);
+    //   the same caller-scope queries (each recognized shape answers
+    //   directly, so `name` is never rewritten);
     // - `lower_require_call` is non-terminal for a dynamic/kept target, and
     //   `lower_autoload` ALWAYS falls through: both record loader side
     //   effects, then the call reaches the generic lowering and the runtime

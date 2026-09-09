@@ -22,7 +22,7 @@ pub struct BacktraceLocation {
     /// The method this frame INVOKED, when the builder could determine it.
     ///
     /// No Ruby row reads it, and CRuby's `Location` has none either -- a
-    /// public row here would be a census divergence. It exists for
+    /// public row here would be a surface divergence. It exists for
     /// `RubyVM::AbstractSyntaxTree.node_id_for_backtrace_location`, whose
     /// rule needs it: a location's node is the CALL at (path, lineno) whose
     /// NAME is the method that location invoked, and a location alone cannot

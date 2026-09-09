@@ -30,8 +30,8 @@ fn tracked_files() -> Vec<String> {
 /// corrupts a non-UTF-8 semantic operation. The audit moves sites onto
 /// byte-aware paths one at a time, so the count may only go DOWN.
 ///
-/// Re-baselined once, 2026-07-31 (211 -> 279): the openssl, zlib, socket,
-/// ffi, date and bigdecimal extensions each brought display paths with them.
+/// The openssl, zlib, socket, ffi, date and bigdecimal extensions each carry
+/// display paths of their own, which the count includes.
 /// The number does not measure the harm -- it counts comments, asserts and
 /// the definition, and misses `chars()` and `char_vec()`, which decode the
 /// same way. `test/gaps/` is the real record; this is a backstop against

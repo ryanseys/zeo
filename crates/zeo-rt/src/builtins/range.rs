@@ -1,7 +1,6 @@
-//! `Range` (CRuby range.c) -- stage B: the `each` primitive Enumerable
-//! drives (migrated), plus `===`/`cover?`/`include?`-family over the shared
-//! `range_covers` (the `Range#===` fix that makes `case x when 1..5` real).
-//! The remaining Tier A rows land in stage E.
+//! `Range` (CRuby range.c): the `each` primitive Enumerable drives, the
+//! `===`/`cover?`/`include?` family over the shared `range_covers` (what
+//! makes `case x when 1..5` real), and the rest of the instance surface.
 
 use std::sync::Arc;
 

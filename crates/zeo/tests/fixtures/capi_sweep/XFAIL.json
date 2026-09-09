@@ -10,6 +10,6 @@
   "psych": "the store gem's psych.rb dies in `Psych.config` with `uninitialized constant Psych::Config` -- a constant defined inside `class << self` behind `if defined?(Ractor)` on the store road (a loader/compiler defect, not the C-API); `Date::VERSION` is also initialized twice",
   "rbs": "every answer matches ruby, then the process dies with SIGSEGV at exit -- teardown of the extension's TypedData objects",
   "stringio": "`zeo cannot hand a Integer to a C extension yet: it has no established RUBY_T_* tag` (NotImplementedError) at the first StringIO call",
-  "strscan": "`rb_reg_onig_match is not implemented by zeo` -- the onig regex_t family is refused by decision (Part IV D3: pure strscan is the answer)",
+  "strscan": "`rb_reg_onig_match is not implemented by zeo` -- the onig regex_t family is refused: the pure-Ruby strscan is the answer",
   "zlib": "`zeo cannot hand a Integer to a C extension yet: it has no established RUBY_T_* tag` (NotImplementedError) at the first Zlib call"
 }

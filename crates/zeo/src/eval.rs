@@ -19,8 +19,8 @@ use zeo_rt::eval::{EvalCompiler, EvalFn, EvalRequest};
 use zeo_rt::{RubyValue, Signal};
 
 /// Install this compiler as the runtime's evaluator. Called by the `zeo`
-/// binary at startup, and (G6-3) by an emitted program whose
-/// `ProgramDesc` carries the installer.
+/// binary at startup, and by an emitted program whose `ProgramDesc`
+/// carries the installer.
 pub fn install() {
     zeo_rt::eval::install(&Jit);
     // The same compiler, reached from the load path: a file the front end
@@ -175,12 +175,12 @@ impl From<String> for Refusal {
     }
 }
 
-/// A codegen refusal's text exactly as the raised `NotImplementedError`
-/// has always carried it: the location the error's span points at
-/// re-appended as ` ({file}:{line})`. The emitter no longer writes the
-/// location into the message -- it travels as a span -- so the one
-/// boundary that turns the error into a Ruby exception restores it here,
-/// where the compiler's file table is still alive.
+/// A codegen refusal's text as the raised `NotImplementedError` carries
+/// it: the location the error's span points at re-appended as
+/// ` ({file}:{line})`. The emitter does not write the location into the
+/// message -- it travels as a span -- so the one boundary that turns the
+/// error into a Ruby exception adds it here, where the compiler's file
+/// table is still alive.
 fn located_message(
     err: crate::diagnostics::clif::CodegenError,
     analyzed: &crate::analyze::Analyzed,
@@ -418,6 +418,9 @@ fn build(inputs: &BuildInputs) -> Result<Compiled, Refusal> {
     let program = crate::clif::eval::compile(&analyzed, &spec)
         .map_err(|e| Refusal::NotCompiled(located_message(e, &analyzed)))?;
     if let Some(init) = program.unit_init {
+        // SAFETY: `unit_init` is the finalized address of a function the
+        // emitter declared `extern "C" fn()`, in JIT memory the compiled
+        // program keeps alive for as long as it is registered.
         let init: unsafe extern "C" fn() = unsafe { std::mem::transmute(init) };
         unsafe { init() };
     }
@@ -431,7 +434,7 @@ fn build(inputs: &BuildInputs) -> Result<Compiled, Refusal> {
 
 /// The shapes that would lower without complaint and be WRONG in a
 /// snippet, because their lowering reads a decision only a whole-program
-/// compile makes. Each is a widening this compiler owes (G6-1/G6-2).
+/// compile makes. Each is a widening this compiler owes.
 fn refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
     scope_refusals(analyzed)
 }
@@ -503,7 +506,7 @@ fn def_bodies(hir: &crate::hir::Hir) -> crate::compiler::FSet<crate::hir::NodeId
 
 /// The shapes that are wrong ANYWHERE in a snippet, `def` bodies
 /// included: their lowering reads a decision only a whole-program compile
-/// makes. Each is a widening this compiler owes (G6-1/G6-2).
+/// makes. Each is a widening this compiler owes.
 fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
     let compiler = &analyzed.compiler;
     // `CompileMode::Eval` registers nothing, so nothing can be hoisted
@@ -566,6 +569,9 @@ fn run(req: &EvalRequest<'_>, c: &Compiled) -> Result<RubyValue, Signal> {
         Some(b) => c.cells.iter().map(|n| b.local_cell_ptr(n)).collect(),
         None => Vec::new(),
     };
+    // SAFETY: `entry` is the finalized address of the snippet's entry
+    // function, emitted with exactly `EvalFn`'s signature, in JIT memory
+    // that lives as long as the `Compiled` that holds it.
     let f: EvalFn = unsafe { std::mem::transmute(c.entry) };
     let answer = unsafe { zeo_rt::eval::call(req, f, &cells) };
     for cell in cells {

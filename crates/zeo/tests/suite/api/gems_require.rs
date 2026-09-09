@@ -103,8 +103,8 @@ fn gem_compat_classifies_each_locked_gem() {
 
 #[test]
 fn autoload_with_a_dynamic_feature_defers_to_the_runtime_row() {
-    // A target the compile-time splice cannot name is no longer a rejection:
-    // it lowers to a real `Module#autoload` call, which resolves the string the
+    // A target the compile-time splice cannot name is not a rejection: it
+    // lowers to a real `Module#autoload` call, which resolves the string the
     // program actually builds against the load path compiled in for it
     // (`zeo_rt::features`). Compiling is the assertion -- what the call then
     // finds is covered by `tests/autoload_dsl_computes_its_own_path.rb`.
@@ -179,9 +179,8 @@ fn ripper_is_declined_and_the_load_error_says_so() {
     assert_eq!(rescued.stdout, "no ripper\n");
 
     // The alternative the message points at is real and covered by the gem
-    // probe (`require "prism"` compiles as a probed gem; its whole-graph
-    // golden was retired from the suite). Not re-asserted here: it pulls the
-    // gem, which cost this test minutes.
+    // probe (`require "prism"` compiles as a probed gem). Not re-asserted
+    // here: it pulls the gem, which costs this test minutes.
 }
 
 #[test]
@@ -419,7 +418,7 @@ fn the_root_gem_outranks_an_alphabetically_earlier_provider() {
 
 #[test]
 fn strict_mode_restores_the_ambiguity_error() {
-    // `ZEO_DEBUG=strict-ambiguous-require` keeps the old hard error for
+    // `ZEO_DEBUG=strict-ambiguous-require` makes ambiguity a hard error for
     // callers who want squatting surfaced loudly. Safe to set here: nextest
     // runs each test in its own process.
     unsafe { std::env::set_var("ZEO_DEBUG", "strict-ambiguous-require") };
@@ -481,11 +480,9 @@ fn base64_package_matches_real_ruby() {
     );
 }
 
-// (Removed: `native_crate_is_linked_only_when_its_package_is_required` and
-// `native_func_arity_is_checked_at_compile_time` -- both asserted the retired
-// native-DSL linking behavior for `base64`, which is now an in-tree `ext/`
-// module. `base64_package_matches_real_ruby` above now validates the in-tree
-// path, and arity is enforced at runtime via `arity!` -> ArgumentError.)
+// `base64` is an in-tree `ext/` module. `base64_package_matches_real_ruby`
+// above validates that path, and `arity!` enforces arity at runtime with an
+// ArgumentError.
 
 // ---- The set pure-Ruby package + the dispatch fixes it forced ----
 
@@ -547,15 +544,15 @@ fn set_package_matches_real_rubys_core_set() {
 
 /// The clean rejections: an expression-position `Ruby::Box.new` (a box
 /// nothing could reference) and box operations outside their recognized
-/// positions. (`.current`/`.enabled?` are ordinary runtime calls now that
-/// the class carries real rows; a non-literal `box.eval` source is NOT
+/// positions. (`.current`/`.enabled?` are ordinary runtime calls, since the
+/// class carries real rows; a non-literal `box.eval` source is NOT
 /// rejected here -- it routes to the runtime `eval`, so a non-string
 /// source is a catchable runtime `TypeError`, exactly like `Kernel#eval`;
 /// see `box_eval_dynamic_source_routes_through_the_vm`. Two shapes that
-/// used to be rejected here compile now: an expression-position literal
-/// `box.eval` defining a class (the registration walk descends every
-/// container), and an expression-position `box.require` (which reaches the
-/// box's own run-time load path).)
+/// compile: an expression-position literal `box.eval` defining a class
+/// (the registration walk descends every container), and an
+/// expression-position `box.require` (which reaches the box's own run-time
+/// load path).)
 #[test]
 fn ruby_box_rejections_are_clean_errors() {
     // An expression-position `.new` compiles to a dynamic send and raises
@@ -567,22 +564,20 @@ fn ruby_box_rejections_are_clean_errors() {
         result.stdout,
         "Ruby Box is disabled. Set RUBY_BOX=1 environment variable to use Ruby::Box.\n"
     );
-    // An expression-position `box.require` used to be a compile-time
-    // rejection. It compiles now -- the ordinary send reaches the box's own
-    // run-time load path -- and a target that resolves to nothing is the
-    // `LoadError` it would be in ruby.
+    // An expression-position `box.require` compiles: the ordinary send
+    // reaches the box's own run-time load path, and a target that resolves
+    // to nothing is the `LoadError` it would be in ruby.
     zeo::check_program("box = Ruby::Box.new\nx = [box.require(\"f\")]\n")
         .expect("an expression-position box.require reaches the run-time load path now");
-    // The once-rejected expression-position class-defining eval splice.
+    // The expression-position class-defining eval splice.
     zeo::check_program("box = Ruby::Box.new\nv = box.eval(\"class X; end\")\n")
         .expect("a literal box.eval defining a class registers and compiles now");
 }
 
-// --- G0 FAIL_RUSTC sweep: Object-boxing + emission fixes ---------------
+// --- Object-boxing + emission fixes ---------------------------------------
 //
-// Each of these reproduces a generated-Rust compile failure (FAIL_RUSTC)
-// found by the conformance corpus: zeo accepted the program but
-// emitted ill-typed Rust.
+// Each of these reproduces a program the conformance corpus found that
+// zeo accepted but lowered wrongly.
 
 // ---- gems with two halves: a native half plus a Ruby half ----
 
@@ -598,11 +593,9 @@ fn ruby_box_rejections_are_clean_errors() {
 
 // A library ONLY a method body requires compiles in as a LAZY UNIT: the call
 // stays a runtime `Kernel#require` and loads the unit at first execution,
-// which is CRuby's order exactly. (It used to be omitted outright -- a
-// deliberate divergence surfacing as LoadError -- because EAGER loading both
-// reordered the program and dragged every lazy dependency into the binary;
-// units keep the size win AND the semantics: `require "rubygems"` stays far
-// below the 2.69M generated lines eager bundler-dragging produced.)
+// which is CRuby's order exactly. EAGER loading would both reorder the
+// program and drag every lazy dependency into the binary; units keep the
+// size win AND the semantics.
 
 // A dynamic `load`/`require` (a runtime-computed target) does not fail the
 // COMPILE -- whole-program AOT can't splice a path it only learns at runtime,
@@ -663,8 +656,8 @@ fn an_absent_autoload_target_is_left_to_the_constant_read() {
     //
     // The gem still compiles when the target is absent, and the constant read
     // raises the LoadError ruby raises there. `alpha` also computes an
-    // autoload target, so its whole load path is compiled in as units -- the
-    // shape that used to raise at the DECLARATION instead.
+    // autoload target, so its whole load path is compiled in as units; the
+    // declaration itself does not raise.
     let files = [
         (
             "packages/alpha/alpha.gemspec",
@@ -726,9 +719,9 @@ fn a_swept_units_definitions_wait_for_the_unit_to_run() {
     // A computed `require` anywhere in a package sweeps every `.rb` in it
     // into feature units, so a run-time `require <var>` can reach any of
     // them. Their `def`s register at startup all the same -- the static MRO
-    // needs a shape -- and used to ANSWER from startup, inventing methods on
-    // Object, on a reopened builtin, on a user class, on a module and on the
-    // class-method channel. ruby has none of them until the file runs.
+    // needs a shape -- but must not ANSWER from startup, on Object, on a
+    // reopened builtin, on a user class, on a module or on the class-method
+    // channel. ruby has none of them until the file runs.
     //
     // Oracle-verified against ruby 4.0.6 (`ruby -Ipackages/leaky/lib`), both
     // halves: every probe raises before, and every probe answers after.

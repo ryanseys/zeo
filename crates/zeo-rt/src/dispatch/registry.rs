@@ -25,8 +25,8 @@ pub(super) struct ClassEntry {
     /// by `zeo::analyze::mro::compute_ancestors` and baked in as a
     /// literal list by `ruby_class!`'s generated `__register`. Method
     /// dispatch itself never needs to walk this (every reachable method is
-    /// already MATERIALIZED directly onto this class -- see the plan's Part
-    /// 6), but `is_a`/rescue-by-class matching does.
+    /// already MATERIALIZED directly onto this class), but `is_a`/rescue-by-
+    /// class matching does.
     pub(super) ancestors: Vec<ClassId>,
     /// The modules this class's BODY `extend`ed (`module M; extend self; end`,
     /// `class C; extend Forwardable; end`). Deliberately absent from
@@ -264,13 +264,13 @@ pub(super) struct FlatHit {
 
 /// The frozen per-class table, DENSE by class id: compile-time ids are
 /// allocated contiguously from zero, so a bounds-checked Vec probe
-/// replaces the hash walk every uncached dispatch op used to pay.
+/// stands in for a hash walk on every uncached dispatch op.
 /// Runtime-minted ids (>= `RUNTIME_CLASS_ID_BASE`) never enter the
 /// frozen registry (the overlay owns them), so the vec never grows
 /// toward the runtime band -- `insert` asserts it. The accessors keep
-/// the map's call shapes (`get(&id)`, `contains_key`, ...) so the ~80
-/// probe sites read unchanged; iteration yields ids BY VALUE and in id
-/// order, which the sorted-output sites rely on maps never providing.
+/// a map's call shapes (`get(&id)`, `contains_key`, ...) for the ~80
+/// probe sites; iteration yields ids BY VALUE and in id
+/// order, which the sorted-output sites rely on.
 #[derive(Default)]
 pub(super) struct Entries {
     slots: Vec<Option<ClassEntry>>,
@@ -1030,8 +1030,8 @@ impl ClassRegistry {
         let Some(entry) = self.entries.get_mut(&id.0) else {
             // NEVER an `expect`. This runs from `zeo_rt_main`, across an
             // `extern "C"` boundary that cannot unwind, so a panic here
-            // aborts the process rather than raising -- which is what a
-            // box's `class << self; alias_method ...; end` used to do.
+            // aborts the process rather than raising. A box's
+            // `class << self; alias_method ...; end` reaches this arm.
             tracing::warn!(class = id.0, box_id, new, old, "alias on an unregistered class");
             return;
         };
@@ -1521,7 +1521,7 @@ impl ClassRegistry {
 
 /// The class registry is installed exactly once, from generated `main()`,
 /// before any `Thread`/`Ractor` spawns anything -- a `OnceLock`
-/// (not a `thread_local!`, unlike before the Send+Sync migration) gives
+/// (not a `thread_local!`) gives
 /// lock-free reads forever after that single write, and is itself the
 /// correct semantic choice regardless of concurrency: classes/methods are
 /// genuinely process-wide-shared in real Ruby, not per-thread state.

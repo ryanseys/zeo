@@ -1032,7 +1032,7 @@ fn lower_class_body_statement(
     // EARLIER in this SAME class/module body (searched in `out`, exactly the
     // same "no forward search, no ancestor walk" restriction `private
     // :name1, :name2` already enforces above) -- aliasing an INHERITED
-    // method is a clean rejection, a documented, narrow scope-cut. Resolved
+    // method is a clean rejection. Resolved
     // entirely at LOWERING time: since the found `DefMethod`'s `params`/
     // `body`/`is_class_method`/`visibility` are all cheaply `Clone`-able,
     // the alias is just a second `DefMethod` node under a different name --
@@ -1122,9 +1122,9 @@ fn lower_class_body_statement(
     // methods at once without repeating `def self.` on each one. `class <<
     // obj` on any expression OTHER than a bare `self` is a per-instance
     // singleton class -- a materially bigger feature (a dynamically-
-    // growable per-instance vtable) zeo doesn't support, matching
-    // the plan's existing scope-cut on `define_singleton_method`; a clean
-    // rejection, not silently ignored. The nested body is lowered through
+    // growable per-instance vtable) zeo doesn't support here, the same
+    // limit `define_singleton_method` has; a clean rejection, not silently
+    // ignored. The nested body is lowered through
     // the ORDINARY class-body path (so `attr_reader`/`private`/`alias`/
     // nested `def`s all work exactly as they would directly in the class
     // body), then each result is mapped onto the ENCLOSING class:
@@ -1472,8 +1472,8 @@ fn lower_class_body_statement(
 /// A nested class is the same fact as a constant, because a `class X` IS a
 /// constant write with a body: `class << self; class Visitor; end; end`
 /// leaves `M.singleton_class.const_defined?(:Visitor)` true and `M::Visitor`
-/// raising. The two used to be classified apart, so the class landed on the
-/// enclosing module and answered a lookup ruby refuses.
+/// raising. Classifying the two apart would land the class on the enclosing
+/// module, answering a lookup ruby refuses.
 ///
 /// A surrogate is NOT one of these. It is the wrapper itself -- a residual
 /// statement's own mint, or a nested `class << self`'s reopen -- and
@@ -1692,9 +1692,8 @@ pub(crate) fn try_lower_definition(
                 //
                 // One walk FROM THIS CREF, nearest scope first, and the first
                 // scope that binds the name answers. Two separate lexical
-                // searches used to decide it, and a `class Program` two
-                // scopes out then overrode the `Program = Data.define` right
-                // here.
+                // searches would let a `class Program` two scopes out
+                // override the `Program = Data.define` right here.
                 Ok(n) => matches!(
                     hir.const_binding_in_scope(&n),
                     Some(crate::hir::ConstBinding::Values(_))
@@ -1712,9 +1711,10 @@ pub(crate) fn try_lower_definition(
             // a `ClassDef` the static path would register as a fresh
             // (memberless) class. The body rides as a block, and every
             // class-body statement but a local write has a spelling there
-            // (`transform_runtime_class_body`): a nested `class Spec` inside
-            // the reopen used to send the whole definition back to the static
-            // path, which minted a memberless `Target` over the Data class.
+            // (`transform_runtime_class_body`), so a nested `class Spec`
+            // inside the reopen does not send the whole definition back to
+            // the static path, which would mint a memberless `Target` over
+            // the Data class.
             //
             // A body that writes a local falls back to the STATIC path rather
             // than erroring: turning a program that ran into one that won't

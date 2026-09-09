@@ -432,7 +432,7 @@ mod tests {
     fn a_gem_whose_own_checksums_disagree_is_refused() {
         let mut bytes = rake_gem();
         // Corrupt a byte inside the `data.tar.gz` member. The outer tar still
-        // reads; the gem's own checksum no longer matches.
+        // reads; the gem's own checksum does not match.
         let at = bytes.len() / 2;
         bytes[at] ^= 0xff;
         let err = Package::from_bytes(&bytes).unwrap_err();

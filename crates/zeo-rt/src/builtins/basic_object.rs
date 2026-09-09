@@ -1,17 +1,14 @@
 //! `BasicObject` -- the true root's 8 methods (CRuby object.c). Owns
 //! `==`/`!=` (funneling to `rb_eq`, whose recursion guard lives in
 //! `value.rs`), `!`, `equal?` (reference identity), `__send__`, and
-//! `instance_eval`/`instance_exec`. `__id__` is Tier B.
+//! `instance_eval`/`instance_exec`, and `__id__`.
 //!
-//! `instance_eval`/`instance_exec` were long documented here as "compile-time
-//! rejections (dynamic self-rebinding is a permanent AOT exclusion)". That
-//! was conflating two different things: rebinding self in a BLOCK needs no
-//! eval and no runtime compilation -- the block is ordinary compiled code,
-//! and the only question is which receiver it runs under. Once a proc takes
-//! its self as a PARAMETER instead of capturing it (`RProc::with_self`),
-//! answering that question is a function call. What stays excluded is the
-//! STRING form (`instance_eval("@x + 1")`), which genuinely needs the eval
-//! VM -- it raises NotImplementedError below, like every other eval path.
+//! Rebinding self in a BLOCK needs no eval and no runtime compilation --
+//! the block is ordinary compiled code, and the only question is which
+//! receiver it runs under. A proc takes its self as a PARAMETER instead of
+//! capturing it (`RProc::with_self`), so answering that question is a
+//! function call. The STRING form (`instance_eval("@x + 1")`) compiles the
+//! snippet through `crate::eval` with the receiver as its self.
 
 use crate::builtins::{arg_error, type_error};
 use crate::{RubyValue, Signal, Symbol};
@@ -189,8 +186,7 @@ pub(crate) fn block_proc(
 /// code. Only an `Object` receiver takes the dispatching path: every other
 /// variant's `==` is the structural one, and paying a send per element to
 /// discover that would tax every `include?` over a list of numbers or strings.
-/// (A user reopen of, say, `Integer#==` is therefore still not consulted here
-/// -- a pre-existing boundary, not one this introduces.)
+/// (A user reopen of, say, `Integer#==` is therefore not consulted here.)
 pub(crate) fn rb_equal(a: &RubyValue, b: &RubyValue) -> Result<bool, crate::Signal> {
     if value_identity(a, b) {
         return Ok(true);
@@ -241,8 +237,8 @@ pub(crate) fn value_identity(a: &RubyValue, b: &RubyValue) -> bool {
         (RubyValue::Fiber(x), RubyValue::Fiber(y)) => Arc::ptr_eq(x, y),
         (RubyValue::Ractor(x), RubyValue::Ractor(y)) => Arc::ptr_eq(x, y),
         // A `Range` is Arc-backed like the rest, so `(1..2).equal?(1..2)`
-        // is now false and `g.equal?(g)` still true -- CRuby's answers. It
-        // used to fall back to structural equality for want of a pointer.
+        // is false and `g.equal?(g)` true -- CRuby's answers, with no
+        // structural fallback.
         (RubyValue::Range(x), RubyValue::Range(y)) => Arc::ptr_eq(x, y),
         (RubyValue::Object(x), RubyValue::Object(y)) => {
             // The same fat-pointer identity `container_identity` uses.
@@ -282,11 +278,8 @@ pub(crate) fn dynamic_send(
 /// [`dynamic_send`] behind `public_send`'s barrier: ruby resolves the target
 /// and then refuses a non-public one with a rescuable `NoMethodError`, with
 /// none of the self-receiver/protected-relatedness relaxations an ordinary
-/// explicit-receiver call gets.
-///
-/// The rustc backend folds this gate into the CALL SITE, so it reaches this
-/// row only on paths that never folded; the CLIF backend has no such fold
-/// and reaches it always. Keeping the rule here means both answer the same.
+/// explicit-receiver call gets. Codegen has no call-site fold for this
+/// gate, so every `public_send` reaches this row.
 pub(crate) fn public_dynamic_send(
     recv: &RubyValue,
     args: &[RubyValue],

@@ -1,7 +1,7 @@
 //! The inline caches: `CallSite`/`ClassMethodSite`/`DynCallerSite` (one
 //! static slot per emitted call site), what they remember (`Cached`), the
 //! cached send entries, and the explicit-receiver visibility barrier
-//! (`Vet`/`FCALL`). Track 1 adds the `CValue`/`CObj` arms here.
+//! (`Vet`/`FCALL`).
 
 use super::*;
 

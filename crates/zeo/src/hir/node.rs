@@ -293,7 +293,7 @@ pub enum HirNode {
     /// node (only precedence differs, already resolved by parse time).
     /// Short-circuits like Ruby's real `&&`, not like Rust's bool-typed
     /// `&&`: the *operand itself* is returned (`a` if falsy, else `b`), so
-    /// codegen can't emit a literal Rust `&&` here (see `expr.rs`).
+    /// codegen cannot lower it to a boolean `and` (see `expr.rs`).
     And(NodeId, NodeId),
     /// `a || b` / `a or b` -- see `And`'s docs; same short-circuit-the-
     /// operand-not-a-bool semantics.
@@ -301,8 +301,8 @@ pub enum HirNode {
     /// `defined?(expr)` -- a compile-time-resolvable classification of
     /// `expr`'s syntactic form (mirrors CRuby's `"expression"`/`"method"`/
     /// `"local-variable"`/`"instance-variable"`/`nil` results), not a
-    /// runtime check. See `clif/expr.rs`'s `lower_defined` for the
-    /// scope-cut this approximates.
+    /// runtime check. `clif/defined.rs`'s `lower_defined` decides which
+    /// forms fold and which ask the runtime.
     Defined(NodeId),
     /// True unless the value is nil -- the TAG test `&.` makes, not a
     /// `nil?` send a program can redefine. It is the condition of the
@@ -664,8 +664,8 @@ pub enum HirNode {
     /// ordinary zero-arg, no-receiver `Kernel#loop` call with a block);
     /// `parse/mod.rs` desugars that call shape to this at lowering time,
     /// mirroring `define_method`'s existing call-shape desugar. An
-    /// unconditional labeled Rust `loop { }` with no exit test of its own --
-    /// only `break` (or an uncaught `raise`) ever ends it.
+    /// unconditional loop with no exit test of its own -- only `break` (or
+    /// an uncaught `raise`) ever ends it.
     Loop {
         body: Vec<NodeId>,
     },
@@ -693,10 +693,10 @@ pub enum HirNode {
     /// `clif/iter.rs`'s `lower_counted`), which `ruby-prism`
     /// itself already guarantees is the only place these can appear (a bare
     /// `break`/`next`/`redo` outside any loop/block is a parse error, not
-    /// something lowering has to re-validate). Compiles to a literal Rust
-    /// `break 'label value;` -- no `Signal` involved, per the ABI's stated
-    /// scope-cut (see `signal.rs`), since a `break` inside a real escaping
-    /// closure is handled separately. A multi-value `break a, b` lowers to a single
+    /// something lowering has to re-validate). Lowers to a jump to the
+    /// loop's exit block -- no `Signal` involved; a `break` inside a real
+    /// escaping closure is handled separately (`Signal::Break`, see
+    /// `signal.rs`). A multi-value `break a, b` lowers to a single
     /// implicit-array argument (`break [a, b]`), the same as `Return`/`Next`.
     Break(Option<NodeId>),
     /// `next` / `next value` -- ends the current iteration early, jumping to
@@ -707,9 +707,8 @@ pub enum HirNode {
     /// `for`/`loop`.
     Next(Option<NodeId>),
     /// `redo` -- re-runs the current iteration's body from the top WITHOUT
-    /// re-testing the loop condition or advancing (the one construct with no
-    /// direct native Rust equivalent -- `continue` always re-tests/advances).
-    /// See `clif/stmt.rs`'s `Redo` arm: a jump back to the body block.
+    /// re-testing the loop condition or advancing. See `clif/stmt.rs`'s
+    /// `Redo` arm: a jump back to the body block.
     Redo,
     /// `a, b = 1, 2` / `a, *b, c = arr` / `(a, b), c = ...` / `@x, $y, Z =
     /// ...` -- see `MultiTargetGroup`/`MultiTarget`'s docs for the full
@@ -754,18 +753,15 @@ pub enum HirNode {
     /// a file that writes no top-level `return` carries neither.
     FileEnd(FileEdge),
     /// `return` / `return value` -- explicit early return from the enclosing
-    /// method. Compiles to a literal Rust `return Ok(value);` (Rust's own
-    /// early return already exits arbitrarily deep nesting -- an `if`/`case`/
-    /// loop body, or a fast-inline-path block like `.times`'s, which is
-    /// spliced directly into the SAME enclosing method body, so a literal
-    /// Rust `return` there already has real Ruby's exact semantics: `return`
-    /// inside a block always exits the enclosing method, not just the
-    /// block). This stops being correct only once a block can become a
-    /// genuinely separate Rust closure (a real escaping `Proc`, a later
-    /// phase) with its own Rust fn boundary a bare `return` would incorrectly
-    /// stop at instead of passing through -- that needs `Signal::Return`
-    /// (already reserved for exactly this in `zeo_rt::Signal`) once it
-    /// exists. A multi-value `return a, b` lowers to a single implicit-array
+    /// method. Lowers to a jump to the body's shared ok-exit, which exits
+    /// arbitrarily deep nesting -- an `if`/`case`/loop body, or a
+    /// fast-inline-path block like `.times`'s, which is spliced directly
+    /// into the SAME enclosing method body, so the jump there already has
+    /// real Ruby's exact semantics: `return` inside a block always exits the
+    /// enclosing method, not just the block. A genuinely separate function
+    /// (a real escaping `Proc`) has its own boundary a jump cannot cross, so
+    /// a `return` inside one travels as `Signal::Return` instead. A
+    /// multi-value `return a, b` lowers to a single implicit-array
     /// argument (`return [a, b]`), via `lower_single_optional_argument`, so
     /// this stays one optional node (mirroring `Break`/`Next`).
     Return(Option<NodeId>),
@@ -791,8 +787,8 @@ pub enum HirNode {
     Yield(Vec<ArrayElem>),
     /// `block_given?` -- a zero-arg, no-receiver call-shape recognized at
     /// lowering time (mirrors `loop`/`define_method`'s desugars), not a
-    /// distinct `ruby-prism` node. Same "not inside a nested block" scope-cut
-    /// as `Yield`.
+    /// distinct `ruby-prism` node. Same "not inside a nested block" rule as
+    /// `Yield`.
     BlockGiven,
     /// A bare `self` used as a VALUE (an explicit receiver, `self.foo`, or
     /// standalone, `puts self`) -- a real `ruby-prism` `SelfNode`, recognized
@@ -812,9 +808,9 @@ pub enum HirNode {
     Raise(Vec<NodeId>, RaiseCause),
     /// `case subject; in PATTERN [if/unless GUARD] ... [else ...] end` --
     /// see `Pattern`/`PatternArm`'s docs. Arms are tested top to bottom,
-    /// first match wins (same "not a native `match`" reasoning as
-    /// `CaseWhen`, since a pattern's own class-check/destructure/guard logic
-    /// can't be expressed as Rust structural patterns generically).
+    /// first match wins, as an `if` chain -- a pattern's own
+    /// class-check/destructure/guard logic is ordinary code, not a jump
+    /// table.
     /// `else_body: None` with no arm matching raises `NoMatchingPatternError`
     /// (see `clif/patterns.rs`'s `lower_case_in`) -- a real, distinct case from
     /// `Some(vec![])` (an explicit, empty `else` clause, which just yields
@@ -1089,8 +1085,8 @@ pub enum HirNode {
     /// `zeo_rt::lastmatch`, including the frame-locality divergence.
     LastMatchRef(LastMatch),
     /// A statement sequence evaluated in order, answering its LAST
-    /// statement's value. `emit_body` emits it as one tail-value Rust block,
-    /// the same shape `Eval` uses.
+    /// statement's value -- one tail-value block, the same shape `Eval`
+    /// uses.
     ///
     /// Two sources reach here:
     ///   - a parenthesized multi-statement expression in real source
@@ -1147,10 +1143,11 @@ impl HirNode {
     /// `lower::defs::transform_runtime_class_body`, which refuses to pass an
     /// unrewritten directive through.
     ///
-    /// The two halves used to be independent lists and drifted apart silently:
-    /// a directive added to the static path but not the runtime one reached
-    /// codegen as a "top-level-only node in expression position". Exhaustive
-    /// here, with no `_` catch-all, so a new variant has to be classified.
+    /// One list for both halves: as two independent lists they drift apart
+    /// silently, and a directive added to the static path but not the
+    /// runtime one reaches codegen as a "top-level-only node in expression
+    /// position". Exhaustive here, with no `_` catch-all, so a new variant
+    /// has to be classified.
     pub fn is_class_body_directive(&self) -> bool {
         match self {
             HirNode::Include(_)
@@ -1255,13 +1252,13 @@ impl HirNode {
     /// Every child node this one owns, in evaluation order.
     ///
     /// The name-collecting passes (`analyze::collect_ivars`,
-    /// `mro::collect_cvars`, `mro::collect_const_refs`) each used to carry
-    /// their own copy of this walk, and the copies drifted: one missed a
-    /// call's keyword arguments, another a `rescue *errs` splat, a third a
-    /// block parameter's default. Every such omission is a silently WRONG
-    /// answer, never a crash. One exhaustive match with no `..` rest pattern
-    /// is what makes a new variant -- or a new field on an existing one --
-    /// a compile error instead.
+    /// `mro::collect_cvars`, `mro::collect_const_refs`) all ride on this one
+    /// walk. Per-pass copies drift: one misses a call's keyword arguments,
+    /// another a `rescue *errs` splat, a third a block parameter's default,
+    /// and every such omission is a silently WRONG answer, never a crash.
+    /// One exhaustive match with no `..` rest pattern is what makes a new
+    /// variant -- or a new field on an existing one -- a compile error
+    /// instead.
     ///
     /// `ClassDef`/`DefMethod` bodies are children like any other. A pass that
     /// must stop at a fresh Ruby scope matches those variants ahead of its

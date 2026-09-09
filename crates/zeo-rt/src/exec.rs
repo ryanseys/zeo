@@ -27,8 +27,8 @@ static AT_EXIT: parking_lot::Mutex<Vec<RubyValue>> = parking_lot::Mutex::new(Vec
 /// The C `argv`, stashed by `zeo_rt_main` before registration runs. Under
 /// an emitted C `main`, `std::env::args()` works on glibc and macOS but is
 /// EMPTY on musl -- so `ARGV`/`$0` seeding reads this first and falls back
-/// to `std::env::args()` for the rustc backend, whose generated `main` never
-/// stashes.
+/// to `std::env::args()` when nothing stashed (a test harness, a host
+/// without an emitted `main`).
 static CLI_ARGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
 
 pub(crate) fn stash_cli_args(args: Vec<String>) {

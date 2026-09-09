@@ -11,7 +11,7 @@ use crate::Signal;
 /// `TranscodeError` -> the exact CRuby exception class per refusal kind.
 /// A plain function, NOT a `From<TranscodeError> for Signal` impl: a second
 /// `From<_>` into `Signal` makes the generated programs' `Ok({...})?`
-/// blocks ambiguous (E0283 -- inference could no longer pick `E = Signal`).
+/// blocks ambiguous (E0283 -- inference cannot pick `E = Signal`).
 pub fn transcode_signal(err: TranscodeError) -> Signal {
     let (class, message, detail) = match err {
         TranscodeError::InvalidByteSequence(m, d) => ("Encoding::InvalidByteSequenceError", m, d),

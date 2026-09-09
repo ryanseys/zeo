@@ -54,10 +54,9 @@ zeo-gem.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zeo-abi.workspace = true
-# The runtime, linked INTO the compiler (plan decision 9, reversed
-# 2026-08-18): the `zeo` binary hosts the Cranelift JIT run path, and the
-# staticlib output below is `libzeo.a` -- the one archive AOT programs
-# link.
+# The runtime, linked INTO the compiler: the `zeo` binary hosts the
+# Cranelift JIT run path, and the staticlib output below is `libzeo.a` --
+# the one archive AOT programs link.
 zeo-rt.workspace = true
 # The C extension API, behind `capi`: the crate is linked (and so exported
 # from `libzeo.a`) only when the feature is on.
@@ -147,7 +146,7 @@ harness = false
 
 [features]
 # The stock build carries every runtime extension and the C-extension
-# surface, exactly as before this crate owned the choice. The default is the
+# surface. The default is the
 # EXPLICIT per-ext list, never a forward to zeo-rt's umbrella: the compiler's
 # own `cfg!(feature = "ext-*")` is what `lower::features::build_carries_ext`
 # reads, so a runtime feature the compiler cannot see would make it lie.

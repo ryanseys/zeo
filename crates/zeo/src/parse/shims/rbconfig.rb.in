@@ -38,9 +38,9 @@ module RbConfig
   undefined_flag = darwin ? "-Wl,-undefined,dynamic_lookup" : "-Wl,--allow-shlib-undefined"
 
   # THE PREFIX IS A REAL DIRECTORY ZEO OWNS, resolved from `zeo::home` and
-  # filled by `parse::loader::shims` (the build cannot know it). It used to be
-  # the literal `/usr/local`, and everything derived from it named a path that
-  # does not exist: `Gem.dir`, `Gem.default_specifications_dir`,
+  # filled by `parse::loader::shims` (the build cannot know it). A literal
+  # such as `/usr/local` would make everything derived from it name a path
+  # that does not exist: `Gem.dir`, `Gem.default_specifications_dir`,
   # `Gem::Specification.stubs` (empty), `Gem.loaded_specs` (empty).
   #
   # It is the WRITABLE build root, not the install prefix, because
@@ -212,9 +212,9 @@ module RbConfig
   # THROUGH, memoizing the result, so `$(CFLAGS)` resolves the whole chain in
   # one pass and a cycle raises instead of spinning.
   #
-  # An earlier version here returned a new String and left `val` alone. Every
-  # generated Makefile came out with an empty `SRCS`, because mkmf's `srcdir`
-  # stayed the literal `$(srcdir)` and globbed nothing.
+  # It must expand `val` IN PLACE. Returning a new String and leaving `val`
+  # alone makes every generated Makefile come out with an empty `SRCS`,
+  # because mkmf's `srcdir` stays the literal `$(srcdir)` and globs nothing.
   def self.expand(val, config = CONFIG)
     return val unless val.is_a?(String)
 

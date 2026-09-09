@@ -50,9 +50,9 @@ pub(crate) fn add_own_method_at(
     } else {
         &ci.own_methods
     };
-    // `own_method_at` is this list's own name index -- the position a scan
-    // comparing every entry's scope name used to find, which made registering
-    // a class's methods quadratic in their count.
+    // `own_method_at` is this list's own name index. A scan comparing every
+    // entry's scope name would make registering a class's methods quadratic
+    // in their count.
     let replaced = if is_class_method {
         ci.own_class_method_at.get(&mname).copied()
     } else {
@@ -276,11 +276,11 @@ pub(super) enum MixinTarget {
 /// extension zeo doesn't have, or from a branch that never executes, can't be
 /// built at all.
 ///
-/// A name the program DOES assign (`M = Module.new; include M`) used to be a
-/// hard error, on the grounds that a compiled class dispatches off a static
-/// MRO a runtime splice cannot reach. It reaches it now: the directive keeps
-/// its runtime self-send and every call site widens. Unknown SUPERCLASSES stay
-/// loud, because zeo has to lay out a struct for one.
+/// A name the program DOES assign (`M = Module.new; include M`) is not an
+/// error: a compiled class dispatches off a static MRO, but the directive
+/// keeps its runtime self-send and every call site widens, so a runtime
+/// splice reaches it. Unknown SUPERCLASSES stay loud, because zeo has to lay
+/// out a struct for one.
 pub(super) fn resolve_module_target(
     compiler: &mut Compiler,
     name: &str,
@@ -616,9 +616,9 @@ fn resolve_in_ancestry(
             .unanchored()
             .to_string();
         // `defining` is checked BEFORE the mint, not after like the arms
-        // above: minting first leaves the excluded shell REGISTERED, so the
-        // caller's deferral no longer matters -- `class Logger < Logger`
-        // with logger unrequired resolved every later read to the phantom
+        // above: minting first would leave the excluded shell REGISTERED,
+        // defeating the caller's deferral -- `class Logger < Logger` with
+        // logger unrequired would resolve every later read to the phantom
         // instead of raising ruby's NameError.
         if path != defining
             && compiler.shell_kinds.contains_key(&(box_id, key))
@@ -896,8 +896,8 @@ pub(crate) fn method_local_types(
     if let Some(Some(n)) = &params.block {
         local_types.entry(n.clone()).or_insert(TyKind::Proc);
     }
-    // A parameter arrives through the Rust signature as a `RubyValue`, so a
-    // body assignment can never narrow it to an unboxed `Arc<Concrete>`: every
+    // A parameter arrives through the function signature as a `RubyValue`,
+    // so a body assignment can never narrow it to an unboxed value: every
     // read BEFORE that assignment still sees the signature's binding.
     // `source_uri = Gem::Uri.new(source_uri)` is the shape -- rubygems rebinds
     // a parameter to a wrapper built FROM it, and the argument read would

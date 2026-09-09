@@ -366,9 +366,9 @@ pub fn read_source(path: &Path) -> Result<String, String> {
 ///
 /// MEMOIZED for the life of the process. The walk descends the whole
 /// rubygems and bundler trees and canonicalizes each file, which is
-/// thousands of syscalls; it ran on EVERY compile, and a run-time `eval` is
-/// a compile. It was 8.5 ms of the 15 ms an eval cost, so RubyGems'
-/// 66 gemspec evals at boot spent half a second re-walking one directory.
+/// thousands of syscalls, and a run-time `eval` is a compile. Unmemoized it
+/// measures 8.5 ms of the 15 ms an eval costs, so RubyGems' 66 gemspec
+/// evals at boot would spend half a second re-walking one directory.
 ///
 /// Keyed by the root alone. These roots are zeo's own payload, and nothing
 /// adds a file to them while a compile is running.
@@ -943,17 +943,16 @@ impl Loader {
             let Some(feature) = literal_feature(result, hir, call)? else {
                 continue;
             };
-            // NOT exempt for a builtin any more. `splice_feature` resolves
-            // a plain `require` FILESYSTEM-FIRST and only falls back to the
-            // static ext, precisely so a gem's Ruby half can sit on top of a
-            // native one -- and this loop skipped that order entirely, so a
-            // DUAL-HOMED feature's gem half was never compiled as a unit.
-            // `tmpdir` is the case: the ext gives the constants, the gem
-            // gives `Dir::Tmpname`.
+            // NOT exempt for a builtin. `splice_feature` resolves a plain
+            // `require` FILESYSTEM-FIRST and only falls back to the static
+            // ext, precisely so a gem's Ruby half can sit on top of a native
+            // one -- this loop must keep that order, or a DUAL-HOMED
+            // feature's gem half is never compiled as a unit. `tmpdir` is
+            // the case: the ext gives the constants, the gem gives
+            // `Dir::Tmpname`.
             //
             // A builtin with no gem half resolves to nothing here and falls
-            // through unchanged, so the exemption it used to need is now
-            // just what happens.
+            // through unchanged; it needs no exemption.
             if let Ok(Some((path, package))) = self.resolve_require(&feature) {
                 // Disclosed as satisfied (first-wins preempts the
                 // "not compiled in" record the deferred set would
@@ -1397,13 +1396,13 @@ impl Loader {
             // LOADING the file runs -- a conditional (`require_relative
             // "hell" if ENV["MT_HELL"]`), a `begin`, a class body, a block.
             // Spliced at the position of the statement holding it, so the
-            // file loads in the order it is written. (These used to splice at
-            // the HEAD of the file, ahead of every top-level require:
-            // minitest/autorun.rb's third line then loaded before its first,
-            // and hell.rb's `class Minitest::Test` reopen became that class's
-            // earliest body -- firing `Runnable.inherited` before
-            // `Runnable`'s own body had a registry to add to.) A method-body
-            // require is `lazy` instead, and lands at the end of the file.
+            // file loads in the order it is written. (Splicing at the HEAD
+            // of the file, ahead of every top-level require, would load
+            // minitest/autorun.rb's third line before its first, and make
+            // hell.rb's `class Minitest::Test` reopen that class's earliest
+            // body -- firing `Runnable.inherited` before `Runnable`'s own
+            // body has a registry to add to.) A method-body require is
+            // `lazy` instead, and lands at the end of the file.
             //
             // AFTER `lower_node`, which folds each require CALL to its load
             // result: splicing first would mark the feature loaded and turn a

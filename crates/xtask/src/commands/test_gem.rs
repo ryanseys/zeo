@@ -1,8 +1,8 @@
 //! Can zeo compile this gem? One gem, one row in a TSV.
 //!
-//! Built to be pointed at a very large corpus -- `~/dev/all-gems/gems` holds
-//! ~195,000 unpacked gems -- so the two things that matter are that a run
-//! writes almost nothing and that one bad gem cannot wedge the sweep.
+//! Built to be pointed at a very large corpus of unpacked gems, so the two
+//! things that matter are that a run writes almost nothing and that one bad
+//! gem cannot wedge the sweep.
 //!
 //! **In memory by default.** The JIT road compiles the gem's require graph
 //! and runs it in the child's own address space with the program cache off,
@@ -26,8 +26,8 @@ usage: cargo xtask test-gem <gem>... [options]
 Compiles each gem and appends a row saying whether zeo could.
 
   --path <dir>       compile this directory as the gem (name from its basename)
-  --gems-root <dir>  where <gem> is looked up. Default: ~/dev/all-gems/gems,
-                     then the repo's own vendor/gems/gems
+  --gems-root <dir>  where <gem> is looked up, as <dir>/<gem> or
+                     <dir>/<gem>-<version>. Required unless --path is given
   --aot              link a real binary instead of running on the JIT
   --no-clean         keep what --aot wrote, for debugging
   --out <path>       the TSV to append to. Default: target/test-gem.tsv
@@ -100,13 +100,19 @@ pub fn run(args: &[String]) -> Result<(), Error> {
     if gems.is_empty() && opts.path.is_none() {
         return Err(Error::new(USAGE.to_string()));
     }
+    if opts.path.is_none() && opts.gems_root.is_none() {
+        return Err(Error::new(format!(
+            "--gems-root <dir> is required to look a gem up by name\n\n{USAGE}"
+        )));
+    }
     let zeo = crate::build_zeo()?;
 
     let mut rows = Vec::new();
     for gem in &gems {
-        let dir = match &opts.path {
-            Some(p) => Some(p.clone()),
-            None => locate(gem, opts.gems_root.as_deref()),
+        let dir = match (&opts.path, &opts.gems_root) {
+            (Some(p), _) => Some(p.clone()),
+            (None, Some(root)) => locate(gem, root),
+            (None, None) => None,
         };
         let started = Instant::now();
         let (status, feature, kind, version) = match &dir {
@@ -278,47 +284,32 @@ fn classify(detail: &str, spec: &Spec, feature: &str) -> &'static str {
     }
 }
 
-/// The gem's unpacked source tree. The big corpus is unversioned
-/// (`<root>/<name>`); the repo's own store is not (`<name>-<version>`), and
-/// the newest wins there.
-fn locate(gem: &str, gems_root: Option<&Path>) -> Option<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(r) = gems_root {
-        roots.push(r.to_path_buf());
-    } else {
-        if let Some(home) = std::env::var_os("HOME") {
-            roots.push(PathBuf::from(home).join("dev/all-gems/gems"));
-        }
-        roots.push(root_join("vendor/gems/gems"));
+/// The gem's unpacked source tree under `root`. An unversioned corpus holds
+/// `<root>/<name>`; a gem store holds `<name>-<version>`, and the newest
+/// wins there.
+fn locate(gem: &str, root: &Path) -> Option<PathBuf> {
+    let flat = root.join(gem);
+    if flat.is_dir() {
+        return Some(flat);
     }
-    for root in roots {
-        let flat = root.join(gem);
-        if flat.is_dir() {
-            return Some(flat);
-        }
-        // `<name>-<version>`: scan only when the flat name missed, and only
-        // this one directory. The big corpus has 195k entries and is never
-        // walked.
-        let mut best: Option<PathBuf> = None;
-        for entry in std::fs::read_dir(&root).into_iter().flatten().flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if let Some(rest) = name.strip_prefix(gem)
-                && rest.starts_with('-')
-                && rest[1..].starts_with(|c: char| c.is_ascii_digit())
-                && entry.path().is_dir()
-                && best.as_ref().is_none_or(|b: &PathBuf| {
-                    b.file_name().unwrap_or_default().to_string_lossy() < name
-                })
-            {
-                best = Some(entry.path());
-            }
-        }
-        if best.is_some() {
-            return best;
+    // `<name>-<version>`: scan only when the flat name missed, and only
+    // this one directory. A large corpus is never walked.
+    let mut best: Option<PathBuf> = None;
+    for entry in std::fs::read_dir(root).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if let Some(rest) = name.strip_prefix(gem)
+            && rest.starts_with('-')
+            && rest[1..].starts_with(|c: char| c.is_ascii_digit())
+            && entry.path().is_dir()
+            && best.as_ref().is_none_or(|b: &PathBuf| {
+                b.file_name().unwrap_or_default().to_string_lossy() < name
+            })
+        {
+            best = Some(entry.path());
         }
     }
-    None
+    best
 }
 
 fn version_of(dir: &Path) -> Option<String> {

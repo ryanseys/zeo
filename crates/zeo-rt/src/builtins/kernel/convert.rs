@@ -9,8 +9,8 @@ use super::*;
 /// Every one of `Integer`/`Float`/`Rational`/`Complex` takes it, and it is a
 /// KEYWORD -- never one of the value arguments -- so the trailing options Hash
 /// comes off before the positional shape is read at all. Read as a positional
-/// it became a base, a denominator or an imaginary part, which is how
-/// `Integer("abc", exception: false)` used to raise about a Hash.
+/// it would become a base, a denominator or an imaginary part, and
+/// `Integer("abc", exception: false)` would raise about a Hash.
 pub(super) fn split_exception_kw(args: &[RubyValue]) -> (&[RubyValue], bool) {
     let Some(RubyValue::Hash(h)) = args.last() else {
         return (args, true);
@@ -290,8 +290,9 @@ pub(super) fn parse_hex_float(s: &str) -> Option<f64> {
     Some(if neg { -result } else { result })
 }
 
-/// `Kernel#Rational(num, den = 1)` -- exact components only (string forms
-/// are a documented scope-cut).
+/// `Kernel#Rational(num, den = 1)`: each component is an Integer, a
+/// Rational, a Float taken at its exact value, or a String parsed as a
+/// rational literal.
 pub(crate) fn rational_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let exact = |v: &RubyValue| -> Result<(num_bigint::BigInt, num_bigint::BigInt), Signal> {
         match v {
@@ -499,10 +500,9 @@ pub(crate) fn string_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     )))
 }
 
-/// `Kernel#Array(arg)`: nil -> [], Array -> itself, Hash -> assoc pairs,
-/// Range -> to_a, anything else -> [arg]. (`to_ary`/`to_a` protocol probes
-/// on user objects are a documented scope-cut, beyond the value-subclass
-/// case below, which IS an Array.)
+/// `Kernel#Array(arg)`: `to_ary` then `to_a` on anything that answers
+/// them, else nil -> [], Array -> itself, Hash -> assoc pairs,
+/// Range -> to_a, anything else -> [arg].
 pub(crate) fn array_impl(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if let Some(a) = crate::builtins::convert::check_to_ary(&args[0])? {
         return Ok(a);

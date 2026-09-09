@@ -285,8 +285,8 @@ pub unsafe extern "C" fn zeo_rt_frozen_check(v: *const RubyValue) -> i32 {
 }
 
 /// An uncached constant read on `owner` (0 = `Object`, the toplevel).
-/// Miss = CRuby's `NameError: uninitialized constant <name>` (the
-/// `ConstSite` caching layer is a later milestone).
+/// Miss = CRuby's `NameError: uninitialized constant <name>`. The cached
+/// form takes a [`crate::constants::ConstSite`] (see below).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_const_get_at(
     owner: u32,

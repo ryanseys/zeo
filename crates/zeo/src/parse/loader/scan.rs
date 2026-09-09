@@ -316,7 +316,8 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
     }
 
     // Only the `begin` BODY is protected by its rescues; the rescue, else and
-    // ensure clauses run outside that protection and visit at the old depth.
+    // ensure clauses run outside that protection and visit at the enclosing
+    // depth.
     fn visit_begin_node(&mut self, node: &ruby_prism::BeginNode<'pr>) {
         let optional = rescues_load_error(node) as u32;
         if let Some(stmts) = node.statements() {

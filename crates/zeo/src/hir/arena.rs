@@ -147,19 +147,19 @@ pub struct Hir {
     /// The key is the FULL cref path a scope-less write lands on
     /// (`"Bundler::Settings::Path"` for a `Path = ...` inside `class
     /// Settings`), and the written spelling for an explicit `M::D = ...`.
-    /// It used to be the bare leaf, and that was a whole-program collision:
-    /// bundler's `Bundler::Settings::Path = Struct.new(...) do ... end` made
+    /// Keying by the bare leaf would be a whole-program collision: bundler's
+    /// `Bundler::Settings::Path = Struct.new(...) do ... end` would make
     /// every `class X < Path` ANYWHERE in the program look like a subclass of
     /// a runtime-minted class, so `class Git < Path` in
-    /// `bundler/source/git.rb` was silently rewritten to `Git =
-    /// Class.new(Path)`. The compile-time class was then never declared and
-    /// never revealed, while the runtime one answered `const_get` -- two
-    /// classes under one name, and `Bundler::Source::Git` raised
+    /// `bundler/source/git.rb` would be silently rewritten to `Git =
+    /// Class.new(Path)`. The compile-time class is then never declared and
+    /// never revealed, while the runtime one answers `const_get` -- two
+    /// classes under one name, and `Bundler::Source::Git` raises
     /// `uninitialized constant` in a program that defines it.
     ///
-    /// [`Hir::record_class_def`] has always keyed by the cref path and
-    /// [`Hir::class_defined_in_scope`] has always searched lexically; this is
-    /// the same rule for the assignment half, and the two are read together.
+    /// [`Hir::record_class_def`] keys by the cref path and
+    /// [`Hir::class_defined_in_scope`] searches lexically; this is the same
+    /// rule for the assignment half, and the two are read together.
     ///
     /// Filled during lowering rather than in one sweep afterwards, and that is
     /// load-bearing rather than incidental: those predicates ask what is
@@ -1269,11 +1269,10 @@ impl Hir {
     /// Whether this program can reach a RUN-TIME `eval`.
     ///
     /// Only `Kernel#eval` and string-form `instance_eval` funnel into
-    /// `zeo_rt::eval_value`/`eval_string`. EVERY `eval` is a run-time one:
-    /// the compile-time splice a literal source once took was retired
-    /// once a snippet compiled for real, because the splice reported the
-    /// ENCLOSING file for `__FILE__` and every backtrace row, ignored a
-    /// magic comment written in the string, and shared the caller's
+    /// `zeo_rt::eval_value`/`eval_string`. EVERY `eval` is a run-time one,
+    /// a literal source included: a compile-time splice would report the
+    /// ENCLOSING file for `__FILE__` and every backtrace row, ignore a
+    /// magic comment written in the string, and share the caller's
     /// storage where CRuby shares a Binding. Block-form `instance_eval
     /// { ... }` runs a real block and carries it in `block`, so a
     /// POSITIONAL argument marks the string form.

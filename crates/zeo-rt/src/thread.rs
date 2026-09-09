@@ -919,7 +919,7 @@ pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
 ///
 /// Joining YOURSELF is a `ThreadError`, not a wait: nobody is left to
 /// finish the thread being waited on, and `Thread.main.join` from the main
-/// thread is the same statement said differently. Both used to park forever.
+/// thread is the same statement said differently. A wait would park forever.
 pub fn thread_join(t: &RThread, limit: Option<std::time::Duration>) -> Result<bool, Signal> {
     if is_current_thread(t) {
         return Err(crate::dispatch::raise_error(

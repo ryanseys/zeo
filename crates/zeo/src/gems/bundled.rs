@@ -8,12 +8,11 @@
 //! | bootstrap | `vendor/ruby/<name>/` | rubygems and bundler, at the pinned tag |
 //! | resolved | `vendor/gems/gems/<name>-<version>/` | every other library, from `Gemfile.lock` |
 //!
-//! The third tier is why this module exists. zeo used to commit 52 vendored
-//! upstream trees under `gems/`, which meant a gem's version was written in
-//! two places -- the tree's gemspec and the lock the ruby oracle resolves --
-//! and a fact written twice drifts. Now the lock is the only writer, so a
-//! golden can no longer record a difference between two library versions and
-//! call it a zeo bug.
+//! The third tier is why this module exists. The lock is the only place a
+//! gem's version is written: a committed upstream tree would write it twice
+//! (the tree's gemspec and the lock the ruby oracle resolves), and a fact
+//! written twice drifts. With one writer, a golden cannot record a
+//! difference between two library versions and call it a zeo bug.
 //!
 //! Neither of the two lower tiers is committed. `cargo xtask deps` writes
 //! both, and it needs no ruby to do it: the bootstrap pair comes from the
@@ -61,11 +60,10 @@ pub const BOOTSTRAP_TIER: &str = "vendor/ruby";
 /// all three shipped tiers into one directory under the payload, so a
 /// release has a single place to look.
 ///
-/// Not [`BOOTSTRAP_TIER`], though it was for a while and the two agreed by
-/// accident while the dev tree also spelled it `lib/ruby`. When the bootstrap
-/// tier moved to `vendor/ruby`, an installed zeo went looking there and found
-/// no libraries at all -- every `require` of a bundled gem answered
-/// `LoadError` while the payload sat beside it.
+/// Deliberately its own constant, not [`BOOTSTRAP_TIER`]: an installed zeo
+/// that looked under the dev tree's spelling would find no libraries at all,
+/// and every `require` of a bundled gem would answer `LoadError` while the
+/// payload sat beside it.
 pub const PAYLOAD_TIER: &str = "lib/ruby";
 /// The RubyGems store `cargo xtask deps` unpacks the lock into. Flat: one
 /// store for one lock, with no ruby ABI level, because nothing here is

@@ -418,9 +418,8 @@ fn send_value_in_reason_inner(
     // The flat one-probe path below -- almost every send in almost every
     // program -- resolves on the `Symbol` alone, so the text is fetched only
     // where a by-NAME builtin table is actually consulted, never up front.
-    // (`name_str` used to take the interner's global mutex, which made this
-    // load-bearing; it is now two slab indexes, so the ordering is kept for
-    // tidiness rather than for the lock.)
+    // (`name_str` is two lock-free slab indexes, so the ordering is
+    // tidiness, not a lock.)
     // CLASS/MODULE-level methods (`File.read`, `Time.now`, `Math.sqrt`):
     // this runtime has no singleton-method tables, so a class value gets its
     // own table probed ahead of the walk. The walk itself describes INSTANCE

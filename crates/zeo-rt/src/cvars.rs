@@ -13,11 +13,8 @@
 //!
 //! Genuinely process-wide-shared storage, not per-thread: a real
 //! CRuby `@@counter` incremented by one `Thread` must be visible to another,
-//! so this migrated from a `thread_local!` to a real `LazyLock<Mutex<_>>`
-//! static rather than just swapping `Rc`/`RefCell` for `Arc`/`Mutex` in
-//! place -- leaving it thread-local would have silently made class
-//! variables per-thread, a real semantic bug, not just a representation
-//! change.
+//! so this is a `LazyLock<Mutex<_>>` static, never a `thread_local!` --
+//! a thread-local would silently make class variables per-thread.
 
 use crate::FMap;
 use crate::RubyValue;

@@ -22,12 +22,12 @@ const C_EXTENSIONS: &[&str] = &[
     "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "S", "s", "patch",
 ];
 
-/// The tracked C that remains, each row with the day it goes.
+/// The tracked C, and the condition under which it goes.
 ///
 /// `zeo-capi/csrc/*.c` are the variadic entry points (`rb_raise`,
 /// `rb_sprintf`, `rb_scan_args`, ...) that Rust cannot write without
 /// `c_variadic`, which stabilizes in Rust 1.99. They go when the toolchain
-/// pin reaches it, expected 2026-10.
+/// pin reaches Rust 1.99.
 const ALLOWED: &[&str] = &[
     "crates/zeo-capi/csrc/cext_err.c",
     "crates/zeo-capi/csrc/cext_fmt.c",

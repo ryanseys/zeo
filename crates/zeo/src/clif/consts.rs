@@ -33,7 +33,7 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> CResult<Operand
     // already split above, and its scope re-asks this walk.
     let top_level = name.starts_with("::");
     let name = name.strip_prefix("::").unwrap_or(name);
-    // The rustc `emit_const_read` bare-name shape: owner from the
+    // The bare-name shape: owner from the
     // compile-time claim map, then every enclosing cref scope, then the
     // top -- one runtime walk through `const_get_cref`, whose miss raises
     // the NameError with the cref-qualified message.
@@ -72,9 +72,8 @@ pub(crate) fn const_read(fx: &mut Fx, id: NodeId, name: &str) -> CResult<Operand
         .copied()
         .unwrap_or(defining);
     // A miss on an owner whose chain defines a USER `const_missing`
-    // dispatches the hook instead of the baked raise (CRuby's protocol,
-    // rustc's `miss` arm); the runtime does it so the walk and the hook
-    // stay one call.
+    // dispatches the hook instead of the baked raise (CRuby's protocol);
+    // the runtime does it so the walk and the hook stay one call.
     let hook = compiler
         .class_method_in_chain(owner, "const_missing")
         .is_some();
@@ -162,8 +161,7 @@ pub(crate) fn const_path_read(fx: &mut Fx, id: NodeId, path: &str) -> CResult<Op
 /// `private_constant` is a runtime FLAG, not a compile-time fact -- a later
 /// `M.public_constant :S` restores the name -- so the guard is emitted where
 /// the compiler saw the directive, and asks. The flag lives on the
-/// constant's OWNER, which the claim map may redirect to (rustc's
-/// `const_owner_id_opt`).
+/// constant's OWNER, which the claim map may redirect to.
 fn emit_private_constant_guard(fx: &mut Fx, scope_cid: crate::compiler::ClassId, name: &str) {
     let compiler = &fx.an.compiler;
     let owner_cid = compiler
@@ -288,8 +286,7 @@ pub(super) fn scoped_const_read(
 /// holding one (`Line = Struct.new(..)`, a class under a computed
 /// superclass), so the path resolves at run time: read the scope by its
 /// own rules -- recursively, so `K::C::P` reports a missing HEAD exactly
-/// as a bare miss does -- then the leaf on the class it names (rustc's
-/// `emit_const_read` runtime-scope arm).
+/// as a bare miss does -- then the leaf on the class it names.
 fn runtime_scope_const_read(fx: &mut Fx, id: NodeId, scope: &str, name: &str) -> CResult<Operand> {
     // A TOP-ANCHORED scope (`::Tilt::Template`) splits with an empty head;
     // that is the anchor, not a namespace to look `Tilt` up in.

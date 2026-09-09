@@ -30,13 +30,12 @@
 //! and RESTARTS the iteration -- CRuby's own `get_next_values` behavior,
 //! oracle-verified.
 //!
-//! Documented divergences (Tier B unless noted): `#feed`, `#+` (Chain),
-//! `Enumerator.produce`, `Enumerator::Lazy`, `rewind`'s receiver-`rewind`
-//! hook, `each(*extra)`'s dup-and-append form, bignum `with_index`
-//! offsets, and `size` returns nil for a handful of shapes CRuby computes
-//! (e.g. `each_slice` over an infinite range). Cross-thread `next` and
-//! `dup` of a live iteration are loud panics mirroring CRuby's
-//! `FiberError`/`can't copy execution context` messages.
+//! `with_index` takes an Integer-range offset only, `rewind` does not call
+//! the source object's own `rewind` hook, and `size` answers nil for a
+//! handful of shapes CRuby computes (e.g. `each_slice` over an infinite
+//! range). Cross-thread `next` and `dup` of a live iteration are
+//! loud panics mirroring CRuby's `FiberError`/`can't copy execution
+//! context` messages.
 
 use crate::builtins::enumerable::pack;
 use crate::builtins::{arg_error, arg_int, frozen_error, inherited_row, need_block, type_error};
@@ -606,7 +605,7 @@ fn product_walk(
 /// shuttle block; each yielded tuple crosses back ARITY-PRESERVED as a
 /// fresh Array payload (CRuby's `next_ii` packs `argc/argv` the same
 /// way), and the shuttle's return value is the block's value inside the
-/// iterated method (`#feed` would inject here -- Tier B, always nil).
+/// iterated method (the value `#feed` injected, else nil).
 fn ensure_fiber(e: &REnumerator) -> u64 {
     let mut st = e.state.lock();
     if let Some(id) = st.fiber {
@@ -1183,8 +1182,7 @@ ruby_class! {
             None,
         )));
         // With a block, ruby RUNS it over each tuple and answers nil; the
-        // enumerator is only what a blockless call gets. The block used to be
-        // accepted and dropped.
+        // enumerator is only what a blockless call gets.
         let Some(RubyValue::Proc(p)) = block else {
             return Ok(product);
         };
@@ -1338,8 +1336,8 @@ ruby_class! {
         st.lookahead = None;
         st.done = None;
         st.saved_ec = crate::ec::Ec::default();
-        // CRuby also calls the receiver's own `rewind` hook when it
-        // responds -- Tier B (rare protocol; documented).
+        // CRuby also calls the source object's own `rewind` hook when it
+        // responds; this row does not.
         Ok(recv.clone())
     }
 

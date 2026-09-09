@@ -1081,9 +1081,9 @@ fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
 /// / hour 25 / min 60 are `ArgumentError`. `parts` is `[year, mon, day, hour,
 /// min, sec]`, any trailing entries absent.
 fn validate_civil_parts(parts: &[i64]) -> Result<(), Signal> {
-    // The FIELD is named, as CRuby names it -- `mon out of range`, not the
-    // generic text every field used to share. `mday` and `mon` are CRuby's
-    // own spellings, not `day` and `month`.
+    // The FIELD is named, as CRuby names it -- `mon out of range`, not one
+    // generic text for every field. `mday` and `mon` are CRuby's own
+    // spellings, not `day` and `month`.
     let ranges = [
         (1usize, "mon", 1, 12),
         (2, "mday", 1, 31),
@@ -1343,8 +1343,8 @@ fn subsec_nsec_arg(v: Option<&RubyValue>) -> Result<u32, Signal> {
 /// `Time.utc(y, mo, d, h, mi, s)` -- civil fields to epoch seconds, the UTC
 /// inverse of `broken_down`. Out-of-range fields normalize (an over-large
 /// month rolls into the year; day/hour/min/sec overflow just accumulate as
-/// seconds), matching `timegm` -- Ruby itself raises instead, a pre-existing
-/// documented divergence (the TODO on `time_utc`).
+/// seconds), matching `timegm`; the Ruby-visible range check is
+/// `validate_civil_parts`, which every constructor runs first.
 fn civil_to_epoch_utc(parts: &[i64]) -> i64 {
     let get = |i: usize, dflt: i64| parts.get(i).copied().unwrap_or(dflt);
     let (mut year, month) = (get(0, 1970), get(1, 1));
@@ -1728,12 +1728,9 @@ ruby_class! {
     }
     // `Time.utc(y, mo, d, h, mi, s)` / `Time.gm(...)`. A 7th argument is
     // MICROSECONDS (not the offset -- that is `Time.new`'s 7th; the two
-    // constructors genuinely differ, oracle-verified).
-    // TODO(plan P-B): out-of-range fields (`Time.utc(2023, 13, 1)`) are
-    // normalized by `civil_to_epoch_utc` (-> 2024-01-01); real Ruby raises
-    // ArgumentError ("mon out of range"). Needs a range check per field
-    // before the call. Also unsupported: the string-month form
-    // (`Time.utc(2023, "nov", 1)`).
+    // constructors genuinely differ, oracle-verified). An out-of-range field
+    // (`Time.utc(2023, 13, 1)`) raises ArgumentError ("mon out of range")
+    // before `civil_to_epoch_utc` can normalize it.
     def self."utc" | "gm" cfunc allocs (_recv, *args) {
         check_civil_argc(args)?;
         let norm = normalize_civil_args(args);
@@ -1750,7 +1747,6 @@ ruby_class! {
     // `Time.new(y, mo, d, h, mi, s, utc_offset)` -- the 7th argument is the
     // OFFSET, in seconds or as a `"+HH:MM"` String, unlike `Time.utc`'s
     // microseconds. With no offset given it is local time, like `Time.local`.
-    // TODO(plan P-B): the `in:` keyword form isn't handled.
     // The `in:` keyword offset takes the place of the 7th positional argument.
     // Ruby reaches this through `Class#new`, which is what `Time.method(:new)`
     // reports owning -- `Time` declares only `initialize`.

@@ -32,9 +32,9 @@ pub enum Signal {
     Return(RubyValue),
     Raise(RubyValue),
     /// `Kernel#throw(tag, value)` unwinding toward the matching
-    /// `Kernel#catch`. An uncaught throw surfaces at the top level as CRuby's
-    /// UncaughtThrowError would (a loud abort; the error-class wrapper is a
-    /// documented scope-cut).
+    /// `Kernel#catch`. A throw with no matching `catch` on the stack never
+    /// becomes this: `throw` raises `UncaughtThrowError` at the throw site
+    /// (see `catch.rs`).
     ///
     /// BOXED, and the only arm that is. Every other variant carries at most
     /// one `RubyValue` (24 bytes); this one carried two, and since an enum is
@@ -58,10 +58,9 @@ pub enum Signal {
     /// temporaries release through ordinary `Result` propagation -- never
     /// native stack unwinding (which Cranelift-compiled frames cannot
     /// support on Mach-O). Rescue clauses never match it and `ensure`
-    /// bodies are SKIPPED for it (today's force-unwind runs no Ruby
-    /// `ensure` either -- the documented "no ensure on never-finished
-    /// fibers" rule); every landing propagates it until the coroutine entry
-    /// finishes on `Err(Signal::Terminate)`.
+    /// bodies are SKIPPED for it (the "no ensure on never-finished fibers"
+    /// rule, CRuby's own); every landing propagates it until the coroutine
+    /// entry finishes on `Err(Signal::Terminate)`.
     Terminate,
 }
 

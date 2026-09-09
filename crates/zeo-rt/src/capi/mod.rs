@@ -1,5 +1,5 @@
 //! The C-ABI surface Cranelift-compiled programs call -- `extern "C"`
-//! twins of the internals the rustc backend reaches as ordinary Rust.
+//! twins of the runtime's ordinary Rust internals.
 //! Every function here is a THIN wrapper: reuse, no reimplementation.
 //!
 //! # The boundary contract (every function's safety terms)

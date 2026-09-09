@@ -180,7 +180,7 @@ pub fn install_core_constants() {
     );
     crate::constants::seed_argv();
     crate::builtins::env::seed_env();
-    // `File`'s constants now seed via its ruby_class! `const` rows (installed
+    // `File`'s constants seed via its ruby_class! `const` rows (installed
     // by the BUILTIN_TABLES loop below).
     #[cfg(feature = "ext-etc")]
     crate::ext::etc::seed_etc();
@@ -192,14 +192,12 @@ pub fn install_core_constants() {
     // The main ractor exists before any program statement runs, so
     // `Ractor.count`/`.current`/`#inspect` never observe a world without it.
     crate::ractor::init_main_ractor();
-    // `ThreadGroup::Default` now seeds itself via thread_group's ruby_class!
+    // `ThreadGroup::Default` seeds itself via thread_group's ruby_class!
     // `const Default` row (installed by the BUILTIN_TABLES loop below).
     seed_ruby_constants();
-    // Macro-migrated classes seed their own constants via the ruby_class!/
-    // ruby_module! `install_constants` thunk, collected in BUILTIN_TABLES --
-    // the data-driven replacement for the per-class `seed_*` calls above, run
-    // as each class moves off them. Independent per class, so ordering after
-    // the legacy seeders is fine.
+    // A `ruby_class!`/`ruby_module!` class seeds its own constants via its
+    // `install_constants` thunk, collected in BUILTIN_TABLES. Independent
+    // per class, so ordering after the hand-written seeders above is fine.
     for table in crate::builtins::all_tables() {
         if let Some(install) = table.install_constants {
             install();
@@ -307,7 +305,7 @@ mod tests {
     /// Every `Object` constant this file seeds must be in
     /// `zeo_abi::SEEDED_OBJECT_CONSTANTS`, or the compiler folds
     /// `defined?(NAME)` to nil for a name the running program has
-    /// (`CROSS_COMPILING` was the miss, task #133). The compiler cannot see
+    /// (`CROSS_COMPILING` is the kind of name that slips). The compiler cannot see
     /// this crate, so the agreement is pinned here, over the source text
     /// the seeding actually is.
     #[test]

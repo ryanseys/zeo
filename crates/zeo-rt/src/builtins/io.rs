@@ -1,8 +1,7 @@
-//! `IO` (G0, minimal): the `STDOUT`/`STDERR` singletons and the
-//! `$stdout`/`$stderr` globals the Kernel print family routes through.
-//! File-backed IO, `STDIN`/`gets`, buffering modes, and encodings are a
-//! later phase (plan P-B) -- this slice exists so `STDOUT.puts`,
-//! `$stderr.print`, and `$stdout = <duck>` redirection behave.
+//! `IO` (CRuby io.c): the `STDIN`/`STDOUT`/`STDERR` singletons and the
+//! `$stdin`/`$stdout`/`$stderr` globals the Kernel print family routes
+//! through, plus the descriptor-backed instance surface -- reads, writes,
+//! read-ahead buffering, sync modes, encodings, pipes, `popen`, `select`.
 
 use std::io::Write;
 use std::sync::{Arc, LazyLock};
@@ -189,15 +188,15 @@ fn read_bom(recv: &RubyValue) -> Result<Option<(crate::encoding::EncodingId, usi
 
 /// The read-ahead buffer behind `gets`/`each_line`/`getc`/`getbyte`.
 ///
-/// Reading a line one `read(2)` at a time costs a syscall PER BYTE:
-/// `bm_io_wordcount` spent 86% of its wall clock inside `read`, against a
-/// CRuby that refills a buffer in chunks. Buffering here is the same trade,
-/// with one rule that keeps it invisible: the descriptor sits AHEAD of the
-/// position Ruby believes in by exactly `data.len() - pos` bytes, and
-/// [`with_file`] seeks that difference back before handing the descriptor to
-/// anything else. So `#read`, `#seek`, `#pos`, `#eof?`, `#sysread` and every
-/// other row see precisely the file they saw before this existed, and the
-/// buffer can only ever be filled where it can also be given back.
+/// Reading a line one `read(2)` at a time costs a syscall PER BYTE: an
+/// unbuffered `bm_io_wordcount` spends 86% of its wall clock inside `read`,
+/// against a CRuby that refills a buffer in chunks. Buffering here is the
+/// same trade, with one rule that keeps it invisible: the descriptor sits
+/// AHEAD of the position Ruby believes in by exactly `data.len() - pos`
+/// bytes, and [`with_file`] seeks that difference back before handing the
+/// descriptor to anything else. So `#read`, `#seek`, `#pos`, `#eof?`,
+/// `#sysread` and every other row see precisely the unbuffered file, and
+/// the buffer can only ever be filled where it can also be given back.
 #[derive(Default)]
 struct ReadBuf {
     data: Vec<u8>,
@@ -1584,8 +1583,8 @@ fn io_read_val(
     };
     // The encoding a WHOLE read tags its bytes with: the handle's external one
     // when it has been set (`File.open(path, "rb")`, an `encoding:` option, a
-    // BOM), else UTF-8. It used to be UTF-8 unconditionally, so a binary
-    // handle came back mis-tagged.
+    // BOM), else UTF-8. UTF-8 unconditionally would mis-tag a binary
+    // handle's bytes.
     let read_enc = as_rio(recv)
         .and_then(|io| io.encodings.lock().0)
         .unwrap_or(crate::encoding::UTF_8);
@@ -2971,9 +2970,9 @@ ruby_class! {
     // Two implementations, because there are two kinds of descriptor.
     //
     // A SEEKABLE one compares the position against the end, which is exact
-    // and costs nothing. On a PIPE or SOCKET that is `ESPIPE` -- which is
-    // what this row used to raise for every one of them -- so those PEEK one
-    // byte instead and park it where the readers already look.
+    // and costs nothing. On a PIPE or SOCKET that seek is `ESPIPE`, so
+    // those PEEK one byte instead and park it where the readers already
+    // look.
     def "eof?" | "eof" (recv, &_blk) {
         check_readable(recv)?;
         // stdin can't seek; peek the shared buffered reader instead. `fill_buf`
@@ -3580,8 +3579,8 @@ ruby_class! {
     // current position, via `read`/`write`) or a filename (String/`to_path`).
     //
     // `copy_length` is what rubygems unpacks every `.gem` with
-    // (`copy_stream(tar.io, out, entry.size)`), and it used to be dropped:
-    // every extracted file got the rest of the archive appended.
+    // (`copy_stream(tar.io, out, entry.size)`); ignoring it would append
+    // the rest of the archive to every extracted file.
     def self."copy_stream" cfunc (_recv, src, dst, copy_length?, src_offset?, &_blk) {
         // A negative length or offset is IGNORED, not refused: `-1` copies
         // the whole file and a negative offset reads from the start.
@@ -3704,9 +3703,8 @@ ruby_class! {
 
     // `IO.sysopen(path, mode = "r", perm = 0o666)` -- open and answer the raw fd
     // Integer (the caller owns closing it). Same flag rules as `File.open`,
-    // through the same helper: this row used to open READ-ONLY whatever it was
-    // asked for, so an `IO.new(fd, "w")` over the result raised EBADF on the
-    // first write.
+    // through the same helper, so an `IO.new(fd, "w")` over the result can
+    // write.
     def self."sysopen" cfunc (_recv, path, mode?, perm?, &_blk) {
         use std::os::fd::IntoRawFd;
         let path = crate::builtins::file::path_arg(path, "sysopen")?;

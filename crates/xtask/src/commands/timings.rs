@@ -1,11 +1,9 @@
 //! What the last test run cost, read back out of its own JUnit.
 //!
-//! `.config/nextest.toml` has written `target/nextest/<profile>/junit.xml` on
-//! every run for months and nothing read it, so the numbers the suite is
-//! tuned against went stale in place: the `golden` group width was measured
-//! 2026-08-24 and carried unchanged across a change that removed four fifths
-//! of the per-program work. A comment saying "re-measure" is not a way to
-//! re-measure.
+//! `.config/nextest.toml` writes `target/nextest/<profile>/junit.xml` on
+//! every run. The numbers the suite is tuned against (the `golden` group
+//! width, the slowest tests) go stale in place unless something reads it
+//! back; a comment saying "re-measure" is not a way to re-measure.
 //!
 //! Nothing here collects anything. It parses the file nextest already wrote.
 

@@ -61,10 +61,9 @@ type SurrogateMaps = (crate::FMap<u32, u32>, crate::FMap<u32, u32>);
 
 /// The compile-time box surrogates, derived ONCE from the installed
 /// registry's name table: `#<Ruby::Box:N>` is the exact name the analyze
-/// pass mints per box. One parse at first ask replaces a `format!` + name
-/// hash (or a name parse-back) at every ask; Track 7's `BoxTable` replaces
-/// this derivation with real registration. Registry-less (unit tests) asks
-/// answer `None` WITHOUT caching, so a later install still populates.
+/// pass mints per box. One parse at first ask, not a `format!` + name
+/// hash (or a name parse-back) at every ask. Registry-less (unit tests)
+/// asks answer `None` WITHOUT caching, so a later install still populates.
 fn box_surrogates() -> Option<&'static SurrogateMaps> {
     static MAPS: OnceLock<SurrogateMaps> = OnceLock::new();
     if let Some(m) = MAPS.get() {

@@ -171,7 +171,7 @@ pub(super) fn lines_from_args(
     // PARAGRAPH MODE: an empty separator is not "no separator" -- ruby splits
     // on a blank line, keeping the "\n\n" that ended each paragraph and then
     // DISCARDING any further consecutive newlines, so "a\n\n\nb" is
-    // ["a\n\n", "b"]. Answering the whole string was the old behaviour.
+    // ["a\n\n", "b"].
     if sep.is_empty() {
         let bytes = text.as_bytes();
         let mut out = Vec::new();

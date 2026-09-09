@@ -1,9 +1,8 @@
-//! `zeo`'s own analog of zeo's `Compiler`/`ClassInfo`/`Scope`
-//! (`compiler.h`) -- pure compile-time bookkeeping. It never appears in the
-//! generated program; codegen consults it and discards it. See the plan's
-//! "Two `ClassId` types, on purpose": this `ClassId` is numerically mirrored
-//! into `zeo_rt::ClassId` by codegen, but the two types are otherwise
-//! unrelated -- `zeo` never links against `zeo-rt` at all.
+//! The compiler's `Compiler`/`ClassInfo`/`Scope` -- pure compile-time
+//! bookkeeping. It never appears in the generated program; codegen consults
+//! it and discards it. Two `ClassId` types, on purpose: this `ClassId` is
+//! numerically mirrored into `zeo_rt::ClassId` by codegen, but the two types
+//! are otherwise unrelated.
 
 mod class_info;
 mod names;
@@ -456,13 +455,11 @@ pub struct Compiler {
     /// de-optimization. See `clif::params::emit_reopen_guard`.
     pub program_freezes: bool,
     /// `class_in_scope`'s lazily-drained (box, lexical_parent) -> name -> id
-    /// index, replacing its linear whole-`classes` scan (the profiled
-    /// hot spot at gem scale: every bare-constant classification paid
-    /// O(#classes) string compares). Drained forward from `indexed_upto` on
-    /// each query, which is sound because every `add_class` site settles a
-    /// class's identity fields (name/box/lexical_parent) before any lookup
-    /// can run; `ZEO_VERIFY_CLASS_INDEX=1` shadow-compares every answer
-    /// against the original scan.
+    /// index. A linear whole-`classes` scan is the hot spot at gem scale:
+    /// every bare-constant classification pays O(#classes) string compares.
+    /// Drained forward from `indexed_upto` on each query, which is sound
+    /// because every `add_class` site settles a class's identity fields
+    /// (name/box/lexical_parent) before any lookup can run.
     class_index: std::cell::RefCell<ClassNameIndex>,
     indexed_upto: std::cell::Cell<usize>,
     /// `cref_of`/`fq_name` answers for every class, precomputed once by
@@ -1198,8 +1195,7 @@ mod cycle_guards {
     }
 
     /// The shape of what `is_exception_backed` asks -- a membership question
-    /// over the chain. It spun forever here, flat on memory, while `require
-    /// "active_record"` looked like it was doing work.
+    /// over the chain. A cyclic chain must not spin it forever.
     #[test]
     fn asking_the_chain_a_question_terminates() {
         let (mut compiler, a, b) = cyclic_pair();

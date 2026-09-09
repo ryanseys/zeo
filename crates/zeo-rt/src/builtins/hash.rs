@@ -1,5 +1,5 @@
-//! `Hash` (CRuby hash.c) -- stage B carries the rows migrated from the old
-//! curated table; the Tier A breadth (merge/fetch/dig/...) lands in stage E.
+//! `Hash` (CRuby hash.c) -- the instance surface over `crate::collections`'
+//! insertion-ordered map.
 
 use crate::RubyValue;
 use crate::builtins::enumerable::{self, own_row};

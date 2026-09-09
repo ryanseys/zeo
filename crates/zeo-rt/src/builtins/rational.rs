@@ -284,7 +284,7 @@ pub(crate) fn rat_to_s(r: &RRationalData) -> String {
 mod tests {
     use super::*;
 
-    /// `rationalize` is now a `ruby_class!` method (mangled fn name), so the
+    /// `rationalize` is a `ruby_class!` method (mangled fn name), so the
     /// test reaches it through Rational's registered instance lookup.
     fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
         (crate::builtins::registered_table(zeo_abi::RATIONAL_CLASS)

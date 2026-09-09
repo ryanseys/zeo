@@ -123,7 +123,7 @@ pub(super) fn slice_bang_impl(
 ///
 /// `replace_utf8` re-encodes, which is silent corruption for a BINARY
 /// string: every byte above 0x7F becomes a two-byte UTF-8 sequence, so a
-/// 21-byte gzip member came back 28 bytes long and no longer parsed. The
+/// 21-byte gzip member comes back 28 bytes long and does not parse. The
 /// characters of a byte-encoded string ARE its bytes, so writing them back
 /// as bytes is both faithful and cheap.
 fn write_back(handle: &crate::collections::RStr, chars: Vec<char>) {

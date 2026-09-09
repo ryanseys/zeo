@@ -394,9 +394,9 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
             super::body::method_frame(analyzed, "Object", &def.name, def.node, false);
         // Object's table holds what a module MATERIALIZED onto it, so a
         // `def require` written in `module Kernel` arrives here -- and it
-        // needs Kernel's reopen flag. With none it was live from BOOT, which
-        // is how rubygems' `def require` ran before the `module Kernel` body
-        // that declares the constant it reads.
+        // needs Kernel's reopen flag. With none it would be live from BOOT,
+        // and rubygems' `def require` would run before the `module Kernel`
+        // body that declares the constant it reads.
         let reopen_flag = em
             .reopen_flags
             .get(&(def.defining_class.0, def.name.clone()))
@@ -1340,8 +1340,8 @@ pub(super) fn main_installs(
         fx.fallible(st);
     }
     // `TOPLEVEL_BINDING`, installed UNCONDITIONALLY so `Object.constants`
-    // lists it (the census asks). A program that never names it gets the
-    // cheap degraded form -- self = `main`, no locals -- because
+    // lists it (the surface comparison asks). A program that never names it
+    // gets the cheap degraded form -- self = `main`, no locals -- because
     // `binding_names` stayed `None`; naming it anywhere upgrades both.
     {
         let op = super::expr::binding_value_at(fx, "<main>", 0);
