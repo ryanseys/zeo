@@ -1,11 +1,12 @@
 # Third-party notices
 
 zeo itself is licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE).
-It redistributes third-party code in five places, each keeping its own
+It redistributes third-party code in seven places, each keeping its own
 license: the C libraries linked into every binary, the fetched Ruby
-standard library, the vendored Ruby under `crates/zeo-rt/ext/`, MRI's C
-API headers, and the test corpus. This file is a map; the authoritative texts live beside the code,
-except the test corpus's, which is reproduced here.
+standard library, the vendored Ruby under `crates/zeo-rt/ext/`, the upstream
+test suites under `crates/zeo-rt/gems/`, ruby's own `mkmf.rb`, MRI's C API
+headers, and the test corpus. This file is a map; the authoritative texts
+live beside the code, except the test corpus's, which is reproduced here.
 
 ## Libraries compiled into every binary zeo produces
 
@@ -52,6 +53,33 @@ Ruby's own dual licence (the Ruby License or 2-clause BSD): `psych`'s
 pure-Ruby tree-building files, `json/add/*.rb`, `syslog/logger.rb`,
 `nkf`'s `kconv.rb`, `pty`'s `expect.rb`, and `date.rb`. Every deviation
 from upstream is marked `zeo:` in the file.
+
+## Upstream test suites under `crates/zeo-rt/gems/`
+
+`stringio/` and `strscan/` are zeo's own pure-Ruby ports: their `lib/` and
+their gemspecs are zeo-authored, and `strscan/lib/strscan.rb` follows the
+structure of ruby/strscan's own `lib/strscan/truffleruby.rb`. Each carries
+upstream's test suite verbatim, so the port is held to what the C extension
+does rather than to what the port's author expected.
+
+| File | From | License |
+|---|---|---|
+| `crates/zeo-rt/gems/stringio/test/test_stringio.rb` | ruby/stringio v3.2.0, test/stringio/test_stringio.rb | the Ruby License or 2-clause BSD |
+| `crates/zeo-rt/gems/stringio/ruby/ut_eof.rb` | ruby/ruby, test/ruby/ut_eof.rb | the Ruby License or 2-clause BSD |
+| `crates/zeo-rt/gems/strscan/test/test_stringscanner.rb` | ruby/strscan v3.1.8, test/strscan/test_stringscanner.rb | the Ruby License or 2-clause BSD |
+
+The `run_pure.rb` drivers beside them are zeo's. The versions are the
+ones `Gemfile.lock` pins, so the suite and the port cannot drift apart.
+`crates/zeo-rt/gems/UPSTREAM.md` says the same thing beside the code.
+
+## ruby's own `mkmf.rb` (`crates/zeo/tools-lib/mkmf.rb`)
+
+ruby/ruby's `lib/mkmf.rb`, byte-identical, at the `v4.0.6` rev
+`crates/zeo-capi/ruby-headers.lock` pins. A gem's `extconf.rb` runs it under
+zeo to write the Makefile that a build reads. It must stay byte-identical:
+zeo's own additions live separately in
+`crates/zeo/src/parse/shims/mkmf_zeo.rb`. The Ruby License or 2-clause BSD,
+and it is embedded in the published `zeo` crate.
 
 ## MRI's C API headers (`share/zeo/ruby-headers/` in a release)
 

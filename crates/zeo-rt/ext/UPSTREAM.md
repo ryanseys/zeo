@@ -73,11 +73,11 @@ bundled with ruby 4.0.5) — in 4.x that IS most of the gem (`power`, `sqrt`,
 `BigMath`, `to_d`). One deviation: the JRuby loader branch is reduced to
 `require "bigdecimal.so"`.
 
-**`date/lib/date.rb`** is the upstream Ruby half verbatim, with two zeo-marked
-changes: it opens with `require "date.so"` rather than `require 'date_core'`,
-`VERSION` is dropped because zeo's native half already declares it, and
-`Date::Error` is ADDED — CRuby defines it in C, and a feature-gated native
-class cannot register a constructible exception here.
+**`date/lib/date.rb`** is the upstream Ruby half verbatim, with three
+`zeo:`-marked changes: it opens with `require "date.so"` rather than
+`require 'date_core'`, `VERSION` is dropped because zeo's native half already
+declares it, and `Date::Error` is ADDED — CRuby defines it in C, and a
+feature-gated native class cannot register a constructible exception here.
 
 **`fiddle/`** has no Rust of its own; it rides zeo's ffi. `closure.rb`,
 `function.rb` and `version.rb` are verbatim from the ruby 4.0.5 fiddle-1.1.8
@@ -108,9 +108,7 @@ backend, replaced).
 5.4.0 gem — `class_loader.rb`, `scalar_scanner.rb`, `tree_builder.rb`,
 `handler.rb`, `visitors/visitor.rb`, `visitors/yaml_tree.rb` — the pure-Ruby
 object-to-node-tree machinery `Gem::Specification#to_yaml` builds its
-document with. One zeo-marked deviation in `tree_builder.rb`: the
-`class_eval`'d bodies spell `Psych::Nodes` in full (zeo's eval does not walk
-the CREF's enclosing modules). `visitors/emitter.rb`
+document with. All six are byte-identical to the gem. `visitors/emitter.rb`
 is zeo-authored: upstream's Emitter drives libyaml's event emitter, which
 zeo does not carry, so zeo's walks the node tree and writes the text itself
 — valid round-trippable YAML, not byte-parity with libyaml's wrapping.

@@ -1,13 +1,16 @@
-# Pull in the statically linked native half FIRST, so `Date` exists to be
+# frozen_string_literal: true
+# date.rb: Written by Tadayoshi Funaba 1998-2011
+
+# zeo: pull in the statically linked native half FIRST, so `Date` exists to be
 # reopened below -- zeo's loader idiom (see ext/strscan/lib/strscan.rb).
 # Upstream's own half opens with `require 'date_core'`, which reaches the same
 # C extension by its build name.
 require "date.so"
 
 class Date
-  # `VERSION` comes from the native half, which already declares it.
+  # zeo: `VERSION` comes from the native half, which already declares it.
 
-  # CRuby defines this in C (`date_core.c`'s `eDateError`), but a feature-gated
+  # zeo: CRuby defines this in C (`date_core.c`'s `eDateError`), but a feature-gated
   # native class cannot register a constructible exception in this runtime: an
   # ABI row is gated-but-constructor-less, and the exception table is
   # constructible-but-ungated, so no row shape is both. Defining it here makes

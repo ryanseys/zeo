@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
 /*
  * `rb_sprintf` and everything that formats a message.
  *
