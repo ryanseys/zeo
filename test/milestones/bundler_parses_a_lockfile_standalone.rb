@@ -1,10 +1,10 @@
-# The bundled Bundler, entered at the umbrella. The top rung of the
-# compile-cost ladder: `require "bundler"` pulls rubygems in as well, so this
-# is the largest require graph zeo compiles on demand.
+# The bundled Bundler, entered at the umbrella. Requiring it pulls rubygems
+# in as well, so this is the largest require graph in the corpus.
 #
-# This file used to enter at `bundler/version` because the umbrella did not
-# compile. It does now; `test/milestones/require_bundler.rb` and
-# `rubygems_then_bundler.rb` are the regression tests.
+# `Bundler::LockfileParser` reads a lockfile's CONTENTS standalone: no
+# Gemfile, no network, no bundle context. That is what makes a lockfile
+# machine-readable, and it is the one Bundler surface a compile has to get
+# right for `--bundle-gemfile` to mean anything.
 require "bundler"
 
 p Bundler::VERSION.is_a?(String)
@@ -44,3 +44,16 @@ p parsed.specs.map { |s| [s.name, s.version.to_s] }.sort
 p parsed.dependencies.keys.sort
 p parsed.platforms.map(&:to_s).sort
 p parsed.bundler_version.to_s
+__END__
+true
+true
+true
+true
+true
+true
+true
+true
+[["rake", "13.2.1"], ["rspec", "3.13.0"], ["rspec-core", "3.13.0"]]
+["rake", "rspec"]
+["arm64-darwin", "x86_64-linux"]
+"4.0.18"

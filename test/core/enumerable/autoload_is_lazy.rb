@@ -12,18 +12,16 @@
 # holding a lazy unit's class registrations back until its unit runs, not
 # adding a hook at the constant read.
 #
-# Measured cost, while it was broken: this was one of the things that blocked
-# `require "rubygems"`, so `test/bench/compile/rubygems.rb` and `bundler.rb` entered
-# at sub-files instead. With the declaration eager, `rubygems.rb`'s `autoload
-# :RequestSet` ran `request_set/gem_dependency_api.rb` before
-# `rubygems/platform` was required, and died on `uninitialized constant
-# Gem::Platform`. Both bench programs enter at the umbrella now.
-$LOAD_PATH.unshift(File.expand_path("autoload_fixture", __dir__))
+# Why it matters here: `rubygems.rb` declares `autoload :RequestSet`, whose
+# file reads `Gem::Platform`. An eager declaration would run it before
+# `rubygems/platform` is required, so the whole umbrella require turns on
+# this being lazy.
+$LOAD_PATH.unshift(File.expand_path("autoload_is_lazy", __dir__))
 
 puts "before the module"
 module AL
   puts "  module body, before the autoload"
-  autoload :Late, File.expand_path("autoload_fixture/late.rb", __dir__)
+  autoload :Late, File.expand_path("autoload_is_lazy/late.rb", __dir__)
   puts "  module body, after the autoload"
 end
 puts "after the module"

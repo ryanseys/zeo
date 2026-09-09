@@ -11,7 +11,7 @@
 #     NAME sits on, which for a chained or block-receiver call is not the
 #     line the expression starts on. Coverage still counts the first line;
 #     the two are different questions and are answered separately.
-require_relative "lib/backtrace_scopes"
+require_relative "backtrace_names_the_scope_and_the_call_line/backtrace_scopes"
 
 def show(label)
   yield
@@ -43,19 +43,19 @@ show("a raise in the receiver of a chained call") do
 end
 __END__
 blocks at a required file's top level:
-  lib/backtrace_scopes.rb:6:in 'block (2 levels) in <top (required)>'
-  lib/backtrace_scopes.rb:5:in 'Array#each'
-  lib/backtrace_scopes.rb:5:in 'block in <top (required)>'
+  backtrace_names_the_scope_and_the_call_line/backtrace_scopes.rb:6:in 'block (2 levels) in <top (required)>'
+  backtrace_names_the_scope_and_the_call_line/backtrace_scopes.rb:5:in 'Array#each'
+  backtrace_names_the_scope_and_the_call_line/backtrace_scopes.rb:5:in 'block in <top (required)>'
   backtrace_names_the_scope_and_the_call_line.rb:23:in 'block in <main>'
   backtrace_names_the_scope_and_the_call_line.rb:17:in 'Object#show'
   backtrace_names_the_scope_and_the_call_line.rb:23:in '<main>'
 a method in a required file:
-  lib/backtrace_scopes.rb:11:in 'Object#a_method_here'
+  backtrace_names_the_scope_and_the_call_line/backtrace_scopes.rb:11:in 'Object#a_method_here'
   backtrace_names_the_scope_and_the_call_line.rb:24:in 'block in <main>'
   backtrace_names_the_scope_and_the_call_line.rb:17:in 'Object#show'
   backtrace_names_the_scope_and_the_call_line.rb:24:in '<main>'
 a chained call:
-  lib/backtrace_scopes.rb:15:in 'Chained.boom'
+  backtrace_names_the_scope_and_the_call_line/backtrace_scopes.rb:15:in 'Chained.boom'
   backtrace_names_the_scope_and_the_call_line.rb:28:in 'block in <main>'
   backtrace_names_the_scope_and_the_call_line.rb:17:in 'Object#show'
   backtrace_names_the_scope_and_the_call_line.rb:26:in '<main>'

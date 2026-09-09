@@ -13,7 +13,7 @@ file.
 | Profile | What it adds |
 |---|---|
 | `cargo nextest run` | the whole corpus, plus the api and checks suites |
-| `cargo nextest run -P full` | the tests that are slow one at a time: the whole-graph milestones, the binary-size check, the bundled-stdlib compile, and the two that need a target directory of their own |
+| `cargo nextest run -P full` | the tests that are slow one at a time: the whole require graphs under `milestones/`, the benchmark bank, the binary-size check, the bundled-stdlib compile, and the two that need a target directory of their own |
 
 `-P full` is not a second pass over the corpus. One run of the corpus is the
 corpus gate.

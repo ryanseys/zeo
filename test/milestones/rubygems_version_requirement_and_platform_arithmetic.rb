@@ -1,17 +1,12 @@
-# The bundled RubyGems, entered at the umbrella. This is the compile-cost
-# instrument's largest rung: `cargo xtask bench --compile` times how long the
-# front end takes on the whole `require "rubygems"` graph and how much it
-# holds while doing it.
+# The bundled RubyGems, entered at the umbrella. Requiring it is the largest
+# require graph zeo compiles on demand, and this walks the part of it every
+# gemspec and lockfile is written against: version arithmetic, requirement
+# matching, platform parsing.
 #
-# The body below is deliberately small and pure -- version arithmetic,
-# requirement matching, platform parsing, what every gemspec and lockfile is
-# written against. Almost all of the cost this measures is the require graph,
-# not these lines.
-#
-# This file used to enter at `rubygems/version` and four siblings because the
-# umbrella did not compile. It does now; `test/milestones/require_rubygems.rb`
-# is the regression test, and `crates/zeo/tests/e2e/gems_vendored.rs` asserts
-# separately that every class in the graph reaches codegen.
+# The body is deliberately small and pure. What it proves is that the whole
+# graph compiles and that these answers survive it, not that these few lines
+# are hard. `test/milestones/require_rubygems.rb` is the narrower regression
+# test on the graph itself.
 require "rubygems"
 
 # --- Gem::Version: the ordering every gemspec and lockfile depends on -------
@@ -99,3 +94,69 @@ end
 p spec.full_name, spec.file_name, spec.require_paths
 p spec.dependencies.map { |d| [d.name, d.type, d.requirement.to_s] }
 p spec.satisfies_requirement?(Gem::Dependency.new("zeo-bench", "~> 0.1"))
+__END__
+"1.2.3"
+"1.2.3"
+[1, 2, 3]
+"1.2.3"
+false
+true
+false
+true
+"2.0.0"
+"1.3"
+"2"
+-1
+["1.0", "1.9.a", "1.9", "1.10", "2.0.0.rc1", "2.0.0"]
+true
+false
+"3.1"
+true
+"#<Gem::Version \"1.2.3\">"
+ArgumentError
+[">= 1.2", ">= 1.2", true, true, true]
+["> 1.2", "> 1.2", false, true, true]
+["<= 1.2", "<= 1.2", true, false, false]
+["< 1.2", "< 1.2", false, false, false]
+["= 1.2", "= 1.2", true, false, false]
+["!= 1.2", "!= 1.2", false, true, true]
+["~> 1.2", "~> 1.2", true, true, false]
+">= 1.2, < 2.0"
+true
+">= 0"
+true
+"~> 2.1"
+false
+true
+[">=", #<Gem::Version "1.2">]
+false
+true
+Gem::Requirement::BadRequirementError
+"rails"
+"~> 7.0"
+:runtime
+true
+false
+true
+false
+false
+"rails (~> 7.0)"
+:development
+true
+"~> 7.0, >= 7.0.1"
+true
+">= 0"
+ArgumentError
+"x86_64-linux"
+"x86_64"
+"linux"
+"universal-darwin-19"
+true
+"ruby"
+true
+true
+"zeo-bench-0.1.0"
+"zeo-bench-0.1.0.gem"
+["lib"]
+[["rake", :runtime, ">= 13.0"]]
+true

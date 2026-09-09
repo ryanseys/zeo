@@ -69,9 +69,9 @@ fn repo_root() -> PathBuf {
 /// the full `cargo xtask dist --pgo` pipeline (instrument, train, profile-use
 /// rebuild) staged inside the same isolated dir. It costs ~15 minutes of
 /// setup, so the everyday bank stays on release -- and a dist-mode bank
-/// never rewrites the committed `bench/results.tsv` (that file is the
-/// release-profile diff chain); compare dist banks with
-/// `--save-baseline` + `critcmp` instead.
+/// writes no summary, because a release median and a dist median are not
+/// comparable; compare dist banks with `--save-baseline` + `critcmp`
+/// instead.
 fn build_snapshot(root: &Path) -> PathBuf {
     let outer = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
@@ -631,13 +631,14 @@ fn bench_cruby(
     g.finish();
 }
 
-/// After an unfiltered bank: every benchmark's median, written to the
-/// CHECKED-IN `bench/results.tsv`. Overwrite and commit -- the git diff
-/// against the previous bank IS the progress record. `cruby` rows carry
-/// over from whatever data the last oracle run left in
-/// `target/criterion` -- the oracle is a MANUAL, once-in-a-while group
-/// (`ZEO_BENCH_ORACLE=1`); a zeo-only bank keeps the standing CRuby
-/// medians beside its fresh zeo ones so the comparison never vanishes.
+/// After an unfiltered bank: every benchmark's median, to stdout and to
+/// `target/bench/results.tsv`. Nothing in the tree is a baseline -- a
+/// measurement is only true of the machine and the day that took it, so it
+/// belongs beside the run rather than in git. `cruby` rows carry over from
+/// whatever data the last oracle run left in `target/criterion`: the oracle
+/// is a MANUAL, once-in-a-while group (`ZEO_BENCH_ORACLE=1`), and a
+/// zeo-only bank keeps the standing CRuby medians beside its fresh zeo ones
+/// so the comparison never vanishes.
 fn export_results(root: &Path, _oracle: bool) {
     let outer = outer_target(root);
     let mut rows: Vec<(&str, String, f64)> = Vec::new();
@@ -675,14 +676,18 @@ fn export_results(root: &Path, _oracle: bool) {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|| "unknown".to_string());
     let mut out = format!(
-        "# bench/results.tsv -- medians from the last full bank (make bench) at {sha}\n\
+        "# medians from a full bank at {sha}, on the machine that ran it\n\
          # group\tbenchmark\tmedian_secs\n"
     );
     for (g, n, s) in &rows {
         out.push_str(&format!("{g}\t{n}\t{s:.4}\n"));
     }
-    std::fs::write(root.join("bench/results.tsv"), out).expect("write bench/results.tsv");
-    eprintln!("wrote bench/results.tsv ({} rows)", rows.len());
+    print!("{out}");
+    let dir = outer.join("bench");
+    std::fs::create_dir_all(&dir).expect("create target/bench");
+    let path = dir.join("results.tsv");
+    std::fs::write(&path, &out).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
+    eprintln!("wrote {} ({} rows)", path.display(), rows.len());
 }
 
 fn main() {
@@ -708,11 +713,10 @@ fn main() {
     }
     c.final_summary();
     // A filtered run measured a subset, and a dist-mode bank measured a
-    // different profile than the committed release chain records; only a
-    // full RELEASE bank rewrites the committed record.
+    // different profile; only a full RELEASE bank writes a summary.
     if !lazy {
         if std::env::var_os("ZEO_BENCH_DIST").is_some() {
-            eprintln!("dist-mode bank: bench/results.tsv (release chain) left untouched");
+            eprintln!("dist-mode bank: no summary written (not comparable with release)");
         } else {
             export_results(&root, oracle);
         }

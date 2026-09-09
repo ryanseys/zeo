@@ -16,6 +16,10 @@
 //! A program zeo does NOT get right lives in `test/gaps/`, whose verdict is
 //! inverted: it must differ from ruby, and a match is the failure.
 //!
+//! `bench` is the benchmark bank. Its programs are sized to be TIMED, so
+//! they run once here as ordinary goldens under the `full` profile -- the
+//! point being that the bank cannot drift into measuring a wrong answer.
+//!
 //! Case names are `<suite>::<path>`. The one exception is `aot_link::`, the
 //! curated link tier over the same `test/aot/` files.
 
@@ -55,6 +59,7 @@ suite_fns! {
     stdlib => STDLIB,
     compiler => COMPILER,
     aot => AOT,
+    bench => BENCH,
 }
 
 /// The one curated link tier: the same `test/aot/` programs through an
@@ -90,6 +95,7 @@ datatest_stable::harness! {
     { test = stdlib, root = "../../test/stdlib", pattern = r"^[^/]+/[^/]+\.rb$" },
     { test = compiler, root = "../../test/compiler", pattern = r"^[^/]+/[^/]+\.rb$" },
     { test = aot, root = "../../test/aot", pattern = r"^[^/]+\.rb$" },
+    { test = bench, root = "../../test/bench", pattern = r"^[^/]+\.rb$" },
     { test = aot_link, root = "../../test/aot", pattern = r"^[^/]+\.rb$" },
     { test = errors, root = "../../test/errors", pattern = r"^[^/]+\.rb$" },
     { test = features, root = "../../test/features", pattern = r"^[^/]+\.rb$" },

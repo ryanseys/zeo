@@ -146,11 +146,7 @@ fn every_directory_at_case_depth_belongs_to_a_program() {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .into_owned();
-                let allowed = name == "fixtures"
-                    || name == "compile"
-                    || dir.join(format!("{name}.rb")).is_file()
-                    || name.ends_with("_fixture")
-                    || name == "lib";
+                let allowed = name == "fixtures" || dir.join(format!("{name}.rb")).is_file();
                 if !allowed {
                     bad.push(path.display().to_string());
                 }

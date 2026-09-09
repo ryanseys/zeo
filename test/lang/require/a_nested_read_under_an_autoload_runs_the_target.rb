@@ -7,10 +7,10 @@
 # whose unit had not run -- `uninitialized constant OpenSSL::SSL::SSLContext`
 # from inside `Net::HTTP#connect`. Caught by an HTTPS request, not by the
 # corpus, which is why this shape is a golden now.
-$LOAD_PATH.unshift(File.expand_path("autoload_nested_fixture", __dir__))
+$LOAD_PATH.unshift(File.expand_path("a_nested_read_under_an_autoload_runs_the_target", __dir__))
 
 puts "before"
-autoload :NS, File.expand_path("autoload_nested_fixture/ns", __dir__)
+autoload :NS, File.expand_path("a_nested_read_under_an_autoload_runs_the_target/ns", __dir__)
 puts "after the declaration"
 
 # Nothing has run yet.

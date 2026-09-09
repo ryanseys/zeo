@@ -13,9 +13,15 @@
 # bench harness diffs trivially against CRuby.
 #
 # attr_accessor (not attr_reader) on every value class is
-# deliberate: spinel's value-type detection otherwise turns
-# IntV / SymV into in-register structs that can't be stored
-# uniformly in a poly array.
+# deliberate: value-type detection otherwise turns IntV / SymV
+# into in-register structs that cannot be stored uniformly in a
+# polymorphic array.
+#
+# `define` of a lambda makes a real cycle: the closure holds the
+# Env it was defined in, and that Env's row holds the closure.
+# Refcounting cannot reclaim it and the collector does not either,
+# so the census below is the recorded answer, not a regression.
+#@ gccheck: cycle leak: 32 objects (PairV x16, SymV x9, IntV x3, Array x2, Env x1, LambdaV x1)
 
 class IntV
   attr_accessor :n

@@ -26,12 +26,15 @@ golden = { max-threads = 14 }
 #
 # What `-P full` adds is NOT another pass over the corpus -- it is the handful
 # of tests that are individually slow: a release compiler build, a whole gem's
-# require graph, a probe target dir of its own. Those are minutes each, so
-# they stay out of the loop a person runs while editing.
+# require graph, the benchmark bank (whose programs are sized to be timed, so
+# each is seconds rather than milliseconds), a probe target dir of its own.
+# Those are minutes each, so they stay out of the loop a person runs while
+# editing.
 [profile.default]
 default-filter = """
 not (
       test(/^milestones::/)
+    | test(/^bench::/)
     | test(/^checks::binary_size::/)
     | test(every_bundled_gem_compiles)
     | test(natlibs_table_matches_rustc)

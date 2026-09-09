@@ -38,7 +38,7 @@ $ cargo xtask bless core::string/upcase.rb
 | `features/` | what a build of zeo answers about itself |
 | `divergences/` | programs zeo answers differently on purpose |
 | `milestones/` | whole require graphs (the `full` profile) |
-| `bench/` | the benchmark bank's inputs |
+| `bench/` | the benchmark bank's inputs, run once as goldens under `-P full` |
 | `fixtures/` | files several programs share |
 
 The four topic roots are exactly two levels deep. Anything deeper is a

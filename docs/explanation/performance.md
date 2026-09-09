@@ -9,10 +9,11 @@ programs, each with its
 correct output, and the criterion bench harness (`cargo bench`) verifies the
 output before it times anything.
 
-Measured 2026-08-25 on one machine, against CRuby 4.0.6 (the Zeo rows from
-that day's full run; the CRuby rows from a combined Zeo + Ruby run earlier
-the same day — the committed [`test/bench/results.tsv`](../../test/bench/results.tsv) is
-the record):
+Measured 2026-08-25 on one machine, against CRuby 4.0.6: the Zeo rows from
+that day's full run, the CRuby rows from a combined Zeo + Ruby run earlier
+the same day. A full bank prints its own medians and writes them to
+`target/bench/results.tsv`; nothing is committed, because a measurement is
+only true of the machine and the day that took it.
 
 | | geomean |
 |---|---|
