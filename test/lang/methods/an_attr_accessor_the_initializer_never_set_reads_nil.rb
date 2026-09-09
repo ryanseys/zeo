@@ -1,0 +1,28 @@
+# Two classes each declaring accessors the initializer only partly assigns: the
+# unassigned one is nil, the assigned one is not.
+# (spinel issue #3136)
+class A
+  attr_accessor :b, :i
+  def initialize
+    @i = 5
+  end
+  def setb = @b = true
+end
+a = A.new
+p a.b.nil?
+p a.i
+p a.i.nil?
+class C
+  attr_accessor :flag
+  def initialize
+    @flag = false
+  end
+end
+p C.new.flag
+p C.new.flag.nil?
+__END__
+true
+5
+false
+false
+false

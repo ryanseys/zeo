@@ -1,0 +1,29 @@
+# `arr << "a"` inside initialize, reaching the ivar through the attr_reader,
+# fills the array the caller reads.
+# (spinel issue #3139)
+class C
+  attr_reader :arr, :nums
+  def initialize
+    @arr = []
+    @nums = []
+    arr << "a"
+    arr << "b"
+    nums << 1
+  end
+end
+c = C.new
+p c.arr
+p c.nums
+class D
+  attr_accessor :mix
+  def initialize
+    @mix = []
+    mix << 1
+    mix << "s"
+  end
+end
+p D.new.mix
+__END__
+["a", "b"]
+[1]
+[1, "s"]

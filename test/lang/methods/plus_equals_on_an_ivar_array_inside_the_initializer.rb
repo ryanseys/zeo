@@ -1,0 +1,20 @@
+# `@switches += opts` and `+= []` inside initialize, and the same for a second
+# ivar, both readable afterwards.
+# (spinel issue #3289)
+class MyClass
+  attr_reader :switches
+  def initialize(opts)
+    @switches = []
+    @switches += opts
+    @switches += []
+    @more = [1]
+    @more += [2, 3]
+  end
+  attr_reader :more
+end
+obj = MyClass.new(["--name", "-n"])
+p obj.switches
+p obj.more
+__END__
+["--name", "-n"]
+[1, 2, 3]
