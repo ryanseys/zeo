@@ -8,7 +8,7 @@ require "tmpdir"
 
 def show(label)
   puts "#{label}: #{yield.inspect}"
-rescue Exception => e # rubocop:disable Lint/RescueException
+rescue Exception => e
   puts "#{label}: #{e.class}: #{e.message}"
 end
 

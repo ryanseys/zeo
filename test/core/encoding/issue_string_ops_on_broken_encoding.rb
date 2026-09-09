@@ -14,7 +14,7 @@ p s.valid_encoding?
 def show(label)
   r = yield
   puts "#{label}\tOK #{r.inspect}"
-rescue Exception => e # rubocop:disable Lint/RescueException
+rescue Exception => e
   puts "#{label}\t#{e.class}\t#{e.message}"
 end
 

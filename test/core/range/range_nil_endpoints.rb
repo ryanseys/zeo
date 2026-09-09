@@ -8,7 +8,7 @@
 def show(label)
   print label, ": "
   p yield
-rescue Exception => e # rubocop:disable Lint/RescueException
+rescue Exception => e
   p [e.class, e.message]
 end
 

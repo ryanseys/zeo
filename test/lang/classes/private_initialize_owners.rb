@@ -16,7 +16,7 @@
 def t(label)
   v = yield
   puts "#{label} => #{v.inspect}"
-rescue Exception => e # rubocop:disable Lint/RescueException
+rescue Exception => e
   puts "#{label} !! #{e.class}: #{e.message}"
 end
 

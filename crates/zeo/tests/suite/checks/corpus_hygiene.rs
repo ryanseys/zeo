@@ -191,3 +191,42 @@ fn no_two_cases_share_a_body() {
         bad.join("\n  ")
     );
 }
+
+/// `cargo xtask promote-gap` moves a gap to `<topic>/<area>/<stem>.rb` and
+/// refuses when that file already exists, so a gap sharing a basename with a
+/// passing case cannot be promoted at all -- and `-E 'test(<stem>)'` matches
+/// both, one of which must fail. A gap is named after the behaviour that
+/// still differs, which no passing case is named after.
+#[test]
+fn no_gap_shares_a_basename_with_a_case() {
+    let cases: std::collections::HashMap<String, PathBuf> = programs()
+        .into_iter()
+        .filter(|(_, suite)| suite.depth == Depth::Two)
+        .map(|(p, _)| {
+            (
+                p.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                p,
+            )
+        })
+        .collect();
+    let root = repo_root();
+    let bad: Vec<String> = crate::suites::GAPS
+        .cases(root)
+        .expect("read the gaps")
+        .iter()
+        .filter_map(|rel| {
+            let name = rel.file_name()?.to_string_lossy().into_owned();
+            let case = cases.get(&name)?;
+            Some(format!(
+                "test/gaps/{name} -- {}",
+                case.strip_prefix(root).unwrap_or(case).display()
+            ))
+        })
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "gaps named like a passing case -- rename the gap after what still \
+         differs:\n  {}",
+        bad.join("\n  ")
+    );
+}

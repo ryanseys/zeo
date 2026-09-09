@@ -1,3 +1,7 @@
+# A Struct member is not an instance variable. `@a` reads nil even though
+# `a` is 1, `instance_variables` is empty until a method assigns `@a`, and
+# assigning it adds a real ivar without touching the member. zeo backs a
+# member with an ivar of the same name, so the two are one slot.
 S = Struct.new(:a, :b)
 class S
   def peek = @a

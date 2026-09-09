@@ -1,3 +1,6 @@
+# A group name containing `)` -- `(?<)>x)` -- and a backreference to it,
+# `\k<)>`. ruby's parser reads the name to the matching `>` and accepts
+# both; Oniguruma rejects the name, so zeo raises where ruby matches.
 def t(label)
   r = begin
     yield.inspect

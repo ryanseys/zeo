@@ -1,3 +1,8 @@
+# `__callee__` answers the name a method was CALLED through and `__method__`
+# the name it was defined as, so an alias makes them differ. Four aliases:
+# on a singleton class, on a block-defined method, on a per-object
+# singleton, and one installed at run time. zeo's frame carries one label,
+# so `__callee__` answers the defined name everywhere.
 class Klass
   def self.original = __callee__
   singleton_class.alias_method :nickname, :original
