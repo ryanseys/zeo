@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # Complex() with an exception: keyword mis-routes the keyword into the
 # numeric argument.
 #

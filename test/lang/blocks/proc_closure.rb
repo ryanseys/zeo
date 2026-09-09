@@ -1,6 +1,6 @@
 # Regression test for proc closures (capturing outer locals).
-# Phase 2 of proc closure recovery: captures via heap cells + per-proc
-# capture struct, mirroring the Fiber capture mechanism.
+# A write through the closure is visible outside it, and after the scope
+# that defined it has returned.
 
 # Escaping closure with mutation
 def make_counter

@@ -1,6 +1,6 @@
-# Phase 16.3 -- reopening builtin classes in root: fresh methods, overrides
-# of native methods, class-level state, and protocol overrides all attach to
-# the real builtin classes and win everywhere real Ruby's would.
+# Reopening a builtin class at the top level: fresh methods, overrides of
+# native methods, class-level state and protocol overrides all attach to the
+# real class and win everywhere ruby's would.
 
 class String
   def blank?

@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # A block parameter list with a trailing comma (`|a,|`) does not discard
 # the extra element, so the body sees the wrong binding.
 #

@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # Enumerator.product with a block returns the Enumerator::Product instead
 # of running the block over each tuple.
 #

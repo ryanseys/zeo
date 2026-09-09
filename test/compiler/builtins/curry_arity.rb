@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # Proc#curry with an arity larger than the proc's own returns a Proc where
 # ruby raises ArgumentError.
 #

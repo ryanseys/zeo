@@ -1,4 +1,4 @@
-# Queue producer/consumer on the cooperative scheduler (Phase 0). A blocking
+# Queue producer and consumer. A blocking
 # #pop parks the caller until a #push hands it a value; #close drains remaining
 # poppers with nil. Results are FIFO (deterministic); thread interleaving order
 # is timing-dependent in CRuby, so only values/counts are asserted.

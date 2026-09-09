@@ -1,6 +1,6 @@
 #@ env: RUBY_BOX=1
 #@ ruby: -W:no-experimental
-# Phase 18 -- Ruby::Box: compile-time box namespaces. A class defined in a
+# Ruby::Box, the namespace isolation. A class defined in a
 # box is a distinct class; builtins are shared (and patchable PER BOX);
 # globals and top-level constants are fully box-separate; values and
 # exceptions cross the boundary as plain references.

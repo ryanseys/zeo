@@ -1,4 +1,5 @@
-# Rational arithmetic over mrb_int num/den (Phase 1; overflow raises).
+# Rational arithmetic: + - * / between Rationals and with Integers,
+# reduced to lowest terms, and an overflow that raises.
 a = Rational(2, 4)
 b = Rational(1, 3)
 puts a

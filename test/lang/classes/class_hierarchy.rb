@@ -1,7 +1,5 @@
-# Issue #404 Phase 3 (Tier 1, classes-only). Exercise the
-# precomputed ancestors / parents tables added in this phase.
-# Modules + dynamic is_a? + case-when on Class come in later
-# tiers; this test stays on user-class inheritance.
+# `superclass` and `ancestors` over user-class inheritance, and class values
+# collected through an array.
 
 class A
 end

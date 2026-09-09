@@ -1,4 +1,4 @@
-# Phase 17.1 -- the numeric tower: full-bignum Integer, Rational, Complex,
+# The numeric tower: full-bignum Integer, Rational, Complex,
 # the CRuby-exact coercion matrix, Math, and Kernel conversions.
 
 r = 1

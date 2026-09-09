@@ -5,7 +5,7 @@
 # 
 # Marshal's object-link table needs shared references and cycles to exercise it.
 #@ gccheck: cycle leak: 2 objects (Array x2)
-# Marshal.dump / Marshal.load round-trip (Phase 1): primitives, Array, Hash.
+# Marshal.dump / Marshal.load round-trip: primitives, Array, Hash.
 def rt(x) = Marshal.load(Marshal.dump(x))
 p rt(42)
 p rt(-7)

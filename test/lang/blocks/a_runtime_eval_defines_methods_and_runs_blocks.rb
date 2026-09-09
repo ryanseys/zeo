@@ -1,9 +1,9 @@
-# The M8 eval-VM tail: `def` inside `eval`/`class_eval`/`instance_eval`
+# `def` inside `eval`/`class_eval`/`instance_eval`
 # (installing on the right definee), optional+rest+keyword params, `return`
 # and `yield` in an eval-defined method, and blocks + auto-splat passed to
 # calls inside eval. Each source is non-literal (held in a variable / built
 # with a heredoc) so it runs through the runtime `eval`, not the inline
-# splice. Output oracle-verified verbatim.
+# splice.
 
 code = <<~RUBY
   def calc(a, b = 10, *rest)

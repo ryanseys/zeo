@@ -1,4 +1,4 @@
-# Phase 17.1 -- Struct: compile-time class synthesis. `Point = Struct.new`
+# Struct: `Point = Struct.new`
 # becomes an ordinary `class Point < Struct` (accessors, initialize,
 # members/to_a/to_h/==/[]/each_pair, Enumerable via the real chain), with
 # keyword_init and block-with-methods forms.

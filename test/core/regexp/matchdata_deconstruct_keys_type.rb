@@ -1,6 +1,6 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# MatchData#deconstruct_keys with a bad argument type answers {} where ruby
-# raises TypeError.
+# From the spinel corpus (c55d9bdb).
+# MatchData#deconstruct_keys raises TypeError for an argument that is
+# neither nil nor an Array of Symbols.
 #
 m001 = "ab".match(/(?<a>a)/)
 r001 = (m001.deconstruct_keys(["a"]) rescue $!.class); p r001

@@ -1,13 +1,6 @@
-# Phase 1B: `begin..rescue..else..end` the `else` body runs only when
-# the begin body completed without exception. Pre-fix the parser
-# emitted the else_clause field but the codegen ignored it -- the
-# else body was silently dropped from emit.
-#
-# Covered:
-#   - else with no exception (else runs)
-#   - else with exception (else does NOT run)
-#   - else combined with ensure
-#   - method-level def with begin..rescue..else
+# `begin..rescue..else..end`: the else body runs only when the begin body
+# completed without an exception. With and without a raise, combined with
+# ensure, and inside a def.
 
 # 1. No exception -- else runs.
 begin

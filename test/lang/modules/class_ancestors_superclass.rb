@@ -1,5 +1,5 @@
 # Class#ancestors and Class#superclass over the full chain (user + builtin),
-# and Class values rendering through inspect/p. (CLASS-OBJECT.md Phase 3)
+# and Class values rendering through inspect/p.
 class Animal; end
 class Dog < Animal; end
 

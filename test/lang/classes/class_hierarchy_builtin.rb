@@ -1,18 +1,7 @@
-# Issue #404 Phase 3 Tier 4. Built-in class prefix in the
-# unified cls_id space. Primitives (Integer, String, Array, ...)
-# now occupy cls_ids 0..20 per docs/CLASS-OBJECT.md; user
-# classes shift to cls_id BC + internal_ci, where BC is the
-# reserved built-in count.
-#
-# Coverage:
-#   - Built-in class const in value position: Integer.to_s ->
-#     "Integer" via the sp_class_names table.
-#   - Built-in class hierarchy: Integer < Numeric, Integer <=
-#     Object, Integer < Comparable (transitive via include).
-#   - `obj.is_a?(klass)` where obj is a primitive (poly recv via
-#     sp_class_for_poly mapping) and klass is a sp_Class value.
-#     The pre-Tier-4 path returned the sp_Class{-1} sentinel for
-#     primitives.
+# Built-in classes as values: `Integer.to_s`, and the hierarchy through
+# `<` and `<=` against Numeric, Object and Comparable (the last transitive
+# through an include). Also `is_a?` where the receiver is a primitive and
+# the class is held in a local.
 
 puts Integer.to_s            # Integer
 puts Float.to_s              # Float

@@ -1,6 +1,6 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# An Integer operation with a nil argument PANICS the runtime
-# (crates/zeo-rt/src/builtins/integer.rs) instead of raising TypeError.
+# From the spinel corpus (c55d9bdb).
+# An Integer or Float operation with a nil argument raises TypeError, for
+# coerce, pow, fdiv, divmod, round and digits alike.
 #
 r001 = (1.5.coerce(nil) rescue $!.class)
 p r001

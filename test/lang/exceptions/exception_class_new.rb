@@ -1,19 +1,6 @@
-# Phase 1C: built-in exception class `.new("msg")`.
-# `RuntimeError.new(...)`, `ArgumentError.new(...)` etc. previously
-# emitted an undefined `sp_RuntimeError` type (the analyze inferred
-# obj_RuntimeError but no struct backed it). Spinel now models
-# built-in exception objects as their message string plus a
-# side-channel cls name -- the same convention `rescue => e` uses.
-#
-# Covers (Phase 1C):
-#   - CLS.new("msg") with various exception classes
-#   - .class returns the class name (string in spinel)
-#   - .message returns the msg
-#   - .is_a? walks the hierarchy
-#
-# Covers (Phase 1D):
-#   - raise <exception_object> -- raise a pre-built exc
-#   - raise CLS.new("msg") -- raise an inline-constructed exc
+# A built-in exception class's `.new("msg")`: `.class`, `.message`, and
+# `is_a?` up the hierarchy. Then raising it, both as a pre-built object and
+# as one constructed inline at the raise.
 
 err = RuntimeError.new("created")
 puts err.class                     # RuntimeError

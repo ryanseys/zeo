@@ -1,5 +1,6 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Array#slice! past the end answers [] where ruby answers nil.
+# From the spinel corpus (c55d9bdb).
+# Array#slice! answers nil for a range that starts past the end, and for a
+# negative length.
 #
 a = [1, 2, 3]
 p a.slice!(1, -1)

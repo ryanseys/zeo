@@ -1,6 +1,6 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Kernel conversion functions raise ArgumentError where ruby raises
-# TypeError for a bad argument type.
+# From the spinel corpus (c55d9bdb).
+# Kernel conversion functions raise TypeError for an argument with no
+# conversion, and consult to_f/to_int where there is one.
 #
 r001 = (Integer({}) rescue $!.class)
 p r001

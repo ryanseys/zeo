@@ -1,4 +1,7 @@
-# Five surfaces from the conformance wave, four of which crashed.
+# Five unrelated surfaces: << / concat / append_as_bytes with an Integer
+# codepoint, a String compared against a non-String, Hash#merge with an
+# empty literal, print of an empty container, and a Regexp matched against
+# nil.
 
 # String#<< and #concat take an Integer as a codepoint. It was passed through
 # the string slot, so the integer arrived at the concatenation as a pointer.

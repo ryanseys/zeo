@@ -1,8 +1,7 @@
-# Thread.new runs a green thread on the cooperative scheduler (Phase 0, N=1):
+# Thread.new runs a block on its own thread:
 # #value returns the block result, #join blocks until it finishes, #alive?
 # reports completion, an unhandled exception is re-raised at #join/#value, and
-# threads carried in an array dispatch #value through the poly slot.
-# (docs/thread-mn-design.md)
+# threads carried in an array each answer #value.
 
 t = Thread.new { 1 + 2 }
 puts t.value                                  # 3

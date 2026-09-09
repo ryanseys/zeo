@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # The uninitialized-constant message is namespaced ("Object::AlsoMissing");
 # ruby names the constant alone.
 #

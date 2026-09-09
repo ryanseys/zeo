@@ -1,6 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Time#round with negative digits rounds where ruby raises ArgumentError.
-#
+# From the spinel corpus (c55d9bdb).
 # Time#round/#floor/#ceil with a negative digit count is CRuby's
 # ArgumentError; the count was clamped to zero and the call answered a Time.
 t001 = Time.utc(2020, 1, 1, 0, 0, 1, 123456)

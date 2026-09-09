@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at fa06b601.
+# From the spinel corpus (fa06b601).
 #
 # A multibyte literal in a pattern is emitted one BYTE at a time, so each
 # byte becomes an atom of its own and a quantifier binds to the last one:

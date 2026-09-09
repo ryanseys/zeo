@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # Integer() rejects the 0d decimal prefix.
 #
 # `0d19` is CRuby's explicit decimal prefix; the parser knew 0x, 0b and 0o but

@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # A super call from a method in an extended module skips the extending
 # object's own definition.
 #

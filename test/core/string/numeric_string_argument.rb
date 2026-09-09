@@ -1,6 +1,6 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# A numeric method with a String argument raises TypeError where ruby
-# raises ArgumentError.
+# From the spinel corpus (c55d9bdb).
+# A numeric method with a String argument raises the ArgumentError ruby
+# raises, not a TypeError.
 #
 r001 = (5.div("x") rescue $!.class)
 p r001

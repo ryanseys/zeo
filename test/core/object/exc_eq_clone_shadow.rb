@@ -1,4 +1,6 @@
-# Three surfaces from the conformance wave.
+# Three unrelated surfaces: Exception#== compares class and message, clone
+# keeps a frozen Hash frozen where dup does not, and a module's private
+# helper does not appear in an includer's method list.
 
 # A user Exception subclass keeps Exception#== -- class plus message -- rather
 # than falling back to Object#== identity

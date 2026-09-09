@@ -1,14 +1,7 @@
-# Issue #404 Phase 3 Tier 4 follow-up: `case obj when ClassConst`
-# on a poly receiver. Pre-Tier-4 the lowering left ConstantReadNode
-# arms unimplemented for poly recv (literal cascade only handled
-# sym/str/int/float/nil/bool). Module#=== is equivalent to
-# `arg.is_a?(recv)`, so we route through sp_class_le over
-# sp_class_for_poly and the precomputed ancestors.
-#
-# Coverage:
-#   - Class match against a poly recv carrying primitives.
-#   - Multiple primitive class arms in one case.
-#   - else clause.
+# `case obj when ClassConst` on a receiver whose type is not known until run
+# time. Module#=== is `obj.is_a?(mod)`, so each arm walks the real
+# ancestors: Integer, String, Float and Symbol arms, several in one case,
+# and the else clause.
 
 def describe(v)
   case v

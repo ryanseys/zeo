@@ -199,7 +199,7 @@ The rows that stay different:
 |---|---|---|
 | `(?:(?!a))*b?`, `a(?:(?<=a))*b?` | compiles | `RegexpError: target of repeat operator is invalid` -- Oniguruma refuses a repeated zero-width group; Onigmo accepts it |
 | a bare `\p` | a literal `p` | `invalid character property name` -- Oniguruma reads `\p` as the property prefix |
-| a group named `)` | refused by `re.c` | accepted by the engine (`test/gaps/regexp_group_name_validation.rb`) |
+| a group named `)` | refused by `re.c` | accepted by the engine (`test/gaps/a_paren_inside_a_group_name_is_accepted_and_referenced.rb`) |
 | a pattern that backtracks past onig's retry limit with NO timeout set | runs to the end | answers no match, as if the pattern failed -- the retry limit is onig's, and Onigmo has none; under a timeout both raise `Regexp::TimeoutError` |
 | an ASCII `\w`/`\d`/`\s` INSIDE a bracket class under `/i` | never folds past ASCII (`/[\w]/i` does not match `ſ`) | folds the whole class, so `ſ` and `K` arrive through `s` and `k` (`test/gaps/an_ascii_escape_inside_a_bracket_class_folds_past_ascii.rb`) |
 | `Regexp.linear_time?` | Onigmo's own analysis | a source scan: false iff the pattern has a backreference, which is Onigmo's rule too |

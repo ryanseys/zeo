@@ -21,8 +21,7 @@
 # builtin method list per class at materialization time, which is
 # `zeo_abi::BUILTINS` and is already indexed by ClassId.
 #
-# Independent of the fused-iterator work: this reproduces byte-identically on
-# the binary built before Wave 8's kinds existed, with the site unfused.
+# Independent of iterator fusion: the site reproduces this unfused.
 module Enumerable
   def none?
     :from_enumerable

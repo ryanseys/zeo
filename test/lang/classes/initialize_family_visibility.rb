@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # initialize, initialize_copy and friends are not private by default.
 #
 class Hooked

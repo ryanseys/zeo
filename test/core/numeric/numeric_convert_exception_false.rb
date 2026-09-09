@@ -1,5 +1,6 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Complex() with exception: false raises instead of answering nil.
+# From the spinel corpus (c55d9bdb).
+# Complex() and Rational() with `exception: false` answer nil for a value
+# they cannot convert.
 #
 p(Complex("bad", exception: false))
 

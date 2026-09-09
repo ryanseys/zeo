@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # The out-of-range Struct#[] message says "too large" for a negative
 # offset; ruby says "too small".
 #

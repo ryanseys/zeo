@@ -1,6 +1,5 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Float#div by zero raises FloatDomainError where ruby raises
-# ZeroDivisionError.
+# From the spinel corpus (c55d9bdb).
+# Float#div by zero raises ZeroDivisionError.
 #
 # A Float that reaches a method through a boxed slot answers the whole
 # Numeric surface, not only the operators (#3800).

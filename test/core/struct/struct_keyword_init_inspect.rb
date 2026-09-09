@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # A keyword_init Struct's inspect omits the "(keyword_init: true)" suffix.
 #
 K = Struct.new(:a, keyword_init: true)

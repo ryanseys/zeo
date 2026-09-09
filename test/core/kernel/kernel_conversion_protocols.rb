@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # Kernel conversions do not consult the to_int/to_str/to_ary protocol
 # methods.
 #

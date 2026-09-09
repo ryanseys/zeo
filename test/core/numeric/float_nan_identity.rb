@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # Two NaN floats do not compare identical under equal?/eql? the way ruby's
 # boxed NaN does.
 #

@@ -1,6 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# MatchData#[] past the last group answers the group text instead of nil.
-#
+# From the spinel corpus (c55d9bdb).
 # A negative MatchData index reaches the capture groups only, so the one that
 # would land on the whole match is nil. A beginless or endless bound carries
 # the range sentinel, which the negative-index fixup turned into a wild offset.

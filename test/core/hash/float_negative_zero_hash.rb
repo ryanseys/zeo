@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # -0.0 and 0.0 hash differently from ruby's answer.
 #
 p((-0.0).eql?(0.0))

@@ -1,5 +1,6 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Struct#dig with an unknown member raises NameError where ruby answers nil.
+# From the spinel corpus (c55d9bdb).
+# Struct#dig answers nil for an unknown member, and for an index past the
+# last one.
 #
 S = Struct.new(:a, :b)
 s = S.new(1, 2)

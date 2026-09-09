@@ -1,4 +1,5 @@
-# Test Phase 2: heterogeneous arrays, bimorphic dispatch
+# A heterogeneous array printed element by element, and one call site
+# dispatching the same method name to two classes.
 
 # Heterogeneous array
 arr = [1, "two", 3.0, true, nil]

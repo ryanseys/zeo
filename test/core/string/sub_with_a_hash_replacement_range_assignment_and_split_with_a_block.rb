@@ -1,7 +1,7 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# A String transform drops replacement characters ruby emits.
-#
-# Three more String surfaces from the conformance wave.
+# From the spinel corpus (c55d9bdb).
+# Three unrelated String surfaces: a Hash replacement in sub/gsub answering
+# its default for a key that misses, range index assignment, and split with
+# a block.
 
 # A Hash replacement in sub/gsub looks the match up with #[], so a miss takes
 # the hash's DEFAULT. The miss was hard-coded to the empty string.

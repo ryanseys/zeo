@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # Enumerable#to_set does not apply the block form, so the untransformed
 # elements land in the set.
 #

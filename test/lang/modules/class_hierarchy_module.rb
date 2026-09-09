@@ -1,13 +1,7 @@
-# Issue #404 Phase 3 Tier 2. Modules in the unified cls_id
-# space + woven into ancestors via the @cls_includes pass.
-#
-# Coverage:
-#   - module constant in value position (Greeting / Comparable
-#     lookalike) lowers to a sp_Class with the unified cls_id.
-#   - <class>.ancestors weaves included modules in include-reverse
-#     order followed by the parent chain.
-#   - <class> <= <module> checks via the ancestors table.
-#   - <class> == <module> never holds (different cls_ids).
+# Modules as values and in the ancestor chain: a module constant in value
+# position, `ancestors` weaving included modules in reverse-include order
+# ahead of the parent chain, `<=` against a module, and `==` never holding
+# between a class and a module.
 
 module Greeting
   def hello

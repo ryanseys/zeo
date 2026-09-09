@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at fa06b601.
+# From the spinel corpus (fa06b601).
 #
 # `Float#round(n)` with a positive digit count rounds by scaling with a power
 # of ten, so the SCALED product's own representation error becomes part of

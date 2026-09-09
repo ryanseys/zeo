@@ -1,18 +1,6 @@
-# Issue #404 Phase 3 Tier 3. Dynamic is_a?(klass) where the
-# klass argument is a sp_Class value (variable or parameter)
-# rather than a ConstantReadNode. Pre-Tier-3 the codegen
-# read @nd_name on the arg as the bare class name and so
-# couldn't resolve a Class-typed local. Tier 3 routes through
-# sp_class_le at runtime so the hierarchy check happens
-# against whichever class the variable carries.
-#
-# Coverage:
-#   - Typed recv (obj_Dog) with dynamic klass parameter.
-#     Routes through compile_introspection_expr's new dynamic
-#     arg arm; sp_class_le over the precomputed ancestors.
-#   - Typed recv with concrete vs unrelated klass.
-#   - Same recv with a module-typed klass (Tier 2 +
-#     ancestors-table glue).
+# `is_a?` with the class held in a local or a parameter rather than named as
+# a constant. The check walks the receiver's real ancestors either way, for a
+# concrete class, an unrelated one, and an included module.
 
 module Trainable
 end

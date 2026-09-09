@@ -1,4 +1,4 @@
-# Phase 17.2 -- the fiber-backed Enumerator (per CRuby's enumerator.c):
+# The fiber-backed Enumerator:
 # blockless iteration methods return real Enumerators, external iteration
 # (#next/#peek) suspends a coroutine per element, StopIteration carries the
 # iteration's result, and Kernel#loop swallows it.

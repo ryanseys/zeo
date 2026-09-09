@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # A user object nested in a JSON structure is rendered by inspect rather
 # than its own to_json.
 #

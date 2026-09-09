@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # MatchData does not deconstruct for an array pattern in case/in.
 #
 m001 = "ab".match(/(a)(b)/)

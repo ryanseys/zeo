@@ -1,4 +1,4 @@
-# Phase 17.1 -- Tier A breadth across String/Symbol/Array/Hash/Range/
+# Breadth across String/Symbol/Array/Hash/Range/
 # Enumerable/Kernel, resolved down the CRuby-exact ancestor chains
 # (Comparable driving <=>, Enumerable driving each, Kernel's universals).
 

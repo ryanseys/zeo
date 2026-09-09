@@ -1,5 +1,6 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# Float#remainder by zero answers NaN where ruby raises ZeroDivisionError.
+# From the spinel corpus (c55d9bdb).
+# Float#remainder by zero raises ZeroDivisionError, for a Float or an
+# Integer divisor and through a local.
 #
 r001 = (7.0.remainder(0.0) rescue $!.class); p r001
 r002 = (7.0.remainder(0) rescue $!.class); p r002

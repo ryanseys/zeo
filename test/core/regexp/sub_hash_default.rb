@@ -1,7 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
-# String#sub with a Hash replacement drops a key that misses, where ruby
-# substitutes the hash's default.
-#
+# From the spinel corpus (c55d9bdb).
 # A Hash replacement in #sub/#gsub answers its default for a key it does not
 # have; the empty string was hard-coded (#3824).
 h = Hash.new("?")

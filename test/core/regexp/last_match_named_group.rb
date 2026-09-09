@@ -1,4 +1,4 @@
-# GAP -- imported from the spinel corpus at c55d9bdb.
+# From the spinel corpus (c55d9bdb).
 # Regexp.last_match with a String name raises "no implicit conversion";
 # ruby accepts a name.
 #
