@@ -1,4 +1,7 @@
-path = "/tmp/zeo_e2e_binshovel_#{Process.pid}"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+path = File.join(ZTMP, "zeo_e2e_binshovel_#{Process.pid}")
 File.open(path, "wb") { |f| f << 180.chr << "a" }
 p File.binread(path).bytes
 File.delete(path)

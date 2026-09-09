@@ -1,3 +1,6 @@
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 p "ab\n".each_line(chomp: 1).to_a
 p "ab\n".each_line(chomp: nil).to_a
 p "ab\ncd\n".lines(chomp: 1)
@@ -9,8 +12,8 @@ t = "truthy"
 p "ab\n".lines(chomp: f)
 p "ab\n".lines(chomp: t)
 p "ab\n".each_line(chomp: t).to_a
-one = "/tmp/zeo_kwflag_#{Process.pid}_1.txt"
-two = "/tmp/zeo_kwflag_#{Process.pid}_2.txt"
+one = File.join(ZTMP, "zeo_kwflag_#{Process.pid}_1.txt")
+two = File.join(ZTMP, "zeo_kwflag_#{Process.pid}_2.txt")
 File.write(one, "a\nb\nc\n")
 File.open(one) do |fh|
   p fh.gets(chomp: "yes")

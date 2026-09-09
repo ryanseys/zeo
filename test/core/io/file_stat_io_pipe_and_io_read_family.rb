@@ -2,8 +2,11 @@
 # (a plain-IO reader/writer pair), the IO instance read family
 # (gets separator/limit/chomp, getc/getbyte, lineno), IO class methods
 # (IO.read/write/copy_stream), and FileTest.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
 
-path = "/tmp/sp_e2e_stat_#{Process.pid}.txt"
+
+path = File.join(ZTMP, "sp_e2e_stat_#{Process.pid}.txt")
 File.write(path, "hello\nworld\n")
 st = File.stat(path)
 p st.class

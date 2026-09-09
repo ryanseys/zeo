@@ -3,8 +3,11 @@
 # literally-named class and default "-" filename with no file args, and
 # binding.local_variable_get(:name) reading an in-scope local (including a
 # reserved-word parameter).
+require "tmpdir"
+ZTMP = Dir.mktmpdir
 
-dir = "/tmp/sp_e2e_dirh_#{Process.pid}"
+
+dir = File.join(ZTMP, "sp_e2e_dirh_#{Process.pid}")
 Dir.mkdir(dir) unless Dir.exist?(dir)
 File.write("#{dir}/x", "")
 File.write("#{dir}/y", "")

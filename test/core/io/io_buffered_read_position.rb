@@ -1,8 +1,11 @@
 # Line and character reads buffer ahead, so every operation that observes or
 # moves the file position has to see the descriptor where RUBY consumed to,
 # never where the read-ahead left it.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
 
-path = "/tmp/zeo_buffered_read_#{Process.pid}.txt"
+
+path = File.join(ZTMP, "zeo_buffered_read_#{Process.pid}.txt")
 File.open(path, "w") { |f| f.write("alpha\nbeta\ngamma\ndelta\n") }
 
 # `pos` after a buffered line read.

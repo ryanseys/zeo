@@ -8,10 +8,13 @@
 # enumerable -- each_entry IS each, so it is renamed to one. A user Enumerable
 # is left alone: its #each may `yield a, b`, and there the two differ (see
 # docs/limitations.md).
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 
 # our own directory, not a platform-specific one; the name never reaches the
 # output, only the entries do
-dir = "/tmp/sp_each_entry_#{Process.pid}"
+dir = File.join(ZTMP, "sp_each_entry_#{Process.pid}")
 Dir.mkdir(dir) unless Dir.exist?(dir)
 File.write(File.join(dir, "a.txt"), "x")
 

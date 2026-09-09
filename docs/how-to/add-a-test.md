@@ -17,6 +17,13 @@ AB
 Ä
 ```
 
+Two rules the harness enforces rather than trusts. The name says what the
+program checks, not which issue it came from: a tracker id in a filename
+tells a red board nothing. And a program that writes files puts them under
+`Dir.mktmpdir` (`require "tmpdir"`) and never prints the directory — ruby
+and zeo each run it under their own scratch root, so a literal `/tmp/name`
+is shared with every case beside it.
+
 ## Where it goes
 
 The topic directory the question belongs to:

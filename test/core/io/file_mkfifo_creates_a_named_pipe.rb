@@ -1,6 +1,9 @@
 # It exists afterwards, and the call answers rather than raising.
 # (spinel issue #3118)
-p001 = "/tmp/sp_mkfifo_3118_#{Process.pid}"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+p001 = File.join(ZTMP, "sp_mkfifo_3118_#{Process.pid}")
 File.delete(p001) if File.exist?(p001)
 r = begin; File.mkfifo(p001); rescue => e; e.class; end
 p r

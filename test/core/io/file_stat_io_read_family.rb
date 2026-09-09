@@ -1,7 +1,10 @@
 # File::Stat, IO.pipe, the IO instance read family, IO class methods, and
 # FileTest -- the file/IO surface. Output is path-independent so the golden is
 # stable.
-path = "/tmp/sp_ex_stat_#{Process.pid}.txt"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+path = File.join(ZTMP, "sp_ex_stat_#{Process.pid}.txt")
 File.write(path, "hello\nworld\n")
 
 st = File.stat(path)

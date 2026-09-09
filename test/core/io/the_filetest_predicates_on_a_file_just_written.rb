@@ -1,6 +1,9 @@
 # owned?, exist?, file? and directory?.
 # (spinel issue #2997)
-f = "/tmp/sp_ft_2997_#{Process.pid}"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+f = File.join(ZTMP, "sp_ft_2997_#{Process.pid}")
 File.write(f, "hi")
 p FileTest.owned?(f)
 p FileTest.exist?(f)

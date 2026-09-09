@@ -1,6 +1,9 @@
 # The mode set is the mode stat reports.
 # (spinel issue #3005)
-dir = "/tmp/sp_issue_3005_#{Process.pid}"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+dir = File.join(ZTMP, "sp_issue_3005_#{Process.pid}")
 Dir.mkdir(dir) unless File.directory?(dir)
 f = File.join(dir, "f")
 File.write(f, "hello")

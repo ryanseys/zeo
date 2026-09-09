@@ -1,7 +1,10 @@
 # Dir.new/Dir.open handles, ARGF's literally-named class and default "-"
 # filename (run with no file arguments), and binding.local_variable_get reading
 # an in-scope local -- including a reserved-word parameter.
-dir = "/tmp/sp_ex_dirh_#{Process.pid}"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+dir = File.join(ZTMP, "sp_ex_dirh_#{Process.pid}")
 Dir.mkdir(dir) unless Dir.exist?(dir)
 File.write("#{dir}/x", "")
 File.write("#{dir}/y", "")

@@ -14,6 +14,8 @@ show { Dir.chdir("/nonexistent_zeo_probe_xyz") { } }
 show { File.realpath("/nonexistent_zeo_probe_xyz") }
 show { File.stat("/nonexistent_zeo_probe_xyz") }
 show { File.delete("/nonexistent_zeo_probe_xyz") }
+# A literal destination on purpose: the rename FAILS, so nothing is created,
+# and the message this test is about names both paths.
 show { File.rename("/nonexistent_zeo_probe_xyz", "/tmp/zzz") }
 show { File.expand_path("~xyz_no_such_user_probe") }
 __END__

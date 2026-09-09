@@ -2,11 +2,14 @@
 # including its load-time module metaprogramming (module_function, extend
 # self, class << self, a platform-conditional StreamUtils_), and the core
 # file operations bundler relies on work.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 
 require "fileutils"
 puts FileUtils::VERSION
 puts FileUtils.respond_to?(:mkdir_p)
-d = "/tmp/zeo_fu_e2e_#{Process.pid}"
+d = File.join(ZTMP, "zeo_fu_e2e_#{Process.pid}")
 FileUtils.rm_rf(d)
 FileUtils.mkdir_p("#{d}/a/b")
 puts Dir.exist?("#{d}/a/b")

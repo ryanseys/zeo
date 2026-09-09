@@ -280,3 +280,68 @@ fn no_case_is_named_by_a_number() {
         bad.join("\n  ")
     );
 }
+
+/// Programs that name a literal `/tmp` path on purpose: each one's answer
+/// depends on the path itself, so a scratch directory would change what it
+/// records. Everything else writes under `Dir.mktmpdir`.
+const LITERAL_TMP_BY_DESIGN: &[&str] = &[
+    // The errno message names both paths of a rename that fails, so nothing
+    // is created and the message has to stay stable.
+    "lang/exceptions/errno_messages_name_crubys_call_sites.rb",
+];
+
+/// A program that writes under a literal `/tmp/name` shares that name with
+/// every case running beside it -- the golden group is fourteen wide -- and
+/// leaves the file behind afterwards. `Dir.mktmpdir` honours the `TMPDIR` the
+/// harness sets, so the writes land in the run's own scratch root and go with
+/// it.
+///
+/// Naming a `/tmp` path without writing to it is fine: it is data.
+#[test]
+fn no_program_writes_under_a_literal_tmp_path() {
+    const WRITERS: &[&str] = &[
+        "File.write(",
+        "File.open(",
+        "Dir.mkdir(",
+        "File.mkfifo(",
+        "FileUtils.",
+        "IO.write(",
+        "File.new(",
+        "File.symlink(",
+    ];
+    let mut bad = Vec::new();
+    for (path, suite) in programs() {
+        let rel = format!(
+            "{}/{}",
+            suite.root.strip_prefix("test/").unwrap_or(suite.root),
+            path.file_name().unwrap_or_default().to_string_lossy()
+        );
+        let text = program_text(&path);
+        let code: String = text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !code.contains("\"/tmp/") && !code.contains("'/tmp/") {
+            continue;
+        }
+        if !WRITERS.iter().any(|w| code.contains(w)) {
+            continue;
+        }
+        if LITERAL_TMP_BY_DESIGN.iter().any(|p| rel.ends_with(p)) {
+            continue;
+        }
+        bad.push(
+            path.strip_prefix(repo_root())
+                .unwrap_or(&path)
+                .display()
+                .to_string(),
+        );
+    }
+    assert!(
+        bad.is_empty(),
+        "programs that write under a literal /tmp path -- put the files under \
+         `Dir.mktmpdir` (require \"tmpdir\") and never print the directory:\n  {}",
+        bad.join("\n  ")
+    );
+}

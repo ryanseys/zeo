@@ -1,4 +1,7 @@
-path = "/tmp/sp_stat_surface_#{Process.pid}"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+path = File.join(ZTMP, "sp_stat_surface_#{Process.pid}")
 File.write(path, "hello")
 st = File.stat(path)
 p st.size == 5

@@ -2,8 +2,11 @@
 # [] because the walk read "" instead of "/"); FNM_DOTMATCH yields "." and
 # dotfiles but never ".."; File.mkfifo returns 0 and creates a FIFO;
 # File#lstat returns a File::Stat; File.exists? was removed in Ruby 3.2.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
 
-d = "/tmp/sp_e2e_fdir_#{Process.pid}"
+
+d = File.join(ZTMP, "sp_e2e_fdir_#{Process.pid}")
 Dir.mkdir(d) unless Dir.exist?(d)
 File.write("#{d}/a1", ""); File.write("#{d}/a2", ""); File.write("#{d}/.hid", "")
 p Dir.glob("#{d}/*").map { |x| x.sub("#{d}/", "") }.sort

@@ -2,8 +2,11 @@
 # autoclose=/autoclose?, to_io (self), close_on_exec?, pread/pwrite at a
 # fixed offset, advise (nil), close_write on a read-only file (IOError),
 # reopen (rebinds to another file), each_codepoint.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
 
-pth = "/tmp/sp_e2e_io_#{Process.pid}.tmp"
+
+pth = File.join(ZTMP, "sp_e2e_io_#{Process.pid}.tmp")
 File.write(pth, "hi\n")
 File.open(pth) do |f|
   p f.readbyte
@@ -22,10 +25,10 @@ File.open(pth) do |f|
 end
 File.open(pth, "r+") { |f| p f.pwrite("X", 0) }
 p File.read(pth)
-File.write("/tmp/sp_e2e_io2_#{Process.pid}.tmp", "other")
-File.open(pth) { |f| File.open("/tmp/sp_e2e_io2_#{Process.pid}.tmp") { |g| f.reopen(g); p f.read } }
+File.write(File.join(ZTMP, "sp_e2e_io2_#{Process.pid}.tmp"), "other")
+File.open(pth) { |f| File.open(File.join(ZTMP, "sp_e2e_io2_#{Process.pid}.tmp")) { |g| f.reopen(g); p f.read } }
 File.open(pth) { |f| cps = []; f.each_codepoint { |c| cps << c }; p cps }
-File.delete(pth); File.delete("/tmp/sp_e2e_io2_#{Process.pid}.tmp")
+File.delete(pth); File.delete(File.join(ZTMP, "sp_e2e_io2_#{Process.pid}.tmp"))
 __END__
 104
 104

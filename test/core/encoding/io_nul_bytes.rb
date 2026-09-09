@@ -1,3 +1,6 @@
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 r, w = IO.pipe
 w.write("hello\0world")
 w.close
@@ -7,7 +10,7 @@ p data.bytes.length
 p data[5].ord
 r.close
 
-path = "/tmp/sp_nul_file_#{Process.pid}"
+path = File.join(ZTMP, "sp_nul_file_#{Process.pid}")
 File.write(path, "a\0b\0c")
 s = File.read(path)
 p s.length

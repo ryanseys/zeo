@@ -4,7 +4,10 @@
 # handle itself were the bytes, and the C build stopped on the pointer type.
 # `Marshal.dump(obj, f)` matched no arm at all and came out as a NameError on
 # the Marshal constant. (matz/spinel#4112)
-path = "/tmp/sp_marshal_io_stream_#{Process.pid}.bin"
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
+path = File.join(ZTMP, "sp_marshal_io_stream_#{Process.pid}.bin")
 
 # The round trip through a stream, with the value carrying a NUL-heavy dump:
 # the write is binary, so the bytes are sized from the header rather than by

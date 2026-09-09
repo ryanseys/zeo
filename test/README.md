@@ -48,6 +48,11 @@ own files.
 Programs run with `test/` as their working directory, so a path in a
 recording reads `core/string/upcase.rb`.
 
+A program that writes files puts them under `Dir.mktmpdir` (`require
+"tmpdir"`) and never prints the directory. Both ruby and zeo run it under
+their own scratch root, so a literal `/tmp/name` would be shared with every
+case running beside it and would outlive the run.
+
 ## The rest
 
 - [The test format](../docs/reference/test-format.md) — directives, the
