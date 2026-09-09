@@ -27,6 +27,11 @@ concurrency:
   group: nightly-${{ github.ref }}
   cancel-in-progress: false
 
+# `moved` reads this workflow's own run history; nothing here writes.
+permissions:
+  contents: read
+  actions: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -58,6 +63,10 @@ jobs:
   # The one platform the dev machines already are, so the least CI adds per
   # minute -- and the most expensive minute. The whole profile, weekly. The
   # anchor-workspace claim only macOS can answer rides in it.
+  # Each cron excludes the OTHER cron's slot, so a scheduled run gets exactly
+  # one job. `workflow_dispatch` sets no schedule, so both guards pass and a
+  # manual run does everything -- which is what "run the nightly now" means.
+  # The `os` input steers this job only.
   macos:
     name: macOS (weekly)
     needs: moved

@@ -63,11 +63,12 @@ two:
 
 ## What the tag does
 
-Push `v<version>` and the Release workflow builds each target natively —
-cross-compiling is ruled out because `dist` finishes by running a compiled
-program — uploads the tarballs and gems, checks that the tag matches the
-workspace version, and creates the Release with the CHANGELOG section as
-its notes.
+Push `v<version>` and the Release workflow runs `cargo nextest run -P full`
+first, because a tag can be cut from a commit no pull request ever ran. Then
+it builds each target natively — cross-compiling is ruled out because `dist`
+finishes by running a compiled program — uploads the tarballs and gems,
+checks that the tag matches the workspace version, and creates the Release
+with the CHANGELOG section as its notes.
 
 ## The published crates
 

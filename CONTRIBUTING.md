@@ -48,6 +48,9 @@ Two things worth knowing before your first run:
 
 ## What gates a change
 
+CI runs the whole thing on Linux for every pull request, and again on macOS
+for every commit that lands on main. Locally, on macOS:
+
 - `cargo nextest run` green.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` at
   zero warnings, which is what `cargo xtask check` runs. Do not add

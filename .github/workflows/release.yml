@@ -14,12 +14,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # A tag must not publish something the suite has never seen. Linux is the
+  # tier every pull request already runs, so this is a re-run rather than a
+  # new opinion -- but a tag can be cut from any commit, including one that
+  # never went through a pull request.
+  test:
+    name: test before publishing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/rust
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.143
+      - uses: ./.github/actions/deps
+      - run: cargo build --workspace
+      - run: cargo nextest run -P full --no-fail-fast
+
   # Every target builds natively. Cross-compiling zeo-rt is not worth it: the
   # runtime links C (Prism, Oniguruma, OpenSSL, libffi), and `cargo xtask dist`
   # finishes with a smoke test that COMPILES AND RUNS a Ruby program with the
   # staged binary -- which a cross build could not do at all.
   dist:
     name: dist (${{ matrix.target }})
+    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -38,10 +57,10 @@ jobs:
             target: aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v5
-      # Reads rust-toolchain.toml -- a release must build with the pin, not
-      # whatever stable is the day the tag lands.
-      - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      # The same toolchain, cache and job count every other workflow uses. It
+      # reads rust-toolchain.toml, so a release builds with the pin rather
+      # than whatever stable is the day the tag lands.
+      - uses: ./.github/actions/rust
 
       # zeo-rt's C dependencies. macOS gets these from the SDK already.
       - name: Linux build deps

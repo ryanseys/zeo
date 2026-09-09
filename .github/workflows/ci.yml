@@ -5,6 +5,10 @@ name: CI
 # near a quarter of an hour. One tier, so a red board never means "and the
 # rest runs tonight".
 #
+# Linux answers every pull request. macOS, which is where zeo is developed
+# and the only place the `#@ only: macos` programs run, answers every commit
+# that lands on main; the weekly `-P full` macOS run is in nightly.yml.
+#
 # Nothing here installs Ruby. Ruby records a program's answer under its
 # `__END__`; running one needs only the committed trailer.
 
@@ -83,6 +87,26 @@ jobs:
           name: junit-${{ matrix.partition }}
           path: target/nextest/full/junit.xml
           if-no-files-found: ignore
+
+  # zeo is developed on macOS, and the corpus has programs that run only
+  # there (`#@ only: macos`). Linux answers every pull request; macOS answers
+  # every commit that lands, which is a compromise about runner minutes
+  # rather than about which platform matters. The weekly `-P full` macOS run
+  # in nightly.yml is the wider net.
+  macos:
+    name: macos
+    runs-on: macos-15
+    if: github.event_name == 'push'
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/rust
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.143
+      - uses: ./.github/actions/deps
+      - run: cargo build --workspace
+      - run: cargo nextest run --no-fail-fast
 
   msrv:
     name: MSRV check
