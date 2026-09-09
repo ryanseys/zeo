@@ -1,0 +1,37 @@
+# The arm checks the value is a hash with those keys, beside an array arm.
+# (spinel issue #2931)
+def f(v)
+  case v
+  in [x, y]
+    "array #{x},#{y}"
+  in { r: }
+    "hash r=#{r}"
+  else
+    "other"
+  end
+end
+p f([3, 4])
+p f({ r: 10 })
+p f(5)
+
+# value sub-patterns (a literal, a class check) also match on a poly scrutinee
+def g(v)
+  case v
+  in { status: "ok", code: c }
+    "ok #{c}"
+  in { r: Integer => n }
+    "int #{n}"
+  else
+    "other"
+  end
+end
+p g({ status: "ok", code: 200 })
+p g({ r: 42 })
+p g({ r: "x" })
+__END__
+"array 3,4"
+"hash r=10"
+"other"
+"ok 200"
+"int 42"
+"other"

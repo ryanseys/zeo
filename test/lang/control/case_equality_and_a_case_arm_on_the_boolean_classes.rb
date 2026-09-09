@@ -1,0 +1,17 @@
+# `TrueClass === true` and the case form, and the false side of each.
+# (spinel issue #2966)
+b = true
+p(TrueClass === b)
+p(case b when TrueClass then :yes else :no end)
+f = false
+p(FalseClass === f)
+p(TrueClass === f)
+p(Integer === 5)
+p(Integer === b)
+__END__
+true
+:yes
+true
+false
+true
+false

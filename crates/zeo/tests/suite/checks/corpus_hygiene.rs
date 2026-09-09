@@ -230,3 +230,53 @@ fn no_gap_shares_a_basename_with_a_case() {
         bad.join("\n  ")
     );
 }
+
+/// The `bundle_*` series: multi-section grab-bag programs whose names are an
+/// index because no one behaviour describes them. Splitting them is separate
+/// work; until then the naming rule allows them by name so it can hold every
+/// other program.
+const NUMBERED_BY_EXCEPTION: &str = "bundle_";
+
+/// A tracker id is not a test name. Four hundred and seventy programs were
+/// called `issue_NNNN.rb`, three hundred and fifty of them with no comment
+/// either, so a red case named a number and nothing else.
+///
+/// The number is not lost: it moves into the header, where it can sit beside
+/// what the program actually checks.
+#[test]
+fn no_case_is_named_by_a_number() {
+    let mut bad = Vec::new();
+    for (path, _) in programs() {
+        let stem = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        if stem.starts_with(NUMBERED_BY_EXCEPTION) {
+            continue;
+        }
+        let rel = path.strip_prefix(repo_root()).unwrap_or(&path).display();
+        if stem.starts_with("issue_") || stem.starts_with("issue") && stem[5..].starts_with(|c: char| c.is_ascii_digit()) {
+            bad.push(format!("{rel} -- an issue id is not a name"));
+            continue;
+        }
+        // A trailing `_<digits>` is an index unless what precedes it is also
+        // a number or a single letter: `_1_1` is a version, `_x_0212` a
+        // standard's number.
+        let Some((head, tail)) = stem.rsplit_once('_') else {
+            continue;
+        };
+        if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) {
+            let prev = head.rsplit('_').next().unwrap_or("");
+            let excused = prev.len() == 1 || prev.chars().all(|c| c.is_ascii_digit());
+            if !excused {
+                bad.push(format!("{rel} -- a trailing number is an index, not a name"));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "programs named by a number rather than by what they check:\n  {}",
+        bad.join("\n  ")
+    );
+}

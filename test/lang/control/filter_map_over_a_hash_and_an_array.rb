@@ -1,0 +1,12 @@
+# A pair, a scalar, an array element, and a block that always answers nil.
+# (spinel issue #2992)
+h = {a: 1, b: 2}
+p h.filter_map { |k, v| [k, v] if v > 1 }
+p h.filter_map { |k, v| v * 10 if v > 1 }
+p [1, 2, 3].filter_map { |x| [x] if x.odd? }
+p({x: 5}.filter_map { |k, v| nil })
+__END__
+[[:b, 2]]
+[20]
+[[1], [3]]
+[]
