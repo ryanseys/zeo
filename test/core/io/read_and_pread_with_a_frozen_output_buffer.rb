@@ -1,3 +1,5 @@
+# Each raises FrozenError rather than writing into it.
+# (spinel issue #3335)
 path = "/tmp/sp_frozen_outbuf.txt"
 File.write(path, "hello world")
 File.open(path) { |f| b = ""; r = (f.read(3, b) rescue $!.class); p r }

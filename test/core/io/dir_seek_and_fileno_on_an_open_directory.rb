@@ -1,3 +1,5 @@
+# Both answer rather than raising, on a directory opened with Dir.new.
+# (spinel issue #2967)
 d = "/tmp/sp_dir_2967_#{Process.pid}"
 Dir.mkdir(d) unless Dir.exist?(d)
 dd = Dir.new(d)

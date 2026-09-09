@@ -1,3 +1,5 @@
+# The extension of the second word of a GET line.
+# (spinel issue #3262)
 def content_type(path)
   File.extname(path)
 end

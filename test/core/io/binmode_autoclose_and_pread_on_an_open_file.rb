@@ -1,3 +1,5 @@
+# Each answers, and pread fills the buffer it was given.
+# (spinel issue #3131)
 p001 = "sp_io_3131.tmp"
 File.write(p001, "hi")
 File.open(p001) { |f| f.binmode; p f.binmode? }

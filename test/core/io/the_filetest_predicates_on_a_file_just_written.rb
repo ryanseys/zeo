@@ -1,3 +1,5 @@
+# owned?, exist?, file? and directory?.
+# (spinel issue #2997)
 f = "/tmp/sp_ft_2997_#{Process.pid}"
 File.write(f, "hi")
 p FileTest.owned?(f)

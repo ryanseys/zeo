@@ -1,3 +1,5 @@
+# Its class and size, and a stat held in a local answering the same.
+# (spinel issue #3041)
 p001 = "/tmp/sp_io_stat_repro.txt"
 File.write(p001, "hello world\n")
 File.open(p001) { |f| p f.stat.class }

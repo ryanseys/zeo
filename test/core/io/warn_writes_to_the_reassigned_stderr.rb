@@ -1,3 +1,5 @@
+# One argument and several, collected in a StringIO bound to $stderr.
+# (spinel issue #3113)
 require "stringio"
 out = StringIO.new
 $stderr = out

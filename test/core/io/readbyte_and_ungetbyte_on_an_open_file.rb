@@ -1,3 +1,5 @@
+# A byte pushed back is the next one read.
+# (spinel issue #3038)
 pth = "sp_issue_3038.tmp"
 File.write(pth, "hi\n")
 File.open(pth) do |f|

@@ -1,3 +1,5 @@
+# It answers the byte count, and the file holds them.
+# (spinel issue #3217)
 require 'stringio'
 io = StringIO.new("hello world")
 File.open("/tmp/spinel_issue_3217_out.txt", "w") do |f|
