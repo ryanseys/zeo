@@ -163,3 +163,35 @@ fn every_directory_at_case_depth_belongs_to_a_program() {
         bad.join("\n")
     );
 }
+
+/// Two programs with identical bytes test one thing twice, under two names,
+/// and both cost a compile and a run on every board. A rename pass left
+/// nineteen such pairs: a descriptive twin beside the terse original it was
+/// meant to replace.
+///
+/// `programs()` yields cases only, so a fixture two programs deliberately
+/// share is not a duplicate here.
+#[test]
+fn no_two_cases_share_a_body() {
+    let mut seen: std::collections::HashMap<Vec<u8>, PathBuf> = std::collections::HashMap::new();
+    let mut bad = Vec::new();
+    for (path, _) in programs() {
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        match seen.get(&bytes) {
+            Some(first) => bad.push(format!(
+                "{}\n    == {}",
+                first.strip_prefix(repo_root()).unwrap_or(first).display(),
+                path.strip_prefix(repo_root()).unwrap_or(&path).display()
+            )),
+            None => {
+                seen.insert(bytes, path);
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "programs whose bytes are identical -- keep the one whose name says \
+         what it checks, in the topic it belongs to:\n  {}",
+        bad.join("\n  ")
+    );
+}
