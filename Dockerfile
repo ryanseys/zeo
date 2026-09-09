@@ -26,6 +26,11 @@
 # runs on the host.
 FROM docker.io/library/rust:latest
 
+# `linux-arm` on an Apple Silicon host; `linux` for an x86_64 host. The
+# nextest version is the one CI pins in .github/workflows/ci.yml.
+ARG NEXTEST_ARCH=linux-arm
+ARG NEXTEST_VERSION=0.9.143
+
 # libclang-dev: ruby-prism-sys runs bindgen, and the rust image ships no
 #   libclang (GitHub runners do, which is why CI never needed this line).
 # clang: `cargo xtask cext api` dumps the headers' AST with `-Xclang`, which
@@ -43,7 +48,7 @@ RUN apt-get update -qq \
 # nextest is the meter every zeo suite is run through (plain `cargo test`
 # is order-dependent for zeo-rt). The prebuilt binary, because building it
 # from source costs more than everything else in this image.
-RUN curl -LsSf https://get.nexte.st/latest/linux-arm | tar zxf - -C /usr/local/bin
+RUN curl -LsSf "https://get.nexte.st/${NEXTEST_VERSION}/${NEXTEST_ARCH}" | tar zxf - -C /usr/local/bin
 
 # Writes go to CARGO_TARGET_DIR
 # (a named volume, so rebuilds stay incremental) or /tmp.

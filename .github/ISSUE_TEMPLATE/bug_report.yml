@@ -1,0 +1,52 @@
+name: Bug report
+description: zeo answers differently from ruby, refuses a program, or crashes
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every zeo test is a Ruby program compared with real ruby, so the most
+        useful report is exactly that: the smallest program that shows the
+        difference, and both outputs.
+  - type: textarea
+    id: program
+    attributes:
+      label: The program
+      description: The smallest `.rb` that shows it. Paste the source, not a link.
+      render: ruby
+    validations:
+      required: true
+  - type: textarea
+    id: ruby
+    attributes:
+      label: What ruby prints
+      description: "`ruby program.rb`, stdout and stderr, and the exit status if it is not 0."
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: zeo
+    attributes:
+      label: What zeo prints
+      description: "`zeo program.rb` (or `zeo -o out program.rb && ./out`), stdout and stderr, and the exit status."
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: zeo --version
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: "e.g. macOS 15 arm64, Ubuntu 24.04 x86_64"
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Gems the program needs, flags you passed, whether it only happens with `-o`.

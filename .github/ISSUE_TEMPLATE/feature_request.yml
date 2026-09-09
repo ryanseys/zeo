@@ -1,0 +1,21 @@
+name: Feature request
+description: Something ruby does that zeo should, or something zeo should do differently
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What should zeo do
+    validations:
+      required: true
+  - type: textarea
+    id: program
+    attributes:
+      label: A program that would show it working
+      description: If it is Ruby behaviour, the `.rb` and what ruby prints for it.
+      render: ruby
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: The gem, program or workflow that needs it.

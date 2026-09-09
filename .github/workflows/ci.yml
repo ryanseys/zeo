@@ -20,6 +20,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -90,7 +93,7 @@ jobs:
       # Deliberately OVERRIDES rust-toolchain.toml (the action exports
       # RUSTUP_TOOLCHAIN): this job checks the `rust-version` floor, not the
       # pin. So it does not use the shared rust action, which installs the pin.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.94"
       - uses: Swatinem/rust-cache@v2

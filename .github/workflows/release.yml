@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -27,10 +27,10 @@ jobs:
         include:
           - os: macos-14
             target: aarch64-apple-darwin
-          # macos-13 is the last Intel runner GitHub offers, and it is what
-          # makes this row NATIVE. Building it on macos-14 would be a cross
-          # build, which the note above rules out.
-          - os: macos-13
+          # The Intel runner is what makes this row NATIVE. Building it on
+          # an arm64 runner would be a cross build, which the note above
+          # rules out.
+          - os: macos-15-intel
             target: x86_64-apple-darwin
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -81,8 +81,11 @@ jobs:
   release:
     name: publish release
     needs: dist
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/v')
+    # The one job that writes: it creates the Release.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
 

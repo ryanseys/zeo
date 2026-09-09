@@ -1,11 +1,9 @@
 name: Nightly
 
-# What the push tier does not pay for: macOS, and the release payload.
+# What the push tier does not cover: macOS, and the release payload.
 #
-# The minutes arithmetic, so nobody moves macOS onto every push: a private
-# repo has 2,000-3,000 minutes a month; Linux bills at 1x and macOS at 10x. A
-# full macOS run is ~40 minutes = 400 billed, so a nightly macOS would be
-# ~12,000 a month. macOS therefore runs weekly, and anything more is a
+# A full macOS run is about 40 minutes on a runner that is scarcer and
+# slower to schedule than Linux, so macOS runs weekly, and anything more is a
 # `workflow_dispatch` by choice.
 #
 # `moved` skips the heavy jobs when main has not changed since the last green
