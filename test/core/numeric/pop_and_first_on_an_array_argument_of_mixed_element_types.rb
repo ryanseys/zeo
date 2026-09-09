@@ -1,0 +1,15 @@
+# A method popping its array argument, reached through a rest parameter, for
+# String, Integer and Float elements.
+# (spinel issue #3137)
+def fn(opts) = opts.pop
+def fn2(*opts) = fn(opts)
+p fn([""])
+p fn([1, 2, 3])
+p fn([1.5, 2.5])
+def g(a) = a.first
+p g([10, 20])
+__END__
+""
+3
+2.5
+10

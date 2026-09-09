@@ -1,0 +1,15 @@
+# A block answering a number, a boolean, or nil, and one that never matches.
+# (spinel issue #3067)
+p((0.0..10.0).bsearch { |x| x * x - 4 >= 0 ? x * x - 4 : nil })
+p((0.0..10.0).bsearch { |x| 4 - x*x })
+p((0.0..10.0).bsearch { |x| x*x - 4 })
+p((0.0..10.0).bsearch { |x| x >= 3.0 })
+p((0.0..10.0).bsearch { |x| x >= 3.0 ? true : nil })
+p((1.0..9.0).bsearch { |x| nil })
+__END__
+nil
+2.0
+nil
+3.0
+3.0
+nil

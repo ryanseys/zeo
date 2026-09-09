@@ -1,0 +1,14 @@
+# A class defining only each sums its Floats from an Integer seed.
+# (spinel issue #2959)
+class Nums
+  include Enumerable
+  def initialize(*xs); @xs = xs; end
+  def each; @xs.each { |x| yield x }; end
+end
+p Nums.new(1.0, 2.0, 3.0).sum(0)
+p Nums.new(1.0, 2.0, 3.0).sum(0.0)
+p Nums.new(1.0, 2.0, 3.0).sum
+__END__
+6.0
+6.0
+6.0
