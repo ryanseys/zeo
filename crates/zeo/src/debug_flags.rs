@@ -97,9 +97,9 @@ pub(crate) fn debug(flag: DebugFlag) -> bool {
 /// comma-separated list.
 ///
 /// A VALUE rather than a bit, so it sits beside [`debug`] rather than in it.
-/// It exists for one job: `cargo xtask size` links `puts 1` once per table
-/// with that table dropped and diffs the binary, which is exact per-table
-/// attribution and cannot be got any other way. A LIST prices a whole set
+/// It exists for one job: linking `puts 1` once per table with that table
+/// dropped and diffing the binary, which is exact per-table attribution and
+/// cannot be got any other way. A LIST prices a whole set
 /// at once, which is the only way to see what the columns share: they
 /// overlap, because two tables can root the same code.
 ///

@@ -1,0 +1,4 @@
+# The oldest rustc the workspace supports, so a lint that suggests a newer
+# API does not fire locally when CI's msrv job would reject the suggestion.
+# Kept equal to `rust-version` in the workspace Cargo.toml.
+msrv = "1.94"

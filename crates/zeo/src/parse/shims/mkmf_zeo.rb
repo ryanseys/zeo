@@ -19,10 +19,11 @@
 # fallback definition clashing with zeo's real, non-static one.
 #
 # THE HEADERS ARE THE ANSWER FOR A RUBY SYMBOL. zeo's headers declare exactly
-# the rows `cext/api.rs` carries -- implemented, stubbed and refused alike, all
-# three being real exported symbols -- and a row zeo does not have is not
-# declared at all. So "declared in these headers" and "resolves at load" are
-# the same question, and a compile answers it without a linker.
+# the rows `crates/zeo-capi/src/api.rs` carries -- implemented, stubbed and
+# refused alike, all three being real exported symbols -- and a row zeo does
+# not have is not declared at all. So "declared in these headers" and
+# "resolves at load" are the same question, and a compile answers it without
+# a linker.
 #
 # THE LINKER IS STILL THE ANSWER FOR A SYSTEM SYMBOL, and that is why this
 # tries the compile FIRST and falls through rather than replacing the probe.

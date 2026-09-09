@@ -49,11 +49,13 @@ Two things worth knowing before your first run:
 ## What gates a change
 
 - `cargo nextest run` green.
-- `cargo clippy --workspace --all-targets` at zero warnings. Do not add
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` at
+  zero warnings, which is what `cargo xtask check` runs. Do not add
   `#[allow]`s to dodge a lint — fix it or discuss it.
-- The tree is rustfmt-clean, but CI does **not** gate it. Keep formatting to
-  the code you touched; `cargo fmt` reformats the whole module tree from any
-  file you hand it, which buries a real change in noise.
+- Formatting is **not** gated, and the tree is not rustfmt-clean: about a
+  hundred files predate the habit. Keep formatting to the code you touched.
+  `cargo fmt` reformats the whole module tree from any file you hand it,
+  which buries a real change in noise.
 - Performance is **not** a gate. A perf claim needs a fresh measurement
   beside it — see [Measure performance](docs/how-to/measure-performance.md).
 

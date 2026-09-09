@@ -813,7 +813,7 @@ impl Compiler {
     ///
     /// They are the four prism-backed tables plus the iseq one, and together
     /// they root the prism library itself -- the largest saving any single
-    /// group of tables carries (`cargo xtask size`). `RubyVM` itself STAYS: ruby
+    /// group of tables carries. `RubyVM` itself STAYS: ruby
     /// defines it in every program, and these five are namespaced under it,
     /// so only `RubyVM.constants` can see them go and that already names
     /// `RubyVM`.

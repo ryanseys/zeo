@@ -2,13 +2,16 @@
 # says "do not edit". linguist-generated collapses them in GitHub diffs and
 # keeps them out of language stats; a change to one should be reviewed as
 # "the generator or its input moved", not line by line.
-crates/zeo-rt/src/cext/api.rs linguist-generated
-crates/zeo-rt/src/cext/stubs.rs linguist-generated
-crates/zeo-rt/src/cext/forward.rs linguist-generated
+crates/zeo-capi/src/api.rs linguist-generated
+crates/zeo-capi/src/stubs.rs linguist-generated
+crates/zeo-capi/src/forward.rs linguist-generated
+crates/zeo-capi/src/layout_facts.rs linguist-generated
 crates/zeo-rt/src/enc/registry.rs linguist-generated
 crates/zeo-rt/src/enc/single_byte.rs linguist-generated
 crates/zeo-rt/src/enc/casefold.rs linguist-generated
 crates/zeo-rt/src/enc/printable.rs linguist-generated
+crates/zeo-rt/src/enc/titlecase.rs linguist-generated
+crates/zeo-rt/src/enc/mb_encode_delta.rs linguist-generated
 
 # The corpus is thousands of small Ruby programs and the extensions carry
 # their Ruby halves, some vendored from upstream gems (see
@@ -17,3 +20,9 @@ crates/zeo-rt/src/enc/printable.rs linguist-generated
 test/** linguist-vendored
 crates/zeo-rt/ext/*/lib/** linguist-vendored
 crates/zeo-rt/gems/** linguist-vendored
+
+# Line endings and what is not text. The corpus records answers byte for
+# byte, so a checkout that rewrote a newline would fail every golden.
+* text=auto
+*.bin binary
+*.snap -text

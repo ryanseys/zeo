@@ -211,8 +211,8 @@ fn a_linked_program_keeps_the_tables_it_names() {
 ///
 /// `analyze::class_reach` answers which of the always-on classes (`Ractor`,
 /// `Marshal`, `TracePoint`, `Pathname`, ...) a value can arrive as, so
-/// `puts :ok` ships none of them. `cargo xtask size --check` is the gate on
-/// what that saves.
+/// `puts :ok` ships none of them. `checks::binary_size` is the gate on what
+/// that saves.
 ///
 /// Asserted through the exported `zeo_ctable_*` symbols rather than bytes,
 /// because that names WHICH class went.
@@ -392,7 +392,7 @@ fn a_deferred_require_of_a_compiled_unit_dead_strips_the_compiler() {
 /// time, and no program can reach either without naming `RubyVM` -- they are
 /// namespaced under it. So a program that never does carries neither, and
 /// with them goes the prism library they root, out of a `puts 1`
-/// binary, measured with `cargo xtask size`.
+/// binary, measured with `ZEO_DEBUG_DROP_TABLE`.
 ///
 /// `RubyVM` itself stays. ruby defines it in every program, and only
 /// `RubyVM.constants` can see the five go -- which already names `RubyVM`.

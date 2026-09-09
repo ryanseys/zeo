@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ryanseys/zeo/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanseys/zeo/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![MSRV 1.94](https://img.shields.io/badge/MSRV-1.94-orange.svg)](rust-toolchain.toml)
+[![MSRV 1.94](https://img.shields.io/badge/MSRV-1.94-orange.svg)](Cargo.toml)
 
 Zeo compiles a whole Ruby program to native code. It reads the source with
 [Prism], analyzes the entire program at once, lowers it to [Cranelift] IR,

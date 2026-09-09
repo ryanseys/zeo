@@ -11,6 +11,18 @@ categories.workspace = true
 description = "MRI's C extension API, implemented in Rust over the zeo-rt runtime"
 documentation = "https://docs.rs/zeo-capi"
 readme = "README.md"
+# What the published `.crate` carries. `csrc/` and `build.rs` are part of the
+# build: three variadic entry points Rust cannot write yet. `ruby-headers.lock`
+# pins the MRI headers an extension compiles against.
+include = [
+    "/src",
+    "/csrc",
+    "/build.rs",
+    "/ruby-headers.lock",
+    "/README.md",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+]
 
 [dependencies]
 zeo-abi.workspace = true

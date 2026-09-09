@@ -36,6 +36,22 @@ unused-allowed-license = "allow"
 
 [bans]
 multiple-versions = "warn"
+# The nine duplicates the graph carries today, each named with the consumer
+# that pulls the second copy. Listing them is what makes a TENTH visible:
+# `cargo deny check bans` warns about anything not here.
+skip = [
+    { crate = "bitflags@1.3.2", reason = "region, under cranelift-jit" },
+    { crate = "foldhash@0.1.5", reason = "hashbrown 0.15, under hashlink" },
+    { crate = "gimli@0.32.3", reason = "addr2line, under miette's backtrace" },
+    { crate = "hashbrown@0.15.5", reason = "hashlink" },
+    { crate = "hashbrown@0.16.1", reason = "indexmap" },
+    { crate = "object@0.37.3", reason = "miette's backtrace" },
+    { crate = "shlex@1.3.0", reason = "cc, under the -sys crates" },
+    { crate = "syn@2.0.118", reason = "the proc-macro crates that have not moved to syn 3" },
+    { crate = "unicode-width@0.1.14", reason = "miette" },
+    { crate = "windows-sys@0.52.0", reason = "the windows crates under tempfile" },
+    { crate = "windows-sys@0.59.0", reason = "the windows crates under rustix" },
+]
 # The tree carries no C (crates/zeo/tests/suite/checks/no_c.rs). C reaches a build
 # only through the `-sys` crates named here, each compiling the library it
 # wraps. `wrappers` is "may depend on"; the checks test holds the set exact.

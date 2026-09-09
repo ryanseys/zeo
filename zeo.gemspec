@@ -5,10 +5,11 @@
 # Two gems come out of this one file, and which one depends on what is beside
 # it when `gem build` runs:
 #
-#   SOURCE gem      built here, in the repo. Carries the launcher and the
-#                   docs and no binary, because there is nothing to build
-#                   from a Ruby packaging step -- zeo is Rust. Installing it
-#                   gives a `zeo` that says which platform gem to fetch.
+#   SOURCE gem      built here, in the repo. Carries the launcher, the
+#                   README and the licence files, and no binary, because
+#                   there is nothing to build from a Ruby packaging step --
+#                   zeo is Rust. Installing it gives a `zeo` that says which
+#                   platform gem to fetch.
 #   PLATFORM gem    built by `cargo xtask gem` from a staging directory that
 #                   already holds `libexec/zeo` and `share/zeo/`. Those are
 #                   picked up by the globs below and the platform comes from
@@ -73,7 +74,7 @@ Gem::Specification.new do |s|
     "bug_tracker_uri" => "#{s.homepage}/issues",
     "changelog_uri" => "#{s.homepage}/blob/main/CHANGELOG.md",
     "documentation_uri" => "#{s.homepage}/blob/main/docs/README.md",
-    # Nothing here is loadable Ruby, so there is no point indexing it.
+    # A push to rubygems.org needs a second factor.
     "rubygems_mfa_required" => "true"
   }
 

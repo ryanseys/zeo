@@ -33,8 +33,8 @@ ARG NEXTEST_VERSION=0.9.143
 
 # libclang-dev: ruby-prism-sys runs bindgen, and the rust image ships no
 #   libclang (GitHub runners do, which is why CI never needed this line).
-# clang: `cargo xtask cext api` dumps the headers' AST with `-Xclang`, which
-#   gcc (the image's `cc`) does not know.
+# clang: `cargo xtask check-c-headers` dumps the headers' AST with `-Xclang`,
+#   which gcc (the image's `cc`) does not know.
 # valgrind: the ownership check the macOS leg cannot run -- ZEO_RT_LEAKCHECK
 #   proves the emitter's own ledger balances, valgrind proves the process
 #   leaks nothing underneath it.

@@ -16,7 +16,15 @@ readme = "README.md"
 # `cargo xtask stage-crate` stages (the pregen class surface rides inside
 # /src). /tests -- the golden and e2e suites, rooted at the repo corpus --
 # is deliberately outside it.
-include = ["/src", "/build.rs", "/tools-lib", "/README.md", "/gems.pregen.tar.gz"]
+include = [
+    "/src",
+    "/build.rs",
+    "/tools-lib",
+    "/README.md",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+    "/gems.pregen.tar.gz",
+]
 
 # docs.rs must not build the vendored-C heavyweights (OpenSSL, libffi) or
 # the C API. The feature list mirrors zeo-rt's docs.rs set.
@@ -233,7 +241,7 @@ pure-stdlib = [
 
 # What a zeo-built program starts with, before its own first line. Each one
 # is the DEFAULT of the matching `--enable=`/`--disable=` dial in
-# `src/ruby_features.rs`, so a build decides what its binaries carry and a
+# `src/cli/features.rs`, so a build decides what its binaries carry and a
 # command line still overrides it either way.
 #
 # All three are off in the stock build, for one reason: an ambient

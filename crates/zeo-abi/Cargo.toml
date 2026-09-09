@@ -11,6 +11,9 @@ categories.workspace = true
 description = "Shared ABI: the zero-dependency leaf crate both the zeo compiler and the zeo-rt runtime agree on"
 documentation = "https://docs.rs/zeo-abi"
 readme = "README.md"
+# What the published `.crate` carries: the source, the two licences and the
+# README. Tests and fixtures are for the repository, not for a consumer.
+include = ["/src", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
 
 [dependencies]
 # Deliberately empty: this crate is the zero-dependency leaf both `zeo`

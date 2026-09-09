@@ -82,3 +82,72 @@ fn no_tracked_file_is_over_a_megabyte() {
         big.join("\n")
     );
 }
+
+/// A `linguist-generated` row whose path moved stops collapsing anything and
+/// says nothing while it fails: GitHub just counts the file as hand-written
+/// again. Three rows named `crates/zeo-rt/src/cext/` for as long as it took
+/// to look, by which time the files had been in `crates/zeo-capi/src/` for
+/// months.
+#[test]
+fn every_gitattributes_pattern_matches_a_tracked_file() {
+    let text = std::fs::read_to_string(repo_root().join(".gitattributes"))
+        .expect("the attributes file is committed");
+    let tracked = tracked_files();
+    let mut dead = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some(pattern) = line.split_whitespace().next() else {
+            continue;
+        };
+        // A whole-tree rule (`*`) or a suffix rule matches by construction.
+        let matches = if let Some(suffix) = pattern.strip_prefix('*') {
+            tracked.iter().any(|f| f.ends_with(suffix))
+        } else if let Some(prefix) = pattern.split('*').next().filter(|p| p.len() < pattern.len()) {
+            tracked.iter().any(|f| f.starts_with(prefix))
+        } else {
+            tracked.iter().any(|f| f == pattern)
+        };
+        if !matches {
+            dead.push(format!(".gitattributes:{}: {pattern}", n + 1));
+        }
+    }
+    assert!(
+        dead.is_empty(),
+        "attribute rules that match no tracked file:\n{}",
+        dead.join("\n")
+    );
+}
+
+/// The crates that are published, each of which must carry both licence
+/// texts. A `.crate` declaring `MIT OR Apache-2.0` and shipping neither is
+/// distributing under terms whose own notice clause it does not meet.
+const PUBLISHED: &[&str] = &[
+    "zeo",
+    "zeo-rt",
+    "zeo-abi",
+    "zeo-capi",
+    "zeo-dsl",
+    "zeo-gem",
+    "zeo-macros",
+];
+
+#[test]
+fn every_published_crate_carries_both_licences() {
+    let root = repo_root();
+    let mut bad = Vec::new();
+    for name in ["LICENSE-MIT", "LICENSE-APACHE"] {
+        let want = std::fs::read(root.join(name)).expect("the root licence is committed");
+        for crate_name in PUBLISHED {
+            let path = root.join("crates").join(crate_name).join(name);
+            match std::fs::read(&path) {
+                Ok(got) if got == want => {}
+                Ok(_) => bad.push(format!("crates/{crate_name}/{name} differs from the root copy")),
+                Err(_) => bad.push(format!("crates/{crate_name}/{name} is missing")),
+            }
+        }
+    }
+    assert!(bad.is_empty(), "licence texts in published crates:\n{}", bad.join("\n"));
+}

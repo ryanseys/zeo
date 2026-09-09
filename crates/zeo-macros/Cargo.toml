@@ -11,6 +11,9 @@ categories.workspace = true
 description = "Proc-macros (ruby_class!/ruby_module!) that register built-in Ruby classes in the zeo-rt runtime"
 documentation = "https://docs.rs/zeo-macros"
 readme = "README.md"
+# What the published `.crate` carries: the source, the two licences and the
+# README. Tests and fixtures are for the repository, not for a consumer.
+include = ["/src", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
 
 [lib]
 proc-macro = true

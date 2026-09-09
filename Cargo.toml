@@ -74,8 +74,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # linkme `BUILTIN_TABLES` elements) and what it dropped (the compiler).
 object = "0.39"
 # DWARF `.debug_line` for `-g` compiles (`clif/debuginfo.rs`). The version
-# is the one `cranelift-object` already resolves to, so this adds a
-# feature rather than a crate.
+# is the one `cranelift-object` already resolves to, so this adds a feature
+# rather than a crate. A second, older `gimli` and `object` still reach the
+# graph under miette's `backtrace`, which `deny.toml` lists by name.
 gimli = "0.33"
 
 # Data-driven tests: one `cargo test`/nextest case per golden `.rb` file

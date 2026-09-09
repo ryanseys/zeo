@@ -19,6 +19,13 @@ $ cargo bench -p zeo --bench programs -- --save-baseline before
 $ cargo bench -p zeo --bench programs -- --baseline before  # compare
 ```
 
+To compare two saved baselines after the fact, rather than against the last
+run, use [`critcmp`](https://github.com/BurntSushi/critcmp):
+
+```console
+$ critcmp before after
+```
+
 Two groups share the bank: `zeo/` times the compiled binary, `ruby/` times
 the same program under the pinned ruby, so the ratio is measured rather than
 remembered.

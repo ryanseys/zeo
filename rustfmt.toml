@@ -1,0 +1,4 @@
+# The edition rustfmt formats for. `cargo fmt` reads it from Cargo.toml, but a
+# bare `rustfmt` and most editor integrations do not, and the 2015 default
+# they fall back to reformats edition-2024 code wrongly.
+edition = "2024"

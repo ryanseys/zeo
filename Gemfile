@@ -149,8 +149,8 @@ gem "zlib", "3.2.3"
 # can actually move a golden: it rides under reline.
 #
 # `rbs` is pinned but NOT shipped -- see `NOT_SHIPPED` in
-# `crates/zeo/src/bundled.rs` for why. The pin still holds the oracle to one
-# release.
+# `crates/zeo/src/gems/bundled.rs` for why. The pin still holds the oracle to
+# one release.
 gem "io-console", "0.9.2"
 gem "rbs", "4.2.0"
 gem "rdoc", "8.0.0"

@@ -9,6 +9,12 @@
 //! exactly: an xtask verb, a nextest profile, and a repo-relative path in
 //! backticks or a Markdown link. Everything else in a fenced block is prose
 //! to a machine.
+//!
+//! The scan reads the config files that carry prose too, not only Markdown.
+//! Every stale reference this test has ever missed was in one of them: a
+//! `Dockerfile` naming a verb that was renamed, a `Gemfile` and a
+//! `Cargo.toml` naming modules that moved. Rust doc comments get the verb
+//! half of the same treatment.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -21,7 +27,29 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Every tracked `.md`, and `README.md` beside a crate.
+/// Config files whose comments cite paths and commands the same way a guide
+/// does, and which a Markdown-only scan never read.
+const PROSE_CONFIG: &[&str] = &[
+    "Dockerfile",
+    "Gemfile",
+    "zeo.gemspec",
+    ".gitattributes",
+    ".gitignore",
+    "deny.toml",
+    "Cargo.toml",
+    "crates/zeo/Cargo.toml",
+    "crates/zeo-rt/Cargo.toml",
+    "crates/zeo-capi/Cargo.toml",
+    "crates/zeo-gem/Cargo.toml",
+    "crates/zeo-abi/Cargo.toml",
+    "crates/zeo-dsl/Cargo.toml",
+    "crates/zeo-macros/Cargo.toml",
+    "crates/xtask/Cargo.toml",
+    ".config/nextest.toml",
+];
+
+/// Every tracked `.md`, `README.md` beside a crate, and the config files that
+/// carry prose.
 fn pages() -> Vec<PathBuf> {
     let root = repo_root();
     let mut out = Vec::new();
@@ -47,6 +75,11 @@ fn pages() -> Vec<PathBuf> {
                 out.push(path);
             }
         }
+    }
+    for rel in PROSE_CONFIG {
+        let path = root.join(rel);
+        assert!(path.is_file(), "PROSE_CONFIG names {rel}, which is not a file");
+        out.push(path);
     }
     out.sort();
     out
@@ -224,6 +257,12 @@ fn stale_citation(root: &Path, page_dir: &str, token: &str) -> Option<&'static s
     }
     let path = token.split(':').next().unwrap_or("").trim_end_matches('/');
     if path.starts_with("tests/") {
+        // A crate's own `tests/` directory, named from a file inside that
+        // crate, is a real path. Anywhere else `tests/` means the corpus,
+        // which is `test/`.
+        if exists_exactly(root, &format!("{page_dir}/{path}")) {
+            return None;
+        }
         return Some("the corpus is `test/`, singular");
     }
     let anchored = ["test/", "crates/", "docs/", ".github/", "exe/"]
@@ -291,5 +330,72 @@ fn every_cited_path_exists() {
         bad.is_empty(),
         "the docs cite paths that do not exist:\n  {}",
         bad.join("\n  ")
+    );
+}
+
+/// Rust files under these roots, for the source-comment verb scan.
+fn source_files() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut walk = vec![repo_root().join("crates")];
+    while let Some(dir) = walk.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// A doc comment that names a verb is as much a promise as a guide is, and
+/// one verb that never existed sat in five of them for as long as it took to
+/// look. `xtask/src/main.rs` is skipped: it DECLARES the verbs.
+#[test]
+fn every_xtask_verb_named_in_the_source_exists() {
+    let verbs = xtask_verbs();
+    assert!(verbs.len() > 5, "parsed no xtask verbs: {verbs:?}");
+    let root = repo_root();
+    let declares = root.join("crates/xtask/src/main.rs");
+    let mut bad = Vec::new();
+    for file in source_files() {
+        if file == declares {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let rel = file.strip_prefix(&root).unwrap_or(&file).to_string_lossy().into_owned();
+        for (n, line) in text.lines().enumerate() {
+            let Some(rest) = line.split("cargo xtask ").nth(1) else {
+                continue;
+            };
+            // `cargo xtask --help` and `cargo xtask <verb>` name no verb.
+            if rest.starts_with('-') || rest.starts_with('<') {
+                continue;
+            }
+            let verb: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+                .collect();
+            if verb.is_empty() {
+                continue;
+            }
+            if !verbs.contains(verb.as_str()) {
+                bad.push(format!("{rel}:{}: `cargo xtask {verb}`", n + 1));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "the source names xtask verbs that do not exist:\n  {}\n\nthe verbs are: {}",
+        bad.join("\n  "),
+        verbs.iter().cloned().collect::<Vec<_>>().join(", ")
     );
 }

@@ -11,6 +11,9 @@ categories.workspace = true
 description = "RubyGems formats in Rust: versions, platforms, Gemfile.lock, gemspecs, .gem packages and the store"
 documentation = "https://docs.rs/zeo-gem"
 readme = "README.md"
+# What the published `.crate` carries: the source, the two licences and the
+# README. Tests and fixtures are for the repository, not for a consumer.
+include = ["/src", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
 
 [dependencies]
 # The parser for a gemspec body. A serialized gemspec is Ruby source, and

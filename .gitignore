@@ -15,12 +15,10 @@ zeo-gems.json
 # half.
 /vendor/
 
-# Measurement, not source: what a gem-probe sweep WROTE. The ledger is 21MB
-# and 195,778 rows, and nothing builds or tests against it -- a refreshed one
-# is attached to a GitHub release by hand.
-#
-# Anything that IS an input lives in the tree as generated Rust instead
-# (`cext/api.rs`, `cext/forward.rs`), so a fresh clone builds.
+# Measurement output, never an input: what a sweep over the gem corpus wrote.
+# Nothing builds or tests against it. Anything that IS an input lives in the
+# tree as generated Rust instead (`crates/zeo-capi/src/api.rs` and its
+# siblings), so a fresh clone builds.
 /measurements/
 
 # What `gem build zeo.gemspec` leaves in the directory it ran in.
