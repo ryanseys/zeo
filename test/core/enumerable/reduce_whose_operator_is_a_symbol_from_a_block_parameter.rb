@@ -1,0 +1,18 @@
+# reduce called with a Symbol that is not a literal, over Integers and Floats,
+# with and without an initial value.
+# (spinel issue #2939)
+p [:+, :-, :*].map { |sym| [10, 3].reduce(sym) }
+p [:+, :*].map { |s| [2, 3, 4].reduce(10, s) }
+ops = [:&, :|]
+p ops.map { |o| [6, 3].reduce(o) }
+p [:+, :-].map { |s| [1.0, 2.0].reduce(s) }
+# literal and static-local forms are unchanged
+p [2, 3, 4].reduce(:+)
+p [2, 3, 4].reduce(10, :*)
+__END__
+[13, 7, 30]
+[19, 240]
+[2, 7]
+[3.0, -1.0]
+9
+240
