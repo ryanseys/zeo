@@ -1,0 +1,9 @@
+# Splitting each line on = and assigning into the memo.
+# (spinel issue #3164)
+r = "a=b\nc=d".each_line.each_with_object({}) do |raw, config|
+  key, value = raw.split("=", 2)
+  config[key] = value
+end
+p r
+__END__
+{"a" => "b\n", "c" => "d"}
