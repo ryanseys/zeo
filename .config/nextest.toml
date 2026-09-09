@@ -62,6 +62,15 @@ filter = "test(milestones::)"
 test-group = "golden"
 slow-timeout = { period = "360s", terminate-after = 2 }
 
+# A bench program is sized to be timed, so seconds are the point. The three
+# slowest take 16-26s alone under the dev profile and 67-77s beside the
+# milestones. 120s is the harness's own deadline for these, and terminating
+# at twice that leaves the harness to report a hang.
+[[profile.default.overrides]]
+filter = "test(bench::)"
+test-group = "golden"
+slow-timeout = { period = "120s", terminate-after = 2 }
+
 # Backstop under the harness's per-child cap: a hung case cannot wedge the run.
 [[profile.default.overrides]]
 filter = "binary(corpus)"
