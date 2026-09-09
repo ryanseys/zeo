@@ -1,0 +1,14 @@
+# `" ".split(/ /)` is [], through a method that may answer nil instead.
+# (spinel issue #3212)
+def maybe_string(flag)
+  flag ? " " : nil
+end
+module Crash
+  def self.call(value)
+    value.split(/ /)
+  end
+end
+raise unless Crash.call(maybe_string(true)) == []
+puts "ok"
+__END__
+ok

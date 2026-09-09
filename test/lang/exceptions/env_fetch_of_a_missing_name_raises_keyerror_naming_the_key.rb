@@ -1,0 +1,13 @@
+# ENV.fetch raises KeyError whose key and message name the variable, and takes a default instead.
+# (spinel issue #3027)
+begin
+  ENV.fetch("SPINEL_NO_SUCH_VAR_XYZ")
+rescue KeyError => e
+  p e.key
+  p e.message
+end
+p ENV.fetch("SPINEL_NO_SUCH_VAR_XYZ", "dflt")
+__END__
+"SPINEL_NO_SUCH_VAR_XYZ"
+"key not found: \"SPINEL_NO_SUCH_VAR_XYZ\""
+"dflt"

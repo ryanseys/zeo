@@ -1,0 +1,20 @@
+# KeyError#key, and #receiver on KeyError, FrozenError and NoMethodError, raise when the exception was built by hand; the keyword form answers.
+# (spinel issue #3030)
+p((KeyError.new("m").key rescue $!.class))
+p((KeyError.new("m").receiver rescue $!.class))
+p((FrozenError.new("m").receiver rescue $!.class))
+p((NoMethodError.new("m").receiver rescue $!.class))
+p((KeyError.new("m", key: :k, receiver: {}).key rescue $!.class))
+p((Interrupt.new.signo rescue $!.class))
+h = {a: 1}
+p((h.fetch(:z) rescue $!.key))
+p((h.fetch(:z) rescue $!.receiver))
+__END__
+ArgumentError
+ArgumentError
+ArgumentError
+ArgumentError
+:k
+2
+:z
+{a: 1}
