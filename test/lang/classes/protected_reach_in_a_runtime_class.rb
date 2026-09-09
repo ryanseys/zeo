@@ -9,7 +9,7 @@
 # body will belong to does not exist until the block runs -- so the site records
 # `Object`, which is not a kind of the runtime class, and the call is refused.
 #
-# `tests/gaps/protected_reach_from_instance_eval.rb` is the sibling: there
+# `test/lang/eval/protected_reach_from_instance_eval.rb` is the sibling: there
 # `self` changes at run time without changing the lexical class. Here the
 # lexical class is simply not the owner yet. Both want the same thing -- a site
 # whose caller class is unknown at compile time must ask at run time.

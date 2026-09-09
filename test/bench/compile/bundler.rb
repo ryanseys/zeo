@@ -3,7 +3,7 @@
 # is the largest require graph zeo compiles on demand.
 #
 # This file used to enter at `bundler/version` because the umbrella did not
-# compile. It does now; `tests/milestones/require_bundler.rb` and
+# compile. It does now; `test/milestones/require_bundler.rb` and
 # `rubygems_then_bundler.rb` are the regression tests.
 require "bundler"
 

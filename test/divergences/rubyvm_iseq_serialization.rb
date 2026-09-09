@@ -13,14 +13,12 @@
 # change. Listed so a caller that branches on it is not surprised.
 #
 # The AST `node_id` row is context and it MATCHES: zeo's numbering agrees with
-# CRuby's here. (The note this file carried until 2026-08-26 said prism's ids
-# were unreachable through the Rust bindings and that they were the answer.
-# Both halves were wrong -- `Node` is an enum, so a variant's `pointer` field
-# reads `pm_node_t.node_id`, and CRuby's AST ids are a THIRD numbering,
-# neither prism's nor zeo's.)
+# CRuby's here. (Prism's ids are reachable: `Node` is an enum, so a variant's
+# `pointer` field reads `pm_node_t.node_id`. CRuby's AST ids are a THIRD
+# numbering, neither prism's nor zeo's.)
 #
 # The one row that is genuinely still open -- `#label` on a Proc-derived
-# handle -- lives in `tests/gaps/rubyvm_iseq_label_on_a_proc_handle.rb`. It
+# handle -- lives in `test/core/rubyvm/rubyvm_iseq_label_on_a_proc_handle.rb`. It
 # was split out because a gap file mixing a permanent refusal with a fixable
 # row can never promote, which made the fixable row invisible work.
 #
@@ -36,7 +34,7 @@
 # work -- the `.divergence` sidecar carries each one.
 #
 # The one row that IS still fixable was split out into
-# `tests/gaps/rubyvm_iseq_label_on_a_proc_handle.rb`, so this file can be a
+# `test/core/rubyvm/rubyvm_iseq_label_on_a_proc_handle.rb`, so this file can be a
 # decided divergence and that one can flip on its own.
 $stderr.reopen(IO::NULL)
 

@@ -4,8 +4,7 @@
 # tag, a nil key as `! ''`, a leading-space string double-quoted; the
 # `indentation:`/`line_width:`/`header:` options are honored; and two
 # references to ONE object dump as an anchor and alias (`&1`/`*1`). zeo
-# quotes-and-inlines everything and ignores the options. (Found by the
-# 2026-08-24 probe sweep.)
+# quotes-and-inlines everything and ignores the options.
 require "yaml"
 require "date"
 p YAML.dump({ "s" => "l1\nl2\n" })

@@ -29,7 +29,7 @@ rescue NoMethodError => e
 end
 # The plain `Host.new.pid` call is NOT asserted here: codegen folds an
 # explicit-receiver builtin call without consulting visibility, so it answers
-# instead of raising. See `tests/gaps/module_function_private_receiver.rb`.
+# instead of raising. See `test/lang/modules/module_function_private_receiver.rb`.
 
 puts "-- the singleton half stays public"
 p Process.respond_to?(:pid)

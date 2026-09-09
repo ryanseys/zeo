@@ -1,5 +1,5 @@
 # A definition hook sees the class only as far as it has been built. The
-# REFLECTION half of that is `tests/method_added_watermark.rb`; this is the
+# REFLECTION half of that is `test/lang/methods/method_added_watermark.rb`; this is the
 # DISPATCH half -- calling a method written below the `def` the hook is
 # reporting must miss, exactly as if it were not there yet.
 #

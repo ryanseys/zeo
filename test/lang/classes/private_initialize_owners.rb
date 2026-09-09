@@ -1,5 +1,5 @@
-# Two patterns behind 56 of the census's private `owner` rows, and the half of
-# them this closes.
+# Two patterns behind 56 private `owner` rows in the surface comparison; this
+# pins half of them.
 #
 # CRuby declares a private `initialize` on every class whose constructor takes
 # arguments `Exception`'s does not, and reflection has to say so.

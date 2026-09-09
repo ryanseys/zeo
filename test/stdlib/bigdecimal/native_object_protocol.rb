@@ -1,6 +1,5 @@
 # Object's universal protocol -- `===`, `==`, `!=`, `equal?`, `eql?`,
-# `frozen?`, `freeze` -- over the native handle and value kinds, promoted
-# from `tests/gaps/` on 2026-08-21.
+# `frozen?`, `freeze` -- over the native handle and value kinds.
 #
 # The rule is not one rule. A heap HANDLE (Fiber, Mutex, Queue, Thread, IO,
 # Dir, MatchData) compares by IDENTITY and carries a frozen bit of its own.

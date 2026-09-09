@@ -2,8 +2,7 @@
 # it; dump to an IO WRITES to it (zeo returns "" and writes nothing --
 # silent data loss); load(nil) answers nil; load's proc argument visits
 # every parsed object; JSON.parse! exists (NaN/Infinity allowed); and
-# `allow_nan: true` admits the literals to parse. (Found by the
-# 2026-08-24 probe sweep.)
+# `allow_nan: true` admits the literals to parse.
 require "json"
 require "stringio"
 def show

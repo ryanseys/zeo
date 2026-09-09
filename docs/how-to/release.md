@@ -49,12 +49,25 @@ native binary — `exe/zeo` is the Ruby that gets loaded and `exec`s the real
 one. `cargo xtask gem` sets `ZEO_GEM_PLATFORM`, stages, and runs `gem build`,
 RubyGems' own packager, so the published gem is not built by zeo.
 
+## Before the tag
+
+Three things must agree on the version, and the workflow checks the first
+two:
+
+1. `version` in the workspace `Cargo.toml` (every crate inherits it).
+2. The tag, spelled `v<version>`.
+3. A `## [<version>] - <date>` section in `CHANGELOG.md`, with the
+   `[Unreleased]` notes moved under it and a new empty `[Unreleased]`
+   above. The workflow extracts that section as the release notes and
+   fails if it is missing.
+
 ## What the tag does
 
 Push `v<version>` and the Release workflow builds each target natively —
 cross-compiling is ruled out because `dist` finishes by running a compiled
 program — uploads the tarballs and gems, checks that the tag matches the
-workspace version, and creates the Release.
+workspace version, and creates the Release with the CHANGELOG section as
+its notes.
 
 ## The published crates
 

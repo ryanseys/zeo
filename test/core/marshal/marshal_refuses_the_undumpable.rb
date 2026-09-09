@@ -1,7 +1,7 @@
 # `Marshal.dump` refuses what cannot round-trip: an object with a singleton
 # ("singleton can't be dumped") and an IO ("can't dump IO"). zeo dumps both
 # happily, silently losing the singleton and the stream -- wrong DATA, not
-# just a missing error. (Found by the 2026-08-24 probe sweep.)
+# just a missing error.
 o = Object.new
 def o.only_mine = 1
 begin

@@ -12,7 +12,8 @@ $ podman build --platform linux/arm64 -t zeo-linux .
 
 Pin the platform. After any amd64 pull, podman resolves `rust:latest` to the
 cached amd64 image, and x86_64 rustc segfaults under emulation on an Apple
-Silicon host — x86_64 coverage goes through the `cross` stage instead.
+Silicon host — x86_64 coverage goes through the `cross` stage instead. On an
+x86_64 host, build with `--platform linux/amd64 --build-arg NEXTEST_ARCH=linux`.
 
 The toolchain is not baked in: `rust-toolchain.toml` in the mounted repo
 pins it and rustup honours it on first use, so a toolchain bump needs no

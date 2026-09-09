@@ -1,8 +1,7 @@
 # Queue-family argument surfaces: `Queue#pop(true)` takes the non_block
 # flag and raises ThreadError ("queue empty") on an empty queue; zeo's row
 # takes no arguments at all. `SizedQueue.new(0)` raises ArgumentError
-# ("queue size must be positive"); zeo mints the queue. (Found by the
-# 2026-08-24 probe sweep.)
+# ("queue size must be positive"); zeo mints the queue.
 begin
   Queue.new.pop(true)
 rescue ThreadError => e

@@ -13,12 +13,12 @@
 #     CRuby's own source tree, which zeo does not have.
 #   * A per-object singleton (`def obj.m(x)`) is a runtime-defined body here
 #     and reports no signature at all -- a real gap, tracked at
-#     `tests/gaps/method_inspect_native.rb`.
+#     `test/core/object/method_inspect_native.rb`.
 #   * A native method with no declared arity prints the variadic `(*)` where
 #     CRuby knows the real count.
 #
 # The anonymous forwarding slots (`*`/`**`/`&`/`...`) DO match, and are pinned
-# in `tests/method_inspect_forwarding.rb`.
+# in `test/core/object/method_inspect_forwarding.rb`.
 #
 # Everything below is a method zeo compiled, or a native one whose arity is
 # declared -- the surface an inspect implementation is actually responsible for.

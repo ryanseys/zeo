@@ -19,7 +19,7 @@
 # `c-call`/`c-return` stay impossible either way: a builtin is a Rust fn with
 # no frame to fire from.
 #
-# `trace_var`/`untrace_var` are done and passing -- see `tests/trace_var.rb`.
+# `trace_var`/`untrace_var` are done and passing -- see `test/core/tracepoint/trace_var.rb`.
 
 def show(label)
   puts "#{label}: #{yield.inspect}"

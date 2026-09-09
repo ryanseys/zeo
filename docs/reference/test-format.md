@@ -32,7 +32,7 @@ in any order. An unknown key fails the case rather than being ignored.
 | `#@ zeo-env: K=V ...` | environment for the zeo child only |
 | `#@ only: macos` / `#@ only: linux` | skip on every other platform |
 | `#@ backend: jit` | skip wherever a real link is used; the program needs the compiler and itself in one process |
-| `#@ gccheck: <line>` | the exit cycle census this program is expected to report |
+| `#@ gccheck: <line>` | the exit cycle count this program is expected to report |
 
 ## The trailer
 

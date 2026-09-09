@@ -22,7 +22,7 @@ p EvalLib.abs(-3)
 eval "class EvalStruct < FFI::Struct; layout :a, :int, :b, :int; end"
 p EvalStruct.size
 # `refine`/`using` at run time. (A `Ruby::Box` closed with them and
-# is pinned by `tests/a_snippet_mints_no_compile_time_box.rb`,
+# is pinned by `test/lang/boxes/a_snippet_mints_no_compile_time_box.rb`,
 # which the golden harness runs with `RUBY_BOX=1`.)
 eval "module EvalRef; refine(String) { def shout = upcase + '!' }; end"
 p eval("using EvalRef; 'hi'.shout")

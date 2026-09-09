@@ -3,7 +3,7 @@
 # utf-8"), and a binary string raises on the transcode. zeo lossy-
 # replaces the first and transcodes the second -- silent data
 # corruption. The float form also differs: 1e100.to_json is "1e+100",
-# not "1.0e+100". (Found by the 2026-08-24 probe sweep.)
+# not "1.0e+100".
 require "json"
 def show
   p yield

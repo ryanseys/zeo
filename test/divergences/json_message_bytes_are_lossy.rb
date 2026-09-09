@@ -6,7 +6,7 @@
 #
 # The class, the position and the shape of the message all agree; only the
 # byte differs, and only inside the quoted echo of input the program
-# already has. `tests/json_parser_edge_cases.rb` holds every other row of
+# already has. `test/stdlib/json/json_parser_edge_cases.rb` holds every other row of
 # that family, all of them exact.
 
 require "json"

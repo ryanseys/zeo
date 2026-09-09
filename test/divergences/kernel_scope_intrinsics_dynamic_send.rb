@@ -1,6 +1,6 @@
 # `send(name)` where `name` is COMPUTED at run time. A LITERAL
 # `send(:block_given?)` folds into the caller exactly like the direct spelling,
-# and every literal shape passes in `tests/kernel_scope_intrinsics.rb`. A
+# and every literal shape passes in `test/core/kernel/kernel_scope_intrinsics.rb`. A
 # dynamic name resolves to a method ROW, and a row cannot see the caller's block
 # or local scope: zeo's `Frame` deliberately carries neither.
 #
@@ -35,7 +35,7 @@
 # tax every call in the program. The ship state is a loud NotImplementedError
 # row rather than a wrong answer; ruby, of course, just answers.
 #
-# The sibling that IS green is `tests/kernel_scope_intrinsics.rb` -- every
+# The sibling that IS green is `test/core/kernel/kernel_scope_intrinsics.rb` -- every
 # literal spelling, direct and through `send(:literal)`. So the boundary is
 # precisely "is the method name a compile-time constant", and a fix would have
 # to move it: either by carrying the caller's block and binding on the `Frame`

@@ -56,7 +56,7 @@ show("ISO-8859-9 upcase") { "\xFD".dup.force_encoding("ISO-8859-9").upcase.bytes
 
 # Registered-only rows answer every reflection question and carry ASCII
 # through. What they cannot do is convert their own high bytes -- see
-# `tests/gaps/encoding_registered_only.rb`.
+# `test/core/encoding/encoding_registered_only.rb`.
 show("EUC-KR ascii") { "abc".encode("EUC-KR").bytes }
 show("EUC-KR ascii back") { "abc".dup.force_encoding("EUC-KR").encode("UTF-8") }
 show("EUC-KR compatible?") { Encoding.compatible?("abc", "d".dup.force_encoding("EUC-KR")) }

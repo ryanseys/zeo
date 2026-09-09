@@ -17,7 +17,7 @@
 #
 # This file pins the ORDER OF EVENTS against ruby. The regression test for
 # the drop itself is `an_autoload_and_a_guarded_require_of_one_file_share_
-# its_unit` in `tests/e2e/gems_require.rs`: reproducing it needs the autoload
+# its_unit` in `crates/zeo/tests/suite/api/gems_require.rs`: reproducing it needs the autoload
 # to name a LOAD-PATH feature, so a name that resolves to nothing has no file
 # to fall back to, and a golden has no `-I` of its own.
 

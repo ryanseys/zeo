@@ -4,9 +4,9 @@
 #@ zeo-env: ZEO_GC=1
 # Three `ObjectSpace` surfaces are refused, and the refusals are decisions
 # rather than unbuilt work. The program's other seven rows answer exactly as
-# ruby does and are here as context, which is why the file lives in `tests/`
-# rather than in `tests/gaps/`: a gap that can never flip is not work still to
-# do, and its presence inflated a count whose whole meaning is "still to do".
+# ruby does and are here as context, which is why the file lives in
+# `test/divergences/` rather than in `test/gaps/`: a gap that can never flip
+# is not work still to do.
 #
 # 1. `_id2ref`. `object_id` is a heap ADDRESS here, so the inverse map is not
 #    missing so much as unsafe: an address answers only while its value lives,

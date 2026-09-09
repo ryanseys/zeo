@@ -127,8 +127,7 @@ p ModSelf.m
 
 puts "== reflection names the owner, and the last body's report"
 # `#arity`/`#parameters` in the WINDOW report the FINAL body on both channels
-# -- the meta rows are static and the timeline lives in the overlay. See
-# `tests/gaps/a_redefinition_window_reports_the_last_body.rb`.
+# -- the meta rows are static and the timeline lives in the overlay.
 class Reflect
   def self.r = "r1"
 end

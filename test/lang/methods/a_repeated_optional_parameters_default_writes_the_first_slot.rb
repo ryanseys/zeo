@@ -1,5 +1,5 @@
 # A repeated `_` parameter binds the FIRST slot for reads, and
-# `tests/a_repeated_underscore_parameter_binds_the_first_slot.rb` pins that.
+# `test/lang/blocks/a_repeated_underscore_parameter_binds_the_first_slot.rb` pins that.
 # One shape inside the same rule is still wrong: a repeated OPTIONAL whose
 # DEFAULT runs.
 #

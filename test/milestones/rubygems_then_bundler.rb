@@ -8,11 +8,11 @@
 # sole-statement class-body guard out into the enclosing scope. Asked of `Gem`
 # the probe answered false, so twelve constants `rubygems/platform.rb` had
 # already written were written again. See
-# `tests/a_class_body_guard_asks_about_the_class.rb`.
+# `test/compiler/guards/a_class_body_guard_asks_about_the_class.rb`.
 #
 # A golden compares stdout AND stderr, which is what kept this honest.
 #
-# Shapes, never versions -- see `tests/milestones.rs`.
+# Shapes, never versions.
 
 require "rubygems"
 require "bundler"

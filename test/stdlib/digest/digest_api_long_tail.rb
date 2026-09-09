@@ -1,7 +1,6 @@
 # Digest rows beyond the (matching) core: `Digest::SHA2` (the
 # bit-length-parameterized class) is absent, `Digest::SHA256.file` is
-# absent, and #inspect embeds the current hexdigest. (Found by the
-# 2026-08-24 probe sweep.)
+# absent, and #inspect embeds the current hexdigest.
 require "digest"
 require "tempfile"
 def show

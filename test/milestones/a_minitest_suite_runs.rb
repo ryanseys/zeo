@@ -8,7 +8,7 @@
 # `zeo test.rb --seed 42` hands all of it to ARGV. That only became possible
 # when zeo adopted ruby's rule; before it, `--seed` was "invalid option".
 #
-# Shapes, never versions -- see `tests/milestones.rs`. Timings are the one
+# Shapes, never versions. Timings are the one
 # thing that cannot match, so nothing here prints one.
 
 # Minitest prints a duration and a random seed, and neither can match across

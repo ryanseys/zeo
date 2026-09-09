@@ -12,8 +12,7 @@
 #
 # The limit this cannot reach is the last section: the FFI type vocabulary
 # is per-COMPILE, so a struct declared in one snippet cannot be NAMED as a
-# field type by the next. See
-# `tests/gaps/an_ffi_type_declared_in_one_snippet.rb`.
+# field type by the next.
 require "ffi"
 
 def show

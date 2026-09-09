@@ -31,7 +31,7 @@
 # twelve. A synthesized guard carries a flag now; a guard the source wrote
 # stays where it was written.
 #
-# Shapes, never versions -- see `tests/milestones.rs`.
+# Shapes, never versions.
 
 require "bundler"
 

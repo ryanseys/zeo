@@ -3,8 +3,7 @@
 # is gated (Psych::Set needs permitting), `!!omap` loads as a Hash,
 # `!ruby/symbol` is gated behind `permitted_classes: [Symbol]` (and
 # converts when permitted, incl. under unsafe_load), and `!ruby/object:`
-# is gated. zeo ignores the tags wholesale. (Found by the 2026-08-24
-# probe sweep.)
+# is gated. zeo ignores the tags wholesale.
 require "yaml"
 def show
   p yield

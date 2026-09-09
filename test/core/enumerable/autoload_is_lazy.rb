@@ -13,7 +13,7 @@
 # adding a hook at the constant read.
 #
 # Measured cost, while it was broken: this was one of the things that blocked
-# `require "rubygems"`, so `tests/bench/rubygems.rb` and `bundler.rb` entered
+# `require "rubygems"`, so `test/bench/compile/rubygems.rb` and `bundler.rb` entered
 # at sub-files instead. With the declaration eager, `rubygems.rb`'s `autoload
 # :RequestSet` ran `request_set/gem_dependency_api.rb` before
 # `rubygems/platform` was required, and died on `uninitialized constant

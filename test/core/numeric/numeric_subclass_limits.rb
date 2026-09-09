@@ -13,7 +13,7 @@
 # This file used to record a second, unrelated limit -- that nothing called
 # `Numeric#singleton_method_added`, so `def n.foo` on a number succeeded where
 # ruby refuses. The definition hooks now fire; see
-# `tests/definition_hooks_at_runtime.rb`.
+# `test/lang/eval/definition_hooks_at_runtime.rb`.
 
 class Deg < Numeric
   def initialize(v) = @v = v

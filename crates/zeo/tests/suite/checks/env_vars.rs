@@ -1,15 +1,13 @@
 //! Every environment variable the docs name has a reader in the tree.
 //!
 //! A documented variable with no reader is a silent no-op: the reader was
-//! renamed or deleted and the instruction outlived it. Three of those were
-//! found at once -- `ZEO_BLESS=1` had been replaced by `ZEO_BLESS_FROM_TOOL`,
-//! and two ledgers plus a doc still told the reader to use the old spelling,
-//! which does nothing at all.
+//! renamed or deleted and the instruction outlived it, and a doc that names
+//! the stale spelling sends the reader to a switch that does nothing at all.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// Spellings the docs mention only to say they are retired. A variable named
+/// Spellings the docs mention only to say they do not work. A variable named
 /// to say it does NOT work is not a broken instruction.
 const HISTORICAL: &[&str] = &["ZEO_BLESS", "ZEO_BLESS_FROM_TOOL", "ZEO_GOLDEN_DIFF_TYPED"];
 
@@ -98,8 +96,8 @@ fn every_documented_env_var_has_a_reader() {
     .collect();
 
     // A reader spells the name as a string literal: `env::var("X")`,
-    // `var_os("X")`, `ENV["X"]`.
-    let readers: BTreeSet<String> = collect(&root, &["crates", "tools"], &[], &["rs", "rb"])
+    // `var_os("X")`, `ENV["X"]` -- in Rust, in Ruby, or in a shim template.
+    let readers: BTreeSet<String> = collect(&root, &["crates", "tools"], &[], &["rs", "rb", "in"])
         .iter()
         .flat_map(|(_, b)| {
             names(b)
@@ -125,5 +123,55 @@ fn every_documented_env_var_has_a_reader() {
         missing.is_empty(),
         "documented environment variables with no reader: {missing:?}\n\
          Either restore the reader, correct the spelling, or add it to HISTORICAL."
+    );
+}
+
+/// Names a reader spells that no page needs to: unit-test fixtures, and the
+/// shim placeholders `build.rs` fills.
+const UNDOCUMENTED_BY_DESIGN: &[&str] = &[];
+
+#[test]
+fn every_env_var_read_is_documented() {
+    let root = repo_root();
+
+    let documented: BTreeSet<String> = collect(
+        &root,
+        &["docs"],
+        &["README.md", "CONTRIBUTING.md"],
+        &["md"],
+    )
+    .iter()
+    .flat_map(|(_, b)| names(b).into_iter().map(|(_, n)| n))
+    .collect();
+
+    // A reader outside a test: `env::var("X")` in `src/`, `ext/` or the
+    // shim templates. Tests set what they read, and xtask documents its own
+    // switches in its usage text.
+    let readers: BTreeSet<String> = collect(
+        &root,
+        &["crates/zeo/src", "crates/zeo-rt/src", "crates/zeo-rt/ext", "crates/zeo-capi/src", "crates/xtask/src"],
+        &[],
+        &["rs", "rb", "in"],
+    )
+    .iter()
+    .flat_map(|(_, b)| {
+        names(b)
+            .into_iter()
+            .filter(|(at, _)| *at > 0 && b[at - 1] == b'"')
+            .map(|(_, n)| n)
+    })
+    .collect();
+
+    assert!(readers.len() >= 20, "only {} ZEO_* readers found -- the scan is not reading them", readers.len());
+    let missing: Vec<&String> = readers
+        .iter()
+        .filter(|v| !v.starts_with("ZEO_TEST_"))
+        .filter(|v| !UNDOCUMENTED_BY_DESIGN.contains(&v.as_str()))
+        .filter(|v| !documented.contains(*v))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "environment variables the tree reads that no page documents: {missing:?}\n\
+         Add a row to docs/reference/environment-variables.md."
     );
 }

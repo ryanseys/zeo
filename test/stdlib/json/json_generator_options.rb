@@ -2,7 +2,7 @@
 # array_nl/space (so pretty_generate != generate with those opts),
 # space_before, ascii_only (must \u-escape), script_safe (must escape /),
 # and the generate-side max_nesting/depth NestingError. fast_generate is
-# absent. (Found by the 2026-08-24 probe sweep.)
+# absent.
 require "json"
 def show
   p yield

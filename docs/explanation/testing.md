@@ -19,23 +19,18 @@ version the other does not have.
 
 ## One compile per program
 
-The corpus is compiled and run once, on the JIT. It used to be run six times
-— separate passes for the AOT tier, a memory ledger, a cycle census, and
-three differential roads — which cost 25,000 cases and about 124 GB of disk
-per run to ask questions that mostly folded into the first pass.
+The corpus is compiled and run once, on the JIT. The ownership ledger and
+the cycle count are **environment variables on the same process**, not a
+second execution: they ride on the ordinary run for almost nothing, and the
+count line is split out of stderr before the comparison.
 
-What folded in: the ownership ledger and the cycle census are **environment
-variables on the same process**, not a different execution. They ride on the
-ordinary run for almost nothing, and the census line is split out of stderr
-before the comparison.
-
-What did not fold in is `test/aot/`: a real link is a different question —
+What does not fold in is `test/aot/`: a real link is a different question —
 the link line, the whole-archive spelling, what a shipped binary has to
 carry — and a curated set of programs asks it.
 
-What was deleted outright: a differential road comparing zeo against itself
-with a debug switch nobody ships. Comparing against *ruby's* answers is
-strictly better signal, and it is what every other case already does.
+There is no differential road comparing zeo against itself with a debug
+switch nobody ships. Comparing against *ruby's* answers is strictly better
+signal, and it is what every case already does.
 
 ## Nothing on disk
 
@@ -55,8 +50,7 @@ FIXED, promote it".
 
 The directory decides this, not a per-file marker, so a case still asks
 exactly one question — it is only the sign of the answer that the directory
-sets. The alternative, keeping gaps as notes nothing runs, was tried: the
-first run after turning them back on found two that had been quietly fixed.
+sets. A gap kept as a note nothing runs is a gap nobody notices closing.
 
 Programs that differ **on purpose** are different again. Those record zeo's
 own answer under `test/divergences/`, each saying why in its header, so the

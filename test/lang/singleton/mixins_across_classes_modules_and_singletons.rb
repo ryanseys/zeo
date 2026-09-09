@@ -2,14 +2,12 @@
 # classes, modules, singleton classes and plain objects, read off `ancestors`,
 # `super` chains, the notification hooks and the reflection predicates.
 #
-# Written 2026-08-21 as a differential sweep against ruby 4.0.6. It found four
-# divergences on its first run, three of them fixed in the same commit series:
-# a singleton `prepend` fired no `prepended` hook, its module landed AFTER the
-# singleton head in `ancestors` instead of before, and
-# `singleton_class.include M` reported itself as `M.extended(K)` rather than
-# `M.included(#<Class:K>)`. The fourth is `tests/gaps/
-# a_module_both_prepended_and_included.rb`, which is why `include A; prepend A`
-# is not among the shapes below.
+# A differential sweep against ruby 4.0.6. It pins that a singleton `prepend`
+# fires the `prepended` hook, that its module lands BEFORE the singleton head
+# in `ancestors`, and that `singleton_class.include M` reports itself as
+# `M.included(#<Class:K>)` rather than `M.extended(K)`. The `include A;
+# prepend A` shape is not among the shapes below; it lives in
+# `test/lang/modules/a_module_both_prepended_and_included.rb`.
 
 module A; end
 module B; end

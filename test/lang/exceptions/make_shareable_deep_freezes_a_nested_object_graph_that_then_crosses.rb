@@ -1,6 +1,6 @@
-# The plan's own listed scenario: object -> array -> object, every node
-# frozen by one make_shareable, the whole graph then crossing a Ractor
-# boundary by reference and dispatching on the far side.
+# A nested graph, object -> array -> object, every node frozen by one
+# make_shareable, the whole graph then crossing a Ractor boundary by
+# reference and dispatching on the far side.
 
 class Node
   def initialize(v, child)

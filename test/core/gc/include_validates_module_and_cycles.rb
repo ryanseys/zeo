@@ -1,7 +1,7 @@
 # `include` validates: a Class argument is a TypeError ("wrong argument
 # type Class (expected Module)") and a cyclic or self include is an
 # ArgumentError ("cyclic include detected"). zeo accepts all three
-# silently. (Found by the 2026-08-24 probe sweep.)
+# silently.
 begin
   Class.new.include(Class.new)
   puts "class included"

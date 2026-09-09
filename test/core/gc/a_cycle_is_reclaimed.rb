@@ -31,10 +31,9 @@
 # matters most: a collector that reclaims a live object is far worse than one
 # that misses a dead one.
 #
-# Four of these arrived from `tests/gaps/a_cycle_can_still_leak.rb`, which is
-# gone: a captured proc cell, a Range endpoint, a per-object singleton, and an
-# ivar on a bare value. Their causes are recorded beside each one, because
-# each was a different mechanism rather than four instances of one bug.
+# Four of these -- a captured proc cell, a Range endpoint, a per-object
+# singleton, and an ivar on a bare value -- each reach the collector through
+# a different mechanism, recorded beside each one.
 seen = ObjectSpace::WeakMap.new
 $held = []
 

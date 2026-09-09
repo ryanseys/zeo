@@ -114,7 +114,7 @@ end
 
 # --- Nesting, either side of every limit ---------------------------------
 # 2,001 is NOT here: past zeo's stack ceiling the two engines deliberately
-# disagree, and `tests/json_nesting_is_bounded_by_the_stack.rb` is where
+# disagree, and `test/divergences/json_nesting_is_bounded_by_the_stack.rb` is where
 # that row lives. Everything below the ceiling must agree exactly.
 [0, 1, 2, 99, 100, 101, 1_999, 2_000].each do |n|
   doc = "[" * n + "]" * n

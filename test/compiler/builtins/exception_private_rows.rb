@@ -4,8 +4,8 @@
 # `Exception.private_instance_methods(false)`.
 #
 # Nothing OBSERVABLE changes about what they do -- the answer is the root pair's
-# either way, which is why the divergence survived: the census gates public
-# method sets only, so a private row is invisible to it.
+# either way -- and the surface comparison gates public method sets only, so a
+# private row is invisible to it.
 
 p Exception.private_instance_methods(false).sort
 p Exception.instance_method(:method_missing).owner

@@ -1,8 +1,7 @@
 # Time's argument errors carry CRuby's exact texts: an out-of-range
 # component names the FIELD ("mon out of range", "mday out of range"), and
-# `Time + Time` says "time + time?". zeo answers generic messages. (Found
-# by the 2026-08-24 probe sweep; matches the TODO(plan P-B) markers in
-# builtins/time.rs.)
+# `Time + Time` says "time + time?". zeo answers generic messages (the TODO
+# markers in builtins/time.rs).
 def show
   yield
 rescue StandardError => e

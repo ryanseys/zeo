@@ -19,7 +19,7 @@
 # the gap "passed" on a divergence that was really a dead child. The milestone
 # tier is where a whole-graph compile belongs.
 #
-# Shapes, never versions -- see `tests/milestones.rs`.
+# Shapes, never versions.
 
 require "bundler"
 require "bundler/cli"

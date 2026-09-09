@@ -21,7 +21,7 @@ NAMES = %i[
 
 # `syscall` is a NOTIMPLEMENT STUB on this platform, and ruby answers
 # `respond_to?` false for those while still listing them -- see
-# `tests/gaps/notimplement_stub_respond_to.rb`.
+# `test/core/object/notimplement_stub_respond_to.rb`.
 ASKABLE = NAMES - %i[syscall]
 
 # ruby files all of these as PRIVATE instance methods and PUBLIC singleton

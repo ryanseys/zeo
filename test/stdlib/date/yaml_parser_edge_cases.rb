@@ -17,7 +17,7 @@
 #
 # ONE GROUP IS NOT HERE: the documents yaml-rust2 and libyaml disagree
 # about the legality of, which is a decided divergence recorded in
-# `tests/yaml_backend_accepts_a_different_dialect.rb`.
+# `test/divergences/yaml_backend_accepts_a_different_dialect.rb`.
 
 require "yaml"
 require "date"

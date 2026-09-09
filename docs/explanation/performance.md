@@ -36,7 +36,7 @@ inference: the typed direct call that took `send_rubyfunc_block` from
 0.30× to 1.2× only fires where the receiver's class is proven at
 compile time. And `getivar_module` (0.39×) waits on a class-level ivar
 cache the emitter does not yet emit. [Measure performance](../how-to/measure-performance.md)
-has the method; the [roadmap](roadmap.md) has the levers.
+has the method.
 
 ## The full table
 

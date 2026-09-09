@@ -4,7 +4,6 @@
 # proc argument visits every object, the depth-limit argument raises
 # ArgumentError past the limit, and the incompatible-format TypeError
 # carries its detail line ("format version 4.8 required; 9.8 given").
-# (Found by the 2026-08-24 probe sweep.)
 require "stringio"
 def show
   p yield

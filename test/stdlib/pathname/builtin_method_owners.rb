@@ -1,6 +1,6 @@
 # Which CLASS owns a builtin method is part of its behaviour, not a detail of
-# reflection: it decides which receivers answer it. This locks the boundaries
-# the arity census proved zeo had drawn in the wrong place.
+# reflection: it decides which receivers answer it. This locks the owner
+# boundaries ruby draws.
 
 require "pathname"
 require "tmpdir"

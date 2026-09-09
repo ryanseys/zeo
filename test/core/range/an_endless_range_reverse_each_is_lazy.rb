@@ -1,6 +1,5 @@
 # `(1..).reverse_each` answers an Enumerator (the raise comes only when it
-# is iterated); zeo raises TypeError at the call. (Found by the 2026-08-24
-# probe sweep.)
+# is iterated); zeo raises TypeError at the call.
 e = (1..).reverse_each
 puts e.class
 begin

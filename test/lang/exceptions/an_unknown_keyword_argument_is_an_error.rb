@@ -3,7 +3,6 @@
 # static shapes right; the DYNAMIC paths -- a runtime-defined method, a
 # `Method#call`, a `send` -- silently drop the extra keyword and the call
 # succeeds. Likely the `**kwrest`-peel shape from the kwargs channel.
-# (Found by the 2026-08-24 probe sweep.)
 c = Class.new { def kw(a:) = a }
 
 begin

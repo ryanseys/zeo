@@ -17,7 +17,7 @@
 # narrowings are load-bearing: a top-level `def foo` called from inside such a
 # method must keep its own label, and the same install path also carries a
 # genuine `define_method` block, whose body keeps its `block in ...` label
-# (`tests/define_method_body_frame_label.rb` caught that one).
+# (`test/lang/methods/define_method_body_frame_label.rb` caught that one).
 #
 # THE `D.new` FRAME was missing. Ruby pushes one because a Data class's `new`
 # is a distinct cfunc -- the one that zips positionals against the member list

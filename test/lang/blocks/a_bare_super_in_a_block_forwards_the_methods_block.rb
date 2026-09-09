@@ -1,7 +1,7 @@
 # A bare `super` written inside a BLOCK forwards the enclosing method's block
 # to the parent, exactly as one written directly in the method body does.
 # zeo forwards the method's PARAMETERS through this shape correctly -- see
-# `tests/a_bare_super_inside_a_block_forwards_the_methods_params.rb` -- but
+# `test/lang/blocks/a_bare_super_inside_a_block_forwards_the_methods_params.rb` -- but
 # not its BLOCK, so the parent raises `LocalJumpError: no block given`.
 #
 # The two halves are synthesized at different places. The forwarded argument

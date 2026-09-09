@@ -18,7 +18,7 @@ reads object layout becomes a call, because a zeo object is an opaque handle
 `ruby/config.h` rendered for the host. The finished tree lives under the
 build root (`target/ruby-headers/<rev>/` in the dev tree, the per-user cache
 for an install), a release tarball carries it pre-seeded, and `cargo xtask
-cext hunks --check` proves every edit still applies to the pin. Without the
+check-c-headers hunks --check` proves every edit still applies to the pin. Without the
 network, `ZEO_RUBY_HEADERS_TARBALL` names a local copy of the archive and
 `ZEO_RUBY_HEADERS_DIR` names the `include/` directory of a `ruby/ruby`
 checkout at that rev.
@@ -88,7 +88,7 @@ carries one. A C++ extension that wraps a Ruby call in `catch (...)`
 intercepts the unwind; `rb_protect` is the spelling for that. A genuine bug
 in zeo (a Rust panic) is never turned into a Ruby exception.
 
-`crates/zeo-capi/src/api.rs` is the census: every symbol an extension can link
+`crates/zeo-capi/src/api.rs` is the full list: every symbol an extension can link
 against, read off clang's AST of every public header. 33 of them are
 REFUSALS, not gaps, and each raises with its reason:
 
@@ -159,8 +159,8 @@ fixed-width `:int8`…`:int64`), their unsigned twins and `:size_t`,
 `:float`/`:double`, `:bool`, `:string` (a `const char *` — a NUL-terminated copy
 in, a Ruby String out), and `:pointer` (below). A wrong argument type is a
 `TypeError`, exactly as the gem raises. Verified byte-for-byte against
-`ffi 1.17.4` — see `tests/ffi_libc.rb`, `tests/ffi_memory.rb`,
-`tests/ffi_struct.rb`.
+`ffi 1.17.4` — see `test/stdlib/ffi/ffi_libc.rb`, `test/stdlib/ffi/ffi_memory.rb`,
+`test/stdlib/ffi/ffi_struct.rb`.
 
 **Memory — `FFI::Pointer` / `FFI::MemoryPointer`.** Real runtime classes over a
 native heap buffer. `MemoryPointer.new(:int, 3)` / `.new(bytes)` /
@@ -214,6 +214,6 @@ crashing.
 vendored over the tier above, plus its `closure`/`function`/`version` files
 verbatim. `Fiddle.dlopen`, `Fiddle::Function`, `Fiddle::Pointer`,
 `Closure::BlockCaller` callbacks (qsort works), and `TYPE_VARIADIC` calls
-are all oracle-matched against the C extension (`tests/fiddle.rb`); the
+are all oracle-matched against the C extension (`test/lang/programs/fiddle.rb`); the
 `Importer` DSL (`fiddle/import`/`fiddle/struct`) is not included — see
 `docs/reference/compatibility.md` `### fiddle` for that and the other divergences.

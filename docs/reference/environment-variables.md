@@ -1,9 +1,8 @@
 # Environment variables
 
-Every `ZEO_*` the tree reads, grouped by who reads it.
-`checks::env_vars` holds this page to the code: a variable named here with no
-reader in the tree fails the suite, because a documented variable that does
-nothing is worse than an undocumented one.
+Every `ZEO_*` the tree reads, grouped by who reads it. `checks::env_vars`
+holds this page to the code in both directions: a variable named here with
+no reader fails the suite, and a reader with no row here fails it too.
 
 ## A compile
 
@@ -49,6 +48,7 @@ nothing is worse than an undocumented one.
 | `ZEO_CEXT_HDRDIR` / `ZEO_CEXT_ARCHHDRDIR` | What `mkmf` reports as the header directories. |
 | `ZEO_CEXT_MAKE` | The `make` to run for an extension. |
 | `ZEO_SOEXT` / `ZEO_DLEXT` | The shared-object extension a built gem gets. |
+| `ZEO_BINDIR` / `ZEO_RUBY_INSTALL_NAME` | What the `rbconfig` shim reports as the ruby binary's directory and name, for an `extconf.rb` that shells out to ruby. |
 | `ZEO_HOST_OS` / `ZEO_HOST_CPU` / `ZEO_RUBY_PLATFORM` / `ZEO_GEM_PLATFORM` | Override what the build reports about this machine. |
 
 ## Development
@@ -61,8 +61,11 @@ nothing is worse than an undocumented one.
 | `ZEO_BENCH_ORACLE` / `ZEO_BENCH_ORACLE_RUBY` | Time the pinned ruby beside zeo. |
 | `ZEO_BENCH_RESUME` | Continue a benchmark run that was interrupted. |
 | `ZEO_LINUX_IMAGE` / `ZEO_LINUX_MEMORY` / `ZEO_LINUX_THREADS` / `ZEO_LINUX_PROFILE` / `ZEO_LINUX_VOLUME` / `ZEO_CONTAINER_ENGINE` | The Linux container loop. |
-| `ZEO_ARITY_DEBUG` / `ZEO_DEBUG_DROP_TABLE` / `ZEO_DEBUG_RUNTIME_LOAD` | Narrow diagnostics for one mechanism each. |
+| `ZEO_ARITY_DEBUG` | Name, on an arity error, which dispatch path bound the call. |
+| `ZEO_DEBUG_DROP_TABLE` | Link a program without one class table, for per-table size attribution. |
+| `ZEO_DEBUG_RUNTIME_LOAD` | Narrate what the runtime registers at boot. |
 | `ZEO_MSPEC_STUBS` | Stub what a vendored spec suite expects and zeo does not have. |
+| `ZEO_TEST_*` | Fixtures the `ENV` unit tests set and read; nothing else reads them. |
 
 ## Ruby's own
 

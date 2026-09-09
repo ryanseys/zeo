@@ -9,7 +9,7 @@
 #    is named right in the identity, with no space before it. zeo prints the
 #    plain locationless form, so a table of symbol-derived callbacks is again
 #    a column of identical strings, which is what
-#    `tests/proc_inspect_identity.rb` fixed for ordinary blocks.
+#    `test/core/object/proc_inspect_identity.rb` fixed for ordinary blocks.
 #
 # A block written in the source now carries both (that file is the control
 # below), so what is missing is only the derived cases: the proc is built by a

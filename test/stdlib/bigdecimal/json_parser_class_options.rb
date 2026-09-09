@@ -1,7 +1,7 @@
 # JSON.parse's container-class options: `object_class:`/`array_class:`
 # build the parse result out of the given classes, and `decimal_class:`
 # parses floats into it (BigDecimal is the use case). zeo ignores all
-# three. (Found by the 2026-08-24 probe sweep.)
+# three.
 require "json"
 require "ostruct"
 require "bigdecimal"

@@ -1,6 +1,6 @@
 # A class built at runtime runs its body as a block, and its directives are
 # rewritten into the self-sends that block serves (`lower::defs::
-# runtime_directive_spelling`). `tests/runtime_class_body_directives.rb` shows
+# runtime_directive_spelling`). `test/lang/classes/runtime_class_body_directives.rb` shows
 # that working for `Class.new do ... end`.
 #
 # Giving the class a runtime SUPERCLASS used to break five separate things, in

@@ -6,7 +6,7 @@
 #
 # The handle carries no bytecode -- there is none -- so `#to_a`, `#to_binary`
 # and `#disasm` refuse on it exactly as they do on a compiled one. See
-# `tests/gaps/rubyvm_iseq_serialization.rb` for the rows that stay refused.
+# `test/divergences/rubyvm_iseq_serialization.rb` for the rows that stay refused.
 
 def try(tag)
   puts "#{tag}: #{yield.inspect}"

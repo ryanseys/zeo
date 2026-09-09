@@ -1,7 +1,7 @@
 # Reading a write-only IO (or writing a read-only one) is an IOError ("not
 # opened for reading"/"not opened for writing") -- ruby checks the mode
 # before touching the fd. zeo lets the syscall fail and raises
-# Errno::EBADF. (Found by the 2026-08-24 probe sweep.)
+# Errno::EBADF.
 begin
   File.open("/dev/null", "w") { |f| f.read }
 rescue IOError => e

@@ -3,7 +3,7 @@
 # silently, so the one diagnostic that catches a constant clobbered by a
 # second file, or by a name a library did not expect to own, never appears.
 #
-# The location half is in place: `tests/const_source_location_of_a_module_constant.rb`
+# The location half is in place: `test/lang/modules/const_source_location_of_a_module_constant.rb`
 # records where every constant was assigned, and the warning's second line is
 # exactly that record read back. What is missing is the check at the write --
 # `constants.rs`'s `const_set` has no "was it already there" test, and

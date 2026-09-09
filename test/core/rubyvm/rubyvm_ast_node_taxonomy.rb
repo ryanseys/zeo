@@ -7,7 +7,7 @@
 # while `x ||= 1` does not, and `BEGIN { }` is hoisted out of the statement
 # list it was written in. Every span below is a measurement.
 #
-# `tests/rubyvm_ast.rb` covers the Node/Location SURFACE. This file covers the
+# `test/core/rubyvm/rubyvm_ast.rb` covers the Node/Location SURFACE. This file covers the
 # node kinds and their children.
 $stderr.reopen(IO::NULL)
 

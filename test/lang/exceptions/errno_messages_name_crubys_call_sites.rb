@@ -3,7 +3,7 @@
 # `@ rb_check_realpath_internal`, `@ rb_file_s_stat`, `@ apply2files`, and
 # `@ rb_file_s_rename - (a, b)` with BOTH paths. zeo names the syscall
 # (`@ read`, `@ chdir`, ...). `File.expand_path("~nouser")` also words its
-# ArgumentError differently. (Found by the 2026-08-24 probe sweep.)
+# ArgumentError differently.
 def show
   yield
 rescue SystemCallError, ArgumentError => e

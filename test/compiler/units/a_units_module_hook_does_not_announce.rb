@@ -15,7 +15,7 @@
 #
 # `Module.private_method_defined?(:method_added)` is deliberately NOT printed
 # here: the unit's `undef` is still applied at boot, which is its own gap
-# (`tests/gaps/a_units_undef_of_a_builtin_row_waits_for_the_unit.rb`).
+# (`test/compiler/units/a_units_undef_of_a_builtin_row_waits_for_the_unit.rb`).
 
 if ARGV.include?("--debug")
   require_relative "a_units_module_hook_does_not_announce/tracer"

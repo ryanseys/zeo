@@ -46,7 +46,7 @@
 # shared object arrives twice with one husk. Both are cheap to implement and
 # both lose a safety property.
 #
-# Resolved 2026-08-22: both are DECISIONS, so this is a passing test whose
+# Both are DECISIONS, so this is a passing test whose
 # golden records ZEO's output, with the reason and ruby's own answer in the
 # `.divergence` sidecar beside it. A program that RELIES on an accident
 # (checking `MovedError` to detect a failed move, say) behaves differently

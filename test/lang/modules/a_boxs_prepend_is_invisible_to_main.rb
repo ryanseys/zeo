@@ -1,10 +1,8 @@
 # `prepend`, which has to beat the builtin row for the box and leave main's
 # alone.
 #
-# Deliberately its OWN box, not the one above. An `include` FOLLOWED BY a
-# prepend in the same box loses the prepend -- a real divergence, filed as
-# `tests/gaps/a_box_prepend_after_an_include_is_lost.rb`. Main gets that
-# pair right, so it is the box path specifically.
+# Deliberately its OWN box, not the one above: the box path is what this
+# program asks about, and main gets the same pair right on its own.
 #@ ruby: -W:no-experimental
 #@ env: RUBY_BOX=1
 

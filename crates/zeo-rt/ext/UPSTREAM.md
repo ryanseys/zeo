@@ -11,9 +11,10 @@ One directory per library, each laid out the way a Rust-backed Ruby gem is
 ```
 
 Two of these follow UPSTREAM's path rather than the template's, because
-upstream's is not `ext/<name>/`: `io-console` is `ext/io/console/src/lib.rs`,
-matching ruby's own `ext/io/console/console.c`. `build.rs` finds the one
-`src/lib.rs` under `ext/` whichever shape a directory uses, and a hyphen in a
+upstream's is not `ext/<name>/`: `io-console` is
+`crates/zeo-rt/ext/io-console/ext/io/console/src/lib.rs`, matching ruby's own
+`ext/io/console/console.c`. `build.rs` finds the one `lib.rs` under a
+directory's `ext/` whichever shape it uses, and a hyphen in a
 gem name becomes an underscore in the module and the cargo feature
 (`io-console` -> `io_console`, `ext-io-console`).
 
@@ -34,7 +35,7 @@ A `.gemspec` goes in only where upstream ships one. `socket`, `pty` and
 `monitor` are library files in ruby 4.0.6 rather than gems — `monitor.rb`
 installs on plain rubylibdir, and neither `ruby/socket` nor `ruby/pty` exists
 — so they carry no version, and the compiler finds them by their `lib/`
-alone. `crates/zeo/tests/checks/gem_versions.rs` holds that set closed.
+alone. `crates/zeo/tests/suite/checks/gem_versions.rs` holds that set closed.
 
 Everything here is compiled into `zeo-rt` as a module; `build.rs` declares
 them from this tree, so adding a library is adding a directory. See
@@ -109,12 +110,14 @@ backend, replaced).
 object-to-node-tree machinery `Gem::Specification#to_yaml` builds its
 document with. One zeo-marked deviation in `tree_builder.rb`: the
 `class_eval`'d bodies spell `Psych::Nodes` in full (zeo's eval does not walk
-the CREF's enclosing modules yet; see the task list). `visitors/emitter.rb`
+the CREF's enclosing modules). `visitors/emitter.rb`
 is zeo-authored: upstream's Emitter drives libyaml's event emitter, which
 zeo does not carry, so zeo's walks the node tree and writes the text itself
 — valid round-trippable YAML, not byte-parity with libyaml's wrapping.
 `nodes.rb`, `coder.rb`, `set.rb`, `omap.rb` and `psych.rb` are zeo-authored.
 
-A library with no licence file of its own is zeo's code, under the
-repository's MIT OR Apache-2.0. The vendored ones carry their upstream
-licence text.
+A file not named in this section is zeo's code, under the repository's
+MIT OR Apache-2.0. `bigdecimal/`, `fiddle/` and `prism/` carry their
+upstream licence text; the other vendored files are ruby/ruby's default
+gems, under Ruby's own dual licence, and `THIRD-PARTY-NOTICES.md` at the
+root lists them.

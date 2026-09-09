@@ -11,7 +11,7 @@
 #
 # The sibling shape that DOES work is `def Counter.tick = 2`, a top-level
 # singleton def, which is registered where it is written -- see
-# `tests/a_class_method_site_stays_correct_when_the_class_changes.rb`.
+# `test/lang/methods/a_class_method_site_stays_correct_when_the_class_changes.rb`.
 class Later
   def self.mode = :compiled
 end

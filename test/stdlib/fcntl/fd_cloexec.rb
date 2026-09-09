@@ -2,7 +2,7 @@
 # inherits only the stdio deliberately given to it -- `IO.pipe` and
 # `File.open` both set `FD_CLOEXEC` at creation. Without it, a pipe write end
 # leaking into an unrelated child holds the reader's EOF open forever (the
-# popen-family deadlock `tests/open3_capture.rb` exercises for real).
+# popen-family deadlock `test/stdlib/open3/open3_capture.rb` exercises for real).
 require "fcntl"
 
 r, w = IO.pipe

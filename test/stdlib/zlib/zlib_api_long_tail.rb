@@ -2,7 +2,7 @@
 # raises Zlib::StreamError (zeo compresses anyway); `Zlib.crc32_combine`
 # and `Zlib.zlib_version`/`Zlib::VERSION` are absent; and a gzip stream
 # with a corrupted ISIZE trailer still reads in ruby where zeo refuses
-# with "not in gzip format". (Found by the 2026-08-24 probe sweep.)
+# with "not in gzip format".
 require "zlib"
 require "stringio"
 def show

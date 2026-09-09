@@ -3,7 +3,6 @@
 # 'inherited'); a non-class names the given class the same way (zeo's
 # message is the older "must be a Class"); and `Class.new(Class)` is
 # refused outright ("can't make subclass of Class") where zeo mints one.
-# (Found by the 2026-08-24 probe sweep.)
 def show
   yield
 rescue Exception => e

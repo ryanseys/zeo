@@ -18,9 +18,6 @@ end
 p defined?(OnlyUnderTheGate)
 
 # A gate on something the program DOES define: the branch compiles and runs.
-# (Asked BEFORE the definition, zeo answers "constant" where ruby answers nil --
-# a constant's document-order visibility is a separate, pre-existing
-# over-approximation, filed as `tests/gaps/issue_defined_before_the_definition.rb`.)
 class DefinedBelow; end
 if defined?(DefinedBelow)
   class GatedOnReal

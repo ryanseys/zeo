@@ -4,11 +4,11 @@
 # them in Rust, which answers `nil`, exactly as ruby answers `nil` for its own
 # C rows. Only `#source_location` and the `file:line` tail of `Method#inspect`
 # differ; `#parameters`, `#arity`, `#owner`, visibility and behaviour agree row
-# for row (`tests/builtin_rows_report_rubys_signature.rb`).
+# for row (`test/gaps/builtin_rows_report_rubys_signature.rb`).
 #
-# The vendored-Ruby alternative was BUILT and MEASURED, then dropped
-# 2026-08-24 (user-directed): 22.7x slower, 3.5x bigger, plus a 14.48 MB
-# embedded compiler for one `eval` -- it bought only these signatures. The fix
+# The vendored-Ruby alternative is measured and rejected: 22.7x slower, 3.5x
+# bigger, plus a 14.48 MB embedded compiler for one `eval` -- it buys only
+# these signatures. The fix
 # shape, if ever worth it: a per-def `at "<internal:nilclass>", 36` directive
 # in `ruby_class!` feeding a builtin source table (~16 bytes/row, no run-time
 # work), generated from the oracle.

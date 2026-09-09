@@ -45,7 +45,7 @@ end
 
 # The element forms escape only the tags they were asked about, and leave
 # the bytes around them alone. The span rule itself -- where one tag ends --
-# is `tests/cgi_element_escapes_span_one_tag.rb`; what this file asks of the
+# is `test/stdlib/cgi/cgi_element_escapes_span_one_tag.rb`; what this file asks of the
 # family is that it stay a BYTE transformation.
 doc = "<A HREF='x'>t</A>\xC0".dup.force_encoding("BINARY")
 r = CGI.escapeElement(doc, "A")

@@ -13,7 +13,7 @@
 # `Bundler::PubGrub::RubyGems`, returned true, recorded the feature as loaded
 # so no later require could recover, and left `Gem` undefined.
 #
-# Shapes, never versions -- see `tests/milestones.rs`.
+# Shapes, never versions.
 
 require "rubygems" unless defined?(Gem)
 

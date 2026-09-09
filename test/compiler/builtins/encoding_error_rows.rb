@@ -30,7 +30,7 @@ end
 puts "invalid own: #{Encoding::InvalidByteSequenceError.instance_methods(false).sort.inspect}"
 puts "undef own: #{Encoding::UndefinedConversionError.instance_methods(false).sort.inspect}"
 # `respond_to?` is the one row zeo files on Kernel rather than Exception -- an
-# accepted owner divergence in the census, subtracted so the rest can be exact.
+# accepted owner divergence, subtracted so the rest can be exact.
 puts "Exception own: #{(Exception.instance_methods(false).sort - [:respond_to?]).inspect}"
 # `#initialize` is Exception's and PRIVATE, so it appears here and in neither
 # public listing. (zeo files `method_missing`/`respond_to_missing?` on

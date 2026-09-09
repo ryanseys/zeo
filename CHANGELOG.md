@@ -40,21 +40,20 @@ The first public release, not yet cut.
 - **RubyGems and Bundler support.** `--gem-path` and `--bundle-gemfile` read
   the store and lockfile that Bundler already wrote, so a compile agrees with
   `bundle exec`. Zeo resolves no dependency graph and contacts no network.
-- **67 bundled gems** in `gems/`, resolving without a `Gemfile`.
-- **Standard-library extensions** in `crates/zeo-rt/src/ext/`, each behind a
+- **A bundled standard library.** Every gem `Gemfile.lock` names ships with
+  the compiler and resolves without a `Gemfile`.
+- **Standard-library extensions** in `crates/zeo-rt/ext/`, each behind a
   Ruby `require` gate and a cargo feature.
 - **Three install tiers.** A relocatable tarball from `cargo xtask dist`,
   `cargo install zeo` from crates.io, and a per-platform binary gem.
 - **The disclosure record.** Where Zeo substitutes its own implementation for
   a library, the compile warns, and `--report` writes a `zeo-gems.json` record
   naming every substitution.
-- **`zeo backend` and ze0.** `zeo backend f.clif -o bin` links a program
-  from Cranelift IR written as text, with a `.zeodata` sidecar carrying
-  what code cannot say; `--emit-clif` now names every function and symbol
-  so its text reads back, and `--emit-zeodata` writes the sidecar. `ze0/`
-  is a Ruby front end for that road, about a thousand lines, that zeo
-  compiles into a native binary; `tests/ze0/` holds the programs it must
-  answer exactly as `zeo build` does.
+- **`zeo backend`.** `zeo backend f.clif -o bin` links a program from
+  Cranelift IR written as text by another front end, with a `.zeodata`
+  sidecar carrying what the text cannot say; `--emit-clif` names every
+  function and symbol so its text reads back, and `--emit-zeodata` writes
+  the sidecar.
 - **Located codegen diagnostics.** A backend refusal carries the offending
   node's source span, and the CLI renders the same annotated excerpt the
   parse and lower stages show. The location left the message text; a
@@ -73,10 +72,10 @@ The first public release, not yet cut.
 
 - **One `Gemfile.lock` decides what Zeo ships.** The bundled stdlib is
   resolved out of `vendor/bundle` at the version the lock states, and the
-  same lock is what the Ruby oracle resolves — so a golden can no longer
-  record a difference between two library versions and call it a Zeo bug.
-  `rubygems` and `bundler` stay committed under `lib/ruby/`, because
-  `bundle install` cannot supply the bundler that runs it.
+  same lock is what the Ruby oracle resolves — so a golden cannot record
+  a difference between two library versions and call it a Zeo bug.
+  `rubygems` and `bundler` are fetched from their git tags into `vendor/`,
+  because `bundle install` cannot supply the bundler that runs it.
 - **One payload, two published artifacts.** `cargo xtask dist` assembles the
   release tarball; `cargo xtask gem` rearranges that same staging into a
   per-platform gem. Neither the compiler nor the runtime knows what a gem
@@ -92,11 +91,12 @@ The first public release, not yet cut.
 - Targets **CRuby 4.0.6**. `zeo-abi` is the single source of that version, so
   the compiler's version tests and the runtime's `RUBY_VERSION` cannot
   disagree.
-- The **method census** compared every module, method, constant and visibility
-  reachable in Ruby 4.0.6 against Zeo's surface. It was retired at zero rows.
-- The **conformance corpus** compiles 4,393 programs and compares stdout,
-  stderr and the exit status with real Ruby byte for byte. Programs that do
-  not yet agree live in `tests/gaps/` as tests that must fail.
+- Every module, method, constant and visibility reachable in Ruby 4.0.6 has
+  a Zeo answer; what remains is behavioural, and recorded.
+- The **conformance corpus** under `test/` compiles thousands of programs and
+  compares stdout, stderr and the exit status with real Ruby byte for byte.
+  Programs that do not yet agree live in `test/gaps/` as tests that must
+  fail.
 
 ### Known limits
 

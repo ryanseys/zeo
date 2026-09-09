@@ -5,7 +5,7 @@
 # answering `Enumerator::Lazy` where ruby says `Enumerator` or `Enumerable`.
 #
 # The behaviour those rows carry is already right (`next`/`peek`/`inspect`
-# match -- `tests/lazy_external_iteration.rb` is the control), so this is the
+# match -- `test/core/enumerable/lazy_external_iteration.rb` is the control), so this is the
 # SHAPE alone. Closing it means giving `RLazy` the `EnumeratorData` payload
 # every inherited `Enumerator` row downcasts to, which is a different object
 # than the source+chain a lazy actually holds.

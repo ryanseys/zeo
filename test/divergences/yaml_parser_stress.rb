@@ -20,7 +20,7 @@
 # agree about WHICH error a malformed document is: yaml-rust2 reports an
 # unresolvable `*x` as an unknown anchor where libyaml has already failed
 # to parse the document at all. That is the same disagreement
-# `tests/yaml_backend_accepts_a_different_dialect.rb` names one row at a
+# `test/divergences/yaml_backend_accepts_a_different_dialect.rb` names one row at a
 # time, and it shows up here as about 150 documents counted `alias`
 # rather than `syntax`.
 #
@@ -73,7 +73,7 @@ SEEDS = [
   "d: 2001-12-14\nt: 2001-12-14 21:59:43\n",
   "s: |\n  l1\n  l2\n",
   # NOT `.nan`: a container holding one compares unequal to itself
-  # here, which is `tests/gaps/a_container_holding_nan_equals_itself.rb`
+  # here, which is `test/core/numeric/a_container_holding_nan_equals_itself.rb`
   # and not a YAML question.
   "n: [~, null, yes, no, .inf, 017, 1:02:03]\n",
   "--- &1\na: *1\n"

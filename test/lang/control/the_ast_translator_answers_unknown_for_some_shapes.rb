@@ -9,7 +9,7 @@
 # mappings themselves: `case`/`when` and `begin`/`rescue` are two of them, and
 # they cost 9 of the 13 nodes CRuby reports for the program below.
 #
-# Each mapped shape is oracle-verified by `tests/rubyvm_ast.rb`, so closing
+# Each mapped shape is oracle-verified by `test/core/rubyvm/rubyvm_ast.rb`, so closing
 # this is adding rows in that style, one kind at a time, not a redesign.
 #
 # NOT part of this gap, and worth keeping apart: `Node#node_id`. zeo numbers

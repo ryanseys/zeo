@@ -16,7 +16,7 @@
 # The harness runs a box source under `RUBY_BOX=1` when the SOURCE TEXT
 # allocates a box -- a plain substring test, so even naming that call in a
 # comment flips the very gate this file is testing. The enabled surface is
-# `tests/ruby_box_surface.rb`'s.
+# `test/lang/boxes/ruby_box_surface.rb`'s.
 
 p (Ruby::Box.singleton_methods(false) - %i[current enabled?]).sort
 p (Ruby::Box.instance_methods(false) -

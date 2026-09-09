@@ -4,12 +4,10 @@
 from I/O take the same path: the snippet goes through the same front end, the
 same `analyze`, and the same Cranelift emitter a whole program goes through.
 
-It was not always so. A literal string used to be recognized at compile time
-and spliced into the HIR arena as `HirNode::Eval`, the way `require` splices a
-file's contents. That path was deleted on 2026-08-21 along with the prism
-interpreter behind it. One path is worth the run-time cost: a splice and a
-compile answered differently often enough that the second implementation was
-the bug, and a snippet built from I/O could never use the splice anyway.
+There is no compile-time splice for a literal string, the way `require`
+splices a file's contents. One path is worth the run-time cost: two
+implementations of the same semantics answer differently at the edges, and a
+snippet built from I/O could never use a splice anyway.
 
 ## One snippet, one compile (`crates/zeo/src/eval.rs`, `clif/eval.rs`)
 
@@ -51,11 +49,10 @@ its own locals, sharing nothing with the scope around it.
 `Hir::uses_runtime_eval` (a receiverless `Kernel#eval`, or a string-form
 `instance_eval`/`class_eval`/`module_eval`) says the program can reach one. An
 eval-free binary references nothing in the compiler, so `-dead_strip` /
-`--gc-sections` drops all of it: `puts 1` links 9,764,552 bytes and
-`puts eval("1+1")` links 23,947,944, so the compiler is 14,183,392 of any
-program that can reach one. This is work matz's interpreter
-cannot do — CRuby always ships its parser because it cannot know in advance
-whether a program evals.
+`--gc-sections` drops all of it; the compiler is about 14 MB of any
+program that can reach one ([Binary size](binary-size.md) has the
+measurement). CRuby always ships its parser because it cannot know in
+advance whether a program evals.
 
 A program the scan MISSED — `send(m, src)` with a computed name, which no
 static analysis can see — raises the runtime's own `NotImplementedError`
@@ -73,16 +70,15 @@ arguments a bare `super` forwards). Two more refusal arms — a redefinition
 analyze resolved and a definition hook analyze spliced — are defensive:
 analyze registers nothing in a snippet, so neither can arise.
 
-`refine`/`using` now compile (each activation gets a run-time `using` slot),
+`refine`/`using` compile (each activation gets a run-time `using` slot),
 and an `FFI::Library` declaration's directives stay ordinary calls whose rows
-attach at run time — neither is declined any more. A `yield` at the snippet's
+attach at run time — neither is declined. A `yield` at the snippet's
 own level is not a decline either: it is CRuby's own catchable `SyntaxError`
 (`Invalid yield`), raised before the snippet runs, and a `def` written in the
 snippet has a block channel of its own.
 
-A prism-walking interpreter answered here until 2026-08-21. It was the
-differential oracle every widening of the compiled path was measured against,
-and it is gone: nothing in the tree implements Ruby twice any more.
+Nothing in the tree implements Ruby twice: there is no interpreter behind
+the compiled path.
 
 ## `Binding` — the caller's locals, by reference
 

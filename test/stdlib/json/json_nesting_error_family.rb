@@ -3,7 +3,7 @@
 # parse. zeo raises ParserError with serde's text for the first and
 # ignores the option outright for the second. The parser MESSAGE texts
 # are the decided serde_json substitution; the missing CLASS and the
-# ignored OPTION are not. (Found by the 2026-08-24 probe sweep.)
+# ignored OPTION are not.
 require "json"
 begin
   JSON.parse("[" * 200 + "]" * 200)

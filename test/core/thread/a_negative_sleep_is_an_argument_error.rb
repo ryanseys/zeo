@@ -1,6 +1,5 @@
 # `sleep(-1)` raises ArgumentError "time interval must not be negative";
-# zeo raises TypeError with a conversion message. (Found by the 2026-08-24
-# probe sweep.)
+# zeo raises TypeError with a conversion message.
 begin
   sleep(-1)
 rescue StandardError => e

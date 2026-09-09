@@ -10,8 +10,7 @@
 # data loss -- and ignores the option, so even `aliases: true` answers
 # nil); a Symbol without `permitted_classes: [Symbol]` raises
 # Psych::DisallowedClass (zeo loads it); and `permitted_classes: [Date]`
-# loads a date scalar as Date (zeo raises NameError). (Found by the
-# 2026-08-24 probe sweep.)
+# loads a date scalar as Date (zeo raises NameError).
 require "yaml"
 begin
   p YAML.safe_load("a: &x [1]\nb: *x")

@@ -9,10 +9,9 @@
 # which is the control in each pair below.
 #
 # `**nil` is the sharpest reader of the flag, since refusing keywords is its
-# whole purpose (`tests/keywords_refused_message.rb` covers the literal form
-# that works). `tests/gaps/struct_construction_argument_shapes.rb` is the same
-# root cause reached through `Struct.new`, which decides member binding from
-# the argument shape because the flag never arrives.
+# whole purpose (`test/compiler/fusion/keywords_refused_message.rb` covers the literal form
+# that works). `Struct.new` reaches the same root cause: it decides member
+# binding from the argument shape because the flag never arrives.
 #
 # An EMPTY `**{}` passes no keywords at all, so it must stay silent -- that is
 # the line separating this from a shape-only test.

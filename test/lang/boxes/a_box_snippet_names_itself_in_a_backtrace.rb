@@ -12,7 +12,7 @@
 # `box.eval` reaching `Kernel#eval` rather than the box's own row.
 #
 # The LITERAL form is spliced at compile time and still reports the
-# program's own file -- see `tests/gaps/a_box_literal_eval_is_spliced.rb`.
+# program's own file -- see `test/gaps/a_box_literal_eval_is_spliced.rb`.
 # This file computes the source (`["K", ""].first` is opaque to the constant
 # folder) so the eval is compiled at run time.
 #

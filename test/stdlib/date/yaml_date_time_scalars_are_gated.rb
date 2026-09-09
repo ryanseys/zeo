@@ -1,8 +1,7 @@
 # A bare date or timestamp scalar is a TYPED value psych gates behind
 # `permitted_classes` -- plain `safe_load` RAISES Psych::DisallowedClass
 # for `2001-12-14`, and with `[Time]` permitted the timestamp loads as a
-# real Time. zeo answers plain strings in every case. (Found by the
-# 2026-08-24 probe sweep.)
+# real Time. zeo answers plain strings in every case.
 require "yaml"
 require "date"
 def show

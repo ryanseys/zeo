@@ -1,6 +1,6 @@
 # MILESTONE: `require "rubygems"` works, and the RubyGems API is usable.
 #
-# The umbrella require, not an entry at a sub-file. `tests/bench/rubygems.rb`
+# The umbrella require, not an entry at a sub-file. `test/bench/compile/rubygems.rb`
 # used to enter at `rubygems/version` and friends precisely because this did
 # not work; this file is what retires that workaround.
 #

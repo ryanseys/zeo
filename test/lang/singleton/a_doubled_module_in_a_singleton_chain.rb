@@ -25,7 +25,7 @@
 # the COMPILER resolved enters a body the walk also knows a position for, so
 # it has to publish the same one or the walk reaches that body again.
 #
-# The wider sweep is `tests/singleton_chain_dispatch_sweep.rb`.
+# The wider sweep is `test/lang/singleton/singleton_chain_dispatch_sweep.rb`.
 
 module CM
   def hi = "cm(#{defined?(super) ? super : 'top'})"

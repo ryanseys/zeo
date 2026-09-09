@@ -17,15 +17,8 @@ product.
 runtime. The only difference between them is `is_pic`, how imported
 symbols resolve, and where data lands — so a JIT run and a linked binary
 execute the same code. AOT is what ships; the JIT exists because it makes
-the dev loop and the test corpus fast (~21 ms for `zeo -e 'puts 1'`), and
-because a compiler that can run in-process is what lets `eval` compile for
-real later.
-
-There was a third mode, `rustc`, which wrote Rust text and shelled out to
-`rustc`. It was zeo's original backend and then its differential oracle
-during the Cranelift bring-up. It was retired on 2026-08-21, once the
-Cranelift path had been the product for a release and the corpus agreed with
-CRuby on both legs; `archive/rustc-backend` keeps it readable.
+the dev loop and the test corpus fast, and because a compiler that can run
+in-process is what lets `eval` compile for real.
 
 ## The layers
 
@@ -60,14 +53,13 @@ it rather than assume it.
 - **Every compiled function returns `i32`.** `0` means the `out` pointer
   holds a value; `1` means a signal is pending, and the emitted code asks
   the runtime what it was (`zeo_rt_signal_kind`, `_take`, `_set`,
-  `_save`/`_restore`). This is the explicit form of what the Rust emitter
+  `_save`/`_restore`). This is the explicit form of what the runtime
   spells `Result<RubyValue, Signal>` and `?`.
 - **Registration is data, not code.** A program's classes, method rows,
   visibility verbs, reflection metadata, feature units, coverage tables
-  and everything else `main` used to call one by one are `#[repr(C)]`
-  tables in `.rodata`, pointed at by one `ProgramDesc`. The emitted C
-  `main` hands it to `zeo_rt_main`, which walks it in the order the old
-  emitted `main` used.
+  and everything else a program registers are `#[repr(C)]` tables in
+  `.rodata`, pointed at by one `ProgramDesc`. The emitted `main` hands it
+  to `zeo_rt_main`, which walks it in registration order.
 - Row structs are serialized with `offset_of!`/`size_of` from `zeo_abi`
   itself, so the two sides cannot disagree about a field offset.
 
@@ -93,7 +85,7 @@ Three things check it:
   aborts at the site instead of corrupting a later value. A tag byte that
   is neither a value tag nor the poison is a slot that never held a value,
   and it reports that too. The shapes it
-  catches are pinned by `tests/compiled_code_releases_a_dead_slot.rb`, which
+  catches are pinned by `test/stdlib/pp/compiled_code_releases_a_dead_slot.rb`, which
   reproduces both in a few lines each.
 - valgrind, on the Linux leg (`cargo xtask linux valgrind`).
 
@@ -111,7 +103,8 @@ Nothing shells cargo to produce it; if it is missing, the fix is `cargo
 build`.
 
 The link line (`backend/link.rs`) has two halves that both fail silently
-if they regress, so both are asserted by `e2e/linkage.rs`:
+if they regress, so both are asserted by
+`crates/zeo/tests/suite/api/linkage.rs`:
 
 - **whole-archive** (`-force_load` / `--whole-archive`), so an archive member
   holding a class table is a candidate for the link at all. Lose a table and
@@ -122,8 +115,8 @@ if they regress, so both are asserted by `e2e/linkage.rs`:
   fails; the binary just doubles.
 
 The system libraries each target needs are a table in `link.rs`, diffed
-against `rustc --print=native-static-libs` by an `#[ignore]`d test that
-the Linux leg runs.
+against `rustc --print=native-static-libs` by a unit test in the `full`
+nextest profile, which the Linux leg runs.
 
 ### Extra link arguments
 
@@ -185,7 +178,7 @@ Platforms differ in where the DWARF ends up, so `-g` changes the link:
 | `ZEO_RT_LEAKCHECK=1` | ownership, per tag, with poison and bad-tag reports |
 | `ZEO_GC=1` | arm the cycle collector; without it a cycle leaks |
 | `ZEO_RT_GCSTATS=1` | one line per collection: nodes, edges, live, reclaimed |
-| `ZEO_RT_GCCHECK=1` | the exit cycle census, gated per program by a `.gccheck` sidecar |
+| `ZEO_RT_GCCHECK=1` | the exit cycle count, gated per program by its `#@ gccheck:` directive |
 | `cargo nextest run -p zeo` | the CLIF snapshots — the only thing that sees emitter SHAPE |
 
 That last row is a standing rule: **a change under `clif/` runs `cargo

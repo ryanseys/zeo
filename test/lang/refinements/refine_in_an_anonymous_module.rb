@@ -8,7 +8,7 @@
 # refine a class chosen by the caller, since the `module` keyword needs a
 # constant name written in the source.
 #
-# `tests/gaps/issue_runtime_refinement_module.rb` covers what happens after a
+# `test/lang/refinements/issue_runtime_refinement_module.rb` covers what happens after a
 # runtime refinement is DEFINED. This is the step before it: the definition is
 # refused outright.
 

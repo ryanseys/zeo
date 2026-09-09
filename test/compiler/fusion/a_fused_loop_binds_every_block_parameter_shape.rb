@@ -1,11 +1,8 @@
 # `3.times`, `(a..b).each` and `arr.each` fuse into a counted loop when the
 # block takes at most one required parameter. Ruby binds every other shape
 # happily -- `3.times { |a, b| }` gives `b` nil -- so those take the ordinary
-# block send instead of being refused.
-#
-# The emitter used to check the parameter shape AFTER deciding to splice, and
-# refused what it found. Found 2026-08-21 while looking for a live refusal to
-# pin a diagnostics test on.
+# block send instead of being refused. The emitter checks the parameter shape
+# BEFORE deciding to splice.
 3.times { |a, b| p [a, b] }
 (1..3).each { |a, b| p [a, b] }
 [10, 20].each { |a, b| p [a, b] }

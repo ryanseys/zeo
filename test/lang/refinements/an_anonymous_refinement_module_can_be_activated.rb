@@ -4,7 +4,7 @@
 # statement is one node -- so at the top level the pair was dropped on the floor
 # and `using` ran as an ordinary call, which raises. It rides in a `Seq` now.
 #
-# `tests/refinement_holder_names_reach_codegen.rb` covers the holder's NAME
+# `test/lang/refinements/refinement_holder_names_reach_codegen.rb` covers the holder's NAME
 # reaching a Rust ident; this covers the holder being activated at all.
 Named = 1
 

@@ -1,6 +1,6 @@
 # `read` (to EOF) and `eof?` on a PIPE must not seek: with the write end
 # closed, ruby answers "" and true. zeo's eof probe seeks and raises
-# Errno::ESPIPE ("Illegal seek"). (Found by the 2026-08-24 probe sweep.)
+# Errno::ESPIPE ("Illegal seek").
 r, w = IO.pipe
 w.close
 p r.read

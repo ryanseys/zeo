@@ -2,7 +2,7 @@
 # through lossy UTF-8 and answers the replacement character for each
 # half of a multibyte char -- data corruption, the to_utf8_lossy
 # family), and `pos=` past the end raises RangeError ("index out of
-# range"). (Found by the 2026-08-24 probe sweep.)
+# range").
 require "strscan"
 s = StringScanner.new("é")
 p s.get_byte.bytes

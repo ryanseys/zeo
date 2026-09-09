@@ -23,8 +23,7 @@
 # ancestors' overlay is probed before that flat table now, stopping at the
 # first ancestor that really defines the name.
 #
-# The wider sweep is `tests/class_method_redefinition_timeline.rb`; what the
-# window still misreports is `tests/gaps/a_redefinition_window_reports_the_last_body.rb`.
+# The wider sweep is `test/lang/methods/class_method_redefinition_timeline.rb`.
 
 class C
   def self.t = "t1"

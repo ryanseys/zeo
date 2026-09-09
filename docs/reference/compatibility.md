@@ -1,6 +1,35 @@
 # Library compatibility
 
-## Encoding divergences (zeo-enc)
+How Zeo satisfies a `require`, and where its answer is **not** the upstream
+gem or C extension. This is prose, not a percentage: each entry carries a
+*reason*, because "Zeo's `json` is not the `json` gem" is a fact that can
+only be stated, never inferred from a score.
+
+A compile run with `--report` also writes a machine-readable
+[`zeo-gems.json`](#the-per-compile-record) recording the same facts for the
+libraries a given program actually used. This document is the human-facing
+catalogue; that file is the per-program ledger.
+
+## Contents
+
+- [Encodings](#encodings)
+- [Ractor, IO::Buffer, RubyVM, Ruby::Box](#ractor-iobuffer-rubyvm-rubybox)
+- [Satisfied, but divergent (a substitution)](#satisfied-but-divergent-a-substitution)
+- [Satisfied faithfully (zeo-bundled gems)](#satisfied-faithfully-zeo-bundled-gems)
+- [The installed Ruby's own stdlib](#the-installed-rubys-own-stdlib)
+- [Not available (native gems)](#not-available-native-gems)
+- [Declined (a CRuby internal, not a missing binding)](#declined-a-cruby-internal-not-a-missing-binding)
+- [Refinements](#refinements)
+- [Required only from a method body](#required-only-from-a-method-body)
+- [Where a nested `require` lands](#where-a-nested-require-lands)
+- [A class written in a `class << self` body](#a-class-written-in-a-class--self-body)
+- [A top-level `return` inside a required file](#a-top-level-return-inside-a-required-file)
+- [`extend` on a class, at runtime](#extend-on-a-class-at-runtime)
+- [`zeo bundle install` works; `bundle exec` and `bundler/setup` do not](#zeo-bundle-install-works-bundle-exec-and-bundlersetup-do-not)
+- [Compiling against an installed gem store](#compiling-against-an-installed-gem-store)
+- [The per-compile record](#the-per-compile-record)
+
+## Encodings
 
 The registry carries all 103 of ruby 4.0.6's encodings, in its order, so
 `Encoding.list`, `.name_list`, `.aliases`, `.find`, every `Encoding::*`
@@ -22,7 +51,7 @@ are exact. Known divergences:
   HKSCS combining forms) are treated as unmapped (undefined conversion)
   rather than decoded. DECODE only: Big5's ENCODE repertoire matches CRuby
   exactly, scalar for scalar and byte for byte, pinned by
-  `tests/big5_and_euc_jp_encode_exactly.rb`.
+  `test/stdlib/digest/big5_and_euc_jp_encode_exactly.rb`.
 - **ISO-2022-JP undefined-conversion messages are simpler than CRuby's.**
   The dummy ISO-2022-JP row transcodes for real (the stateful escape codec
   in `enc/iso2022jp.rs`), and the representable repertoire matches -- but a
@@ -31,11 +60,9 @@ are exact. Known divergences:
   stateless-ISO-2022-JP in conversion from UTF-8 to EUC-JP to ...`).
   Halfwidth katakana are refused (as CRuby refuses them), and so are the
   JIS X 0212 characters CRuby reaches through its EUC-JP pivot -- CRuby
-  refuses those too, it just names the pivot while doing so. (The
-  parenthetical here until 2026-08-26 said the EUC-JP encoder is JIS X
-  0208-only. It no longer is: EUC-JP reaches the SS3 plane, and
-  ISO-2022-JP's repertoire did not change with it, because ISO-2022-JP
-  has no room for those characters either way.)
+  refuses those too, it just names the pivot while doing so. (EUC-JP
+  itself reaches the SS3 plane; ISO-2022-JP has no room for those
+  characters either way.)
 - **The dummy UTF-16/UTF-32 rows always write a big-endian BOM** when
   encoding TO them, and reading FROM them requires one (no BOM is an
   invalid sequence) -- both CRuby-observed; the difference is only that
@@ -44,19 +71,9 @@ are exact. Known divergences:
   never needs it: Zeo's decoders consume an offending sequence whole, so
   `#primitive_errinfo`'s fifth element is always empty.
 
-How Zeo satisfies a `require`, and where its answer is **not** the upstream
-gem or C extension. This is prose, not a percentage: each entry carries a
-*reason*, because "Zeo's `json` is not the `json` gem" is a fact that can
-only be stated, never inferred from a score.
-
-A compile run with `--report` also writes a machine-readable
-[`zeo-gems.json`](#the-per-compile-record) recording the same facts for the
-libraries a given program actually used. This document is the human-facing
-catalogue; that file is the per-program ledger.
-
 ## Ractor, IO::Buffer, RubyVM, Ruby::Box
 
-These subsystems carry their full census surface; the divergences below are
+These subsystems carry their full method surface; the divergences below are
 behavioural, each deliberate, each narrower than the CRuby behaviour it
 replaces.
 
@@ -79,7 +96,7 @@ replaces.
   row means reproducing CRuby's own allocation order. Prism's real ids ARE
   read, for `node_id_for_backtrace_location`. Types, locations,
   children orderings, `#source` and `#script_lines` match the oracle (pinned
-  by `tests/rubyvm_ast.rb`); a construct outside the mapped tier answers an
+  by `test/core/rubyvm/rubyvm_ast.rb`); a construct outside the mapped tier answers an
   honest `:UNKNOWN` leaf rather than raising. `SyntaxError` messages carry
   prism's wording, not parse.y's.
 - **`RubyVM::InstructionSequence` refuses serialization.** `#to_a`,
@@ -89,7 +106,7 @@ replaces.
   `InstructionSequence.of` answers a real object naming the method and its
   source site (`<RubyVM::InstructionSequence:m@file:line>`); only the
   serialization rows on it refuse. The remaining refusals are recorded in
-  `tests/gaps/rubyvm_iseq_serialization.rb`, whose header reads the rows
+  `test/divergences/rubyvm_iseq_serialization.rb`, whose header reads the rows
   apart (which are permanent absences, which are open work).
 - **`RubyVM::YJIT.enable` answers `false`.** There is no JIT to switch on.
   Every stats/log reader answers its disabled shape.
@@ -100,7 +117,7 @@ replaces.
   `Object`). `Ruby::Box.current` answers the current box. `#require` and
   `#load` are real, but a computed or box-side target can only reach sources
   the binary embeds — `--embed-sources` is the opt-in (the decided
-  divergence in `tests/a_box_cannot_require_a_spliced_feature.rb`). Without
+  divergence in `test/divergences/a_box_cannot_require_a_spliced_feature.rb`). Without
   `RUBY_BOX=1`, `Box.new` raises the same disabled-mode `RuntimeError` ruby
   raises.
 
@@ -115,8 +132,8 @@ stderr that Ruby never produces.
 
 | `require` | Zeo provides | why it diverges |
 |---|---|---|
-| `json` | a hand-written parser and generator | not the `json` gem's C extension. It targets json 2.21.2 and matches it row for row on the option and error matrix; both halves are ITERATIVE, so `max_nesting: false` costs heap rather than machine stack, which is a stronger guarantee than the gem's own generator gives. The serde_json substitution this row used to describe is long retired. |
-| `psych` / `yaml` | `yaml-rust2` parsing, psych's semantics above it | not libyaml. Tags, anchors, merge keys, `!ruby/object:` revival and the `Psych::Nodes` tree all behave as psych's do; what still differs is `Psych::SyntaxError`'s problem TEXT and a node tree's `#yaml` (see tests/gaps/). |
+| `json` | a hand-written parser and generator | not the `json` gem's C extension. It targets json 2.21.2 and matches it row for row on the option and error matrix; both halves are ITERATIVE, so `max_nesting: false` costs heap rather than machine stack, which is a stronger guarantee than the gem's own generator gives. |
+| `psych` / `yaml` | `yaml-rust2` parsing, psych's semantics above it | not libyaml. Tags, anchors, merge keys, `!ruby/object:` revival and the `Psych::Nodes` tree all behave as psych's do; what still differs is `Psych::SyntaxError`'s problem TEXT and a node tree's `#yaml` (see `test/gaps/`). |
 | `zlib` | `flate2`-backed built-in | not the `zlib` C extension; four entry points it doesn't expose are declined — see below |
 | `digest` | RustCrypto-backed built-in | not the OpenSSL `digest` C extension |
 | `openssl` | vendored OpenSSL 3 via rust-openssl | the same EVP primitives CRuby binds; PKey generation, X509 issuance and `SSLServer` are declined — see below |
@@ -158,16 +175,14 @@ The rows that stay different:
 |---|---|---|
 | `(?:(?!a))*b?`, `a(?:(?<=a))*b?` | compiles | `RegexpError: target of repeat operator is invalid` -- Oniguruma refuses a repeated zero-width group; Onigmo accepts it |
 | a bare `\p` | a literal `p` | `invalid character property name` -- Oniguruma reads `\p` as the property prefix |
-| a group named `)` | refused by `re.c` | accepted by the engine (`tests/gaps/regexp_group_name_validation.rb`) |
+| a group named `)` | refused by `re.c` | accepted by the engine (`test/gaps/regexp_group_name_validation.rb`) |
 | a pattern that backtracks past onig's retry limit with NO timeout set | runs to the end | answers no match, as if the pattern failed -- the retry limit is onig's, and Onigmo has none; under a timeout both raise `Regexp::TimeoutError` |
-| an ASCII `\w`/`\d`/`\s` INSIDE a bracket class under `/i` | never folds past ASCII (`/[\w]/i` does not match `ſ`) | folds the whole class, so `ſ` and `K` arrive through `s` and `k` (`tests/gaps/an_ascii_escape_inside_a_bracket_class_folds_past_ascii.rb`) |
+| an ASCII `\w`/`\d`/`\s` INSIDE a bracket class under `/i` | never folds past ASCII (`/[\w]/i` does not match `ſ`) | folds the whole class, so `ſ` and `K` arrive through `s` and `k` (`test/gaps/an_ascii_escape_inside_a_bracket_class_folds_past_ascii.rb`) |
 | `Regexp.linear_time?` | Onigmo's own analysis | a source scan: false iff the pattern has a backreference, which is Onigmo's rule too |
-| a subject in an encoding onig lacks (UTF8-MAC, CESU-8, CP949, GBK, Big5-HKSCS, Windows-1250, KOI8-U, Emacs-Mule) | matched in that encoding | matched over a lossy UTF-8 view of the subject (`tests/gaps/a_binary_regexp_holds_a_high_byte.rb` is the tracked case) |
+| a subject in an encoding onig lacks (UTF8-MAC, CESU-8, CP949, GBK, Big5-HKSCS, Windows-1250, KOI8-U, Emacs-Mule) | matched in that encoding | matched over a lossy UTF-8 view of the subject (`test/gaps/a_binary_regexp_holds_a_high_byte.rb` is the tracked case) |
 
-The engine-route divergences an earlier three-engine design carried (a
-forward backreference that never matched, `\K` reporting one position for
-both ends, `\b` with an ASCII word definition, `/i` on a backreference) are
-gone with it: every pattern runs on the one engine.
+Every pattern runs on the one engine, so there is no second dialect to
+translate into.
 
 ### `objspace`
 
@@ -205,7 +220,7 @@ required; Zeo's are always present, so the `require` is ceremony (the shape
   `internal_class_of`/`internal_super_of` raise `NotImplementedError` naming
   what they'd need (a root set, per-allocation source positions, an object
   header, an id table, internal classes). See
-  `tests/gaps/object_identity_and_allocation_tracing.rb`.
+  `test/divergences/object_identity_and_allocation_tracing.rb`.
 
 ### `zlib`
 
@@ -262,9 +277,8 @@ bad checksum while `#gets`/`#readlines`/`#readpartial` do. Zeo follows the same
 rule, so a program that reads a corrupt member with `read` gets the same bytes
 under both.
 
-`Zlib.gzip` used to stamp a fixed mtime of 0 for deterministic output. It now
-stamps the current time, as CRuby does — a divergence removed, not added. A
-caller who wants a reproducible member can set `GzipWriter#mtime=`.
+`Zlib.gzip` stamps the current time, as CRuby does. A caller who wants a
+reproducible member sets `GzipWriter#mtime=`.
 
 ### `io/console`
 
@@ -281,9 +295,7 @@ Two divergences:
 - `IO#cursor` asks the terminal for its position and parses the reply. A
   stream that answers nothing reads as `[0, 0]` rather than hanging.
 
-Before this landed, `IO#winsize` answered `[0, 0]` on a non-terminal where
-CRuby raises `Errno::ENOTTY`; it now raises. The corpus expectation that
-recorded `[0, 0]` was spinel's, not ruby's, and has been re-oracled.
+`IO#winsize` on a non-terminal raises `Errno::ENOTTY`, as CRuby does.
 
 ### `nkf`
 
@@ -321,8 +333,8 @@ current mode with a true sticky tail), the rounding engine, the
 mode/limit/save_* state, conversions, and `Kernel#BigDecimal` -- while
 `**`/`power`, `sqrt` (Newton), `BigMath`, and `util`'s `to_d` family are
 the gem's OWN Ruby code, vendored in `crates/zeo-rt/ext/bigdecimal/` and compiled like
-any user code. Both goldens (`tests/bigdecimal*.rb`) compare live against
-the oracle, engineering-notation `to_s` and division digits included.
+any user code. The goldens under `test/stdlib/bigdecimal/` compare live
+against the oracle, engineering-notation `to_s` and division digits included.
 Known divergences of the native slice:
 
 - **`Kernel#BigDecimal` answers without the require** (the `time`-shaped
@@ -350,7 +362,7 @@ extension the oracle runs (error messages like `unknown symbol "x"` /
 failures carrying the raw `dlerror(3)` text, `NULL.to_s` raising
 `ArgumentError "NULL pointer given"`, `Pointer#==` answering `false` for a
 non-Pointer, and `Fiddle.malloc` returning the raw address Integer of a real
-libc `malloc`). The golden (`tests/fiddle.rb`) compares all of this live
+libc `malloc`). The golden (`test/lang/programs/fiddle.rb`) compares all of this live
 against the C-extension oracle. Known divergences:
 
 - **`fiddle/import` and `fiddle/struct` are not included** (nor
@@ -388,7 +400,7 @@ carries none of it. The lifecycle
 `state`), the inclusion rule (a file is reported iff its top level began
 while measurement was set up; the entry script never qualifies), the
 nil/0/count line shapes, and every error message are oracle-matched live
-(`tests/coverage.rb`). Known divergences:
+(`test/stdlib/coverage/coverage.rb`). Known divergences:
 
 - **Lines only**: `supported?(:lines)` is true; `:branches`, `:methods`,
   `:oneshot_lines` and `:eval` answer FALSE (CRuby supports them), and a
@@ -424,7 +436,7 @@ dispatch across multiple tracepoints, reentrancy suppression while a
 handler runs, `:return` firing when an exception unwinds a method, and
 the inspect/error shapes (`"access from outside"`, `"not supported by
 this event"`, `"unknown event: x"`) are oracle-matched live
-(`tests/tracepoint.rb`). Known divergences:
+(`test/core/tracepoint/tracepoint.rb`). Known divergences:
 
 - **The six reachable events only**: `:b_call`/`:b_return` (blocks),
   `:c_call`/`:c_return` (builtins run as native code, not method
@@ -436,7 +448,7 @@ this event"`, `"unknown event: x"`) are oracle-matched live
   `#instruction_sequence` are defined and REFUSE**, with CRuby's own
   `RuntimeError: not supported by this event` (and its `access from outside`
   when no handler is running) -- which is what CRuby answers for a `:line`
-  event too. `#self` and `#binding` answer (`tests/tracepoint_self_and_binding.rb`).
+  event too. `#self` and `#binding` answer (`test/core/tracepoint/tracepoint_self_and_binding.rb`).
 - **An explicit early `return` reports the `end` line** for `:return`
   where CRuby reports the `return` statement's line (the frame pop
   cannot tell the exit paths apart; an exception unwind reports the
@@ -589,7 +601,7 @@ dropped. **Without `ZEO_GC=1` there is no collector and a cycle leaks**, which
 is the default; the flag is a RUN-TIME one, read where the program runs rather
 than where it was compiled.
 
-Armed, the pass reclaims every shape `tests/a_cycle_is_reclaimed.rb` builds:
+Armed, the pass reclaims every shape `test/core/gc/a_cycle_is_reclaimed.rb` builds:
 cycles among objects, Arrays, Hashes, Structs, exceptions and value
 subclasses, and cycles closed through a compiled `Proc`'s captured local, a
 `Range` endpoint, a per-object singleton, or an ivar written on a bare value.
@@ -612,7 +624,7 @@ exception reachable from its own VM error slot; a reference count does not.
 
 ### `Fiber`
 
-The fiber surface is faithful (`tests/gc_fiber_binding_rows.rb`), with two
+The fiber surface is faithful (`test/compiler/builtins/gc_fiber_binding_rows.rb`), with two
 bounds:
 
 - **There is no fiber scheduler.** `.scheduler`/`.current_scheduler` answer
@@ -637,7 +649,7 @@ The constant and method-reflection surface is faithful — `const_get`/`_set`/
 `_defined?`, the visibility family, `instance_method`/`public_instance_method`,
 `define_method`, `remove_class_variable`, `undefined_instance_methods`,
 `set_temporary_name`, `const_missing` and `Module.nesting` are oracle-matched
-live (`tests/module_reflection_rows.rb`). Four rows report less, each because
+live (`test/compiler/builtins/module_reflection_rows.rb`). Four rows report less, each because
 the fact they report is resolved at COMPILE time and left no runtime record:
 
 - **`#const_source_location` answers `[]` for a constant that exists**, `nil`
@@ -671,7 +683,7 @@ A Zeo `Thread` is a REAL OS thread, so the whole scheduling and storage surface
 answers for itself: `#join`/`#value`, `#kill`/`#raise` and their checkpoints,
 `Thread.stop`/`#run`/`#wakeup`/`#stop?`, `#priority`, `#fetch`, the
 thread-variable pair, `#native_thread_id`, `Thread.list` and
-`.handle_interrupt` are oracle-matched live (`tests/thread_surface.rb`). Four
+`.handle_interrupt` are oracle-matched live (`test/compiler/builtins/thread_surface.rb`). Four
 rows report less than CRuby's, and all four have the same cause — one OS thread
 cannot read another's execution state:
 
@@ -690,7 +702,7 @@ cannot read another's execution state:
 Which OS thread `Thread.main` is differs by platform. On macOS the top level
 runs on the PROCESS main thread, as in CRuby -- `pthread_main_np` answers 1,
 and AppKit, WebKit and Metal, which refuse any other thread, work from a
-compiled program (`tests/macos/the_toplevel_runs_on_the_process_main_thread.rb`
+compiled program (`test/stdlib/ffi/the_toplevel_runs_on_the_process_main_thread.rb`
 opens an `NSWindow`). The linked binary carries a 64 MiB main-thread stack
 (`-stack_size`), and the `zeo` driver does too, so `--backend jit` runs the
 program on the same thread with the same depth. On Linux the top level runs on
@@ -701,7 +713,7 @@ there `Thread.main.native_thread_id` is not `Process.pid`, and `at_exit`
 handlers run on the joining thread. Everything Ruby can observe about
 `Thread.main` -- one object, `Thread.current` at the top level, `#status`,
 interrupt delivery, `trap` -- is the same on both
-(`tests/the_toplevel_thread_is_the_main_thread.rb`).
+(`test/core/thread/the_toplevel_thread_is_the_main_thread.rb`).
 
 ### `#source_location` on a row ruby writes in Ruby
 
@@ -710,20 +722,19 @@ compiles into its own interpreter -- and each answers a real
 `["<internal:nilclass>", 36]`. Zeo implements every one of them in Rust, which
 answers `nil`, exactly as ruby answers `nil` for its own C rows.
 
-Only `#source_location` and the `file:line` tail of `Method#inspect` differ.
-`#parameters`, `#arity`, `#owner`, visibility and behaviour agree row for row:
-the whole-surface census over the 2,594 rows both declare is zero
-(`tests/builtin_rows_report_rubys_signature.rb`).
+Only `#source_location` and the `file:line` tail of `Method#inspect` differ
+by design. `#owner`, visibility and behaviour agree row for row, and
+`#parameters`/`#arity` agree for every row except the ones
+`test/gaps/builtin_rows_report_rubys_signature.rb` still records: the rows
+ruby names because it writes them in Ruby, whose parameter names the DSL
+spells one at a time.
 
-Zeo did vendor CRuby's own `nilclass.rb` and `pathname_builtin.rb` and compile
-them, which made these rows answer byte-identically. Measurement retired it:
-the compiled Ruby ran **22.7x slower** than the Rust rows (0.359 s against
-8.148 s over 200,000 Pathname operations -- and CRuby itself runs the same
-source in 1.018 s), cost **3.5x the bytes**, and pulled a 14.48 MB embedded
-compiler in for one `eval`. It bought only the signatures, and those are now
-spelled in the DSL directly. The `#source_location` residue is a DECIDED
-divergence now: `tests/a_row_ruby_writes_in_ruby_names_its_source.rb` (with
-its `.divergence` sidecar) pins zeo's `nil` answer and carries ruby's.
+Compiling CRuby's own `nilclass.rb` and `pathname_builtin.rb` would make
+these rows answer byte-identically, at a measured cost of 22.7x the run
+time and 3.5x the bytes plus an embedded compiler for one `eval`. The
+`#source_location` residue is therefore a DECIDED divergence:
+`test/divergences/a_row_ruby_writes_in_ruby_names_its_source.rb` pins zeo's
+`nil` answer.
 
 ### `Pathname`
 
@@ -749,7 +760,7 @@ differs; see the section above.
 
 All four work called directly and through a LITERAL `send`: the compiler
 folds each into the caller, where the block and the scope are in hand
-(`tests/kernel_scope_intrinsics.rb`).
+(`test/core/kernel/kernel_scope_intrinsics.rb`).
 
 What stays divergent is a send with a COMPUTED name (`m = :binding; send(m)`).
 `block_given?`/`iterator?` need the CALLER's block and `binding`/
@@ -757,8 +768,8 @@ What stays divergent is a send with a COMPUTED name (`m = :binding; send(m)`).
 Zeo's call `Frame` deliberately carries only `(file, line, label)` -- 40 bytes,
 pushed on every call -- so widening it would tax every call in the program for
 a reflection path almost nothing takes. This is a DECIDED divergence:
-`tests/kernel_scope_intrinsics_dynamic_send.rb` and its `.divergence` sidecar
-record zeo's answer on purpose.
+`test/divergences/kernel_scope_intrinsics_dynamic_send.rb` records zeo's
+answer on purpose.
 
 ### `Random::Formatter` carries its whole surface from the start
 
@@ -799,7 +810,7 @@ generated on one machine. `Process::Sys.setreuid` and
 `Process::UID.change_privilege` reach the same capability.
 
 The rest of `Process::Sys`, `Process::UID` and `Process::GID` is
-oracle-matched live in `tests/process_identity_rows.rb`, including every
+oracle-matched live in `test/compiler/builtins/process_identity_rows.rb`, including every
 refusal. `Process::UID.switch`'s saved-id fallback reads an id Zeo seeds on
 first use rather than at startup, so a program that moved its effective id
 through `Process::Sys` BEFORE ever touching `Process::UID`/`GID` would find
@@ -849,7 +860,7 @@ an unfinished feature.
   and silently break re-entry, which is worse than a `LoadError` a caller can
   rescue. CRuby itself prints *"callcc is obsolete; use Fiber instead"* when
   the extension loads, and Zeo ships `Fiber`. Documented as a declined
-  divergence in `tests/callcc_is_declined.rb` (a passing step-around test,
+  divergence in `test/lang/exceptions/callcc_is_declined.rb` (a passing step-around test,
   per the gaps README rule that declined divergences don't live in `gaps/`).
 - **`ripper`** exposes the reduction event stream of CRuby's `parse.y`. Zeo's
   front end embeds prism, a different parser with a different event model, so
@@ -858,7 +869,7 @@ an unfinished feature.
   real gem's Ruby half over the same prism Zeo itself parses with, which gives
   a syntax tree rather than a reduction stream. The decline is asserted by
   `ripper_is_declined_and_the_load_error_says_so`
-  (`crates/zeo/tests/e2e/gems_require.rs`) rather than by a golden: a golden is
+  (`crates/zeo/tests/suite/api/gems_require.rs`) rather than by a golden: a golden is
   diffed against the oracle, and ruby loads ripper, so the two can never agree.
 
 ## Refinements
@@ -869,7 +880,7 @@ an unfinished feature.
 the refinement; one written above it does not. `send`, `public_send`,
 `respond_to?` and `Object#method` all honour it, `Module#instance_methods`
 does not, and a refined `Method#owner` reports a `Refinement` — see
-`tests/refinements.rb`, which is oracle-blessed line by line.
+`test/lang/refinements/refinements.rb`, which is oracle-blessed line by line.
 
 Three narrowings:
 
@@ -949,7 +960,7 @@ CRuby does when `MT_HELL` is unset.
 A file loaded this way runs its top level at program START, not on the call, so
 a lazily-required file that only means to *warn and bail* on a missing optional
 dependency does both at startup instead. `irb/ext/tracer.rb` is one; see
-`crates/zeo/src/bundled.rs` for where the bundled libraries come from,
+`crates/zeo/src/gems/bundled.rs` for where the bundled libraries come from,
 and `cargo xtask deps` for how they get there.
 
 ## A class written in a `class << self` body
@@ -976,10 +987,9 @@ class itself is identical either way.
 
 A body compiled at RUN time (`eval` / `class_eval`) still hands both the
 constant and the class to the enclosing module -- there is no compile-time
-surrogate to file them on. See
-`tests/gaps/an_eval_singleton_body_constant_lands_on_the_module.rb`.
+surrogate to file them on.
 
-`tests/singleton_body_class_and_self_path.rb` pins the behaviour.
+`test/lang/singleton/singleton_body_class_and_self_path.rb` pins the behaviour.
 
 ## A top-level `return` inside a required file
 
@@ -1010,7 +1020,7 @@ The copies carry it the way Ruby's do: an object's `clone` copies the
 singleton class (extended modules and `def obj.method` rows) and `dup` drops
 it; a class's `dup` and `clone` both keep it, because `rb_mod_init_copy`
 clones the singleton class either way. Pinned by
-`tests/an_extended_receiver_copies_like_ruby.rb`.
+`test/lang/singleton/an_extended_receiver_copies_like_ruby.rb`.
 
 ## `zeo bundle install` works; `bundle exec` and `bundler/setup` do not
 
@@ -1031,13 +1041,8 @@ Bundle complete! 1 Gemfile dependency, 1 gem now installed.
 
 `install`, `update`, `list`, `check`, `show`, `info`, `lock`, `config` and
 `--version` all run; `Bundler::CLI.commands.keys` matches CRuby's exactly.
-Four defects stood between Bundler and that, each general and each fixed:
-a hook in another file could not be ordered against a definition, a hook an
-`extend` supplied was installed at the wrong position, a superclass clause
-never ran its `autoload`, and a bare `require` matched any loaded path ending
-in the same name.
 
-**`bundle exec` and `require "bundler/setup"` still do not**, and both fail
+**`bundle exec` and `require "bundler/setup"` do not**, and both fail
 the same way:
 
 ```
@@ -1047,8 +1052,8 @@ Gem::GemNotFoundException: can't find gem bundler (= 4.0.16) with executable bun
 Bundler asks RubyGems for its own installed gem and binstub so it can set
 `BUNDLE_BIN_PATH` for the child process. Zeo carries Bundler as a compiled-in
 library, not as a gem in a store, so there is nothing for that lookup to find.
-That is a packaging question, tracked on tasks #72 and #73, not a compiler
-gap: the command itself dispatches correctly.
+That is a packaging question, not a compiler gap: the command itself
+dispatches correctly.
 
 To compile against what a bundle resolved, point zeo at the result — the
 section below.

@@ -2,7 +2,7 @@
 # firing ruby has only the first body installed. zeo runs the second.
 #
 # This is not the watermark, which handles a name whose first definition is
-# still ahead (`tests/method_added_dispatch_watermark.rb`). Here `v` is already
+# still ahead (`test/lang/methods/method_added_dispatch_watermark.rb`). Here `v` is already
 # defined at both firings -- what differs is WHICH body. zeo keeps one row per
 # name: `analyze::add_own_method` REPLACES an earlier same-name entry rather
 # than appending, which is Ruby's own last-def-wins rule everywhere else, and

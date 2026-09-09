@@ -10,7 +10,7 @@
 # `Psych::Coder` and rubygems does the rest -- including coercing `date` and
 # rebuilding `Gem::Version` from its own nested `!ruby/object:`.
 #
-# Shapes, never versions -- see `tests/milestones.rs`.
+# Shapes, never versions.
 
 # Nothing is required but rubygems itself. `Gem::Version`, `Gem::Dependency`
 # and `Gem::Requirement` all arrive through rubygems' own `autoload`, which is

@@ -1,7 +1,7 @@
 # Crates
 
-Seven crates, edition 2024. Six are published together, version-locked with
-`=`; `xtask` is not published at all.
+Eight crates, edition 2024. Seven are published together, version-locked
+with `=`; `xtask` is not published at all.
 
 | Crate | What it is |
 |---|---|
@@ -10,6 +10,7 @@ Seven crates, edition 2024. Six are published together, version-locked with
 | `zeo-abi` | a dependency-free leaf: the `ClassId` numbers and the ABI both sides agree on |
 | `zeo-dsl` | the shared `syn` grammar for the `ruby_class!` / `ruby_module!` DSL |
 | `zeo-macros` | the proc-macro that expands that DSL into runtime code |
+| `zeo-capi` | MRI's C extension API (`rb_*`), implemented in Rust over the runtime; linked when the `capi` feature is on |
 | `zeo-gem` | RubyGems' formats: `Gemfile.lock`, gemspecs, `.gem` files, the store |
 | `xtask` | the repo's own chores (`cargo xtask`) |
 

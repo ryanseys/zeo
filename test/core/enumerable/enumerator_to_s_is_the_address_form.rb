@@ -10,7 +10,7 @@
 # stays one short token.
 #
 # `Enumerator::Lazy#to_s` already answers the address form
-# (`tests/lazy_external_iteration.rb`), so the two halves of one rule
+# (`test/core/enumerable/lazy_external_iteration.rb`), so the two halves of one rule
 # currently disagree with each other as well as with ruby.
 
 def norm(s) = s.sub(/0x\h+/, "0xADDR")

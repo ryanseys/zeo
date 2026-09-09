@@ -6,7 +6,7 @@
 #
 # A RUNTIME redefinition winning over an accessor is the one part not pinned
 # here -- zeo does not honour it for a plain method either, so it lives in
-# `tests/gaps/issue_runtime_redefine_accessor.rb` rather than pretending to be
+# `test/lang/methods/issue_runtime_redefine_accessor.rb` rather than pretending to be
 # something devirtualization introduced.
 class Node
   attr_accessor :value

@@ -22,7 +22,7 @@
 # LIFO, so this sees the finished report. Everything else is compared byte for
 # byte.
 #
-# Shapes, never versions -- see `tests/milestones.rs`.
+# Shapes, never versions.
 
 require "stringio"
 real_stdout = $stdout

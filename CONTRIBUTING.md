@@ -6,6 +6,12 @@ Issues and pull requests are welcome.
 `cargo xtask deps`, `cargo build`, `cargo nextest run`. Ruby is needed only
 to record a test's answer.
 
+The tools the loop needs, beyond the pinned Rust toolchain and a C compiler:
+`cargo-nextest` (every suite), `cargo-deny` and `cargo-machete` (`cargo
+xtask check`), `critcmp` (comparing benchmark baselines), and `podman` for
+the optional Linux loop. `cargo install` each; CI pins the versions in
+`.github/workflows/ci.yml`.
+
 ## The one rule: oracle-verified, divergence-documented
 
 The house style is *approximation is fine, silent wrongness is not.*
@@ -67,14 +73,13 @@ Two things worth knowing before your first run:
   `|`-joined name that genuinely differs from its def (`"<<" arity 1 | "push"`),
   and a test fails any override that merely restates the parameter list. Add
   `cfunc` when CRuby declares the method `argc = -1`, which discards a
-  signature the DSL can still express. The arity oracle that gated this
-  reached zero and is retired, so a disagreement with ruby is now found by a
-  golden, not a ledger.
+  signature the DSL can still express. A disagreement with ruby is found by
+  a golden, not a ledger.
 - Declare a method on the class CRuby owns it on — that decides which receivers
-  answer it, so `IO#flock` (File's) and `Module#superclass` (Class's) were
-  behaviour bugs, not reflection details. Write a golden that calls the
-  method on a receiver only the correct owner gives — that is what catches a
-  wrong class or an invented name now.
+  answer it: `flock` belongs to File, not IO, and `superclass` to Class, not
+  Module. Write a golden that calls the method on a receiver only the
+  correct owner gives — that is what catches a wrong class or an invented
+  name.
 - Module docs explain *design rationale*, not narration; keep them current —
   a stale claim is treated as a bug.
 
@@ -83,13 +88,17 @@ Two things worth knowing before your first run:
 zeo is Rust. The tree tracks no C, C++ or assembly source and no patch to
 one, and no copy of MRI's headers: the C API is `crates/zeo-capi`, Rust over
 the runtime, and an extension builds against upstream's headers fetched at
-the first build ([Build a C-extension gem](docs/how-to/build-a-c-extension-gem.md)). Two gates hold the rule.
-`crates/zeo/tests/suite/checks/no_c.rs` lists tracked C by extension and holds the
-exceptions exact, each dated.
+the first build ([Build a C-extension gem](docs/how-to/build-a-c-extension-gem.md)).
+The one exception is `crates/zeo-capi/csrc/`: three files of variadic entry
+points (`rb_raise`, `rb_funcall`, `rb_scan_args`) that Rust cannot write
+until `c_variadic` stabilises. Two gates hold the rule.
+`crates/zeo/tests/suite/checks/no_c.rs` lists tracked C by extension and
+holds that exception exact.
 `deny.toml` bans `cc`, `bindgen`, `cmake` and `cxx-build` except through the
 crates that compile a vendored library, and the same checks file pins that
 set: `onig_sys`, `ruby-prism-sys`, `libffi-sys`, `libmimalloc-sys`,
-`openssl-src`/`openssl-sys`, and criterion's `alloca`. `libc` is bindings,
+`openssl-src`/`openssl-sys`, `zeo-capi` (for `csrc/`), and criterion's
+`alloca`. `libc` is bindings,
 not a build, and is fine anywhere.
 
 To add a crate that compiles C: name it in `deny.toml`'s `wrappers` and in

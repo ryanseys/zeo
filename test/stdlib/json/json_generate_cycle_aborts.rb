@@ -9,8 +9,7 @@
 # ("Did you try to serialize objects with circular references?"); zeo's
 # serializer re-enters the container guard and the process ABORTS
 # (`value/collections.rs:174`) -- the third surface of the recursive-
-# traversal guard family beside `Array#join` and twin-`<=>`. (Found by
-# the 2026-08-24 probe sweep.)
+# traversal guard family beside `Array#join` and twin-`<=>`.
 require "json"
 a = [1]
 a << a

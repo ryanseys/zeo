@@ -1,5 +1,5 @@
 # `Time.parse` and its stricter siblings, from the vendored `time` gem. All of
-# them delegate to `Date._parse` (see `tests/date_parse_heuristics.rb`); this
+# them delegate to `Date._parse` (see `test/stdlib/date/date_parse_heuristics.rb`); this
 # file pins what the gem builds on top of it.
 #
 # Every case names its zone explicitly and compares in UTC: a string with no

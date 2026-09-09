@@ -3,7 +3,6 @@
 # answers false/nil, ignoring the option), and a bare `spawn` of a
 # missing command names it in the ENOENT message ("No such file or
 # directory - cmd"); zeo's message is the @-form with an empty site.
-# (Found by the 2026-08-24 probe sweep.)
 def show
   p yield
 rescue Exception => e

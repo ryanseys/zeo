@@ -13,7 +13,7 @@
 # eighteenth being written.
 #
 # `each_byte` is NOT here: it is a decided divergence, and
-# `tests/each_byte_on_a_write_only_handle.rb` records it.
+# `test/divergences/each_byte_on_a_write_only_handle.rb` records it.
 
 require "tmpdir"
 

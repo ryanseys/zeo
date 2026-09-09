@@ -7,7 +7,7 @@
 # frees the allocation and lets the allocator hand the address out again, so
 # the ivar row has to go first. Reversing the two lines makes both counts
 # below read 2000: every later value of the same shape lands on a dead one's
-# address and inherits its ivars. `tests/spinel/singleton_address_reuse.rb` is
+# address and inherits its ivars. `test/lang/singleton/singleton_address_reuse.rb` is
 # the same test for the singleton table, which made exactly that mistake.
 def with_ivar
   a = [1, 2, 3]

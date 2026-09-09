@@ -11,7 +11,7 @@
 # raise below reports the snippet's line under the caller's file and
 # label. Giving it its own frame costs two frame pushes per execution on
 # the path whose whole justification is being zero-cost, so it stays
-# recorded in `tests/gaps/a_box_literal_eval_is_spliced.rb`.
+# recorded in `test/gaps/a_box_literal_eval_is_spliced.rb`.
 b = Ruby::Box.new
 p b.eval("__FILE__")
 p b.eval("__FILE__ + '/x'")

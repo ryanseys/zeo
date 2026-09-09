@@ -1,6 +1,6 @@
 # `Proc#>>`/`#<<` type-check their operand AT COMPOSE TIME ("callable
 # object is expected"); zeo builds the composite and would only fail when
-# called. (Found by the 2026-08-24 probe sweep.)
+# called.
 begin
   p(->(x) { x } >> 5)
 rescue TypeError => e

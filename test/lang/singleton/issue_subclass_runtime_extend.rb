@@ -9,7 +9,7 @@
 # something installed at run time.
 #
 # The class-body form (`class Base; extend Store; end`) already worked and is
-# covered by `tests/runtime_extend_binds_the_class.rb`.
+# covered by `test/lang/singleton/runtime_extend_binds_the_class.rb`.
 
 module Store
   def tag = "tagged"

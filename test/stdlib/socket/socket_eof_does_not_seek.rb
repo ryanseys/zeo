@@ -2,8 +2,7 @@
 # false and the rest of the stream is readable. zeo's eof? probe seeks
 # and raises Errno::ESPIPE -- the same root as
 # `a_pipe_read_to_eof_does_not_seek.rb`, found via Net::HTTP keep-alive
-# (the second request in one `Net::HTTP.start` dies on this). (Found by
-# the 2026-08-24 probe sweep.)
+# (the second request in one `Net::HTTP.start` dies on this).
 require "socket"
 server = TCPServer.new("127.0.0.1", 0)
 port = server.addr[1]

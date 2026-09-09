@@ -1,5 +1,5 @@
 #@ ruby: -W:no-experimental
-# The Ruby namespace + Ruby::Box census surface, disabled mode (no RUBY_BOX
+# The Ruby namespace + Ruby::Box surface, disabled mode (no RUBY_BOX
 # in the environment -- the harness sets the gate only for a source that
 # ALLOCATES a box): identity constants alias the RUBY_* globals, the Box
 # class carries its real rows, and the gate answers CRuby's disabled shape.
@@ -13,8 +13,7 @@ p [Ruby::PATCHLEVEL == RUBY_PATCHLEVEL, Ruby::REVISION == RUBY_REVISION,
 p Ruby::Box.superclass
 # CRuby defines the gate-only rows (`main`/`root`/`master` and their
 # predicates) ONLY under `RUBY_BOX=1`; zeo's are in the static table
-# either way, so this pins the surface both modes share. See
-# `tests/gaps/a_disabled_box_still_carries_its_gate_rows.rb`.
+# either way, so this pins the surface both modes share.
 GATE_ONLY = %i[main master root main? master? root?]
 p (Ruby::Box.singleton_methods(false) - GATE_ONLY).sort
 p (Ruby::Box.instance_methods(false) - GATE_ONLY).sort

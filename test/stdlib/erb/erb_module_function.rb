@@ -8,7 +8,7 @@ p ERB::Util.html_escape("a > b & c")
 p ERB::Util.h("<x>")
 p ERB::Util.url_encode("a b")
 # Rendering a template needs `TOPLEVEL_BINDING` -- see
-# `tests/gaps/issue_erb_render_needs_binding.rb`.
+# `test/stdlib/erb/issue_erb_render_needs_binding.rb`.
 
 # `module_function` keeps BOTH halves: a public module method and a private
 # instance method for the include-mixin.

@@ -1,7 +1,7 @@
 # Gems and the payload
 
-Zeo ships a Ruby standard library. Nothing about it is committed, and Ruby is
-not needed to get it.
+Zeo ships a Ruby standard library. The upstream gems are fetched, not
+committed, and Ruby is not needed to get them.
 
 ## Four tiers answer a `require`
 
@@ -20,15 +20,12 @@ cannot disagree about what ships.
 
 ## Why the lock is the only writer
 
-Zeo used to commit 52 vendored upstream trees. A gem's version was then
-written in two places — the tree's own gemspec, and the lock the ruby oracle
-resolves — and a fact written twice drifts. It did: zeo shipped `json`
-2.21.2's parser while the oracle resolved whatever the machine had, and the
-two disagreed about a line counter. The corpus recorded that as a zeo bug.
+A gem's version written in two places — a committed tree's own gemspec,
+and the lock the ruby oracle resolves — drifts, and the corpus then records
+the difference between two library versions as a zeo bug.
 
-Now `Gemfile.lock` states every version once. The compiler reads it and the
-oracle reads it, so a golden cannot record a difference between two library
-versions and call it a defect.
+`Gemfile.lock` states every version once. The compiler reads it and the
+oracle reads it, so a golden cannot record such a difference.
 
 ## Why the bootstrap pair is fetched differently
 

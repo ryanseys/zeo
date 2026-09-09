@@ -16,7 +16,7 @@
 # emits it verbatim, where zeo renders the offset and drops the width.
 #
 # Found by a 13,800-case directive x flag x width sweep while fixing
-# `tests/strftime_zone_offset_flags.rb`; every case NOT in the three shapes
+# `test/stdlib/date/strftime_zone_offset_flags.rb`; every case NOT in the three shapes
 # above matches, including all 84 `%z` flag spellings.
 
 t = Time.at(0).utc

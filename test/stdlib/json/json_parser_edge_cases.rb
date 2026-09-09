@@ -11,7 +11,7 @@
 # 10,000 deep. Ruby's parser keeps its own stack and reads a million-deep
 # document with `max_nesting: false`; this one recurses, so it refuses past
 # a ceiling far short of the frames the stack holds. A loud NestingError
-# beats ending the process. `tests/json_nesting_is_bounded_by_the_stack.rb`
+# beats ending the process. `test/divergences/json_nesting_is_bounded_by_the_stack.rb`
 # records it.
 
 require "json"
@@ -128,7 +128,7 @@ show("truncated utf-8") { JSON.parse("[\"\xE3\x81\"]".b) }
 # NOT here: a high byte OUTSIDE a string. Ruby quotes the raw byte back in
 # the message, so the message itself is not valid UTF-8; zeo's message
 # builder takes a Rust `String` and renders it U+FFFD. Display only, and
-# `tests/json_message_bytes_are_lossy.rb` records it.
+# `test/divergences/json_message_bytes_are_lossy.rb` records it.
 
 # --- The whole document is a scalar --------------------------------------
 show("bare true") { JSON.parse("true") }

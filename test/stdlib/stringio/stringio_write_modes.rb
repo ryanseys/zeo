@@ -1,8 +1,7 @@
 # StringIO's write modes: append mode seeks to the END before each write
 # (zeo overwrites from position 0 -- "cb" instead of "abc": data
 # corruption, not a missing error), and a read-only StringIO refuses a
-# write with IOError (zeo writes and answers the byte count). (Found by
-# the 2026-08-24 probe sweep.)
+# write with IOError (zeo writes and answers the byte count).
 require "stringio"
 s = StringIO.new(+"ab", "a")
 s.write("c")

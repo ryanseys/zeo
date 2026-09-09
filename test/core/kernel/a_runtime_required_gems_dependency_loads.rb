@@ -3,7 +3,7 @@
 # deliver its constants: tempfile's `require "tmpdir"` leaves
 # Dir::Tmpname undefined and Tempfile.create raises NameError. The
 # top-level-require form works. A cousin of the dual-homed fold in
-# `error_highlight_library.rb`. (Found by the 2026-08-24 probe sweep.)
+# `error_highlight_library.rb`.
 def go
   require "tempfile"
   Tempfile.create("x") { puts "created" }

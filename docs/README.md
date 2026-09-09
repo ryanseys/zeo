@@ -45,4 +45,3 @@ Four kinds of page, and the kind tells you what to expect from it.
 | [Testing](explanation/testing.md) | the oracle model, and what the suite refuses to do |
 | [Performance](explanation/performance.md) | what the generated code costs, measured |
 | [Binary size](explanation/binary-size.md) | what a compiled program weighs |
-| [Roadmap](explanation/roadmap.md) | what is next |

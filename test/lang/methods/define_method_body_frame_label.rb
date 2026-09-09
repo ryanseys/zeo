@@ -7,7 +7,7 @@
 #     Named.new.dm      ruby "block in <class:Named>"   zeo "Named#dm"
 #
 # A real `def` is the opposite and zeo now gets it right (see
-# `tests/method_defined_in_a_block_frame_label.rb`): a `def` written inside a
+# `test/lang/methods/method_defined_in_a_block_frame_label.rb`): a `def` written inside a
 # block still creates an ordinary method, so ruby names the frame after the
 # method. The two are the same question asked of the two ways to define one,
 # and the answers go opposite ways -- which is what makes it easy to fix one

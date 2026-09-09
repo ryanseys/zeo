@@ -4,8 +4,6 @@
 # CRuby rejects is accepted and the ArgumentError names the wrong range:
 # zeo reports `expected 1..4` where CRuby says `1..3`.
 #
-# One row the arity census gated before it was retired at zero.
-#
 # The original header follows. It describes the PREDECESSOR project's
 # version of this test and its own fix, not zeo's divergence above.
 #
@@ -30,7 +28,7 @@ check { Math.lgamma }
 check { Dir.mkdir }
 # the valid shapes still answer
 p Hash.new(5)[:missing]
-# A name no run ever creates: this corpus's own working directory is `tests/`,
+# A name no run ever creates: this corpus's own working directory is `test/`,
 # so anything plausible there is a file somebody may add.
 p File.exist?("no-such-file-e7c1a0")
 __END__

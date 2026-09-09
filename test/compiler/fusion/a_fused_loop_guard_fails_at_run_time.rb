@@ -10,11 +10,11 @@
 # inline arm, the second the fallback. Before slot initialization moved to
 # the entry block, the block parameter's slot was nil-initialised INSIDE the
 # inline arm, so the second call released a slot holding stack garbage.
-# `tests/compiled_code_releases_a_dead_slot.rb` has the mechanism.
+# `test/stdlib/pp/compiled_code_releases_a_dead_slot.rb` has the mechanism.
 #
 # A RUN-TIME redefinition, deliberately. A compile-time `class Array; def
 # each` reaches backwards and makes the FIRST call answer 30 as well --
-# that is `tests/gaps/a_later_def_on_a_builtin_reaches_back.rb`, a separate
+# that is `test/lang/methods/a_later_def_on_a_builtin_reaches_back.rb`, a separate
 # gap this file must not depend on.
 #
 # Runs under `ZEO_RT_LEAKCHECK=1`, which is what makes it a memory-safety

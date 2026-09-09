@@ -1,5 +1,9 @@
 # Zeo
 
+[![CI](https://github.com/ryanseys/zeo/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanseys/zeo/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![MSRV 1.94](https://img.shields.io/badge/MSRV-1.94-orange.svg)](rust-toolchain.toml)
+
 Zeo compiles a whole Ruby program to native code. It reads the source with
 [Prism], analyzes the entire program at once, lowers it to [Cranelift] IR,
 and links `libzeo.a` — Zeo's own Ruby runtime, written in Rust and compiled
@@ -29,8 +33,7 @@ Every test compares Zeo's output with real Ruby 4.0.6, byte for byte.
 
 The corpus ([`test/`](test)) runs green, each program compared with real Ruby
 on stdout, stderr and the exit status. Every module, method, constant and
-visibility that Ruby 4.0.6 reaches has a Zeo answer — the census that
-measured that reached zero rows and was retired — so what remains is
+visibility that Ruby 4.0.6 reaches has a Zeo answer, so what remains is
 behavioural, not missing surface.
 
 Every known difference is recorded: in
@@ -40,12 +43,10 @@ Every known difference is recorded: in
 
 ## Install
 
-```console
-$ cargo install zeo
-```
-
-Or `gem install zeo`, which fetches the build for your platform. Or take a
-release tarball, which relocates anywhere:
+The first release is not cut yet, so today the way in is a build from
+source (below). The release will ship three ways: `cargo install zeo`,
+`gem install zeo` (a per-platform gem that carries the binary), and a
+relocatable tarball:
 
 ```console
 $ tar xzf zeo-<version>-<triple>.tar.gz -C /usr/local
@@ -80,8 +81,10 @@ Ruby is needed for one thing only: recording a test's answer.
 
 ## Contributing
 
-Issues and pull requests are welcome. The one rule that matters: **keep every
-difference from Ruby visible.**
+Issues and pull requests are welcome. A bug report is most useful as the
+smallest `.rb` that shows it, what `ruby` printed, what `zeo` printed, and
+`zeo --version`; the issue template asks for exactly that. The one rule
+that matters: **keep every difference from Ruby visible.**
 
 1. Check each new behaviour against real Ruby.
 2. Leave a comment at the site of any difference you accept.

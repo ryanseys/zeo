@@ -1,12 +1,12 @@
 # Limitations
 
 What zeo does not do, and why. Everything here is deliberate and
-recorded; the rest is in [the roadmap](../explanation/roadmap.md).
+recorded; what is not yet right lives in [`test/gaps/`](../../test/gaps).
 
 - **The cycle collector is opt-in.** Memory is reference-counted, so a
   reference cycle leaks unless `ZEO_GC=1` arms the collector. It is off by
-  default because the allocation registry it needs costs about 1.5% over the
-  benchmark bank. Armed, it runs on its own once the live registry has grown
+  default because the allocation registry it needs costs a measurable
+  share of the benchmark bank. Armed, it runs on its own once the live registry has grown
   enough — nothing has to call `GC.start`. There is no tracing collector:
   the pass reconciles reference counts, because zeo's lowering declares no
   stack maps for Cranelift to build root sets from.
@@ -29,32 +29,34 @@ recorded; the rest is in [the roadmap](../explanation/roadmap.md).
 - **Four extensions are partial** — `coverage`, `nkf`, `openssl`,
   `TracePoint`. See [Add an extension](../how-to/add-an-extension.md).
 - **The Cranelift backend's performance pass is not finished.** Correctness
-  is complete; code quality is not. On compute-bound work it currently runs
-  at **0.71× of CRuby** — see [Performance](../explanation/performance.md).
-
-[The roadmap](../explanation/roadmap.md) tracks the rest.
+  is complete; code quality is not. [Performance](../explanation/performance.md)
+  has the measured numbers, program by program.
 
 ---
 
 zeo holds every library name it implements under three **mirror
-conditions**, and this file is the ledger those conditions require:
+conditions**, and this file is the ledger those conditions require.
+
+The tree tracks no C of its own, with one gated exception: three files
+under `crates/zeo-capi/csrc/` carry the variadic C API entry points
+(`rb_raise`, `rb_funcall`, `rb_scan_args`) that Rust cannot write before
+`c_variadic` stabilises in Rust 1.99. `checks::no_c` holds that set exact.
 
 1. **Divergences are ledgered.** Anything zeo answers differently from
    CRuby is written down -- here, in
-   [`docs/reference/compatibility.md`](COMPATIBILITY.md), or as a committed
+   [`docs/reference/compatibility.md`](compatibility.md), or as a committed
    divergence golden under
-   [`test/divergences/`](../../test/divergences) whose
-   `.expected` records ZEO's answer on purpose.
+   [`test/divergences/`](../../test/divergences) whose `__END__` trailer
+   records ZEO's answer on purpose.
 2. **The real thing is the oracle.** Every golden's recorded output comes
    from ruby 4.0.6 resolving the same `Gemfile.lock`, and the pure-Ruby
    ports additionally run their gems' own upstream test suites
-   (`crates/zeo/tests/e2e/pure_gems.rs`).
+   (`crates/zeo/tests/suite/api/pure_gems.rs`).
 3. **Failure is loud.** Outside the contract, zeo refuses at compile time
    with a named reason, or raises at run time -- never a silent no-op.
    That is the compile contract: CRuby-identical or FAIL.
 
-Four buckets, spinel's taxonomy. An entry moves buckets only with a
-commit that says why.
+Four buckets. An entry moves buckets only with a commit that says why.
 
 ## Fundamental
 
@@ -152,20 +154,3 @@ Deliberate answers, each with its reasoning ledgered where it lives.
   itself uses the lazy shape in `new_cond`.
 - **Shift_JIS maps through CP932**, and the other encoding-table
   divergences -- see the encoding section of `docs/reference/compatibility.md`.
-
-## Now supported
-
-Formerly on this list; kept so a report against an old version finds
-its answer.
-
-- `Monitor#new_cond` / `MonitorMixin::ConditionVariable` (was absent).
-- `StringIO` paragraph mode, `readchar`, mode validation, the
-  `rb:BOM|UTF-8` open road (were absent or wrong in the native ext until
-  the differential matrix caught them).
-- `StringScanner` `fixed_anchor: true` (was stored but not acted on) and
-  byte-exact `peek` (panicked mid-character).
-- `Regexp#match` honors its position argument; `\G` anchors correctly on
-  all three engine routes.
-- The C-extension route itself: a locked gem's C extension builds from
-  source, loads and runs through MRI's fetched headers -- the sweep
-  table above says which gems make it all the way.

@@ -11,7 +11,7 @@
 # (`rb_keyword_given_p`) does not reach a builtin row. A real positional Hash
 # must keep working, which is why the shape alone cannot settle it; the flag
 # has to travel. Same root cause as
-# `tests/gaps/keyword_given_flag_does_not_travel.rb`.
+# `test/lang/methods/keyword_given_flag_does_not_travel.rb`.
 #
 # `keyword_init: true` is unaffected (it decides from the declaration). The
 # arity-message half of the old combined gap lives in

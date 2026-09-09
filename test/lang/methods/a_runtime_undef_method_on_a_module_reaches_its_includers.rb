@@ -16,7 +16,7 @@
 #
 # The gate is `Module#undef_method` reaching a module that has already been
 # included -- a plain `undef_method` in a class BODY is decided at compile
-# time and works (see `tests/a_nested_class_undef_stays_in_that_class.rb`).
+# time and works (see `test/lang/classes/a_nested_class_undef_stays_in_that_class.rb`).
 module Retiring
   def self.retire
     undef_method :doomed

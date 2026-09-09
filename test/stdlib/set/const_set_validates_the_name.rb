@@ -2,7 +2,7 @@
 # zeo sets the lowercase constant. `const_get` already validates. And
 # `remove_const` on a missing name prints the RECEIVER in its NameError
 # ("constant #<Module:0x...>::Nope not defined"); zeo names only the
-# constant. (Found by the 2026-08-24 probe sweep.)
+# constant.
 begin
   Module.new.const_set(:lower, 1)
   puts "set succeeded"

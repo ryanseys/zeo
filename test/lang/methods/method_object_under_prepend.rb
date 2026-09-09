@@ -14,7 +14,7 @@
 # is the standard way to defeat a `method_missing` proxy or a prepended
 # wrapper), so re-dispatching gives back exactly what the caller asked to skip.
 #
-# `tests/method_object_freezes_its_entry.rb` fixed the sibling case -- a Method
+# `test/core/object/method_object_freezes_its_entry.rb` fixed the sibling case -- a Method
 # whose entry is REDEFINED afterwards -- by freezing the layer the name resolved
 # through. This is the same question asked of a chain position the caller named
 # explicitly rather than one that was resolved for them.

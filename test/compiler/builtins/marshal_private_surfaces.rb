@@ -1,4 +1,4 @@
-# The census-visible marshal privates: Marshal's module_function dump,
+# The reflection-visible marshal privates: Marshal's module_function dump,
 # Complex/Rational marshal_dump hooks, Random's full state family.
 p Marshal.private_instance_methods(false)
 p Marshal.singleton_methods(false).sort

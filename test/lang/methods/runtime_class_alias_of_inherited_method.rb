@@ -12,7 +12,7 @@
 # trampoline, which downcasts and aborts.
 #
 # So this is not the `Method`/`UnboundMethod` snapshot bug that
-# `tests/method_object_freezes_its_entry.rb` fixed, and copying the LAYER
+# `test/core/object/method_object_freezes_its_entry.rb` fixed, and copying the LAYER
 # rather than the body does not close it: re-resolving through the layer finds
 # the same struct-downcasting trampoline. What is missing is the bridge
 # `builtins/value_subclass.rs` already builds for a builtin root -- an instance

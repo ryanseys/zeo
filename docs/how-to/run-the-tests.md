@@ -64,14 +64,6 @@ $ cargo xtask test-gem rake rack thor
 $ cargo xtask test-gem nokogiri --aot --no-clean
 ```
 
-
-## The Ruby implementation
-
-ze0, the Ruby implementation of the same compiler, lives in its own
-repository (`~/dev/ze0`). It consumes an installed `zeo` through
-`zeo backend`, and carries its own corpus, its self-compile check and its
-sweep. Nothing here runs it.
-
 ## What a run costs
 
 Nothing on disk. Every corpus child compiles in memory (`ZEO_CACHE=0`) and

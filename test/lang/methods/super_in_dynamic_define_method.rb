@@ -12,7 +12,7 @@
 # Both the explicit-argument and the bare form are wrong, and differently: the
 # explicit form should resolve, and the bare form should raise ruby's OWN
 # RuntimeError about implicit argument passing (see
-# `tests/zsuper_in_define_method.rb`), not this one.
+# `test/lang/methods/zsuper_in_define_method.rb`), not this one.
 
 class Base
   def who(*a) = "base#{a.inspect}"

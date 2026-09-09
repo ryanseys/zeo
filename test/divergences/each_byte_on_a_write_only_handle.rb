@@ -7,7 +7,7 @@
 # to `io_fillbuf` and reports what the kernel said. Matching it means
 # giving `each_byte` a per-byte descriptor path whose only purpose is to
 # surface a raw errno -- worse code for a worse message, at the row where
-# `tests/the_mode_is_checked_before_the_descriptor.rb` records that the
+# `test/core/io/the_mode_is_checked_before_the_descriptor.rb` records that the
 # other seventeen agree.
 #
 # The classes differ, so a program rescuing `Errno::EBADF` here would see

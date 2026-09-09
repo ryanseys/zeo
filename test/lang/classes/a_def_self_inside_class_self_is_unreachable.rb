@@ -14,7 +14,7 @@
 # spells, through the same `define_singleton_method` lowering. `class << obj`
 # had the same hole and takes the same route.
 #
-# The wider sweep is `tests/singleton_chain_dispatch_sweep.rb`.
+# The wider sweep is `test/lang/singleton/singleton_chain_dispatch_sweep.rb`.
 
 class K
   class << self

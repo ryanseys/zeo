@@ -2,7 +2,7 @@
 # libyaml, and the two do not draw the line between a legal and an illegal
 # document in exactly the same place. The rows below are every difference
 # found by sweeping the truncations and byte shapes in
-# `tests/yaml_parser_edge_cases.rb` -- which is where every row the two
+# `test/stdlib/date/yaml_parser_edge_cases.rb` -- which is where every row the two
 # engines AGREE on lives, all of them exact.
 #
 # The differences are all at the PARSER, not at the semantics: what a

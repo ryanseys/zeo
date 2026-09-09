@@ -1,6 +1,6 @@
 # Two Set rows: the FrozenError names the receiver ("can't modify
 # frozen Set: Set[1]"), and a binary op on a Set SUBCLASS answers the
-# subclass. (Found by the 2026-08-24 probe sweep.)
+# subclass.
 require "set"
 begin
   Set[1].freeze.add(2)
