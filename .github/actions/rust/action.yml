@@ -31,8 +31,7 @@ runs:
         cache-on-failure: true
         cache-workspace-crates: true
 
-    # .cargo/config.toml pins `jobs = 10` for the 12-core dev box; a 4-vCPU
-    # runner oversubscribed by that fights itself. The env var outranks the
-    # file.
+    # One job per vCPU, whatever the runner has, and the env var outranks any
+    # local cargo config.
     - run: echo "CARGO_BUILD_JOBS=$(getconf _NPROCESSORS_ONLN)" >> "$GITHUB_ENV"
       shell: bash

@@ -10,6 +10,10 @@ crates/zeo-rt/src/enc/single_byte.rs linguist-generated
 crates/zeo-rt/src/enc/casefold.rs linguist-generated
 crates/zeo-rt/src/enc/printable.rs linguist-generated
 
-# Vendored verbatim from rubygems/rubygems, not zeo's own code. See
-# lib/ruby/UPSTREAM.md.
-lib/ruby/** linguist-vendored
+# The corpus is thousands of small Ruby programs and the extensions carry
+# their Ruby halves, some vendored from upstream gems (see
+# crates/zeo-rt/ext/UPSTREAM.md). Neither is what the repository is written
+# in, so both stay out of the language statistics.
+test/** linguist-vendored
+crates/zeo-rt/ext/*/lib/** linguist-vendored
+crates/zeo-rt/gems/** linguist-vendored

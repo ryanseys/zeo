@@ -33,9 +33,8 @@ crates/zeo/src/class_surface.pregen.rs
 # Jujutsu (some of us drive git through jj; the store is local-only state)
 .jj/
 
-# Agent/editor scratch: settings, worktrees, session state
+# Editor and tool scratch: settings, worktrees, session state
 .claude/
-.worktrees/
 compile_flags.txt
 
 # Local working notes (research records, follow-up plans) -- deliberately
@@ -49,8 +48,8 @@ compile_flags.txt
 *.log
 
 # `zeo test/foo.rb` writes its binary to test/foo -- the input path with the
-# extension stripped. Three of those reached HEAD at 13MB each before the size
-# guard existed. Every real file under test/ has an extension.
+# extension stripped. Every real file under test/ has an extension, so an
+# extensionless path there is a build product.
 /test/**
 !/test/**/
 !/test/**/*.*
