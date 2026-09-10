@@ -1,4 +1,3 @@
-# Imported from the spinel corpus at c55d9bdb.
 # A class opened BARE and reopened with a superclass is ruby's own
 # `TypeError: superclass mismatch for class Sub` -- a real bare `class Sub`
 # gives the class Object as its parent, and a later `< Base` conflicts with
@@ -38,6 +37,6 @@ end
 puts Child.new.run
 __END__
 #@ stderr
-core/string/reopen_split_superclass_dispatch.rb:25:in '<module:M>': superclass mismatch for class Sub (TypeError)
-	from core/string/reopen_split_superclass_dispatch.rb:7:in '<main>'
+core/string/reopen_split_superclass_dispatch.rb:24:in '<module:M>': superclass mismatch for class Sub (TypeError)
+	from core/string/reopen_split_superclass_dispatch.rb:6:in '<main>'
 #@ exit 1

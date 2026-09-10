@@ -3,7 +3,7 @@
 # 0xfc-marked strings and freed the frozen (0xf1) one -- a GC use-after-free
 # on the next collect. Frozen globals must survive collection. (#1449)
 VERSION = "0.8.0".freeze
-NAME = ("spinel-" + "rt").freeze
+NAME = ("zeo-" + "rt").freeze
 GC.start
 GC.start
 sum = 0.0
@@ -19,5 +19,5 @@ puts NAME
 puts(sum > 0.0)
 __END__
 0.8.0
-spinel-rt
+zeo-rt
 true

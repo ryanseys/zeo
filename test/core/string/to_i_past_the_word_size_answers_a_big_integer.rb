@@ -1,7 +1,6 @@
-# String#to_i / Integer() on input exceeding int64 raises
-# RangeError rather than saturating silently. spinel's int model
-# is int64-only, so the CRuby Bignum promotion path lowers to a
-# user-catchable RangeError.
+# String#to_i and Integer() on input too large for a machine word answer a
+# big integer rather than raising or saturating. Base 16 goes the same way,
+# and an in-range value is unaffected.
 
 begin
   "99999999999999999999".to_i

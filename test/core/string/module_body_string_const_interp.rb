@@ -11,7 +11,7 @@ end
 puts M::V
 
 class C
-  NAME = "spinel"
+  NAME = "sample"
   GREETING = "hello #{NAME}"
 end
 puts C::GREETING
@@ -40,7 +40,7 @@ end
 puts I::S
 __END__
 v33
-hello spinel
+hello sample
 ddtrace-1.2
 hi
 n=33

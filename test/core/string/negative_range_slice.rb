@@ -1,6 +1,6 @@
-# #496. `a[1..-2]` returned [] in spinel where CRuby returns
-# [a[1], a[2], a[3]]. Codegen emitted `sp_IntArray_slice(arr, 1,
-# -2 - 1 + 1)` (length = -2), and the runtime's `len <= 0` early
+# `a[1..-2]` counts its end from the far end of the receiver, so it answers
+# [a[1], a[2], a[3]] rather than nothing. A slice whose length is computed as
+# `last - first + 1` without resolving the negative endpoint first goes
 # return produced an empty array. Fix: new `_slice_range` /
 # `_sub_range_r` runtime helpers take (start, end, exclusive)
 # and normalize negative end against the collection length

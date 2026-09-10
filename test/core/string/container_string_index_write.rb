@@ -1,6 +1,5 @@
-# `outer[i][k] = v` where the inner value is a String: spinel splices a String
-# into a FRESH buffer, so the result has to be stored back into outer's slot.
-# The store-back form existed for a statically Integer index and not for a boxed
+# `outer[i][k] = v` where the inner value is a String. The write has to be
+# seen through `outer` afterwards, whether the index is a plain Integer or a
 # one, so an index that came out of a container -- a destructured block parameter
 # whose receiver is a local, an element read -- wrote to the inner value alone
 # and the assignment was silently dropped (#4067).

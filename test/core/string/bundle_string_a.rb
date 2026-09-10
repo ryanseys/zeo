@@ -233,8 +233,7 @@ def t_string_each_byte
   "hello".each_byte { |b| total = total + b }
   puts total
   
-  # String#each_byte returns the receiver (CRuby parity). Pre-fix Spinel's
-  # each_byte was statement-only and the assignment dropped the value.
+  # String#each_byte answers the receiver, so the value can be assigned.
   total2 = 0
   ret = "hello".each_byte { |b| total2 = total2 + b }
   puts total2

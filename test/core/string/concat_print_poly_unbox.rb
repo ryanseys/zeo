@@ -58,10 +58,9 @@ h_missing = { "other" => "x", "n" => 42 }
 show_concat(h_missing)
 show_print(h_missing)
 
-# --- Symbol-valued poly via `print`. CRuby's `print :sym` calls
-# `Symbol#to_s` -> "sym"; spinel's compile_print poly arm routes
-# through `sp_poly_to_s` whose SP_TAG_SYM case returns the same
-# rendering. Exercises the tag dispatch beyond SP_TAG_STR.
+# --- A Symbol reached through a slot of no single type, printed. `print :sym`
+# calls Symbol#to_s and writes "sym", so the runtime has to find the Symbol
+# and not assume a String.
 def show_print_sym(node)
   raw = node["k"]
   text = raw.nil? ? "" : raw

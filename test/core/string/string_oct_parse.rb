@@ -1,8 +1,7 @@
 # String#oct is a lenient Integer(str, 8)-style parse: leading whitespace, an
 # optional sign, an optional base prefix (0x/0b/0o/0d or a leading 0 = octal),
-# and single underscore separators between digits. Spinel previously mishandled
-# a sign before a base prefix, dropped underscore separators, and ignored the 0d
-# prefix.
+# and single underscore separators between digits. A sign BEFORE a base
+# prefix, and the 0d prefix, are part of the grammar too.
 def o(x); x.oct; end
 
 p o("777")        # 511

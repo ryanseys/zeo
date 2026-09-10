@@ -1,10 +1,10 @@
 # Integer#to_s on a Bignum answers an ordinary String, so it must live on the
 # string heap with its marker byte.
 #
-# It used to be a bare malloc'd buffer. Nothing reads the byte before such a
-# chunk deliberately, but sp_str_byte_len does -- it is how every spinel string
-# reports its length -- so the length came out of whatever the allocator had
-# put there, and the next concat memcpy'd that many bytes. Under GC stress that
+# A bare allocation is not enough: a string reports its length from a header
+# the allocator does not write, so a buffer without one reports whatever
+# happened to be in memory, and the next concat copies that many bytes. Under
+# GC stress that
 # is a heap-buffer-overflow inside sp_str_concat; the visible symptom is a SEGV
 # in memcpy with a concat on the stack.
 #

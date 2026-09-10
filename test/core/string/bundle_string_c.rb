@@ -40,14 +40,9 @@ t_str_index_range_eq
 
 # === str_setbyte_dup_mutates ===
 def t_str_setbyte_dup_mutates
-  # `String#setbyte` on a heap-allocated string mutates in place.
-  # Spinel adopts `# frozen_string_literal: true` semantics
-  # globally: string literals are frozen (rodata-resident), so a
-  # setbyte on a literal raises FrozenError; setbyte on a heap
-  # buffer (from .dup, +, *, gsub, etc.) mutates as usual.
-  #
-  # This test pins the heap-mutate path. Literal -> FrozenError is
-  # covered by test/str_setbyte_frozen_literal.
+  # `String#setbyte` on a heap-allocated string mutates in place: a string
+  # from .dup, +, * or gsub is a buffer of its own. A frozen string raises
+  # instead, which the frozen-literal programs cover.
   
   # Dup'd string: setbyte mutates.
   s = "ab".dup
@@ -64,11 +59,9 @@ t_str_setbyte_dup_mutates
 
 # === string_endless_range ===
 def t_string_endless_range
-  # #543. `s[1..]` (Ruby 2.6+ endless range) returned an empty
-  # string under spinel-AOT instead of the substring from index 1
-  # to end. CRuby returns "id" for ":id"[1..]; spinel returned "".
-  # Trigger: the codegen lowered `s[1..]`'s RangeNode `right` (an
-  # AST -1 sentinel meaning "no value") to literal `0`, then
+  # An endless range index, `s[1..]`, answers the substring from index 1 to
+  # the end: ":id"[1..] is "id". A missing endpoint is not the number 0, so
+  # lowering the absent side to a literal `0` and then
   # `sp_str_sub_range_r(s, 1, 0, 0)` produced a zero-length slice.
   #
   # Sam Ruby caught this when Roundhouse's router stripped the
@@ -215,10 +208,8 @@ t_string_index_nullable
 
 # === string_index_oob_returns_nil ===
 def t_string_index_oob_returns_nil
-  # `"hello"[20]` (single-int index past the end) returns nil in CRuby,
-  # not "". Pre-fix spinel's sp_str_sub_range fell through to its
-  # OOB branch and returned the empty string, so a `.nil?` check
-  # (or any `== nil` comparison) saw a non-NULL pointer and surfaced
+  # `"hello"[20]`, a single index past the end, answers nil and not "". The
+  # difference matters to `.nil?` and to `== nil`, which an empty string
   # false. Issue #619 puzzle 3.
   puts "hello"[20].nil?     # true
   puts "hello"[5].nil?      # true (at end of string, single-int index)
@@ -233,10 +224,8 @@ t_string_index_oob_returns_nil
 
 # === string_to_i_underscore ===
 def t_string_to_i_underscore
-  # CRuby's `String#to_i` accepts `_` between consecutive digits and
-  # stops at the first non-digit. spinel previously emitted
-  # `(mrb_int)atoll(s)` which stops at the first `_`, returning 1
-  # for "1_2_3asdf" instead of 123. Now routes through
+  # `String#to_i` accepts `_` between consecutive digits and stops at the
+  # first non-digit, so "1_2_3asdf" is 123 and not 1. It goes through
   # sp_str_to_i_cruby. Issue #619 puzzle 1.
   
   p("1_2_3asdf".to_i)

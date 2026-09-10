@@ -1,6 +1,6 @@
-# Every string spinel hands back to Ruby carries a marker byte at [-1].
-# sp_gc_mark reads it to decide whether a rooted pointer is a literal to skip
-# or a heap object whose mark word it should write, so a runtime arm that
+# Every string the runtime hands back carries a marker byte before its data.
+# The collector reads it to tell a literal it should skip from a heap object
+# whose mark word it should write, so a runtime path that
 # returns a BARE C literal is a fault waiting for a collection: the collector
 # reads whatever rodata precedes the literal, fails to recognise a marker,
 # concludes it has a heap object and writes into read-only memory.

@@ -1,10 +1,9 @@
 # `s[i] = v` took a statically Integer index only. A boxed one reaches it
 # whenever the value came out of a container -- a destructured block parameter,
 # an element read, an untyped argument -- and the call fell through to
-# "undefined method '[]=' for an instance of String" on a program CRuby runs
-# (#4060). The conversion is the checked one, so a boxed Integer works and the
-# splice forms spinel does not support raise TypeError rather than being read
-# as a number.
+# `s[i] = v` where the index arrives in a slot of no single type. The index
+# conversion is the checked one, so an Integer in that slot works and anything
+# that is not index-like raises TypeError rather than being read as a number.
 s = +"abc"
 pairs = [[0, 1]]
 pairs.each { |r, c| s[c] = "*" }

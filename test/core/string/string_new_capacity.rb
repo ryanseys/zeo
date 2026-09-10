@@ -1,7 +1,6 @@
-# The capacity: and encoding keyword arguments to String.new are hints that do
-# not change the value -- the content is the leading positional argument. Spinel
-# previously dropped the content whenever a keyword argument was present,
-# returning "".
+# The `capacity` and `encoding` keyword arguments to String.new are hints
+# that do not change the value: the content is the leading positional
+# argument, and it survives a keyword argument beside it.
 def with_cap; String.new("x", capacity: 100); end
 p with_cap                     # "x"
 

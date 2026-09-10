@@ -2,7 +2,6 @@
 # inside string interpolation lowers through sp_sym_intern. The runtime
 # helper is gated on @needs_sym_intern, which analyze set as a memoized
 # side effect and missed for this shape -> link failure on the call.
-# Found via the spinelgems harness (nagiosplugin).
 class P
   def status(n)
     return :critical if n > 2

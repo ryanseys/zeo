@@ -33,7 +33,7 @@ class Derived < Base
   alias title name
 end
 
-d = Derived.new("spinel")
+d = Derived.new("sample")
 puts d.title
 puts d.title.upcase
 __END__
@@ -42,5 +42,5 @@ tok
 TOK
 tok!
 read
-spinel
-SPINEL
+sample
+SAMPLE

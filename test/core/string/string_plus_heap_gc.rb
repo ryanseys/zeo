@@ -1,6 +1,5 @@
-# Regression for matz/spinel#1450. A `String#+` loop allocates only on the
-# string heap (no object-heap allocation), and before the fix the string heap
-# was swept only from sp_gc_collect, which fires on OBJECT-heap pressure
+# A `String#+` loop allocates strings and nothing else. A collector that only
+# runs on object allocation never runs here, so the strings pile up
 # (sp_gc_bytes). So a string-only workload never collected and RSS grew without
 # bound. The fix drives collection off the string heap's own live-byte count.
 #
@@ -20,5 +19,5 @@ after = GC.stat["cycle"]
 puts(after > before ? "collected" : "NO COLLECTION")
 __END__
 #@ stderr
-core/string/string_plus_heap_gc.rb:20:in '<main>': undefined method '>' for nil (NoMethodError)
+core/string/string_plus_heap_gc.rb:19:in '<main>': undefined method '>' for nil (NoMethodError)
 #@ exit 1

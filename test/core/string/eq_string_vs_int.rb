@@ -1,6 +1,5 @@
-# A String and an Integer are never == in Ruby (no implicit coercion).
-# Spinel used to lock the == operand types and emit sp_str_eq(str, int)
-# (or int == char*), failing to compile.
+# A String and an Integer are never ==: there is no implicit coercion, so the
+# comparison answers false rather than refusing to compile.
 p("3" == 3)
 p(3 == "3")
 p("3" != 3)

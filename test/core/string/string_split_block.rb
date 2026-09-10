@@ -1,7 +1,6 @@
-# String#split with a block yields each substring (rather than ignoring the
-# block and returning the array). Spinel previously never ran the block. The
-# call is used in statement position, collecting via the block's side effects --
-# matching how String#scan with a block already behaves.
+# String#split with a block yields each substring rather than answering the
+# array. The call sits in statement position and the block collects, the same
+# way String#scan with a block does.
 def sp1(x); r = []; x.split(",") { |p| r << p }; r; end
 p sp1("a,b,c")                 # ["a", "b", "c"]
 

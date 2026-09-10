@@ -1,6 +1,5 @@
-# Range#include? / cover? / === on string ranges. Spinel inlines
-# strcmp bounds for literal string-range receivers rather than
-# trying to fit the receiver into the int-only sp_Range struct.
+# Range#include?, cover? and === where the endpoints are Strings rather than
+# numbers: the comparison is String ordering.
 
 puts ("a".."z").include?("m")
 puts ("a".."z").cover?("m")

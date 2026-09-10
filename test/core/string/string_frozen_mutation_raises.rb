@@ -1,8 +1,7 @@
 # frozen_string_literal: true
-# Issue #886: Mutating methods on a frozen string literal raise
-# FrozenError per MRI. spinel string literals are always frozen.
-# Mutable strings (String.new("...")) keep working via the
-# mutable_str arm.
+# Under the `frozen_string_literal: true` pragma above, a mutating method on
+# a string literal raises FrozenError. A string built with String.new is not
+# a literal, so it still mutates.
 begin
   "hello".insert(0, "X")
   puts "BUG: insert no raise"

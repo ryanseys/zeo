@@ -1,8 +1,5 @@
-# Issue #729. `"#{stmt1; stmt2; ...; stmtN}"` should evaluate every
-# statement in source order (for side effects) and use the LAST
-# statement's value in the string. spinel used to take stmts.first,
-# silently dropping later statements -- losing both their effects on
-# locals and the correct interpolation value.
+# An interpolation holding several statements runs every one of them in source
+# order, for their effects on locals, and interpolates the LAST one's value.
 
 y = 0
 s = "#{y = 10; y = 20; y}"

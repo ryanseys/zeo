@@ -1,6 +1,5 @@
-# Spinel-allocated strings encode their byte length in the heap
-# header (sp_str_hdr.len), but several runtime helpers and one
-# codegen `bytesize` emit walked the buffer via NUL-terminated
+# A Ruby string knows its own byte length, so a NUL byte in the middle is an
+# ordinary byte. Anything that measures the string by walking to a NUL
 # strlen/`while(*p)` semantics. A `0.chr` value carrying a header
 # length of 1 with byte content `\x00` reported `length=0`,
 # `bytesize=0`, and sliced wrong past any embedded NUL.

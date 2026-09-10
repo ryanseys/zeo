@@ -1,6 +1,5 @@
-# GC.stat surfaces the string heap (str_bytes / str_count). Spinel allocates
-# string data on a separate malloc'd heap (sp_str_heap) that is deliberately
-# excluded from the object-heap `bytes` figure (see sp_str_alloc), so a
+# GC.stat surfaces the string heap as str_bytes and str_count. String data
+# lives on a heap of its own, kept out of the object-heap `bytes` figure, so a
 # string-heavy workload can hold gigabytes that `bytes` never reflects.
 # Retaining 1000 strings makes str_count >= 1000 and str_bytes > 0.
 arr = []
@@ -15,5 +14,5 @@ puts "str_bytes > 0: " + (g["str_bytes"] > 0 ? "yes" : "no")
 puts "retained: " + arr.length.to_s
 __END__
 #@ stderr
-core/string/gc_stat_string_heap.rb:13:in '<main>': undefined method '>=' for nil (NoMethodError)
+core/string/gc_stat_string_heap.rb:12:in '<main>': undefined method '>=' for nil (NoMethodError)
 #@ exit 1

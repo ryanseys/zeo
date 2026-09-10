@@ -14,7 +14,7 @@ p "hello".slice(1, 2)
 p "hello".slice(1)
 
 # Through a local receiver too.
-s = "spinel"
+s = "sample"
 p s.slice(2..4)
 __END__
 "ell"
@@ -26,4 +26,4 @@ __END__
 "hello"
 "el"
 "e"
-"ine"
+"mpl"
