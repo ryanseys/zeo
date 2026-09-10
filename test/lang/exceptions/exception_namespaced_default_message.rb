@@ -1,6 +1,6 @@
-# #692: namespaced exception class default message must use Ruby's
-# `::` module separator, not the C-mangled `_` form spinel uses
-# internally.
+# A namespaced exception class's default message names the class with Ruby's
+# `::` separator, whatever spelling the compiler uses for the symbol behind
+# it.
 
 module ActiveRecord
   class RecordNotFound < StandardError

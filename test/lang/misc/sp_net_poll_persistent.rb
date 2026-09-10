@@ -1,7 +1,7 @@
 # Persistent registration: register once per connection, then read only what
 # fired. The older reset/add/run/ready contract rebuilds the set every tick, so
 # a caller with N parked fds does O(N) work per tick however few are ready;
-# these cost O(events) instead. (matz/spinel#4103)
+# these cost O(events) instead.
 #
 # fd 1 is this process's stdout: always open and always write-ready, whether it
 # is a file or a pipe with room, so the readiness assertion below holds on any

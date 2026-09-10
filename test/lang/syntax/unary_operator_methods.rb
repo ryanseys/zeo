@@ -1,6 +1,6 @@
 # Unary operator methods `def -@` / `def +@` must mangle to valid C
-# identifiers and dispatch on `-obj` / `+obj`. Found via the spinelgems
-# harness (latinum, as-duration negate via `-@`).
+# identifiers and dispatch on `-obj` and `+obj`. A money or duration class
+# negating through `-@` is the usual reason to define one.
 class Money
   attr_reader :cents
   def initialize(c)

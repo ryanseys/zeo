@@ -10,9 +10,9 @@
 
 # === array_mul_string ===
 def t_array_mul_string
-  # `Array * sep` (String arg) is equivalent to Array#join(sep) and
-  # returns a string. Previously spinel routed it through the int-repeat
-  # path which treated the string pointer as a loop count.
+  # `Array * sep` with a String argument is Array#join(sep) and answers a
+  # String. The Integer argument means repetition instead, so the two
+  # readings of `*` must not be confused.
   puts ([1, 2, 3] * ",")
   puts ([1, 2, 3] * ",").inspect
   puts ([1, 2, 3] * "")

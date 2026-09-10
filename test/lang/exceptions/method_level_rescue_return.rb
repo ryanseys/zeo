@@ -19,8 +19,8 @@ puts safe(5)
 puts safe(-1)
 
 # Typed rescue catches matching class and returns from rescue body.
-# Use explicit raise rather than Integer() since spinel's Integer()
-# doesn't raise on unparseable input — separate gap, not under test.
+# The raise is explicit, so what this checks is the rescue and not what any
+# particular conversion raises.
 def parse(s)
   raise ArgumentError, "bad" if s == "nope"
   s.to_i

@@ -4,8 +4,8 @@
 # that referenced them — including `rescue => e` bodies because
 # the parser implicitly threads `$!` through some shapes.
 puts $!.inspect       # nil outside rescue
-puts $;.inspect       # nil (split-default sep — spinel doesn't honor it)
-puts $,.inspect       # nil (Array#print sep — same)
+puts $;.inspect       # nil (the split-default separator)
+puts $,.inspect       # nil (the print separator)
 puts $/.inspect       # "\n" — the only one with a meaningful default
 __END__
 nil

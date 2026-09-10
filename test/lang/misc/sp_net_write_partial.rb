@@ -1,7 +1,7 @@
 # Non-blocking write: hand back what the socket took, leave the policy for the
-# rest to the caller. sp_net_write_str / _bytes keep writing until everything
-# is gone, so one peer that cannot keep up delays delivery to every other one,
-# and nothing at the Ruby level can see it happening. (matz/spinel#4103)
+# rest to the caller. A writer that loops until everything is gone lets one
+# peer that cannot keep up delay delivery to every other one, with nothing at
+# the Ruby level able to see it happening.
 #
 # A UNIX-domain pair gives two live fds without binding a port, so this is
 # deterministic on any POSIX target.

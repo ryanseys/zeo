@@ -1,8 +1,5 @@
-# Issue #719. `class << self; def X; ...; end; end` inside a class
-# body defines a singleton method on the enclosing class, equivalent
-# to `def self.X`. spinel used to leave the SingletonClassNode
-# unhandled in classes; only the module-side attr_accessor path
-# fired.
+# `class << self; def X; ...; end; end` inside a class body defines a
+# singleton method on the enclosing class, the same as `def self.X`.
 
 class C
   class << self

@@ -31,10 +31,9 @@ end
 sum_triple { |a, b, c| puts a + b + c }
 
 # 3. Mixed-arity yields in the same method. The smaller yields
-#    must not leak values from the larger ones. Pre-fix, the second
-#    yield's `b` would carry 999 from the first yield; post-fix it's
-#    0. Test uses `b.to_i` so the CRuby-side `nil` and Spinel-side
-#    mrb_int 0 both produce the same numeric value.
+#    must not leak values from the larger ones: the second yield's `b` must
+#    not carry 999 from the first. The program reads `b.to_i`, so a missing
+#    parameter counts as zero.
 def mixed_yield
   yield 100, 999
   yield 200
@@ -56,9 +55,8 @@ Dispatcher.new.emit { |x, y| puts x + y }
 
 # 5. Three different yield arities in one method. Max-arity detection
 #    must find 3 so the function-pointer signature has 3 slots; the
-#    smaller yields must zero-pad their unused slots. Test uses
-#    `b.to_i` / `c.to_i` so CRuby's `nil` for missing block params
-#    and Spinel's `mrb_int 0` produce the same numeric sum.
+#    a smaller yield leaves its unused parameters nil. The program reads
+#    `b.to_i` and `c.to_i`, so those count as zero in the sum.
 def varied
   yield 1, 2, 3
   yield 10, 20

@@ -1,6 +1,6 @@
-# `_1` .. `_9` (and `it`, which the parser lowers to `_1`) are names spinel
-# synthesizes rather than names the author wrote, and blocks share their
-# enclosing scope's local table -- so two such blocks in one method interned
+# `_1` .. `_9`, and `it`, are names the parser supplies rather than names the
+# author wrote. Each block gets its OWN, so two such blocks in one method
+# must not share them: a scheme that interned
 # the SAME slot and their types merged. Values stayed right, because each block
 # writes the slot before reading it; what it cost was the type.
 #

@@ -1,7 +1,5 @@
-# Issue #721. `class C; extend M; end` should expose M's instance
-# methods as class methods on C. spinel used to silently ignore the
-# extend call; `C.<m>` would fall through to the unresolved-call
-# warning + emit 0.
+# `class C; extend M; end` exposes M's instance methods as class methods on
+# C, so `C.<m>` reaches the module's body.
 
 module M
   def ext_method; "extended"; end

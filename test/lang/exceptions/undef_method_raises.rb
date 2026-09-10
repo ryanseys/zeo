@@ -1,7 +1,5 @@
-# Issue #717. `undef <m>` removes the method from the class's
-# dispatch table AND a subsequent call to it raises NoMethodError
-# (matching CRuby). spinel previously recorded the undef but the
-# slot stayed callable.
+# `undef <m>` removes the method, and a call to it afterwards raises
+# NoMethodError rather than still reaching the old body.
 
 class C
   def meth; "method"; end

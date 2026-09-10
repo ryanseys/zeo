@@ -16,10 +16,9 @@
 #
 # Scope-set-up at the widen-check site (push_scope + declare
 # params + refine_method_body_locals) is load-bearing: without
-# it, ivar / local reads in the body fall back to int default
-# and the check reports spurious mismatches for methods whose
-# body is actually homogeneous (e.g. spinel's own helpers like
-# `parse_id_list` returning `@parse_id_pool[k]`).
+# it, an ivar or local read in the body falls back to a default type and the
+# check reports a mismatch for a method whose body is really of one type --
+# a reader like `def get(k) = @pool[k]`, say.
 
 def f(value)
   return value if value < 0

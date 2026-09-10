@@ -1,7 +1,5 @@
-# Issue #742 (partial -- values_at). `arr.values_at(i, j, ...)`
-# picks elements at the given indices and returns a fresh array of
-# the same element type. spinel used to fall through to the
-# unresolved-call warning for every array variant.
+# `arr.values_at(i, j, ...)` picks the elements at those indices and answers
+# a fresh array, whatever the element type of the receiver.
 
 # sym_array
 puts [:a, :b, :c].values_at(0, 2).inspect

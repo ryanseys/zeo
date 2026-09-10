@@ -1,6 +1,5 @@
-# Issue #703: !0 / !:foo are false in Ruby (only nil/false are
-# falsy). spinel previously used C's `!` directly, treating 0
-# as falsy.
+# `!0` and `!:foo` are false: only nil and false are falsy, so zero and a
+# symbol are both truthy.
 puts !!0
 puts !!:foo
 puts !!""

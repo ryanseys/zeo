@@ -22,11 +22,8 @@ puts $counter   # 3
 # Mirror of LocalVariableOrWriteNode. Only assigns if the global
 # is currently falsy.
 #
-# Note: Spinel uses C-truthy semantics (any zero is falsy), which
-# diverges from CRuby (only nil/false are falsy). For unassigned
-# globals (default 0/nil) the two agree on the first assignment;
-# subsequent ||= against truthy non-zero ints also agree. This
-# test exercises only the agreement region.
+# Only nil and false are falsy, so an unassigned global fires and a global
+# already holding a number does not.
 $or_count ||= 5    # never assigned, fires
 puts $or_count     # 5
 $or_count ||= 99   # already 5 (truthy in both), doesn't fire

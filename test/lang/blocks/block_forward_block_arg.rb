@@ -1,8 +1,8 @@
 # `&proc_var` argument forwarding (`def m(&b); g(&b); end`).
 #
-# Pre-fix Spinel never parsed `&expr` in call argument position
-# (`g(&block)`) — Prism's `PM_BLOCK_ARGUMENT_NODE` had no case in
-# `flatten()`, so the codegen saw the call as taking no block at all
+# The block reaches `g` through the `&b` argument, so `g` runs it. A caller
+# that dropped `&expr` in argument position would see the call as taking no
+# block at all
 # and the captured `&block` was silently dropped at every forwarding
 # call site.
 #

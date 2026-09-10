@@ -29,10 +29,9 @@ def t_io_call_in_proc_body
   #    invoke `sp_proc_call`. Without this, `p.call` inside the
   #    block fell through to warn_unresolved_call on a poly recv.
   #
-  # Symbol#to_proc (`&:call`) — the more idiomatic Ruby form for this
-  # iteration — is still TODO in spinel (`find_block_arg` returns -1
-  # for the SymbolNode shape). The explicit-block form `{ |p| p.call }`
-  # is the closest equivalent that works today; the &:sym lowering is
+  # The explicit block `{ |p| p.call }` is written out rather than the
+  # `&:call` shorthand, so what this iterates over is the block form. The
+  # Symbol#to_proc lowering is
   # a separate concern.
   
   [

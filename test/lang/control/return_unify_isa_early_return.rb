@@ -5,11 +5,9 @@
 # to return mrb_int from a pointer-typed function -- fatal under
 # -Werror.
 #
-# The function-signature side surfaces the same widen-to-poly fix
-# as #581 (post-fixpoint widen pass). The fix here also closes a
-# latent bug in the @unified_imeth_returns marker (spinel's
-# Array#index returns -1 for not-found, not nil, so the
-# `.index == nil` check at the producer site never added entries
+# The method's declared answer has to cover both arms, the early return and
+# the fall-through alike. A related trap: `Array#index` answers nil for a
+# miss and not -1, so an `.index == nil` check never matches where
 # and the marker stayed empty). Switching to `.include?` lets the
 # imeth-family marker get populated, which the widen pass then
 # honors -- so the #563 self-operator dispatch family stays intact

@@ -3,7 +3,7 @@ r001 = (begin; ({a: 1}).nope; rescue NoMethodError => e001; e001.receiver; end);
 p(begin; ({}).nope; rescue NoMethodError => e; e.receiver; end)
 # Ruby: {}
 p(begin; ({"x" => 1}).nope; rescue NoMethodError => e; e.receiver; end)
-# Ruby: {"x" => 1}   Spinel: nil
+# Ruby: {"x" => 1}
 p(begin; ({a: 1}).nope; rescue NoMethodError => e; e.receiver.class; end)
 # Ruby: Hash
 

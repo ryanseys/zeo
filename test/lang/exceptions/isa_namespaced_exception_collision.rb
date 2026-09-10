@@ -10,7 +10,7 @@
 #
 # `rescue` and #ancestors were right throughout, which is what made it quiet:
 # only is_a?/kind_of?/instance_of? saw it. Found under net/http, where
-# Timeout::Error sits beside URI::Error. (matz/spinel#4133)
+# Timeout::Error sits beside URI::Error.
 module A
   class Error < StandardError; end
   class Sub < Error; end

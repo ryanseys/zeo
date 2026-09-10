@@ -1,10 +1,9 @@
 # Inline-at-call-site arity-0 instance-eval trampoline.
 #
-# Full Ruby instance-eval is dynamic — `self` is rebound at runtime,
-# so AOT compilation needs static type information to resolve method
-# dispatch inside the block. Spinel's compromise: detect the exact
-# DSL trampoline shape `def m(&b); instance_eval(&b); end` at compile
-# time, and inline the block body at the call site with `self`
+# instance_eval rebinds `self` for the length of the block, so a bare call
+# inside it reaches the receiver's methods. The shape here is the DSL
+# trampoline `def m(&b); instance_eval(&b); end`, where the block reaches the
+# method's receiver through `self`
 # rebound to the receiver. Receiverless calls inside the spliced
 # body dispatch to the receiver's class via static type inference
 # (the new `@instance_eval_self_var` / `@instance_eval_self_type`).

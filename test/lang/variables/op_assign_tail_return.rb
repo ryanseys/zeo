@@ -1,5 +1,5 @@
 # An operator-assignment (x += 1, @x += 1) in method tail position returns the
-# updated value, like the class-variable form already did. (matz/spinel#1484)
+# updated value, the same way the class-variable form does.
 class CounterLocal
   def inc(v); v += 1; end
   def dec(v); v -= 2; end

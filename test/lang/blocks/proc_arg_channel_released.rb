@@ -19,9 +19,9 @@
 # version of THAT test fails on ruby. A slot count is the portable spelling of
 # the same property -- a dropped structure stops being live.
 #
-# Spinel's original read `GC.stat["bytes"]`. CRuby's `GC.stat` is keyed by
-# SYMBOL and has no "bytes" statistic, so a String subscript is nil there and
-# the comparison raises `NoMethodError` on ruby too.
+# `GC.stat` is keyed by SYMBOL and has no "bytes" statistic, so a String
+# subscript answers nil and comparing it raises NoMethodError. The keys here
+# are symbols for that reason.
 def build(len)
   n = len.to_i
   a = []

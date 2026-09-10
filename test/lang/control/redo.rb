@@ -1,8 +1,7 @@
 # RedoNode coverage — `redo` re-runs the current iteration of the
 # enclosing loop without re-evaluating the guard or advancing the
-# iterator. Spinel emits a labeled goto back to the iteration top.
-# Each loop form needs the wrapping helper trio (push_redo_label /
-# emit_redo_label / pop_redo_label) so this file exercises every
+# iterator. Every loop form has to support it, which is why this file
+# exercises every
 # form that has it.
 #
 # Per-section `def t_<form>; ...; end; t_<form>` isolates the

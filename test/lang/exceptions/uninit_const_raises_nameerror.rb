@@ -7,9 +7,8 @@ rescue NameError
   puts "uninit raised"
 end
 
-# Self-referential init `X = X + 1` reads X before X is bound;
-# CRuby raises NameError. Spinel previously evaluated X as 0
-# and assigned 1.
+# A self-referential initialiser `X = X + 1` reads X before X is bound, so it
+# raises NameError rather than reading X as zero and assigning 1.
 begin
   X = X + 1
   puts X

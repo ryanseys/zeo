@@ -18,10 +18,9 @@
 # - Empty/missing else (implicit nil → 0)
 #
 # Out of scope:
-# - Poly type-unification of mixed concrete branches (int/string).
-#   Spinel's inference picks one concrete type as the unified type
-#   rather than `poly`, so `tmp = 1LL;` is emitted against a
-#   `const char *` slot. The bug isn't in this PR's multi-stmt
+# - Branches whose values are of different concrete types (an Integer arm
+#   beside a String arm). What such an `if` answers is a separate question
+#   from the multi-statement
 #   restructuring — the ternary fast path has the same inference
 #   issue. Separate fix.
 
