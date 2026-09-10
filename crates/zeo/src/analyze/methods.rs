@@ -2,6 +2,7 @@
 //! shapes, module/mixin targets, superclass + const-alias resolution.
 
 use super::*;
+use crate::diagnostics::analyze::AnalyzeError;
 
 /// The next [`crate::compiler::SiteDef::seq`]. The walk visits bodies in the
 /// order they run, so a plain counter IS execution order.
@@ -141,7 +142,7 @@ pub(super) fn register_body_def_method(
     class_id: ClassId,
     stmt: NodeId,
     conditional: Conditional,
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     let HirNode::DefMethod {
         name,
         params,
@@ -244,7 +245,7 @@ pub(super) fn register_conditional_defs(
     compiler: &mut Compiler,
     class_id: ClassId,
     subtree: &[(NodeId, Reach)],
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     for &(s, reach) in subtree {
         if reach.through_block || !matches!(compiler.hir[s], HirNode::DefMethod { .. }) {
             continue;
@@ -926,7 +927,7 @@ pub(super) fn register_method(
     params: Params,
     body: Vec<NodeId>,
     visibility: Visibility,
-) -> Result<crate::compiler::ScopeId, String> {
+) -> Result<crate::compiler::ScopeId, AnalyzeError> {
     // Deferred to `mro::reinfer_local_types`, which recomputes every scope
     // against the finished class tables anyway and is the first thing to read
     // the map -- inferring here too would only be thrown away.

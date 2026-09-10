@@ -63,6 +63,18 @@ impl From<&str> for AnalyzeError {
     }
 }
 
+/// A lowering that runs INSIDE the analyze pass -- the runtime spelling of a
+/// `undef`, say -- reports through this pass's error. The span comes with it,
+/// which is more precise than the statement the walk would stamp.
+impl From<crate::diagnostics::lower::LowerError> for AnalyzeError {
+    fn from(e: crate::diagnostics::lower::LowerError) -> AnalyzeError {
+        AnalyzeError {
+            message: e.message,
+            span: e.span,
+        }
+    }
+}
+
 /// The pass still reports a plain message to anything reading its text -- the
 /// in-process harnesses assert on exact strings, and the ledger records them.
 impl From<AnalyzeError> for String {

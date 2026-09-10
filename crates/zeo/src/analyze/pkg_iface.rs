@@ -15,6 +15,7 @@
 //! untranslated.
 
 use crate::compiler::{ClassId, Compiler, Scope};
+use crate::diagnostics::analyze::AnalyzeError;
 use crate::hir::Visibility;
 
 /// A HOST static definition on a BUILTIN method that a merged package also
@@ -24,7 +25,7 @@ use crate::hir::Visibility;
 /// instead of installing in document order, so the shape refuses -- naming
 /// the PACKAGE, which is what lets the drop-to-splice tier retry that gem
 /// from source.
-pub(super) fn refuse_host_spine_redefinitions(compiler: &Compiler) -> Result<(), String> {
+pub(super) fn refuse_host_spine_redefinitions(compiler: &Compiler) -> Result<(), AnalyzeError> {
     if compiler.hir.pkg_merge.is_empty() {
         return Ok(());
     }
@@ -55,7 +56,8 @@ pub(super) fn refuse_host_spine_redefinitions(compiler: &Compiler) -> Result<(),
              instead)",
             compiler.class(*class).name,
             feature_of(class.0, name, *class_side)
-        ));
+        )
+        .into());
     }
     // A HOST `using` of a merged package's module: the refinements live in
     // the package's compiled bodies, not in its interface, so the host's
@@ -70,13 +72,14 @@ pub(super) fn refuse_host_spine_redefinitions(compiler: &Compiler) -> Result<(),
                  instead)",
                 compiler.class(a.module).name,
                 compiler.hir.pkg_merge[pi as usize].feature
-            ));
+            )
+            .into());
         }
     }
     Ok(())
 }
 
-pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(), String> {
+pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(), AnalyzeError> {
     if compiler.hir.pkg_merge.is_empty() {
         return Ok(());
     }
@@ -87,7 +90,8 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                 "package '{}' was built against a different bootstrap band \
                  (its first class id is {}, this zeo's is {}); rebuild the package",
                 m.feature, m.first_class_id, compiler.first_program_class_id
-            ));
+            )
+            .into());
         }
         // Pass 1: mint every interface class, so references between them
         // resolve in any order. A name another PACKAGE already claimed is
@@ -105,7 +109,8 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                 return Err(format!(
                     "package '{}': interface class {} has no class row",
                     m.feature, ic.id
-                ));
+                )
+                .into());
             };
             // By QUALIFIED name: an earlier package's nested class carries a
             // leaf name plus a lexical parent (pass 1b), so the raw `name`
@@ -127,7 +132,8 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                          has (a builtin); a package reopen of a builtin is \
                          not supported yet",
                         m.feature, mc.name
-                    ));
+                    )
+                    .into());
                 }
                 if taken.is_module != ic.is_module {
                     let kind = |m: bool| if m { "module" } else { "class" };
@@ -138,7 +144,8 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                         mc.name,
                         kind(ic.is_module),
                         kind(taken.is_module)
-                    ));
+                    )
+                    .into());
                 }
                 // The ivar LAYOUT is ABI: each package's bodies compiled
                 // slot indices from its own list, so the lists must agree
@@ -160,7 +167,8 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                          variable layout than another merged package compiled \
                          against; compile one of them from source",
                         m.feature, mc.name
-                    ));
+                    )
+                    .into());
                 }
                 compiler
                     .pkg_class_map
@@ -218,7 +226,7 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
             ci.lexical_parent = Some(parent);
         }
         // Pass 2: wire parents, mixins and extends through the id map.
-        let map = |compiler: &Compiler, id: u32| -> Result<ClassId, String> {
+        let map = |compiler: &Compiler, id: u32| -> Result<ClassId, AnalyzeError> {
             if id < m.first_class_id {
                 return Ok(ClassId(id));
             }
@@ -233,6 +241,7 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                          parent or mixin)",
                         m.feature, id
                     )
+                    .into()
                 })
         };
         for ic in &m.iface {
@@ -288,7 +297,8 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                          ancestry (superclass or mixins) than another merged \
                          package; compile one of them from source",
                         m.feature
-                    ));
+                    )
+                    .into());
                 }
             }
             let ci = &mut compiler.classes[cid.0 as usize];

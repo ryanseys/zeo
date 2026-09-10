@@ -2,6 +2,7 @@
 //! definition targets, compatibility checks, and the mixin deferrals.
 
 use super::*;
+use crate::diagnostics::analyze::AnalyzeError;
 
 /// Resolve a compact-path CONTAINER (`Gem::Security` in `Gem::Security::Policy`)
 /// or, when it is defined ELSEWHERE in the program (present in
@@ -162,7 +163,7 @@ pub(super) struct ClassRegistration<'a> {
 pub(super) fn register_class(
     compiler: &mut Compiler,
     reg: &ClassRegistration<'_>,
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     tracing::trace!(
         class = reg.name,
         superclass = reg.superclass,
@@ -203,7 +204,7 @@ struct DefinitionTarget {
 fn resolve_definition_target(
     compiler: &mut Compiler,
     reg: &ClassRegistration<'_>,
-) -> Result<Option<DefinitionTarget>, String> {
+) -> Result<Option<DefinitionTarget>, AnalyzeError> {
     let &ClassRegistration {
         name,
         superclass,
@@ -248,9 +249,7 @@ fn resolve_definition_target(
         // silently missing the class; the refusal drops the gem to its
         // source splice, where the whole-program answer is right.
         if compiler.hir.pkg_build.is_some() {
-            return Err(format!(
-                "unknown superclass `{s}` (defined outside this package)"
-            ));
+            return Err(format!("unknown superclass `{s}` (defined outside this package)").into());
         }
         // Loud at `--log-level debug`, because this DISCARDS a whole
         // definition -- body, nested classes and all -- and the program
@@ -294,7 +293,8 @@ fn resolve_definition_target(
                     return Err(format!(
                         "unknown class/module `{prefix}` in `{name}` (defined outside this \
                          package)"
-                    ));
+                    )
+                    .into());
                 }
                 defer_unresolved_directive(compiler, def_node, prefix);
                 return Ok(None);
@@ -404,7 +404,7 @@ fn check_builtin_superclass_restatement(
     superclass: &Option<String>,
     target: &DefinitionTarget,
     def_node: Option<NodeId>,
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     if let Some(cid) = target.existing.or(target.overlay_root) {
         let ci = compiler.class(cid);
         // NOTE: the implicit `Object` root (id 0) is NOT `is_builtin` (it
@@ -438,7 +438,7 @@ fn check_builtin_superclass_restatement(
                     if !zeo_abi::is_namespace_placeholder(cid)
                         || compiler.class(cid).explicit_superclass
                     {
-                        return Err(superclass_mismatch(compiler, def_node, name));
+                        return Err(superclass_mismatch(compiler, def_node, name).into());
                     }
                     compiler.classes[cid.0 as usize].parent = Some(want);
                 }
@@ -461,7 +461,7 @@ fn check_reopen_compatibility(
     cid: ClassId,
     reg: &ClassRegistration<'_>,
     target: &DefinitionTarget,
-) -> Result<ClassId, String> {
+) -> Result<ClassId, AnalyzeError> {
     let &ClassRegistration {
         name,
         superclass,
@@ -485,7 +485,7 @@ fn check_reopen_compatibility(
         // The COMPILE error keeps the first line only: the
         // diagnostic already points a span at the definition that
         // conflicts, and the second line is a runtime message.
-        return Err(format!("{leaf} is not a {kind}"));
+        return Err(format!("{leaf} is not a {kind}").into());
     }
     // A user `module OpenSSL; ...; end` reopening a feature-gated
     // builtin slot MATERIALIZES the constant: clear the gate so the
@@ -532,7 +532,7 @@ fn check_reopen_compatibility(
             // `require "bundler"`.
             let bare_conflict = compiler.class(cid).bare_definition && !compiler.unit_walk;
             if compiler.class(cid).explicit_superclass || bare_conflict {
-                return Err(superclass_mismatch(compiler, def_node, name));
+                return Err(superclass_mismatch(compiler, def_node, name).into());
             }
             // ... and establishing one that already descends from THIS
             // class would close a loop: `class A; class B < A; class A <
@@ -543,7 +543,7 @@ fn check_reopen_compatibility(
             // the walk that noticed was `require "active_record"` dying
             // after twelve minutes.
             if compiler.superclass_chain_contains(want, cid) {
-                return Err(superclass_mismatch(compiler, def_node, name));
+                return Err(superclass_mismatch(compiler, def_node, name).into());
             }
             compiler.classes[cid.0 as usize].parent = Some(want);
         }
@@ -576,7 +576,7 @@ fn create_class(
     compiler: &mut Compiler,
     reg: &ClassRegistration<'_>,
     target: DefinitionTarget,
-) -> Result<ClassId, String> {
+) -> Result<ClassId, AnalyzeError> {
     let &ClassRegistration {
         superclass,
         is_module,
@@ -615,7 +615,7 @@ fn create_class(
                         "superclass must be an instance of Class (given an instance of Module)"
                             .to_string();
                     ruby_raises(compiler, def_node, "TypeError", &msg);
-                    return Err(msg);
+                    return Err(msg.into());
                 }
                 // The one class CRuby itself refuses: a `Class` subclass
                 // would need an allocator for class objects, and there is
@@ -623,7 +623,7 @@ fn create_class(
                 if cid == crate::compiler::CLASS_CLASS {
                     let msg = "can't make subclass of Class".to_string();
                     ruby_raises(compiler, def_node, "TypeError", &msg);
-                    return Err(msg);
+                    return Err(msg.into());
                 }
                 cid
             }
@@ -673,7 +673,7 @@ fn walk_class_body(
     compiler: &mut Compiler,
     class_id: ClassId,
     reg: &ClassRegistration<'_>,
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     let &ClassRegistration {
         body,
         box_id,
@@ -1250,7 +1250,8 @@ fn walk_class_body(
                                 "`prepend {m}` inside `class << self` isn't supported when {m} \
                                  defines `prepended`/`prepend_features` (zeo limitation: the hook \
                                  takes the singleton class, which zeo cannot name)"
-                            ));
+                            )
+                            .into());
                         }
                         compiler.classes[class_id.0 as usize]
                             .class_method_prepends
@@ -1452,7 +1453,7 @@ fn defer_guarded_mixin(
     conditional: Conditional,
     cref: &[ClassId],
     box_id: u32,
-) -> Result<bool, String> {
+) -> Result<bool, AnalyzeError> {
     // The site owns its class (`ClassBodySite::class`), so the caller does
     // not restate the id.
     let class_id = compiler.class_body_sites[site_idx].class;

@@ -4,6 +4,7 @@
 //! `static_guards.rs`.
 
 use super::*;
+use crate::diagnostics::analyze::AnalyzeError;
 
 /// One top-level statement of the program walk: intercepts the
 /// definition-shaped nodes (`ClassDef`/`DefMethod`/`Include`/...) for
@@ -629,7 +630,7 @@ pub(super) fn superclass_mismatch(
 pub(super) fn register_class_or_raise(
     compiler: &mut Compiler,
     reg: &ClassRegistration<'_>,
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     let registered = register_class(compiler, reg);
     if let Err(e) = &registered {
         // Loud at `--log-level debug`: either branch below REPLACES a whole
@@ -688,7 +689,7 @@ pub(super) fn register_nested_class_defs(
     stmt: NodeId,
     cref: &[ClassId],
     box_id: u32,
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     register_nested_class_defs_as(compiler, stmt, cref, box_id, Conditional::No)
 }
 
@@ -702,7 +703,7 @@ pub(super) fn register_nested_class_defs_as(
     cref: &[ClassId],
     box_id: u32,
     conditional: Conditional,
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     register_nested_class_defs_in(
         compiler,
         &nested_stmts(&compiler.hir, stmt),
@@ -720,7 +721,7 @@ pub(super) fn register_nested_class_defs_in(
     cref: &[ClassId],
     box_id: u32,
     conditional: Conditional,
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     for &(s, reach) in nested {
         let HirNode::ClassDef {
             name,
@@ -1448,7 +1449,7 @@ const EXCEPTION_TAIL: &[(&str, Option<&str>, bool, Option<&str>)] = &[
 fn register_exception_tail_row(
     compiler: &mut Compiler,
     &(name, superclass, is_module, mixin): &(&str, Option<&str>, bool, Option<&str>),
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     let superclass = superclass.map(str::to_string);
     register_class(
         compiler,
@@ -1470,9 +1471,7 @@ fn register_exception_tail_row(
         compiler.resolve_class(name, &[], 0),
         compiler.resolve_class(marker, &[], 0),
     ) else {
-        return Err(format!(
-            "{name} or {marker} went missing right after registration"
-        ));
+        return Err(format!("{name} or {marker} went missing right after registration").into());
     };
     compiler.classes[cls.0 as usize]
         .mixin_order
@@ -1495,7 +1494,7 @@ fn register_exception_tail_row(
 ///    has its `BoxHandle`'s ClassId, WITHOUT stealing the exception ids. Boxes
 ///    thus start after `Math::DomainError`; their ids are looked up, never baked,
 ///    so the shift is invisible.
-pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
+pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), AnalyzeError> {
     let before = compiler.classes.len();
     // The `Errno` block registers between the pinned exception rows and the
     // `IO::Wait*` rows: split the table at its first marker-module row. The
@@ -1550,7 +1549,7 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
         .collect::<Vec<_>>()
     {
         let Some(target) = compiler.resolve_class(target, &[], 0) else {
-            return Err(format!("{target} went missing right after registration"));
+            return Err(format!("{target} went missing right after registration").into());
         };
         register_class(
             compiler,
@@ -1570,7 +1569,7 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
             crate::constpath::ConstPath::parse(alias).base(),
             0,
         ) else {
-            return Err(format!("{alias} went missing right after registration"));
+            return Err(format!("{alias} went missing right after registration").into());
         };
         compiler.classes[cls.0 as usize].builtin_overlay = Some(target);
     }

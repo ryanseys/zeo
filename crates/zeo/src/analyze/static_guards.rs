@@ -9,6 +9,7 @@
 //! `Compiler` exists.
 
 use super::*;
+use crate::diagnostics::analyze::AnalyzeError;
 
 /// If `stmt` is a `begin/rescue` whose body provably cannot raise -- the
 /// `require` a `begin; require "x"; rescue LoadError` guard lowers to when the
@@ -367,7 +368,7 @@ fn covering_span(compiler: &Compiler, body: &[NodeId]) -> crate::hir::Span {
 pub(super) fn register_guarded_top_defs(
     compiler: &mut Compiler,
     stmt: NodeId,
-) -> Result<bool, String> {
+) -> Result<bool, AnalyzeError> {
     fn qualifies(compiler: &Compiler, body: &[NodeId]) -> bool {
         body.iter().all(|&s| match &compiler.hir[s] {
             HirNode::DefMethod { .. } | HirNode::ClassDef { .. } => true,
@@ -379,7 +380,10 @@ pub(super) fn register_guarded_top_defs(
             _ => !branch_has_top_defs(compiler, std::slice::from_ref(&s)),
         })
     }
-    fn rewrite_body(compiler: &mut Compiler, body: Vec<NodeId>) -> Result<Vec<NodeId>, String> {
+    fn rewrite_body(
+        compiler: &mut Compiler,
+        body: Vec<NodeId>,
+    ) -> Result<Vec<NodeId>, AnalyzeError> {
         body.into_iter()
             .map(|s| match &compiler.hir[s] {
                 HirNode::DefMethod {
@@ -470,7 +474,7 @@ pub(super) fn register_guarded_top_defs(
             })
             .collect()
     }
-    fn rewrite_if(compiler: &mut Compiler, stmt: NodeId) -> Result<(), String> {
+    fn rewrite_if(compiler: &mut Compiler, stmt: NodeId) -> Result<(), AnalyzeError> {
         let HirNode::If {
             cond,
             then_body,

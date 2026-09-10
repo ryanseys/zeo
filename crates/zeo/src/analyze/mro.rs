@@ -118,8 +118,11 @@ fn mix_into(chain: &mut Vec<ClassId>, origin: &mut usize, sub: &[ClassId], is_pr
 /// and this is called four times per class. Taking it eagerly made a successful
 /// compile pay O(classes x definition sites) to build a diagnostic it then threw
 /// away -- at Rails scale, both terms in the ten-thousands.
-fn at_class<T>(r: Result<T, String>, at: impl FnOnce() -> Option<Span>) -> Result<T, AnalyzeError> {
-    r.map_err(|e| AnalyzeError::from(e).with_span_if_missing(at()))
+fn at_class<T>(
+    r: Result<T, AnalyzeError>,
+    at: impl FnOnce() -> Option<Span>,
+) -> Result<T, AnalyzeError> {
+    r.map_err(|e| e.with_span_if_missing(at()))
 }
 
 /// Computes `ancestors` for every registered class/module, then
@@ -410,7 +413,7 @@ fn reinfer_local_types(compiler: &mut Compiler) {
 /// behavior for an alias that names a method only defined later (ruby raises
 /// NameError there at class-body time; zeo's story for that shape is
 /// unchanged by this filter).
-fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
+fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), AnalyzeError> {
     let pending = std::mem::take(&mut compiler.classes[class_id.0 as usize].pending_aliases);
     for (new_name, old_name, is_class_method, alias_seq, alias_stream) in pending {
         let ancestors = compiler.class(class_id).ancestors.clone();
@@ -556,7 +559,10 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
 /// the inherited original, whose visibility belongs to the module that defined
 /// it. A name that resolves nowhere is left alone -- a `module_function` naming
 /// a builtin has no body to clone.
-fn resolve_module_functions(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
+fn resolve_module_functions(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+) -> Result<(), AnalyzeError> {
     let pending =
         std::mem::take(&mut compiler.classes[class_id.0 as usize].pending_module_functions);
     for name in pending {
@@ -630,7 +636,7 @@ fn materialize_methods(
     own_ivars: &[Vec<String>],
     scope_name_ids: &[NameId],
     vis_override_ids: &[Vec<(NameId, Visibility)>],
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     let mut seen: FSet<crate::compiler::NameId> = FSet::default();
     let mut materialized: Vec<MethodEntry> = Vec::new();
     // Every `private :inherited_method` seen so far in the walk. Ancestors run
@@ -920,7 +926,7 @@ fn materialize_class_methods(
     compiler: &mut Compiler,
     class_id: ClassId,
     scope_name_ids: &[NameId],
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     // `undef_method :m` inside this class's `class << self`: the name is not
     // materialized onto it from any position, so it raises NoMethodError here
     // while staying live on the ancestor that defined it. `seen` still claims
@@ -1056,7 +1062,7 @@ fn materialize_class_methods(
 fn resolve_cvars_and_consts(
     compiler: &mut Compiler,
     main_statements: &[NodeId],
-) -> Result<(), String> {
+) -> Result<(), AnalyzeError> {
     let mut top_consts = NameList::default();
     let mut top_cvars = NameList::default();
     for &n in main_statements {
