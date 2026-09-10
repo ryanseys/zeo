@@ -200,3 +200,83 @@ fn nothing_but_the_attribution_names_the_predecessor() {
         bad.join("\n  ")
     );
 }
+
+/// The crates whose `unsafe` blocks are not all documented yet, with the
+/// count each carries today. `clippy::undocumented_unsafe_blocks` is warn
+/// across the workspace and each of these two holds a crate-level `expect`
+/// that fails the build the day it reaches zero. This walks the same files
+/// with a text scan, so the number can only go DOWN.
+///
+/// The scan is a proxy for the lint, not a copy of it: it counts
+/// `unsafe {` blocks and calls one documented when a `SAFETY:` line sits
+/// above it, past any blanks, comments and attributes. Close enough to
+/// ratchet, and it costs nothing to ask on every run.
+const UNDOCUMENTED_UNSAFE_LIMITS: &[(&str, usize)] =
+    &[("crates/zeo-rt", 1017), ("crates/zeo-capi", 1050)];
+
+fn undocumented_unsafe_blocks(crate_dir: &Path) -> usize {
+    let mut count = 0;
+    let mut stack = vec![crate_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|n| n == "target") {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                let lines: Vec<&str> = text.lines().collect();
+                for (n, line) in lines.iter().enumerate() {
+                    let blocks = line
+                        .match_indices("unsafe")
+                        .filter(|(i, _)| line[i + "unsafe".len()..].trim_start().starts_with('{'));
+                    for _ in blocks {
+                        if !documented_above(&lines, n) {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    count
+}
+
+/// Walk back from `n` over the lines that may sit between a block and its
+/// comment -- blanks, other comments, attributes -- and answer whether one
+/// of them says `SAFETY:`.
+fn documented_above(lines: &[&str], n: usize) -> bool {
+    if lines[n].contains("SAFETY:") {
+        return true;
+    }
+    for line in lines[..n].iter().rev() {
+        let t = line.trim_start();
+        if t.contains("SAFETY:") {
+            return true;
+        }
+        if !(t.is_empty() || t.starts_with("//") || t.starts_with('#') || t.starts_with(')')) {
+            return false;
+        }
+    }
+    false
+}
+
+#[test]
+fn the_undocumented_unsafe_count_only_goes_down() {
+    let root = repo_root();
+    let mut over = Vec::new();
+    for (crate_dir, limit) in UNDOCUMENTED_UNSAFE_LIMITS {
+        let count = undocumented_unsafe_blocks(&root.join(crate_dir));
+        if count > *limit {
+            over.push(format!("{crate_dir}: {count} (limit {limit})"));
+        }
+    }
+    assert!(
+        over.is_empty(),
+        "undocumented `unsafe` blocks grew -- every new one states why it is \
+         sound, and the limit here comes down with it:\n  {}",
+        over.join("\n  ")
+    );
+}

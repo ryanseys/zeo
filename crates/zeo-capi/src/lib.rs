@@ -18,6 +18,11 @@
 //! [`zeo_rt::capi_hooks`], and [`HOOKS`] is the one element this crate
 //! contributes to that slice.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "the SAFETY audit is in progress; checks::hygiene::the_undocumented_unsafe_count_only_goes_down ratchets the count, and this attribute fails the build once the crate reaches zero"
+)]
+
 pub mod alloc;
 pub mod api;
 pub mod builtins;

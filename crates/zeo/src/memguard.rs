@@ -95,6 +95,7 @@ pub fn set_phase(phase: Phase) {
 /// is for ENFORCEMENT, which needs a current reading; this is for
 /// MEASUREMENT, which needs an exact one.
 pub fn peak_bytes() -> Option<u64> {
+    // SAFETY: `rusage` is a plain C struct, so all-zero is a valid value.
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
     // SAFETY: `getrusage` fills the `rusage` it is handed and reads nothing.
     if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
@@ -179,6 +180,7 @@ fn mib(bytes: u64) -> String {
 /// This process's resident size, or `None` on a platform with no reader.
 #[cfg(target_os = "macos")]
 fn resident_bytes() -> Option<u64> {
+    // SAFETY: `proc_taskinfo` is a plain C struct, so all-zero is a valid value.
     let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
     let want = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
     // SAFETY: `proc_pidinfo` writes at most `want` bytes into `info`, which is

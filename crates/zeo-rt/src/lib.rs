@@ -1,5 +1,10 @@
 //! zeo-rt: the runtime library every zeo-generated program links against.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "the SAFETY audit is in progress; checks::hygiene::the_undocumented_unsafe_count_only_goes_down ratchets the count, and this attribute fails the build once the crate reaches zero"
+)]
+
 /// Internal maps (interner, dispatch registry, globals/constants): foldhash
 /// instead of SipHash -- process-internal keys need speed, not DoS
 /// resistance. Ruby-visible `Object#hash` keeps `DefaultHasher`.

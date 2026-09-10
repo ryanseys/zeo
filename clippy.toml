@@ -2,3 +2,8 @@
 # API does not fire locally when CI's msrv job would reject the suggestion.
 # Kept equal to `rust-version` in the workspace Cargo.toml.
 msrv = "1.94"
+
+# A `// SAFETY:` line above `let x = unsafe { .. }`, or above the
+# attributes of an unsafe item, counts as that block's comment.
+accept-comment-above-statement = true
+accept-comment-above-attributes = true

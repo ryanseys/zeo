@@ -63,8 +63,13 @@ pub fn run(
     let argv: Vec<*const c_char> = argv_owned.iter().map(|s| s.as_ptr()).collect();
     let argc = i32::try_from(argv.len()).expect("argc fits i32");
 
+    // SAFETY: `jitted.main` is the finalized address of the emitted `main`,
+    // which the emitter gives exactly this signature, in JIT memory `jitted`
+    // keeps alive across the call.
     let main: unsafe extern "C" fn(i32, *const *const c_char) -> i32 =
         unsafe { std::mem::transmute(jitted.main) };
+    // SAFETY: `argv` holds `argc` pointers to the NUL-terminated strings
+    // `argv_owned` owns, and both outlive the call.
     let status = unsafe { main(argc, argv.as_ptr()) };
 
     // The emitted `main` returned; the module (and the code it owns) is

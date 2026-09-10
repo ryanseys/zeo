@@ -170,6 +170,9 @@ unused = "warn"
 
 [workspace.lints.clippy]
 all = "warn"
+# Every `unsafe` block states why it is sound. The audit runs behind a
+# per-crate ratchet (`checks::hygiene`), so the count can only go down.
+undocumented_unsafe_blocks = "warn"
 
 # `line-tables-only` everywhere, not just for dependencies:
 # `[profile.dev.package."*"]` covers DEPENDENCIES only, and the workspace's

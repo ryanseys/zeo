@@ -422,6 +422,8 @@ fn build(inputs: &BuildInputs) -> Result<Compiled, Refusal> {
         // emitter declared `extern "C" fn()`, in JIT memory the compiled
         // program keeps alive for as long as it is registered.
         let init: unsafe extern "C" fn() = unsafe { std::mem::transmute(init) };
+        // SAFETY: the unit initializer takes no arguments and the program
+        // that owns its code is registered for the whole call.
         unsafe { init() };
     }
     let entry = program.entry as usize;
@@ -573,8 +575,11 @@ fn run(req: &EvalRequest<'_>, c: &Compiled) -> Result<RubyValue, Signal> {
     // function, emitted with exactly `EvalFn`'s signature, in JIT memory
     // that lives as long as the `Compiled` that holds it.
     let f: EvalFn = unsafe { std::mem::transmute(c.entry) };
+    // SAFETY: `f` is that entry, and `cells` holds one live cell handle per
+    // captured local, as `call` requires.
     let answer = unsafe { zeo_rt::eval::call(req, f, &cells) };
     for cell in cells {
+        // SAFETY: each handle was claimed above and is released once.
         unsafe { zeo_rt::capi::procs::zeo_rt_cell_release(cell) };
     }
     answer

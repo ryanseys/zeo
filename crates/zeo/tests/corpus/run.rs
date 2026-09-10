@@ -58,8 +58,9 @@ const MAX_CHILD_ADDRESS_SPACE: u64 = 4 << 30;
 #[cfg(unix)]
 fn bound_address_space(cmd: &mut Command) {
     use std::os::unix::process::CommandExt as _;
-    // `pre_exec` runs in the forked child, where only async-signal-safe
-    // calls are legal; `setrlimit` is one, and the closure does nothing else.
+    // SAFETY: `pre_exec` runs in the forked child, where only
+    // async-signal-safe calls are legal; `setrlimit` is one, and the closure
+    // does nothing else.
     unsafe {
         cmd.pre_exec(|| {
             let lim = libc::rlimit {
@@ -82,9 +83,12 @@ fn bound_address_space(_cmd: &mut Command) {}
 /// not fire and the other bounds still apply).
 #[cfg(target_os = "macos")]
 fn child_rss(pid: u32) -> Option<u64> {
+    // SAFETY: `proc_taskinfo` is a plain C struct, so all-zero is a valid value.
     let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
     let ptr = std::ptr::addr_of_mut!(info).cast::<libc::c_void>();
+    // SAFETY: `proc_pidinfo` writes at most `size` bytes into `ptr`, which is
+    // exactly that size, and reads nothing else.
     let n = unsafe { libc::proc_pidinfo(pid as libc::c_int, libc::PROC_PIDTASKINFO, 0, ptr, size) };
     (n == size).then_some(info.pti_resident_size)
 }

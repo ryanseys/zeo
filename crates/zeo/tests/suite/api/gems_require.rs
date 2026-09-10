@@ -419,8 +419,9 @@ fn the_root_gem_outranks_an_alphabetically_earlier_provider() {
 #[test]
 fn strict_mode_restores_the_ambiguity_error() {
     // `ZEO_DEBUG=strict-ambiguous-require` makes ambiguity a hard error for
-    // callers who want squatting surfaced loudly. Safe to set here: nextest
-    // runs each test in its own process.
+    // callers who want squatting surfaced loudly.
+    // SAFETY: nextest runs each test in its own process, so no other thread
+    // is reading the environment here.
     unsafe { std::env::set_var("ZEO_DEBUG", "strict-ambiguous-require") };
     let err = compile_packages(
         &[
