@@ -27,9 +27,9 @@ def t_each_cons_map_chain_fusion
   # called without a block returns an Enumerator in CRuby. When the
   # very next call is a terminal like `.map { |pair| ... }`, the
   # Enumerator is consumed immediately and the chain has the same
-  # observable result as eagerly materialising each window. Spinel
-  # fuses the source + terminal into a single C loop, so no
-  # Enumerator object is allocated and no intermediate
+  # observable result as eagerly materialising each window. The source and
+  # the terminal can therefore be run as one loop, with no Enumerator
+  # allocated and no intermediate
   # array-of-arrays is built (one window allocation per iteration,
   # bounded by .map's accumulator).
   #
@@ -57,9 +57,9 @@ def t_each_cons_with_index_map_chain_fusion
   # Phase A.3 of Enumerator-chain strategy (#566): three-step
   # `arr.each_cons(n).with_index(off).map { ... }` chain. CRuby
   # returns an Enumerator from each_cons, then another from
-  # with_index, and consumes both at the terminal .map. Spinel
-  # fuses the whole chain into a single C loop with an idx counter
-  # initialised from `off` (default 0) and incremented after each
+  # with_index, and consumes both at the terminal .map. The whole chain can
+  # be run as one loop with an index counter starting at `off` (default 0)
+  # and incremented after each
   # pair, so no Enumerator object is allocated.
   #
   # Block param shapes:
@@ -101,9 +101,8 @@ def t_env_fetch
   puts ENV.fetch("THIRD_UNSET_VAR_XYZ_42", "pre-" + "fix")
   
   # ---- set / retrieval branch ----
-  # Spinel doesn't currently expose `ENV[]=` from Ruby, so we can't
-  # set a var ourselves. HOME is always exported by POSIX `make` and
-  # in CI, so we use that as the "set" probe. We only assert "non-
+  # HOME is always exported, so it serves as the "set" probe without this
+  # program having to set one. It only asserts "non-
   # empty + not the fallback string" so the test stays portable
   # across runners (the actual home value differs per machine).
   # A regression that inverted the getenv-result ternary would
@@ -125,11 +124,9 @@ t_env_fetch
 
 # === equality_should_be_true ===
 def t_equality_should_be_true
-  # #555 (gurgeous/Adam Doppelt). A corpus of `should be true`
-  # expressions that compiled to false in spinel pre-fix.
-  # Each line is an independent equality predicate; CRuby
-  # returns true for all twelve, and after the followup
-  # commits spinel matches on all 12.
+  # Twelve independent equality predicates, each of which answers true. They
+  # are collected here because each one is a shape an implementation can get
+  # wrong on its own.
   
   p ({} == {})                                     # 01
   p ({a: 1} == {a: 1})                             # 02

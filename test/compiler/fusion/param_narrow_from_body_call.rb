@@ -16,10 +16,9 @@ class CPU
   def cycles_advance(n); n + 100; end
 end
 
-# Two separate methods that each take a CPU param. Neither has a
-# direct call-site arg whose type spinel statically knows to be CPU
-# at the time scan_new_calls runs (caller-side widening), so the
-# narrow has to come from the body's method-call shapes.
+# Two methods that each take a CPU parameter. Neither has a call site that
+# says so, so what the parameter holds has to come from what the body DOES
+# with it.
 
 def fetch(cpu, addr)
   cpu.peek_a(addr)        # peek_a is only on CPU → narrow cpu to obj_CPU

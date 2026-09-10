@@ -6,8 +6,7 @@
 # for the life of the process and RSS grew without bound (#4073).
 #
 # The live set here is a handful of tiny pairs. What matters is that the
-# threshold stays a real number and the heap stays bounded. GC.stat's keys are
-# spinel's own, like gc_stat_string_heap.rb's.
+# threshold stays a real number and the heap stays bounded.
 N     = 20_000
 ITERS = 400
 
@@ -35,5 +34,5 @@ puts "heap bounded: " + (g["bytes"] < 400_000_000 ? "yes" : "no")
 __END__
 retained: 7
 #@ stderr
-core/gc/gc_threshold_no_runaway.rb:32:in '<main>': undefined method '>' for nil (NoMethodError)
+core/gc/gc_threshold_no_runaway.rb:31:in '<main>': undefined method '>' for nil (NoMethodError)
 #@ exit 1

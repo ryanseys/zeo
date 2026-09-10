@@ -5,8 +5,7 @@
 # zeo's divergence: `freeze` on a Mutex/ConditionVariable is accepted but
 # does not stick -- `frozen?` answers false immediately after. The handle
 # types live outside the `__frozen` AtomicBool convention generated instances
-# carry, so freeze has nowhere to record itself. (Spinel once had the same
-# observable for its own reasons, #3483.)
+# carry, so freeze has nowhere to record itself.
 a = Mutex.new
 p a.frozen?
 p a.freeze.equal?(a)

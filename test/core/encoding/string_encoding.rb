@@ -1,5 +1,4 @@
-# Issue #723. `.encoding` returns the source label (spinel uses
-# UTF-8 throughout) as a small Encoding value.
+# `.encoding` answers an Encoding value naming the string's encoding.
 
 puts "hello".encoding
 puts "x".encode.encoding

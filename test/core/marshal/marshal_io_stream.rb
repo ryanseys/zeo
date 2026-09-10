@@ -3,7 +3,7 @@
 # were compiled: `Marshal.load(f)` handed the sp_File* over as though the
 # handle itself were the bytes, and the C build stopped on the pointer type.
 # `Marshal.dump(obj, f)` matched no arm at all and came out as a NameError on
-# the Marshal constant. (matz/spinel#4112)
+# the Marshal constant.
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

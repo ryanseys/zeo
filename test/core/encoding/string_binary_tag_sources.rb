@@ -1,8 +1,6 @@
-# spinel has two encodings, UTF-8 and ASCII-8BIT, and one rule for which is
-# which: a string is ASCII-8BIT when the PROGRAM ASKED FOR BYTES. CRuby's third
-# encoding, US-ASCII, carries only "these bytes are 7-bit" -- measurably nothing
-# else, since compatibility keys on the content being 7-bit rather than on the
-# encoding's identity -- and spinel carries that as a header bit with no name.
+# One rule decides between UTF-8 and ASCII-8BIT: a string is ASCII-8BIT when
+# the PROGRAM ASKED FOR BYTES. US-ASCII carries only "these bytes are 7-bit",
+# which is a fact about the content rather than about the encoding's identity.
 #
 # pack and String#b followed the rule. Marshal.dump, Random#bytes, binread,
 # unpack and force_encoding did not: they answered UTF-8 over byte data, which

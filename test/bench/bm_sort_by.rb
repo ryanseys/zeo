@@ -7,8 +7,8 @@
 # several sizes so the quadratic-vs-linearithmic gap is visible.
 #
 # The input is a deterministic multiplicative permutation (distinct keys, no
-# ties), so ruby and spinel produce byte-identical sorted output regardless of
-# sort stability. The sorted checksum is printed to stdout (compared by the bench
+# ties), so the sorted output is byte-identical whether or not the sort is
+# stable. The sorted checksum is printed to stdout (compared by the bench
 # harness).
 
 def perm_array(n)

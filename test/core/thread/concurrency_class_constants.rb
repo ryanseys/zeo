@@ -6,7 +6,6 @@
 # instance carries Queue's class id (SizedQueue shares Queue's runtime
 # representation, told apart only by its bound). Everything else here
 # (constants as values, #name, #class, superclass) already matches.
-# (Imported from spinel, which had the same observable, #3466.)
 p Queue, Mutex, Thread, Fiber, ConditionVariable, SizedQueue
 p Queue.new.class
 p SizedQueue.new(2).class

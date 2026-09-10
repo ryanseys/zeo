@@ -1,13 +1,13 @@
 # Indexing a string that holds only 7-bit bytes is byte indexing: #length is
-# the byte length and s[i] is the byte at i. spinel had folded the UTF-8 walk
-# into a pointer-keyed length cache, so the walk was already gone -- but every
-# index still PROBED that cache twice (once for #length, once for the byte
+# the byte length and s[i] is the byte at i, with no UTF-8 walk needed. A
+# length cache alone does not get you there: an index still probes it twice,
+# once for #length and once for the byte
 # offset), about 160 instructions per index. A bit in the string header answers
 # the same question with two loads and cannot be evicted.
 #
-# The bit says nothing about encoding. US-ASCII and UTF-8 are compatible and
-# spinel does not distinguish them (docs/limitations.md); this is a fact about
-# the BYTES, verified by a scan that was happening anyway and cleared wherever
+# The bit says nothing about encoding: US-ASCII and UTF-8 are compatible over
+# 7-bit content. This is a fact about the BYTES, verified by a scan that was
+# happening anyway and cleared wherever
 # the bytes can change.
 #
 # What this program checks is the clearing. A string measured while it is

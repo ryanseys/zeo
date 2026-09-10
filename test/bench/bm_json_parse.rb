@@ -137,7 +137,7 @@ class JSONParser
 end
 
 # Test
-json = '{"name": "spinel", "version": 1, "features": ["aot", "gc", "fiber"], "fast": true}'
+json = '{"name": "zeo", "version": 1, "features": ["aot", "gc", "fiber"], "fast": true}'
 parser = JSONParser.new(json)
 result = parser.parse
 puts result

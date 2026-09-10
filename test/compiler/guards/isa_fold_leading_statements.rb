@@ -4,8 +4,8 @@
 # conditional, hoists its branches into the enclosing prelude, which is
 # written out first. So the assignment landed BELOW the `if` that reads it,
 # the nil arm always won, and a branch reached its tail without having run its
-# own first line. (matz/spinel#4139, from a Roundhouse app where four
-# controller assertions raised "unknown status :success")
+# own first line. The shape came from a controller whose status assertions
+# all raised "unknown status".
 RANGES = { success: 200..299, redirect: 300..399 }.freeze
 CODES  = { ok: 200, created: 201 }.freeze
 

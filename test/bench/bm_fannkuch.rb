@@ -1,5 +1,5 @@
 # The Computer Language Benchmarks Game
-# Fannkuch-Redux - adapted for Spinel
+# Fannkuch-Redux
 
 def fannkuch(n)
   p = Array.new(n + 1, 0)

@@ -11,10 +11,9 @@
 # the request/response cycle composition is a frequent source of
 # poly-param widening in real codebases.
 #
-# Routes are explicit `if path == "..."` matches (Sinatra's
-# regex/glob routing would require runtime pattern matching that's
-# outside Spinel's subset). Handlers take the params hash and
-# return a response body string.
+# Routes are explicit `if path == "..."` matches rather than Sinatra's
+# regex and glob routing, so what this times is the handler dispatch and not
+# a pattern matcher. Handlers take the params hash and answer a body string.
 
 class Request
   attr_accessor :method_name

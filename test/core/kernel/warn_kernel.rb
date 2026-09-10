@@ -1,6 +1,4 @@
-# Issue #734. `warn arg, ...` writes each arg to stderr with a
-# newline (matching Kernel#warn). spinel used to emit the unresolved-
-# call warning and drop the IO silently.
+# `warn arg, ...` writes each argument to stderr with a newline.
 #
 # at_exit + warn -- both used to fall through to the unresolved-call
 # warning. warn's stderr output is asserted via the .err.expected file

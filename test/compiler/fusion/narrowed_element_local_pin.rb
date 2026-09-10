@@ -14,8 +14,7 @@
 # every compile ran its whole round budget, leaving whatever types the cap
 # happened to catch. (The LangArena program of #3781 compiled in 15s and lost
 # an unrelated method's element type that way; it now settles in 1.3s.)
-#
-# Imported from the spinel corpus at c55d9bdb; see tests/spinel/UPSTREAM.md.
+
 
 def sort_pairs(n)
   rank = Array.new(n) { |i| (n - i) % 3 }

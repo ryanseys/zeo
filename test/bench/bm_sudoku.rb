@@ -1,5 +1,4 @@
 # Sudoku solver benchmark (from yjit-bench)
-# Adapted for Spinel AOT compilation
 # Multi-return encoded: forward returns min * 1000 + min_c
 
 def sd_genmat_mr

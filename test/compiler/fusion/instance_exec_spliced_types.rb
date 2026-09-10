@@ -18,8 +18,7 @@
 # same name (e.g. an outer `b = Builder.new` and a block param
 # `|b|`) are restored after the splice via pop_scope.
 #
-# Tag has a subclass (TagPlus) so Spinel keeps it heap-allocated
-# (multi-instance classes can't be SRA-promoted to value types).
+# Tag has a subclass (TagPlus), so its instances are heap objects.
 
 class Tag
   def fire(s, y, n, &b)

@@ -234,7 +234,7 @@ site = Site.new(LAYOUT)
 
 DOC1 = "---\ntitle: Hello World\nauthor: Matz\n---\n# Welcome\n\nThis is a **bold** intro paragraph.\n\n## Why static\n\nFast, *cacheable*, and **portable**.\n"
 
-DOC2 = "---\ntitle: Second Post\nauthor: spinel\n---\n# Second\n\nA shorter article with *one* emphasis.\n"
+DOC2 = "---\ntitle: Second Post\nauthor: Koichi\n---\n# Second\n\nA shorter article with *one* emphasis.\n"
 
 puts site.build(DOC1)
 puts "---"
@@ -247,7 +247,7 @@ __END__
 <p>Fast, <em>cacheable</em>, and <strong>portable</strong>.</p>
 </body></html>
 ---
-<html><head><title>Second Post</title></head><body><h1>Second Post</h1><p class='by'>by spinel</p>
+<html><head><title>Second Post</title></head><body><h1>Second Post</h1><p class='by'>by Koichi</p>
 <h1>Second</h1>
 <p>A shorter article with <em>one</em> emphasis.</p>
 </body></html>

@@ -44,10 +44,9 @@ begin
   p "wow".delete(Mode.new)
   p "hello=world".partition(Mode.new.to_str + "orl")
 
-  # A class defining neither conversion is CRuby's TypeError. Where the
-  # object's class is STATIC spinel reports it at compile time instead (the
-  # call could only ever raise -- see test/rbs-seed/implicit_conv_no_method.rb);
-  # reached through a poly slot the class is a run-time question, so the
+  # A class defining neither conversion raises TypeError. Where the object's
+  # class is known ahead of the run the call could only ever raise; reached
+  # through a slot of no single type the class is a run-time question, so the
   # TypeError is a run-time one, worded as CRuby words it.
   inert = [1, Inert.new][1]
   begin

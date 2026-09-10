@@ -16,10 +16,9 @@ def cell_get(cells, x, y)
   cells[(y % H) * W + (x % W)]
 end
 
-# Range-with-block idioms (`(-1..1).count { ... }`, `(-1..1).sum { ... }`,
-# `SIZE.times.map { ... }`) aren't implemented in spinel's codegen yet —
-# they emit a deduped warning and a literal 0 at codegen time. Use the
-# Array equivalents so the generation actually runs.
+# The Array equivalents are written out rather than the Range-with-block
+# idioms (`(-1..1).count { ... }`, `(-1..1).sum { ... }`,
+# `SIZE.times.map { ... }`), so what this times is the generation itself.
 OFFSETS = [-1, 0, 1]
 
 def neighbors(cells, x, y)

@@ -1,6 +1,6 @@
-# String#include?/#index/#rindex must be byte-oriented and NUL-transparent:
-# spinel Strings can carry embedded NULs (pack, socket reads), so a strstr-
-# backed search that stops at the first NUL diverges from CRuby (issue #1778).
+# String#include?, #index and #rindex are byte-oriented and NUL-transparent.
+# A string can carry embedded NULs -- from pack, or a socket read -- so a
+# search that stopped at the first NUL would miss what follows it.
 z = [0].pack("C*")
 s = "user" + z + "app" + z + "tail"
 puts s.include?("app" + z)   # needle contains a NUL

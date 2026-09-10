@@ -54,9 +54,8 @@ p "\x2A\x00".unpack('s!')
 # Mixed (poly) array path: a string element alongside the modified directive.
 p ['abc', 0x01020304].pack('a3l>').bytes
 
-# Note: repeated endian modifiers ("l><") raise RangeError in CRuby, so
-# they cannot appear here (expected output is ruby-generated). Spinel's
-# pack has no exception path; it applies the last modifier instead.
+# Note: repeated endian modifiers ("l><") raise RangeError, so they cannot
+# appear here -- this program prints its answers rather than rescuing.
 __END__
 [1, 2, 3, 4]
 [1, 2, 3, 4]

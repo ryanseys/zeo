@@ -1,10 +1,10 @@
 # Polyvariance-rich exerciser. A `Cell.set(v)` accepts mixed-type
 # `v` across call sites (string / int / array), so `@value` is a
 # genuinely poly ivar and `set`'s param is a genuinely poly param.
-# `render_one(v)` dispatches by is_a? — another poly param whose
-# return narrows by branch but spinel currently keeps the
-# function-level return as poly. Shape mirrors real-blog's
-# Active Record setter pattern in ~80 lines, so SP_POLY_REPORT
+# `render_one(v)` dispatches by is_a? -- another parameter of no single
+# type, whose answer narrows per branch but not for the method as a whole.
+# The shape mirrors an Active Record setter in about eighty lines, so a
+# report of where values stay untyped
 # counts move visibly with each backward-inference refinement.
 
 class Cell

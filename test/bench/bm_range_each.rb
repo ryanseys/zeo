@@ -5,9 +5,9 @@
 # sequential data dependency on the loop body so the C
 # compiler cannot collapse the loop to a closed form.
 #
-# Tests Spinel's Range#each lowering: a literal numeric range
-# should fuse to a tight C `for` loop with bounds inlined,
-# avoiding the `sp_Range` struct allocation+access of the
+# What this times is Range#each over a literal numeric range, which should
+# come out as a tight counted loop with its bounds inlined, rather than the
+# object allocation and field reads of the
 # generic `each` path.
 
 sum = 0

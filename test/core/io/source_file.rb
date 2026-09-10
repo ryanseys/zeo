@@ -1,11 +1,8 @@
 # SourceFileNode -- the `__FILE__` keyword.
 #
-# Spinel inlines `require`/`require_relative` at parse time, so call
-# sites in different source files are not distinguished. `__FILE__`
-# always returns the toplevel script path passed to probe_parse,
-# matching CRuby's behavior for top-level uses.
+# Every read here is at top level, so `__FILE__` is this script's own path.
 #
-# This test exercises __FILE__ end-to-end: it must (a) emit the path,
+# The program exercises it end to end: it must (a) emit the path,
 # (b) flow as `string` through type inference (so dispatch picks the
 # string-method arms), (c) interoperate with literals (concat / compare
 # / interpolate), and (d) round-trip through a typed-String parameter

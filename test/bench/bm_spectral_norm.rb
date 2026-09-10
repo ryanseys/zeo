@@ -2,7 +2,6 @@
 # https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
 # Contributed by Sokolov Yura
 # Modified by Chris Houhoulis
-# Adapted for Spinel benchmark
 
 n = Integer(ARGV[0] || 100)
 

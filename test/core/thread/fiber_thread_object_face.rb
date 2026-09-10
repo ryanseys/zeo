@@ -7,8 +7,7 @@
 # compares the box rather than the handle behind it (ConditionVariable,
 # Fiber and Thread compare the handle and answer true); (2) Fiber#raise on a
 # fiber that has never been resumed delivers the requested RuntimeError
-# instead of ruby's FiberError (nowhere to deliver it yet). (Imported from
-# spinel, where the front end once refused these receivers outright, #3470.)
+# instead of ruby's FiberError, since there is nowhere to deliver it yet.
 a = Mutex.new
 b = Queue.new
 c = SizedQueue.new(2)

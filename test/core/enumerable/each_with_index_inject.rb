@@ -1,4 +1,4 @@
-# matz/spinel#1481: inject/reduce over each.with_index / each_with_index
+# inject and reduce over each.with_index and each_with_index
 puts [10, 20, 30].each.with_index.inject(0) { |acc, (val, idx)| acc + idx }       # 3
 chars = [1, 2, 3]
 puts chars.each.with_index.inject(0) { |sum, (c, k)| sum + c * (26 ** k) }         # 2081 (base26)

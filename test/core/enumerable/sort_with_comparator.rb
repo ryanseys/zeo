@@ -3,8 +3,7 @@
 # same one, so the mixed-case word list below ("Apple"/"apple" compare equal)
 # and the 60-element tie table at the end are the tie order this pins.
 #
-# This was a decided divergence while zeo sorted stably. Imported from the
-# spinel corpus at c55d9bdb; see tests/spinel/UPSTREAM.md.
+# This was a decided divergence while zeo sorted stably.
 #
 # TWO goldens, because the tie order is libc's and glibc's qsort is not BSD's:
 # `.expected` is macOS, `.linux.expected` linux.

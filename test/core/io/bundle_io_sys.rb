@@ -17,13 +17,11 @@ def t_file_binread
   #
   # `File.binread(path)` standalone is aliased to File.read.
   #
-  # Uses a cwd-relative path so MSYS2 and the native-Windows-built
-  # spinel binary resolve to the same file (the harness runs each test
-  # from the project root). `/tmp/...` would land in different places
-  # on the two sides — see test/fileio.rb for the same workaround.
+  # A cwd-relative path, so ruby and zeo resolve it to the same file: the
+  # harness runs each program with test/ as its working directory.
   
-  # Set up a binary file with embedded NULs via a shell command.
-  # spinel's File.write uses fputs and would stop at the first NUL.
+  # The binary file with embedded NULs is written by a shell command, so
+  # what File.binread reads back was not written by the same runtime.
   path = "probe_binread_test.bin"
   `printf 'AB\\000CD\\000EF' > #{path}`
   
@@ -40,9 +38,8 @@ def t_file_binread
   puts arr[6]                   # 69 (E)
   puts arr[7]                   # 70 (F)
   
-  # `File.binread` standalone aliases `File.read`. spinel's strings
-  # are null-terminated so any NUL in the result is a hard stop —
-  # this branch is just verifying the alias resolves and returns
+  # `File.binread` standalone aliases `File.read`. This branch verifies the
+  # alias resolves and answers
   # something string-shaped.
   puts File.binread(path)[0, 2] # AB
   
@@ -54,12 +51,10 @@ t_file_binread
 def t_fileio
   # Test basic File I/O.
   # Uses cwd-relative paths so the harness (which runs each test from
-  # the project root) and the CRuby reference both write to the same
-  # place on every platform — `/tmp/...` doesn't resolve uniformly
-  # across MSYS2 mingw64 ruby and native-Windows-built spinel binaries.
+  # test/) so ruby and zeo write to the same place.
   
   # Write a file
-  File.write("probe_test.txt", "Hello from Spinel!\nLine 2\n")
+  File.write("probe_test.txt", "Hello from the writer!\nLine 2\n")
   
   # Read the file
   content = File.read("probe_test.txt")
@@ -170,7 +165,7 @@ def t_process_clock_gettime
   t1 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
   t2 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
   
-  # t1 and t2 must be Float-typed in spinel; arithmetic should work.
+  # t1 and t2 are Floats, so the subtraction below is Float arithmetic.
   diff = t2 - t1
   if diff >= 0
     puts "monotonic"
@@ -232,7 +227,7 @@ __END__
 69
 70
 AB
-Hello from Spinel!
+Hello from the writer!
 Line 2
 true
 false

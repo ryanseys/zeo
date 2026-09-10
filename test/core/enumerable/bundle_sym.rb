@@ -292,8 +292,8 @@ t_symbol_upcase_downcase
 def t_source_encoding
   # SourceEncodingNode — the `__ENCODING__` keyword.
   #
-  # Spinel sources are assumed to be UTF-8; __ENCODING__ is a small
-  # Encoding value whose to_s returns the canonical name.
+  # `__ENCODING__` is an Encoding value whose to_s answers the canonical
+  # name of the source encoding.
   
   puts __ENCODING__.to_s
 end

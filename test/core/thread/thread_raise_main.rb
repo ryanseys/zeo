@@ -10,7 +10,7 @@ begin
   t.join
   sleep 0.2
 rescue => e
-  # CRuby lands here; spinel's no-op never raises.
+  # The rescue is here for the delivered case; nothing is printed either way.
 end
 puts "ok"
 __END__

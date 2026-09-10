@@ -16,9 +16,9 @@ p(r.equal?(r))               # 2524
 p(Random.new(1) == Random.new(1))  # distinct objects -> false
 Random.srand(7)
 p(rand(100).class)           # 2525: Integer
-p(Random.urandom(8).bytesize) # 2543: 8 bytes. NOT .length: spinel counts
-                              # UTF-8 chars, so random bytes that happen to
-                              # form multi-byte sequences made it flaky
+p(Random.urandom(8).bytesize) # 8 bytes. bytesize and not length: random
+                              # bytes need not be valid UTF-8, and length
+                              # counts characters
 p(Random.urandom(8).class)
 begin; rand(1..); rescue => e; p e.class; end   # 2544: Errno::EDOM
 begin; rand(..5); rescue => e; p e.class; end

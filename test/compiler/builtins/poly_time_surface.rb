@@ -2,7 +2,7 @@
 # untyped value by is_a?(Time) -- reached a poly surface that had only the
 # scalar accessors on it. Everything that answers a Time, a boolean, an offset,
 # or a formatted string raised NoMethodError at run time, with nothing wrong in
-# the generated C to warn about it. (matz/spinel#4109)
+# the compiler's output to warn about it.
 #
 # The array is a poly container, so every receiver below is boxed. The instant
 # is put in UTC first: zone, iso8601 and the local reads would otherwise answer

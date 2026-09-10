@@ -1,7 +1,7 @@
 # The PRNG contract: same seed -> same stream, for every consumer of the
 # Kernel-level stream (rand in all its forms, shuffle, sample, the Random
-# default instance). Values are implementation-specific (spinel is not
-# MT19937), so only invariants are asserted.
+# default instance). The values themselves are not part of the contract, so
+# only the invariants are asserted.
 
 srand(42); a = rand(100)
 srand(42); b = rand(100)

@@ -31,10 +31,9 @@ t_ptr_array_null_guards
 
 # === ptr_array_pop ===
 def t_ptr_array_pop
-  # #520. `Array#pop` on a nested integer array (Array<Array<Int>>,
-  # spinel-side `int_array_ptr_array`) used to fall through to the
-  # unresolved-call warning and emit 0 — the array stayed intact.
-  # The same gap existed for any `<X>_ptr_array` element type; only
+  # `Array#pop` on an array whose elements are themselves arrays removes and
+  # answers the last one, rather than leaving the receiver intact. The same
+  # goes for any element type; only
   # the IntArray / StrArray / FloatArray / SymArray flavors had a
   # direct `_pop` runtime helper.
   #

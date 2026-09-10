@@ -1,6 +1,7 @@
-# Random.urandom hands back binary bytes, so #length is the byte count. spinel
-# keeps no per-string encoding tag and counts UTF-8 code points whenever the
-# bytes happen to spell valid UTF-8 -- true of about 1.5% of 4-byte draws, which
+# Random.urandom hands back binary bytes, so #length is the byte count. A
+# string with no encoding of its own would be counted as UTF-8 code points
+# whenever the bytes happened to spell valid UTF-8 -- true of about 1.5% of
+# 4-byte draws, which
 # then reported a length short of the requested size. #3474.
 p 2000.times.any? { Random.urandom(4).length != 4 }
 p 2000.times.any? { Random.urandom(4).bytesize != 4 }

@@ -1,7 +1,6 @@
-# String#% with a right-hand side whose static type is poly (a scalar at one
-# call site, an Array at another) must spread an Array value across the format
-# directives at runtime. Spinel previously wrapped a poly RHS in a one-element
-# array unconditionally, so an Array read zeros.
+# String#% with a right-hand side of no single type -- a scalar at one call
+# site, an Array at another -- spreads an Array value across the format
+# directives at runtime, rather than wrapping it as one argument.
 def fmt(f, v); f % v; end
 
 # v unifies to poly: it receives an Integer, an Array, a Float, and a String.

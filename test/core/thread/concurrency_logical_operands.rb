@@ -4,8 +4,7 @@
 # zeo's divergence is one probe: a Queue carried through `||` no longer
 # inspects in the `#<Thread::Queue:0x...>` form (the final
 # `inspect.start_with?` answers false). Every other operand shape -- classes,
-# values, nil, locked? -- already matches. (Imported from spinel, where the
-# same file once failed to BUILD, #3484.)
+# values, nil, locked? -- already matches.
 m = Mutex.new
 p(m.lock && m.locked?)
 m.unlock

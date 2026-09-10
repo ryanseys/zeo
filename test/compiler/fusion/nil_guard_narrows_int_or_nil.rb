@@ -14,10 +14,8 @@
 # With the nil-guard narrow, the idiomatic form works directly.
 #
 # Discriminator: `lookup` consumes find_or_neg's return as an
-# int-typed array index. Pre-fix the function returns sp_RbVal
-# and arr[poly] does not compile cleanly (spinel emits no
-# implicit poly->int unbox at the index site). Post-fix the
-# return is mrb_int and arr[i] is direct integer indexing.
+# array index, so past the nil guard the value has to be usable as an
+# Integer rather than as something still wrapped.
 
 ARR = [10, 20, 30, 40, 50, 60]
 

@@ -1,4 +1,3 @@
-# Imported from the spinel corpus at c55d9bdb.
 # `each` yielding more than one value per element. Enumerable packs them into
 # one array element, so `map`/`to_a`/`sort_by` see pairs.
 #
