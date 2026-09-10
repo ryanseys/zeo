@@ -43,7 +43,14 @@ pub fn build(clif: &Path, sidecar: Option<&Path>, output: &Path) -> Result<(), S
         None => Sidecar::default(),
     };
     let object = compile(&text, &sidecar).map_err(|e| format!("{}: {e}", clif.display()))?;
-    super::object::object_to_binary(&object, false, false, &[], &[], output)
+    Ok(super::object::object_to_binary(
+        &object,
+        false,
+        false,
+        &[],
+        &[],
+        output,
+    )?)
 }
 
 /// The object file for `text` and `sidecar`.

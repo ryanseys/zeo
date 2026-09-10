@@ -111,7 +111,10 @@ pub fn run_program(
 
 /// Artifact mode (`zeo -o app file.rb`, `--compile`): produce the SHIPPED
 /// binary at `output` for `compiled`.
-pub fn build_artifact(compiled: &CompiledProgram<'_>, output: &Path) -> Result<(), String> {
+pub fn build_artifact(
+    compiled: &CompiledProgram<'_>,
+    output: &Path,
+) -> Result<(), link::LinkError> {
     match compiled {
         CompiledProgram::Aot(compiled) => object::object_to_binary(
             &compiled.object,

@@ -47,6 +47,44 @@ pub enum ZeoHome {
 /// [`ensure_resolved`] first so a broken install reports as an ordinary error
 /// instead. Library/test entrypoints run from the dev tree, where resolution
 /// cannot fail.
+/// Why zeo cannot say where its runtime payload is. Both variants reproduce
+/// the message the site used to `format!`, so the CLI's `zeo: <msg>` line is
+/// unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum HomeError {
+    /// `ZEO_HOME` was set and names something that is not a payload. A hard
+    /// error, never a fall-through: the user asked for THIS payload.
+    #[error(
+        "ZEO_HOME is set to `{path}`, but that is not a zeo payload directory \
+         (expected `lib/{triple}/libzeo.a` beneath it)"
+    )]
+    ZeoHomeIsNotAPayload { path: String, triple: &'static str },
+
+    /// Every tier was probed and none answered. The message lists them in
+    /// the order they were tried, because which one the user meant to work
+    /// is what they need to fix.
+    #[error(
+        "zeo cannot find its runtime payload.\n\
+         Probed, in order:\n\
+         - ZEO_HOME: not set\n\
+         - executable-relative: {executable_relative}\n\
+         - dev tree: {dev_root} (no crates/zeo-rt there)\n\
+         An installed zeo expects `share/zeo/lib/{{ruby,<triple>}}` next to its \
+         `bin/` directory; set ZEO_HOME to point at a payload directory to \
+         override."
+    )]
+    NoPayloadAnywhere {
+        executable_relative: String,
+        dev_root: String,
+    },
+}
+
+impl From<HomeError> for String {
+    fn from(e: HomeError) -> String {
+        e.to_string()
+    }
+}
+
 pub fn zeo_home() -> &'static ZeoHome {
     static HOME: OnceLock<ZeoHome> = OnceLock::new();
     HOME.get_or_init(|| match try_resolve() {
@@ -57,13 +95,13 @@ pub fn zeo_home() -> &'static ZeoHome {
 
 /// CLI-facing pre-flight: resolve (and memoize) the home, reporting failure
 /// as an error instead of the panic [`zeo_home`] falls back on.
-pub fn ensure_resolved() -> Result<(), String> {
+pub fn ensure_resolved() -> Result<(), HomeError> {
     // Probe without touching the OnceLock so a failure stays reportable; the
     // success result is re-derived (cheaply) on first real use.
     try_resolve().map(|_| ())
 }
 
-fn try_resolve() -> Result<ZeoHome, String> {
+fn try_resolve() -> Result<ZeoHome, HomeError> {
     resolve(
         std::env::current_exe().ok().as_deref(),
         std::env::var_os("ZEO_HOME").as_deref(),
@@ -77,7 +115,7 @@ fn resolve(
     exe: Option<&Path>,
     env_home: Option<&OsStr>,
     dev_root: &Path,
-) -> Result<ZeoHome, String> {
+) -> Result<ZeoHome, HomeError> {
     // 1. Explicit override. A set-but-broken ZEO_HOME is a hard error, never
     //    a silent fall-through -- the user asked for THIS payload.
     if let Some(dir) = env_home {
@@ -88,12 +126,10 @@ fn resolve(
                 payload,
             });
         }
-        return Err(format!(
-            "ZEO_HOME is set to `{}`, but that is not a zeo payload directory \
-             (expected `lib/{}/libzeo.a` beneath it)",
-            payload.display(),
-            crate::backend::link::host_triple(),
-        ));
+        return Err(HomeError::ZeoHomeIsNotAPayload {
+            path: payload.display().to_string(),
+            triple: crate::backend::link::host_triple(),
+        });
     }
 
     // 2. Executable-relative: <prefix>/bin/zeo -> <prefix>/share/zeo.
@@ -127,20 +163,12 @@ fn resolve(
         });
     }
 
-    Err(format!(
-        "zeo cannot find its runtime payload.\n\
-         Probed, in order:\n\
-         - ZEO_HOME: not set\n\
-         - executable-relative: {}\n\
-         - dev tree: {} (no crates/zeo-rt there)\n\
-         An installed zeo expects `share/zeo/lib/{{ruby,<triple>}}` next to its \
-         `bin/` directory; set ZEO_HOME to point at a payload directory to \
-         override.",
-        probed
+    Err(HomeError::NoPayloadAnywhere {
+        executable_relative: probed
             .map(|p| format!("{} (no lib/<triple>/libzeo.a there)", p.display()))
             .unwrap_or_else(|| "could not determine the executable's path".into()),
-        dev_root.display(),
-    ))
+        dev_root: dev_root.display().to_string(),
+    })
 }
 
 /// Where zeo may WRITE: build output, caches, and the materialized RubyGems
@@ -307,7 +335,9 @@ mod tests {
         let payload = tmp.join("share/zeo");
         touch(&payload.join("lib/powerpc-unknown-linux-gnu/libzeo.a"));
         let dev = dev_fixture(&tmp);
-        let err = resolve(None, Some(payload.as_os_str()), &dev).unwrap_err();
+        let err = resolve(None, Some(payload.as_os_str()), &dev)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("not a zeo payload directory"), "{err}");
     }
 
@@ -318,7 +348,9 @@ mod tests {
         let payload = tmp.join("share/zeo");
         touch(&payload.join("lib/ruby/json/json.gemspec"));
         let dev = dev_fixture(&tmp);
-        let err = resolve(None, Some(payload.as_os_str()), &dev).unwrap_err();
+        let err = resolve(None, Some(payload.as_os_str()), &dev)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("libzeo.a"), "{err}");
     }
 
@@ -327,7 +359,9 @@ mod tests {
         let tmp = tempdir("env-broken");
         let dev = dev_fixture(&tmp);
         let missing = tmp.join("nope");
-        let err = resolve(None, Some(missing.as_os_str()), &dev).unwrap_err();
+        let err = resolve(None, Some(missing.as_os_str()), &dev)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("ZEO_HOME"), "{err}");
     }
 
@@ -389,7 +423,7 @@ mod tests {
             // anywhere" IS the registry tier, not an error.
             assert!(matches!(resolved, Ok(ZeoHome::Registry { .. })));
         } else {
-            let err = resolved.unwrap_err();
+            let err = resolved.unwrap_err().to_string();
             assert!(err.contains("executable-relative"), "{err}");
             assert!(err.contains("dev tree"), "{err}");
         }

@@ -19,7 +19,7 @@ pub fn object_to_binary(
     extra_objects: &[std::path::PathBuf],
     link_args: &[String],
     output: &Path,
-) -> Result<(), String> {
+) -> Result<(), super::link::LinkError> {
     let obj_path = if debuginfo {
         let mut p = output.to_path_buf();
         let name = p
@@ -30,8 +30,10 @@ pub fn object_to_binary(
     } else {
         std::env::temp_dir().join(format!("{}.o", super::scratch_name("zeo-p0")))
     };
-    std::fs::write(&obj_path, object)
-        .map_err(|e| format!("writing {}: {e}", obj_path.display()))?;
+    std::fs::write(&obj_path, object).map_err(|e| super::link::LinkError::Io {
+        what: format!("writing {}", obj_path.display()),
+        detail: e.to_string(),
+    })?;
     let linked = super::link::link_binary(
         &obj_path,
         extra_objects,

@@ -47,6 +47,18 @@ impl From<String> for MainError {
     }
 }
 
+impl From<crate::home::HomeError> for MainError {
+    fn from(err: crate::home::HomeError) -> MainError {
+        MainError::Plain(err.to_string())
+    }
+}
+
+impl From<crate::backend::link::LinkError> for MainError {
+    fn from(err: crate::backend::link::LinkError) -> MainError {
+        MainError::Plain(err.to_string())
+    }
+}
+
 impl From<crate::CompileError> for MainError {
     fn from(err: crate::CompileError) -> MainError {
         MainError::Compile(err)

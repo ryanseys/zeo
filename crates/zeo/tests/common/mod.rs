@@ -40,7 +40,7 @@ pub fn zeo_cli() -> Result<PathBuf, String> {
     reason = "shared through `#[path]`; each binary uses a part of it"
 )]
 pub fn runtime_archive() -> Result<PathBuf, String> {
-    zeo::backend::link::runtime_archive()
+    zeo::backend::link::runtime_archive().map_err(String::from)
 }
 
 /// The one directory tests write under: `target/zeo-test/<stamp>/`, where

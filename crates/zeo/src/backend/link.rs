@@ -4,7 +4,107 @@
 //! `runtime_archive`'s presence rule, the library lists by the
 //! `natlibs_table_matches_rustc` diff test.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Everything that stops a program from linking. Each variant reproduces the
+/// message the site used to `format!`, so `zeo: <msg>` output is unchanged;
+/// what is new is that the failure modes are a list a reader can see.
+///
+/// The io errors are carried as their rendered text rather than as
+/// `io::Error`, because [`dev_tree_archive`] memoizes its answer in a
+/// `OnceLock` and hands out clones.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LinkError {
+    #[error("cannot locate the running zeo binary: {0}")]
+    NoZeoBinary(String),
+
+    #[error("the zeo binary has no parent directory")]
+    ZeoBinaryHasNoParent,
+
+    /// No `libzeo.a` where this install tier keeps one. `remedy` is the tail
+    /// that tells THIS tier's user what to do about it.
+    #[error("runtime archive missing: {path} {remedy}")]
+    NoRuntimeArchive { path: String, remedy: Remedy },
+
+    /// A build ran and produced no archive, which no input can cause.
+    #[error("the runtime build produced no {0} -- this is a zeo bug")]
+    RuntimeBuildProducedNothing(String),
+
+    #[error("spawning cargo to build libzeo.a: {0}")]
+    NoCargoForDevTree(String),
+
+    #[error(
+        "zeo was installed with `cargo install`, which ships no runtime \
+         archive, and building one needs cargo on PATH: {0}"
+    )]
+    NoCargoForRegistry(String),
+
+    /// A tool ran and reported failure. `stderr` is already filtered through
+    /// [`link_diagnostics`] where the tool is a linker.
+    #[error("{what} failed:\n{stderr}")]
+    ToolFailed { what: String, stderr: String },
+
+    #[error("{what}: {detail}")]
+    Io { what: String, detail: String },
+
+    #[error("no native-library table for target {0}")]
+    NoNativeLibs(String),
+}
+
+/// What to do about a missing archive, which differs by install tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Remedy {
+    /// A release tarball or platform gem: the payload is incomplete.
+    Reinstall,
+    /// A dev tree whose staticlib half was never built.
+    CargoBuild,
+    /// A dev tree reached through a binary `cargo build -p zeo --bin zeo`
+    /// would not have refreshed the archive for.
+    CargoBuildPackage,
+}
+
+impl std::fmt::Display for Remedy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Remedy::Reinstall => write!(
+                f,
+                "-- this zeo install cannot compile a program. Reinstall from a \
+                 release tarball built for {}.",
+                host_triple()
+            ),
+            Remedy::CargoBuild => {
+                f.write_str("(rerun `cargo build` -- `libzeo.a` is built beside the `zeo` binary)")
+            }
+            Remedy::CargoBuildPackage => f.write_str(
+                "(rerun `cargo build -p zeo` -- `libzeo.a` is built beside the `zeo` binary)",
+            ),
+        }
+    }
+}
+
+impl LinkError {
+    fn io(what: impl Into<String>, e: std::io::Error) -> LinkError {
+        LinkError::Io {
+            what: what.into(),
+            detail: e.to_string(),
+        }
+    }
+
+    fn missing(path: &Path, remedy: Remedy) -> LinkError {
+        LinkError::NoRuntimeArchive {
+            path: path.display().to_string(),
+            remedy,
+        }
+    }
+}
+
+/// The CLI renders every failure as `zeo: <msg>`, so the boundary is one
+/// `to_string`.
+impl From<LinkError> for String {
+    fn from(e: LinkError) -> String {
+        e.to_string()
+    }
+}
 
 /// `libzeo.a` -- the staticlib half of this crate's own build (see `[lib]
 /// crate-type` in Cargo.toml), found wherever this zeo's install tier put it.
@@ -23,12 +123,10 @@ use std::path::PathBuf;
 /// compiled-program cache links. The failure is silent and reads exactly like
 /// an edit that never landed. [`dev_tree_archive`] is the rule; the suites
 /// call this function rather than carrying a second copy of it.
-pub fn runtime_archive() -> Result<PathBuf, String> {
+pub fn runtime_archive() -> Result<PathBuf, LinkError> {
     let exe = std::env::current_exe()
-        .map_err(|e| format!("cannot locate the running zeo binary: {e}"))?;
-    let dir = exe
-        .parent()
-        .ok_or_else(|| "the zeo binary has no parent directory".to_string())?;
+        .map_err(|e: std::io::Error| LinkError::NoZeoBinary(e.to_string()))?;
+    let dir = exe.parent().ok_or(LinkError::ZeoBinaryHasNoParent)?;
     // A cargo TEST binary lives one level deeper, in `<profile>/deps/`, while
     // the archive stays in `<profile>/`.
     let dir = match dir.file_name().is_some_and(|n| n == "deps") {
@@ -60,18 +158,9 @@ pub fn runtime_archive() -> Result<PathBuf, String> {
         if staged.is_file() {
             return Ok(staged);
         }
-        return Err(format!(
-            "runtime archive missing: {} -- this zeo install cannot compile a \
-             program. Reinstall from a release tarball built for {}.",
-            staged.display(),
-            host_triple()
-        ));
+        return Err(LinkError::missing(&staged, Remedy::Reinstall));
     }
-    Err(format!(
-        "runtime archive missing: {} (rerun `cargo build` -- \
-         `libzeo.a` is built beside the `zeo` binary)",
-        archive.display()
-    ))
+    Err(LinkError::missing(&archive, Remedy::CargoBuild))
 }
 
 /// Whether `dir` is cargo's own output directory for this tree --
@@ -103,20 +192,17 @@ const ARCHIVE_CRATES: &[&str] = &["zeo", "zeo-rt", "zeo-abi", "zeo-macros"];
 /// of merely reported. A dev tree has cargo by definition, cargo does nothing
 /// when the archive is already current, and concurrent zeo processes serialize
 /// on cargo's own build lock -- so the first builds and the rest find it fresh.
-fn dev_tree_archive(dir: &std::path::Path, root: &std::path::Path) -> Result<PathBuf, String> {
-    static ONCE: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
+fn dev_tree_archive(dir: &std::path::Path, root: &std::path::Path) -> Result<PathBuf, LinkError> {
+    static ONCE: std::sync::OnceLock<Result<PathBuf, LinkError>> = std::sync::OnceLock::new();
     ONCE.get_or_init(|| {
         let archive = dir.join("libzeo.a");
         if let Some(newer) = source_newer_than(&archive, root) {
             build_archive(dir, &newer)?;
         }
-        archive.is_file().then_some(archive.clone()).ok_or_else(|| {
-            format!(
-                "runtime archive missing: {} (rerun `cargo build -p zeo` -- \
-                 `libzeo.a` is built beside the `zeo` binary)",
-                archive.display()
-            )
-        })
+        archive
+            .is_file()
+            .then_some(archive.clone())
+            .ok_or_else(|| LinkError::missing(&archive, Remedy::CargoBuildPackage))
     })
     .clone()
 }
@@ -155,7 +241,7 @@ fn source_newer_than(archive: &std::path::Path, root: &std::path::Path) -> Optio
 }
 
 /// `cargo build -p zeo --lib` for the profile this binary was built into.
-fn build_archive(dir: &std::path::Path, because: &std::path::Path) -> Result<(), String> {
+fn build_archive(dir: &std::path::Path, because: &std::path::Path) -> Result<(), LinkError> {
     // `debug` is the `dev` profile's OUTPUT directory, not its name.
     let profile = match dir.file_name().and_then(|n| n.to_str()) {
         Some("debug") | None => "dev",
@@ -173,13 +259,13 @@ fn build_archive(dir: &std::path::Path, because: &std::path::Path) -> Result<(),
             _ => PathBuf::from("."),
         })
         .output()
-        .map_err(|e| format!("spawning cargo to build libzeo.a: {e}"))?;
+        .map_err(|e: std::io::Error| LinkError::NoCargoForDevTree(e.to_string()))?;
     match out.status.success() {
         true => Ok(()),
-        false => Err(format!(
-            "building libzeo.a failed:\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        )),
+        false => Err(LinkError::ToolFailed {
+            what: "building libzeo.a".into(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        }),
     }
 }
 
@@ -201,7 +287,7 @@ fn build_archive(dir: &std::path::Path, because: &std::path::Path) -> Result<(),
 /// (dev tree, release tarball, platform gem) ships an archive and never
 /// reaches here. Nothing is fetched that `cargo install zeo` did not already
 /// download, so the build runs offline against the local registry cache.
-fn registry_archive(cache: &std::path::Path) -> Result<PathBuf, String> {
+fn registry_archive(cache: &std::path::Path) -> Result<PathBuf, LinkError> {
     let version = env!("CARGO_PKG_VERSION");
     let dest = cache.join(format!("runtime-{version}")).join("libzeo.a");
     if dest.is_file() {
@@ -210,7 +296,7 @@ fn registry_archive(cache: &std::path::Path) -> Result<PathBuf, String> {
     let anchor = cache.join(format!(".runtime-build-{version}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&anchor);
     std::fs::create_dir_all(anchor.join("src"))
-        .map_err(|e| format!("creating {}: {e}", anchor.display()))?;
+        .map_err(|e| LinkError::io(format!("creating {}", anchor.display()), e))?;
     std::fs::write(
         anchor.join("Cargo.toml"),
         format!(
@@ -218,9 +304,9 @@ fn registry_archive(cache: &std::path::Path) -> Result<PathBuf, String> {
              edition = \"2021\"\n\n[dependencies]\nzeo = \"={version}\"\n\n[workspace]\n"
         ),
     )
-    .map_err(|e| format!("writing the anchor manifest: {e}"))?;
+    .map_err(|e| LinkError::io("writing the anchor manifest", e))?;
     std::fs::write(anchor.join("src/main.rs"), "fn main() {}\n")
-        .map_err(|e| format!("writing the anchor main: {e}"))?;
+        .map_err(|e| LinkError::io("writing the anchor main", e))?;
 
     // It takes minutes. A compile that looks hung is worse than a slow one.
     eprintln!("zeo: building the runtime archive for {version} (once, a few minutes)...");
@@ -228,25 +314,19 @@ fn registry_archive(cache: &std::path::Path) -> Result<PathBuf, String> {
         .args(["build", "--release", "-p", "zeo"])
         .current_dir(&anchor)
         .output()
-        .map_err(|e| {
-            format!(
-                "zeo was installed with `cargo install`, which ships no runtime \
-                 archive, and building one needs cargo on PATH: {e}"
-            )
-        })?;
+        .map_err(|e: std::io::Error| LinkError::NoCargoForRegistry(e.to_string()))?;
     if !out.status.success() {
         let _ = std::fs::remove_dir_all(&anchor);
-        return Err(format!(
-            "building the runtime archive failed:\n{}",
-            link_diagnostics(&String::from_utf8_lossy(&out.stderr))
-        ));
+        return Err(LinkError::ToolFailed {
+            what: "building the runtime archive".into(),
+            stderr: link_diagnostics(&String::from_utf8_lossy(&out.stderr)),
+        });
     }
     let built = anchor.join("target").join("release").join("libzeo.a");
     if !built.is_file() {
         let _ = std::fs::remove_dir_all(&anchor);
-        return Err(format!(
-            "the runtime build produced no {} -- this is a zeo bug",
-            built.display()
+        return Err(LinkError::RuntimeBuildProducedNothing(
+            built.display().to_string(),
         ));
     }
     // Publish through a rename so a concurrent first run never reads a
@@ -254,10 +334,11 @@ fn registry_archive(cache: &std::path::Path) -> Result<PathBuf, String> {
     let dir = dest
         .parent()
         .expect("the destination always has a parent directory");
-    std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(dir)
+        .map_err(|e| LinkError::io(format!("creating {}", dir.display()), e))?;
     let staging = dir.join(format!(".libzeo.a.{}", std::process::id()));
-    std::fs::copy(&built, &staging).map_err(|e| format!("staging the archive: {e}"))?;
-    std::fs::rename(&staging, &dest).map_err(|e| format!("publishing the archive: {e}"))?;
+    std::fs::copy(&built, &staging).map_err(|e| LinkError::io("staging the archive", e))?;
+    std::fs::rename(&staging, &dest).map_err(|e| LinkError::io("publishing the archive", e))?;
     let _ = std::fs::remove_dir_all(&anchor);
     Ok(dest)
 }
@@ -296,7 +377,7 @@ const NATLIBS_LINUX_GNU: &[&str] = &[
 const NATLIBS_LINUX_MUSL: &[&str] = &[];
 
 /// The native-library tail of a link line for `triple`.
-pub fn natlibs_for(triple: &str) -> Result<&'static [&'static str], String> {
+pub fn natlibs_for(triple: &str) -> Result<&'static [&'static str], LinkError> {
     if triple.contains("apple-darwin") {
         Ok(NATLIBS_MACOS)
     } else if triple.contains("linux-musl") {
@@ -304,7 +385,7 @@ pub fn natlibs_for(triple: &str) -> Result<&'static [&'static str], String> {
     } else if triple.contains("linux-gnu") {
         Ok(NATLIBS_LINUX_GNU)
     } else {
-        Err(format!("no native-library table for target {triple}"))
+        Err(LinkError::NoNativeLibs(triple.to_string()))
     }
 }
 
@@ -389,7 +470,7 @@ pub fn link_binary(
     output: &std::path::Path,
     debuginfo: bool,
     loads_cext: bool,
-) -> Result<(), String> {
+) -> Result<(), LinkError> {
     let archive = runtime_archive()?;
     let natlibs = natlibs_for(host_triple())?;
     let mut cmd = std::process::Command::new("cc");
@@ -428,13 +509,12 @@ pub fn link_binary(
     }
     let out = cmd
         .output()
-        .map_err(|e| format!("running cc to link {}: {e}", output.display()))?;
+        .map_err(|e| LinkError::io(format!("running cc to link {}", output.display()), e))?;
     if !out.status.success() {
-        return Err(format!(
-            "linking {} failed:\n{}",
-            output.display(),
-            link_diagnostics(&String::from_utf8_lossy(&out.stderr))
-        ));
+        return Err(LinkError::ToolFailed {
+            what: format!("linking {}", output.display()),
+            stderr: link_diagnostics(&String::from_utf8_lossy(&out.stderr)),
+        });
     }
     Ok(())
 }
