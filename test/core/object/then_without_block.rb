@@ -1,16 +1,8 @@
 # `Kernel#then` / `yield_self` without a block is an Enumerator over one
 # element -- the receiver -- and it knows its own SIZE.
 #
-# The original header follows. It describes the PREDECESSOR project's
-# version of this test and its own fix.
-#
-# `then` / `yield_self` given no block is an Enumerator over exactly one
-# element, the receiver -- spinel refused the call outright (#4028):
-#
-#   undefined method 'then' for an instance of Array (NoMethodError)
-#
-# and a `then` whose block body is EMPTY declared its result slot `void`,
-# because the desugared `then { nil }` types as nil, which has no C slot.
+# A `then` whose block body is empty is covered too: it answers nil rather
+# than nothing at all.
 
 [].then{}
 p([].then{})

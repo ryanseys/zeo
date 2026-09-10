@@ -30,8 +30,8 @@ puts "x".eql?("x")  # true
 # OCCURRENCE is its own static object (no cross-occurrence merging), so two
 # textually equal literals are distinct objects, matching plain CRuby.
 # Aliasing (t = s) still answers truthfully. The one residue: re-evaluating
-# the SAME occurrence (a literal in a loop) yields one object -- the
-# frozen-string-literal semantics spinel's immutable strings always had.
+# the SAME occurrence (a literal in a loop) yields one object, which is what
+# a frozen string literal does.
 puts s.equal?(s)    # true   (same variable)
 puts s.equal?(t)    # false  (two occurrences: distinct objects)
 puts s.equal?(u)    # false  (different value)

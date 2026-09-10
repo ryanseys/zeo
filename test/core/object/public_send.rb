@@ -1,8 +1,6 @@
-# Issue #735. `recv.public_send(:meth, args)` should be identical to
-# `recv.send(:meth, args)` in spinel (visibility is not modeled in
-# static dispatch). The parser textually rewrites `.send(:foo)` and
-# `.__send__(:foo)` to `.foo`; now `.public_send(:foo)` (and the
-# string-form variant) take the same shortcut.
+# `public_send` reaches a public method by name, given either a Symbol or a
+# String, and `__send__` does the same. Whether public_send REFUSES a private
+# method is a separate question with its own tests.
 
 puts "hello".public_send(:upcase)
 puts "world".public_send("upcase")

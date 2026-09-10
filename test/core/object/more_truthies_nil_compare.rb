@@ -1,24 +1,15 @@
-# #562 (gurgeous / Adam Doppelt). A corpus of `<container_op>
-# == nil` predicates that CRuby answers as true but spinel
-# previously emitted as false. Root cause: typed-array /
-# typed-hash returns can't represent nil at the value level
-# (sp_IntArray_get returns 0 on out-of-range, sp_StrIntHash_get
-# returns 0 on missing key, etc.), so the existing
-# `int == nil` short-circuit in compile_eq folded the
-# predicate to FALSE.
+# A container operation that finds nothing answers nil, and `== nil` on it is
+# therefore true. Each line below reads past the end, off an empty container,
+# or for a key or element that is not there:
 #
-# compile_container_op_nil_check recognizes specific call
-# shapes on the lhs of `== nil` and emits a CRuby-equivalent
-# runtime predicate:
-#   arr[i] / arr.delete_at(i) -> (i < 0 || i >= len)
-#   arr.first / arr.last / arr.pop -> (len == 0)
-#   arr.find_index(x) -> !arr.include?(x)
-#   hash[k] -> !hash.has_key?(k)
-#   regex.match(s) -> !regex.match?(s)
+#   arr[i], arr.delete_at(i)     -- index outside the array
+#   arr.first, arr.last, arr.pop -- the array is empty
+#   arr.find_index(x)            -- x is not in the array
+#   hash[k]                      -- the hash has no such key
+#   regex.match(s)               -- the pattern does not match
 #
-# Plus `Array.new.instance_of?(Array)` folds to TRUE: every
-# Array variant (int_array / str_array / etc.) is
-# conceptually `Array`; same for Hash variants.
+# The hazard is a container whose element type cannot hold nil: a miss must
+# still answer nil rather than that type's zero value.
 
 p ([1, 2, 3][99] == nil)          # 01
 p Array.new.instance_of?(Array)   # 02

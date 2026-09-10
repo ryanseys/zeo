@@ -1,6 +1,5 @@
-# `Regexp#=~` (and match?/===) with a non-String operand raises
-# TypeError in CRuby; Spinel used to pass the scalar where a char* was
-# expected and segfault.
+# `Regexp#=~`, and match? and === beside it, raise TypeError when the operand
+# is not a String.
 x = 5
 begin
   if /p/ =~ x

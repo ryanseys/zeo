@@ -1,11 +1,7 @@
-# A plain tail instance-variable write is the method's value in Ruby
-# (`def m; @x = v; end` answers v). Returning the statement default instead
-# handed back the slot type's nil: NULL for an Array (the caller segfaulted on
-# the first `.length`), 0 for an Integer, "" for a String, {} for a Hash.
-# #3317 routed only an OBJECT-valued tail ivar write through the value path,
-# and `def m = (@x = v)` parses as a value so the endless form was already
-# right; the ordinary statement form was not. (matz/spinel#1484 covers the
-# operator-assignment form, which already worked.)
+# A tail instance-variable write is the method's value: `def m; @x = v; end`
+# answers v. That holds for every type the slot can be -- Array, Integer,
+# String, Hash -- and for the ordinary statement form as much as the endless
+# `def m = (@x = v)`, which parses as a value already.
 class Slots
   def initialize
     @i = nil

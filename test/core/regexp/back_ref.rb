@@ -1,11 +1,10 @@
 # BackReferenceReadNode -- `$&`, `$~`, `$'`, $`, `$+`.
 #
-# Special globals populated by regex matches. Spinel's regex engine
-# already populates sp_re_match* state for $1..$9 (NumberedReferenceReadNode);
-# this extends to the symbolic back-references.
+# The globals a regex match fills in, beside the numbered $1..$9 that have
+# their own tests.
 #
 #   $&  -- the entire matched substring
-#   $~  -- the MatchData object (aliased to $& in Spinel; no MatchData wrapper)
+#   $~  -- the MatchData object
 #   $`  -- the substring before the match
 #   $'  -- the substring after the match
 #   $+  -- the contents of the last group matched

@@ -1,14 +1,10 @@
-# Static-vs-runtime class lattice for `is_a?` / `kind_of?` /
-# `instance_of?` when the recv's static type is a parent class but
-# the runtime instance can be any descendant. Previously spinel
-# collapsed the descendant-target case to literal FALSE because
-# is_class_or_ancestor(parent, child) returns 0; the recv's runtime
-# cls_id was never consulted.
+# `is_a?`, `kind_of?` and `instance_of?` where the receiver is declared as a
+# parent class but the object in it is some descendant. The answer is the
+# runtime object's class, never the declared one, so asking a parent-typed
+# slot whether it is a child class has to look at what it actually holds.
 #
-# Fix: when the target is identical to, ancestor of, or descendant
-# of the static recv type, consult the actual cls_id slot.
-# `is_a?` / `kind_of?` use ancestor-walk (sp_class_le); `instance_of?`
-# uses exact equality.
+# `is_a?` and `kind_of?` walk the ancestors; `instance_of?` wants the exact
+# class.
 
 class Animal
 end

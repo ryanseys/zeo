@@ -3,8 +3,8 @@
 # top-level `def` (regex_local_var's `find`) is unique within this
 # file. Local-name collisions (`re`, `re2` reused across files for
 # different regex literals) are dodged with per-section prefixes
-# so spinel's local-type inference doesn't unify them across the
-# script and widen to poly.
+# so the compiler cannot unify them across the script and give them one
+# type.
 
 # === Stage 1: UTF-8 source byte-length ===
 # A regex source containing multi-byte UTF-8 chars must reach the
@@ -128,8 +128,7 @@ end
 # regex_pat_c_expr helper so =~, match?, match, gsub, sub, scan, and
 # split all accept either form.
 
-# match? predicate (boolean -- safe across CRuby/Spinel int/value
-# differences in =~ which returns a position vs a count).
+# match? answers a boolean, where =~ answers a position.
 ir_x = "bar"
 puts "foo_bar".match?(/foo_#{ir_x}/)   #=> true
 puts "foo_baz".match?(/foo_#{ir_x}/)   #=> false

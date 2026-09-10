@@ -1,6 +1,5 @@
-# spinel-side String#split(regexp[, limit]) compatibility, mirroring CRuby and
-# upstream mruby-regexp string_regexp.rb#split (62a55cefe split compat,
-# b61e44b35 limit). Fixes: zero-width matches split into characters instead of
+# String#split with a regexp separator, and with a limit. The rules that are
+# easy to get wrong: a zero-width match splits into characters rather than
 # emitting empty fields, trailing empty fields are stripped under the default
 # limit (kept under a negative limit), an empty subject is always [], unmatched
 # optional capture groups are omitted, and a positive limit caps the field

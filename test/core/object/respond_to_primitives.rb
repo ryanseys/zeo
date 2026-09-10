@@ -1,7 +1,10 @@
-# respond_to? on built-in (primitive) receivers, answered at compile time by
-# probing spinel's own method resolution -- no hand-maintained method list.
-# Per-type helpers keep each receiver's concrete type (a single shared helper
-# would widen every receiver to a poly value, whose runtime class isn't static).
+# respond_to? on built-in receivers, over the whole shape of the question: a
+# no-arg method, an operator, an index, a block iterator, a String argument
+# rather than a Symbol, and a name that is absent.
+#
+# Each receiver goes through its OWN helper so it keeps its concrete type. One
+# shared helper would widen them all to a single slot, which is a different
+# test.
 def st(x); x; end
 def si(x); x; end
 def sf(x); x; end

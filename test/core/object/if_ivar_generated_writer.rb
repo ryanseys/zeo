@@ -1,10 +1,9 @@
-# `if obj.attr` had its live branch dropped when the backing ivar's only
-# VISIBLE write was the constructor's nil and the real value arrived through a
-# generated setter. emit_if folds a branch away when every program-wide write
-# to the ivar assigns nil, but attr_writer / attr_accessor synthesize the
-# setter, so `c.w = [0.5]` is a CallNode against a body that has no AST and the
-# scan never saw it. The program took the else branch forever, silently.
-# (matz/spinel#4107)
+# `if obj.attr`, where the only write spelled out in the source is the
+# constructor's nil and the real value arrives through an attr_accessor.
+#
+# A compiler that folds the branch away because every write it can SEE assigns
+# nil has not counted the generated setter: `c.w = [0.5]` is a call whose body
+# no scan of the source will find. The branch has to stay live.
 class Ctx
   attr_accessor :w
   def initialize

@@ -1,8 +1,7 @@
 # A top-level `def` is Object's PRIVATE instance method, so an explicit receiver
 # cannot reach it -- except through #send, whose whole point is to ignore
-# visibility. Spinel retargets `x.send(:m)` to a plain `x.m` in the analyzer,
-# which is the right lowering but loses exactly the permission that made the
-# call legal, so the top-level method was never found.
+# visibility. So `x.send(:m)` is NOT the same call as `x.m`: rewriting one
+# into the other drops the permission that made it legal.
 def zork(v) = "top:#{v}"
 def plain = "top-plain"
 

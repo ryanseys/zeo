@@ -1,16 +1,11 @@
-# `<poly>.is_a?(Klass)` / `kind_of?` / `instance_of?` runtime
-# dispatch. Spinel previously fell through to user-class dispatch
-# only — the SP_TAG_INT / SP_TAG_STR / SP_TAG_FLT / SP_TAG_NIL /
-# SP_TAG_BOOL / SP_TAG_SYM / built-in Array / Hash / Range cases
-# were missing, so `is_a?(Integer)` against a poly slot always
-# returned false and downstream branches took the wrong arm. The
-# user-class dispatch also walked the wrong direction (recv->parent
-# instead of any-descendant->ancestor).
+# `is_a?`, `kind_of?` and `instance_of?` on a receiver the compiler cannot
+# give one type. Every kind has to answer for itself: Integer, String, Float,
+# nil, true/false, Symbol, and the built-in Array, Hash and Range, as well as
+# a user class.
 #
-# Repro: a heterogeneous poly array yields each element back as
-# poly, then the type test routes it to the right branch. The
-# trailing Bar.new must select the `is_a?(Bar)` arm AND the
-# Foo.new before it must NOT match `is_a?(Bar)` (subclass-only).
+# The shape is a mixed array whose elements come back out one at a time and
+# route to a branch by type. A subclass instance must select its own arm and
+# NOT its sibling's, so the walk goes from the object towards its ancestors.
 
 class Foo
   def name; "foo"; end

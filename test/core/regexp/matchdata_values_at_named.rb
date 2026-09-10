@@ -1,7 +1,6 @@
 # MatchData#values_at(:name) resolves each named group against this MatchData's
-# own regexp group table, like MatchData#[]. Spinel routed a Symbol/String
-# argument through the index accessor, which consulted a single first-seen global
-# name table -- so a second named-capture regexp's names resolved to nil.
+# own regexp group table, the same way MatchData#[] does. Each regexp has its
+# own names, so a second one's groups must not be looked up in the first's.
 def one(s); s.match(/(?<a>\w)(?<b>\w)/).values_at(:a, :b); end
 def two(s); s.match(/(?<c>\w)(?<d>\w)/).values_at(:c, :d); end
 p one("hi")                    # ["h", "i"]

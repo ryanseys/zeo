@@ -1,8 +1,7 @@
-# An empty `{}` / `[]` has no elements to type it, so inference gives the
-# literal whatever the reads elsewhere suggest. The plain ivar write lends the
-# literal its slot's variant; `||=` did not, so a module registry built one
-# hash layout while every write and read of the slot used another, and the C
-# build stopped on the pointer types. (matz/spinel#4111)
+# An empty `{}` or `[]` carries no element to type it, so what it holds is
+# decided by the reads and writes elsewhere. `@reg ||= {}` has to reach the
+# same answer as `@reg = {}` would: one container, agreed on by the writes
+# and the reads alike.
 module Registry
   @reg ||= {}
   def self.register(extension, klass)

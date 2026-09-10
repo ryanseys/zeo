@@ -1,8 +1,7 @@
-# Object#object_id — unique stable id per object value.
-# Int uses the MRI tagged formula (2*n+1), string uses the pointer
-# bit pattern, symbol uses its interned id scaled to avoid collision.
-# The exact numbers aren't part of the contract; spinel just needs
-# values that are stable and unique-ish.
+# Object#object_id. The contract is stability and distinctness, not any
+# particular number: one object answers the same id every time, and two
+# different objects answer different ids. The program compares ids to each
+# other, never to a literal.
 
 puts 42.object_id == 42.object_id   # true (same value, same id)
 puts 1.object_id != 2.object_id     # true (different value)

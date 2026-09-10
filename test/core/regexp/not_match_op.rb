@@ -1,6 +1,5 @@
-# Issue #732. `str !~ /pattern/` should return true when no match
-# and false when there is a match. spinel used to emit the unresolved-
-# call warning and return 0; now `!~` is the negation of `=~`.
+# `str !~ /pattern/` is the negation of `=~`: true when nothing matches,
+# false when something does.
 
 puts "hello" !~ /xyz/
 puts "hello" !~ /llo/
