@@ -55,7 +55,10 @@ pub fn resolve(compiler: &mut Compiler) {
         if compiler.classes[idx].unit.is_some() || compiler.classes[idx].is_builtin {
             continue;
         }
-        let names: Vec<(String, bool)> = compiler.classes[idx]
+        // Sorted, because the set is hash-ordered and the group numbers
+        // minted below reach the emitted code: an unsorted walk gives one
+        // program two different objects across two compiles.
+        let mut names: Vec<(String, bool)> = compiler.classes[idx]
             .method_history
             .iter()
             .filter(|(n, _, _, _)| sources.contains(n.as_str()))
@@ -63,6 +66,7 @@ pub fn resolve(compiler: &mut Compiler) {
             .collect::<crate::compiler::FSet<_>>()
             .into_iter()
             .collect();
+        names.sort();
         for (name, singleton) in names {
             // Every body of this name, with the document position of each.
             // A body with no site record -- a `def` inside an `if` -- has no
