@@ -1323,7 +1323,7 @@ fn subsec_nsec_arg(v: Option<&RubyValue>) -> Result<u32, Signal> {
             let usec = match v {
                 RubyValue::Float(f) => *f,
                 RubyValue::Rational(r) => crate::builtins::rational::rat_to_f64(r),
-                _ => unreachable!(),
+                _ => unreachable!("the arm pattern binds Float and Rational only"),
             };
             if !(0.0..1_000_000.0).contains(&usec) {
                 return Err(arg_error!("subsecx out of range"));

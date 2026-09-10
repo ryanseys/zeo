@@ -354,7 +354,7 @@ fn int_size(kind: char, native: bool) -> usize {
             }
         }
         'Q' | 'q' | 'j' | 'J' => 8,
-        _ => unreachable!(),
+        _ => unreachable!("the directive parser passes integer kinds only"),
     }
 }
 

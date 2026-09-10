@@ -1138,7 +1138,7 @@ pub fn refinement_import_methods(
     }
     for m in modules {
         let RubyValue::Class(mid) = m else {
-            unreachable!()
+            unreachable!("the validation loop above rejected every non-Module")
         };
         if ancestors_of_value(*mid).len() > 1
             && let Some((file, line)) = crate::frames::current_location()

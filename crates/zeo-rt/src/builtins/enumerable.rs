@@ -1096,7 +1096,7 @@ impl SumAcc {
                 let x = match v {
                     RubyValue::Int(i) => i as f64,
                     RubyValue::Float(f) => f,
-                    _ => unreachable!(),
+                    _ => unreachable!("the arm pattern binds Int and Float only"),
                 };
                 // Kahan-Babuska: t = sum + x, compensating with
                 // whichever operand lost precision.
@@ -2269,13 +2269,13 @@ mod tests {
         let a = ints(&[1, 2, 4, 9, 10, 11, 12, 15]);
         let adjacent = RProc::new(|args: &[RubyValue]| {
             let (RubyValue::Int(i), RubyValue::Int(j)) = (&args[0], &args[1]) else {
-                unreachable!()
+                unreachable!("the driver walks an Integer array")
             };
             Ok(RubyValue::Bool(i + 1 == *j))
         });
         let gap = RProc::new(|args: &[RubyValue]| {
             let (RubyValue::Int(i), RubyValue::Int(j)) = (&args[0], &args[1]) else {
-                unreachable!()
+                unreachable!("the driver walks an Integer array")
             };
             Ok(RubyValue::Bool(i + 1 != *j))
         });

@@ -226,7 +226,7 @@ ruby_class! {
     // named, by 1-based index otherwise.
     def "inspect" (recv) {
         let md = recv_md(recv);
-        let RubyValue::Array(a) = crate::regexp::matchdata_to_a(&md) else { unreachable!() };
+        let RubyValue::Array(a) = crate::regexp::matchdata_to_a(&md) else { unreachable!("matchdata_to_a answers an Array") };
         let items: Vec<RubyValue> = a.lock().iter().cloned().collect();
         let mut s = format!("#<MatchData {}", items[0].inspect_string());
         for (i, item) in items.iter().enumerate().skip(1) {

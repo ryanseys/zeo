@@ -414,7 +414,7 @@ ruby_class! {
         if !ok {
             return Err(type_error!("initialize_copy should take same class object"));
         }
-        let RubyValue::Object(o) = orig else { unreachable!() };
+        let RubyValue::Object(o) = orig else { unreachable!("the type check above accepted only a Random object") };
         let other = downcast_robj::<RandomObj>(o).expect("just matched");
         if !Arc::ptr_eq(&me, &other) {
             *me.state.lock() = other.state.lock().clone();

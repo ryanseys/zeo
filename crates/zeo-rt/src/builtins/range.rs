@@ -680,7 +680,7 @@ ruby_class! {
             // all-digit and single-character branches, which a length-ordered
             // loop of its own got wrong in both directions.
             Some(RubyValue::Str(s)) if matches!(end, Some(RubyValue::Str(_))) => {
-                let RubyValue::Str(e) = end.unwrap() else { unreachable!() };
+                let RubyValue::Str(e) = end.unwrap() else { unreachable!("the arm guard matched a Str end") };
                 let end = e.lock().to_utf8_lossy().into_owned();
                 let beg = s.lock().to_utf8_lossy().into_owned();
                 crate::builtins::string::upto_each(&beg, &end, exclusive, &mut |v| {
@@ -690,7 +690,7 @@ ruby_class! {
             // Symbol ranges iterate by NAME succession (the same walk over
             // `rb_sym2str`), yielding Symbols: `(:a..:e)` walks :a..:e.
             Some(RubyValue::Symbol(s)) if matches!(end, Some(RubyValue::Symbol(_))) => {
-                let RubyValue::Symbol(e) = end.unwrap() else { unreachable!() };
+                let RubyValue::Symbol(e) = end.unwrap() else { unreachable!("the arm guard matched a Symbol end") };
                 let end = e.name();
                 let beg = s.name();
                 crate::builtins::string::upto_each(&beg, &end, exclusive, &mut |v| {
@@ -920,7 +920,7 @@ ruby_class! {
                 let _ = (start, exclusive);
                 let all = crate::builtins::enumerable::enumerable_send(recv, "to_a", &[], None)
                     .expect("Enumerable implements to_a")?;
-                let RubyValue::Array(all) = all else { unreachable!() };
+                let RubyValue::Array(all) = all else { unreachable!("Enumerable#to_a answers an Array") };
                 let items = all.lock().clone();
                 let n = n.max(0) as usize;
                 let skip = items.len().saturating_sub(n);

@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn dup_is_a_fresh_independent_object() {
         let RubyValue::Object(o) = new_cv() else {
-            unreachable!()
+            unreachable!("new_cv builds an Object")
         };
         let dup = o.dup_object(false);
         assert_eq!(dup.class_id(), CONDITION_VARIABLE_CLASS);

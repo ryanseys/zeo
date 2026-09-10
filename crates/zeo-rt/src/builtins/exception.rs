@@ -1485,7 +1485,7 @@ fn signal_exception_initialize(
             let spelled = match name {
                 RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
                 RubyValue::Symbol(s) => s.name(),
-                _ => unreachable!(),
+                _ => unreachable!("the arm pattern binds Str and Symbol only"),
             };
             let signo = crate::builtins::signal::signo_from_name(&spelled).ok_or_else(|| {
                 let bare = spelled.strip_prefix("SIG").unwrap_or(&spelled);

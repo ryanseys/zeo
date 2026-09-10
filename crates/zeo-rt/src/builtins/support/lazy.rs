@@ -1055,7 +1055,7 @@ mod tests {
     fn times_two() -> RubyValue {
         RubyValue::Proc(RProc::new(|args: &[RubyValue]| {
             let RubyValue::Int(i) = args[0] else {
-                unreachable!()
+                unreachable!("the driver walks an Integer array")
             };
             Ok(RubyValue::Int(i * 2))
         }))
@@ -1064,7 +1064,7 @@ mod tests {
     fn is_even() -> RubyValue {
         RubyValue::Proc(RProc::new(|args: &[RubyValue]| {
             let RubyValue::Int(i) = args[0] else {
-                unreachable!()
+                unreachable!("the driver walks an Integer array")
             };
             Ok(RubyValue::Bool(i % 2 == 0))
         }))
