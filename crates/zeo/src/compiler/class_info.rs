@@ -270,8 +270,8 @@ pub struct ClassInfo {
     /// so [`lookup_method`](Compiler::lookup_method) is a binary search.
     ///
     /// A scan would be O(visible methods), and `method_in_chain` is asked once
-    /// per call site: that product is what took spinel's Rails-scale front end
-    /// down seven separate times. Built once, at the end of
+    /// per call site. That product is quadratic in the size of the program,
+    /// which a Rails-scale require graph reaches. Built once, at the end of
     /// `analyze::mro::materialize`, after the last thing that rewrites a table.
     pub(super) method_index: Vec<(NameId, u32)>,
     pub(super) class_method_index: Vec<(NameId, u32)>,

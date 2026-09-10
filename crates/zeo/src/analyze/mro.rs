@@ -37,12 +37,10 @@ use crate::hir::{HirNode, NodeId, Span, Visibility};
 /// `[A, C, A]` because the include ran against an empty chain, while
 /// `prepend A; include A` gives `[A, C]` because the include found it.
 ///
-/// This is the one place zeo deliberately does NOT copy spinel's own
-/// shortcut -- spinel's separately generated `.ancestors` reflection only
-/// expands a class's own DIRECT includes, which is measurably wrong for a
-/// module-including-module diamond. Consulting this SAME list for dispatch,
-/// reflection, AND class-variable ownership avoids that class of bug
-/// entirely.
+/// Dispatch, reflection and class-variable ownership all read THIS list.
+/// A second chain built for `.ancestors` alone is the tempting shortcut, and
+/// it answers a module-including-module diamond wrongly the moment it expands
+/// only a class's DIRECT includes. One list cannot disagree with itself.
 pub fn compute_ancestors(compiler: &Compiler, class_id: ClassId) -> Vec<ClassId> {
     chain_of(compiler, class_id, &mut Vec::new())
 }

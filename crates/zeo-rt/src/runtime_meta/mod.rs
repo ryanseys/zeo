@@ -985,7 +985,8 @@ pub(crate) fn pin_identity(v: &RubyValue) -> Option<usize> {
 /// address is removed FIRST, and the pins go LAST. Reversed, there is a window
 /// in which a new value can be born at a reused address and inherit a dead
 /// object's singleton methods -- which is the exact bug the pin exists to
-/// prevent, and which `tests/spinel/singleton_address_reuse.rb` catches.
+/// prevent, and which `test/lang/singleton/singleton_address_reuse.rb`
+/// catches.
 ///
 /// Only keys the pin table names are touched. A Class receiver is keyed by
 /// [`class_identity`] and never pinned, so its rows are never candidates.

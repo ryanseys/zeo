@@ -205,7 +205,7 @@ pub(super) fn main_mixin(
     //
     // The list is CLOSED on purpose. There is no `prepend` and no `extend`,
     // so routing either would shadow a user's own top-level `def` --
-    // `spinel::anon_double_splat_forward.rb`'s `def prepend(**)` is an
+    // `lang/methods/anon_double_splat_forward.rb`'s `def prepend(**)` is an
     // ordinary method that happens to share the name.
     let target = RubyValue::Class(zeo_abi::OBJECT_CLASS);
     match name.name_str() {

@@ -22,8 +22,8 @@
 //! a thread-local byte rather than a compiler-hoisted check. That path is
 //! `unsafe`, so it is checked three ways: a debug-only record of which thread
 //! took it (asserted never to change, live across the whole golden corpus,
-//! which builds the Debug runtime), a `tests/spinel` golden driving one object
-//! from both sides of a spawn, and Miri:
+//! which builds the Debug runtime), `core/thread/ivar_sole_thread_handoff.rb`,
+//! which drives one object from both sides of a spawn, and Miri:
 //!
 //! ```text
 //! MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-preemption-rate=0.9" \
