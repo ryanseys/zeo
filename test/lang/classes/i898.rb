@@ -1,8 +1,8 @@
 # Random uses a different RNG than CRuby, so values differ; the test
 # checks the interface (types, ranges, reproducibility), not exact
-# sequence parity. bytes#length is avoided because spinel has no
-# ASCII-8BIT encoding — String#length counts UTF-8 chars, so a random
-# byte buffer's char-count is not its byte-count.
+# sequence parity. The byte buffer is measured with bytesize rather than
+# length, since length counts characters and a random byte run is not valid
+# UTF-8.
 r = Random.new(42)
 puts r.rand(100).class
 puts r.rand.class

@@ -109,11 +109,9 @@ puts T_poly_recv_dispatch_narrow_Server.new.run(80)
 # `iterable.each do |a| ... end` over a poly slot silently dropped
 # the iteration.
 #
-# Repro: an ivar `@store` widened to poly via two distinct array
-# shapes (an int_array and a poly_array) is iterated via `.each`.
-# Spinel previously emitted no loop at all — the body never ran.
-# The block param `a` is delivered as sp_RbVal (the widest fit
-# across the cls_id arms).
+# The shape: an ivar `@store` written with two differently typed arrays and
+# then iterated with `.each`. The loop has to run, and the block parameter
+# arrives as whatever the element actually is.
 
 class T_poly_recv_each_C
   def store_int_array

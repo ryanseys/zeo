@@ -60,10 +60,8 @@ end
 # #530. `Class.new(kw: val)` (Symbol-keyed kwargs) where the
 # class's initialize takes a single positional `attrs` param.
 # CRuby binds `attrs = {kw: val}` (the kwargs become a positional
-# hash whose keys are the kwarg *symbols*). Spinel previously
-# emitted `sp_Foo_new(0)` because the kwarg name didn't match the
-# positional param name -- the kwarg got silently dropped and the
-# param defaulted to int.
+# hash whose keys are the kwarg SYMBOLS), so the keywords must not be
+# dropped just because none of their names matches the parameter's.
 #
 # Fix: when a KeywordHashNode arg's keys match no param name
 # and there's still an unfilled positional, treat the whole
@@ -215,10 +213,9 @@ puts param_reset.label
 # computation, not a bare param reference — `is_simple_writer_method`
 # must not classify it as auto-attr_writer.
 #
-# Without that fix, the method gets auto-registered in @cls_attr_writers,
-# `cls_has_attr_writer(T_no_attr_write_shortcut_complex_C, "doubled")` returns true, and the call site
-# short-circuits `c.doubled = 5` to `c->iv_doubled = 5` — bypassing the
-# `* 2` entirely. Ruby would print 10; pre-fix Spinel printed 5.
+# A hand-written `doubled=` is not an attr_writer. Treating it as one lets
+# `c.doubled = 5` write the ivar straight through and skip the `* 2`, which
+# prints 5 where 10 is right.
 
 class T_no_attr_write_shortcut_complex_C
   def initialize

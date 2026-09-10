@@ -54,13 +54,9 @@ puts d.attrs.has_key?(:c)   # false
 
 # === poly_int_arith_auto_unify ===
 # Auto-unify int receiver + poly argument in arithmetic. Common
-# case: `addr + arr[i][j]` where the inner dispatch is a
-# heterogeneous user-class+IntArray array — both arms genuinely
-# return int at runtime, but spinel statically types `[]`
-# dispatch as poly. Spinel previously emitted `(addr +
-# <sp_RbVal>)` and the C compile failed (`invalid operands to
-# binary + (have 'mrb_int' and 'sp_RbVal')`). The operator-site
-# fall-through now unboxes the poly arg via .v.i, mirroring PR
+# case: `addr + arr[i][j]`, where `arr` mixes a user class with an array so
+# nothing proves what `[]` answers. Both possibilities do answer an Integer
+# at runtime, so the addition has to find it there, the same way as in
 # #347's LV-write semantics.
 
 # Class that defines `[]` returning int — when stored alongside an

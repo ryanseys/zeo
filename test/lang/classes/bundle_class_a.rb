@@ -6,10 +6,10 @@
 # === alias_method ===
 # AliasMethodNode -- `alias greet hello` inside a class body.
 #
-# CRuby snapshots the method at alias time -- if `hello` is later
-# redefined, `greet` still calls the original. In Spinel's AOT model
-# methods are static C functions; we register a compile-time
-# synonym so dispatch on `.greet` routes to the same C function as
+# An alias snapshots the method AT ALIAS TIME: if `hello` is redefined
+# later, `greet` still runs the body it was aliased to. So the alias binds to
+# the definition and not to the name, which a synonym routing `.greet` to
+# whatever `hello` means
 # `.hello`. Out of scope: alias inside a method body (CRuby allows
 # but the semantics differ); alias of an inherited method.
 
@@ -60,9 +60,9 @@ h = T_and_node_poly_operand_Holder.new
 puts h.chain    # 1
 
 # === array_3d_nested ===
-# Deep-nested array literals (3D and beyond). Spinel doesn't
-# have a typed `<X>_ptr_array_ptr_array` slot — the second-level
-# `[[1,2,3],[4,5,6]]` infers as `int_array_ptr_array` and the
+# Deep-nested array literals, three levels and beyond. Each level is an
+# array whose elements are arrays, so the second-level `[[1,2,3],[4,5,6]]` is
+# an array of int arrays and the
 # outer `[[[...]],[[...]]]` would naively box each element via
 # `sp_box_ptr_array`, which erases the elem-type info and
 # leaves the dispatch returning an unknown obj at the next `[]`

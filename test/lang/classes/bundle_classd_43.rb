@@ -4,9 +4,8 @@
 #   - strip_nullable_int_cast
 
 # === str_setbyte_frozen_literal ===
-# Spinel adopts `# frozen_string_literal: true` semantics
-# globally — every string literal is frozen, mutation requires
-# a heap-allocated buffer (`.dup`, `+`, etc.). setbyte on a
+# Under the `frozen_string_literal: true` pragma a string literal is frozen,
+# and mutating one needs a buffer of its own (`.dup`, `+`). setbyte on a
 # literal raises FrozenError with the same message CRuby uses
 # when the pragma is in effect.
 

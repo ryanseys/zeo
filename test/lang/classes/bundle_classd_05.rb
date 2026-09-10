@@ -40,9 +40,8 @@ puts [T_map_empty_block_Box.new(1), T_map_empty_block_Box.new(2), T_map_empty_bl
 #
 # Now `Range#map { array_block }` infers as `<inner>_ptr_array`
 # (matching the runtime sp_PtrArray storage), so the result can
-# be indexed `arr[i][j]` directly. A subsequent re-assignment
-# with a different array shape goes to a separate slot to avoid
-# spinel's slot widening to poly.
+# be indexed `arr[i][j]` directly. A later re-assignment of a differently
+# shaped array uses a separate local, so this one keeps its own type.
 
 class T_map_range_recv_array_block_C
   def initialize

@@ -1,8 +1,7 @@
 # A bare call inside a method resolves the way CRuby's ancestry does: the
 # enclosing class's own chain answers it before a top-level `def` does, because
-# a top-level def lands on Object, which is BELOW the class. Spinel kept
-# top-level defs in a flat table consulted ahead of the class members, so a
-# helper in a class lost to a same-named helper beside it.
+# a top-level def lands on Object, which is BELOW the class. A helper defined
+# in the class must therefore win over a same-named helper beside it.
 def helper = "top"
 def size = 9
 def name = "top-name"

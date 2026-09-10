@@ -35,9 +35,8 @@ puts (a <=> b).to_s   # -1
 puts (b <=> a).to_s   # 1
 puts (b <=> c).to_s   # 0
 
-# Standalone `==` falls back to identity, which doesn't help here;
-# the issue is just the recursion inside `<=>`. Spinel's Comparable
-# include path is a separate feature.
+# A standalone `==` falls back to identity, which does not help here: what
+# this is about is the recursion inside `<=>`.
 
 # === user_method_named_like_mutator ===
 # compile_body_return treats certain method names (`update`, `clear`,

@@ -6,10 +6,9 @@
 #   - kwargs_into_default_hash_param
 
 # === ivar_writer_heterogeneity ===
-# Issue #247: when two writers in different methods of the same class
-# disagree on the value type, spinel used to narrow the slot to
-# whichever writer's update_ivar_type call ran last — and the loser's
-# emit site silently miscompiled. Here writer 1 in initialize assigns
+# Two writers in different methods of the same class disagree about the
+# value type of one ivar. Neither writer's type may win over the other's:
+# both writes have to work. Here writer 1 in initialize assigns
 # an int (via SymIntHash#[]) and writer 2 in write_any assigns a
 # string param; the slot must widen to poly so both store cleanly.
 
@@ -131,10 +130,8 @@ puts T_kwarg_default_empty_hash_kind_W.write(1, 404).to_s
 # (`attrs = {}`), call sites that pass kwargs whose names DON'T
 # match the param name should bundle the kwargs into that hash
 # slot. CRuby auto-folds trailing unmatched kwargs into a hash
-# positional; spinel previously dropped them silently because:
-#  - The analyzer fixpoint left the param typed `str_int_hash`
-#    (from the literal `{}` default) and never widened despite
-#    the call site carrying mixed-type values.
+# positional, so they must not be dropped -- not even when the `{}` default
+# suggests a narrower value type than the call site passes.
 #  - The codegen `compile_typed_call_args` / class-method dispatch
 #    arm filled the unmatched slot with the literal default
 #    (`sp_StrIntHash_new()` / `sp_StrPolyHash_new()`), so the

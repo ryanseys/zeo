@@ -9,11 +9,8 @@ def t_poly_array_clear_expr
   # to the unresolved-call warning and emitted literal 0, which
   # made `c = a.clear` mistype `c` as int.
   #
-  # Surfaced via optcarrot's `@sp_visible ||= @sp_map.clear` shape
-  # (the `||=` form needs a typed initializer here so Spinel's
-  # per-variable type inference has a concrete poly_array tag to
-  # unify with — Ruby allows type changes across reassignment but
-  # Spinel doesn't).
+  # The `||=` form needs its initializer to say what the variable holds,
+  # since the right-hand side alone does not.
   
   a = [1, "two", :three, [4, 5]]
   b = a.clear

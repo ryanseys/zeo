@@ -108,11 +108,10 @@ c = T_inherited_cmeth_self_returning_local_Comment.find(9)
 puts c.body
 
 # === inherited_cmethod_subclass_dispatch ===
-# #523. Sibling to #516. When a subclass inherits a class method
-# whose body calls another class method (`self.last` calls bare
-# `all`), spinel correctly monomorphized the call (`sp_Sub_cls_all`
-# is invoked) but the surrounding inference of the call's result
-# type used the parent's signature -- the local slot for the
+# A subclass inherits a class method whose body calls another class method
+# by a bare name: `self.last` calls `all`. The call reaches the SUBCLASS's
+# `all`, and what that answers -- not what the parent's would -- decides the
+# type of the local
 # returned array was typed `sp_IntArray *` (from T_inherited_cmethod_subclass_dispatch_Base.all's empty
 # `[]` literal) while `sp_Sub_cls_all` returned `sp_PtrArray *`,
 # triggering an `incompatible pointer types` C warning and an

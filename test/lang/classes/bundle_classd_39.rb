@@ -26,7 +26,7 @@ puts "done"
 # === send_literal_symbol ===
 # .send(:sym, args) statically rewrites to .sym(args) at parse time.
 # Non-literal symbol args (variable, interpolation) leave the call
-# alone -- those require runtime dispatch which Spinel doesn't model.
+# alone: the name is only known once the program runs.
 
 class T_send_literal_symbol_Calc
   def add(a, b)

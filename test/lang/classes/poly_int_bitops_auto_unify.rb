@@ -2,9 +2,8 @@
 # `>>`, `&`, `|`, `^`). int recv + poly arg previously failed C
 # compile; the poly arg is now unboxed via .v.i.
 
-# Heterogeneous poly_array of [user-class-with-[], IntArray] —
-# the outer `arr[i]` dispatch returns poly, then `[j]` on the
-# poly returns poly (since spinel statically types `[]` as poly).
+# An array mixing a user class that defines `[]` with a real array, so
+# neither `arr[i]` nor the `[j]` after it has a type known ahead of the run.
 class Bits
   def [](i); [0xff, 0x0a, 0x10][i]; end
 end

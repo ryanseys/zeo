@@ -171,9 +171,8 @@ puts r2.body.inspect
 
 # === nested_class_in_class ===
 # Nested class definition inside another class.
-# Spinel has no namespace table; bare class names must be unique, so
-# `class T_nested_class_in_class_A; class B; ... end; end` registers `B` at top level the same
-# way `module M; class B; ... end; end` does.
+# The inner class is reached through the outer one's namespace, the same way
+# a class nested in a module is.
 
 class T_nested_class_in_class_A
   class B

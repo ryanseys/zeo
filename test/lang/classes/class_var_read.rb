@@ -2,10 +2,9 @@
 # ClassVariableWriteNode (the `@@x = ...` last-expression-as-return
 # path) and several real-world class-var idioms.
 #
-# Spinel's class vars are independent per declaring class -- the
-# ClassVariableWriteNode commit covers the storage-shape
-# limitation in detail. This test exercises only patterns that
-# stay inside one class's slot (no cross-hierarchy reads).
+# Every pattern here stays inside one class's own class variable. Reading a
+# class variable across a hierarchy is a separate question with its own
+# tests.
 
 # 1. Singleton-counter idiom: class-method bumps a shared counter,
 #    instance-method reads it. Both routes touch @@count via the
@@ -50,13 +49,9 @@ end
 puts Other.value             # 100, unaffected by Counter.tick calls
 
 
-# 3. Cvar with explicit non-zero initial value at class body. Spinel
-#    folds the literal into the static C decl (compile-time), so the
-#    cvar enters the program with the source's value rather than the
-#    type default. Conditional rewrites at class body level (e.g.
-#    `if X; @@y = ...; end`) are NOT supported -- Spinel doesn't run
-#    class-body statements at startup, only constant assignments and
-#    method definitions get hoisted.
+# 3. A class variable given an explicit initial value in the class body
+#    enters the program with the value the source wrote, not the zero of
+#    its type.
 class Config
   @@debug = true
   @@max_retries = 5
@@ -69,11 +64,9 @@ puts Config.debug?           # true (folded into static decl)
 puts Config.max_retries      # 5
 
 
-# 4. Cvar updated across many class-method calls -- the cumulative
-#    state lives in the cvar slot, not in any temporary. Chained
-#    `.add(n).add(m)` returning self isn't supported in Spinel
-#    (class methods are static C functions with no self), so we
-#    call separately.
+# 4. A class variable updated across many class-method calls: the running
+#    total lives in the class variable and not in a temporary. The calls
+#    are written out separately rather than chained.
 class Tally
   @@total = 0
 

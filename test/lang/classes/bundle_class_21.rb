@@ -158,8 +158,8 @@ puts T_ivar_c_keyword_KeywordIvar.new.value
 # (FloatArray for float fills, StrArray for string, sym_array (IntArray
 # internally) for symbol, PtrArray for object/pointer fills).
 #
-# Use float values whose fractional part is non-zero so Spinel's float-puts
-# matches CRuby's.
+# The float values have non-zero fractional parts, so the printed form does
+# not depend on how a trailing ".0" is rendered.
 
 class T_ivar_float_array_Box
   attr_accessor :nums

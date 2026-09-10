@@ -18,11 +18,8 @@ takes_class(ArgumentError)
 c = StandardError
 puts c.name
 
-# Shape B: nested user class as value. Verify the value compiles
-# and survives a round-trip through a local; the displayed
-# `c.name` between spinel and MRI may differ (spinel uses `_` as
-# the internal separator), but `c == Inner-class` confirms the
-# value emit and equality semantics hold.
+# Shape B: a nested user class as a value. It survives a round trip through
+# a local, and the equality below holds afterwards.
 module M
   class Inner
   end

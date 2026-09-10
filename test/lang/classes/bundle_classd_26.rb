@@ -76,10 +76,9 @@ puts "end"
 # every typed branch and emits *nothing* — the assignment silently
 # drops from generated T_poly_recv_bracket_assign_C.
 #
-# Trigger: @arr is observed as int_array (`[nil] * N`) AND as a
-# scalar (string, int) — finalize collapses to plain `poly`. Then
-# `@arr[i] = v` should still write to the underlying storage, but
-# without the poly arm spinel emits zero code for the assignment.
+# The shape: @arr holds an array in one place and a scalar in another, so
+# nothing gives it one type. `@arr[i] = v` still has to write through to the
+# array, rather than compiling to nothing at all.
 
 class T_poly_recv_bracket_assign_C
   def init_arr(n)

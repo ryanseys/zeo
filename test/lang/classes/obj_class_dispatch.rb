@@ -26,8 +26,7 @@ b = Bar.new
 puts b.describe                 # #<Bar>
 
 # Subclass: dispatch should pick up the cmeth defined on the
-# inherited class. Spinel's cmeth lookup walks parents via
-# cls_cmethod_owner, mirroring CRuby's dispatch.
+# inherited class: the lookup walks the parents.
 class Base
   def self.kind
     "base-kind"

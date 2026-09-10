@@ -15,10 +15,9 @@ module OpenSSL
       while i < n
         # 1..127 (single-byte ASCII, never 0): this test exercises module
         # reopening + dispatch, not binary strings. A 0 byte would embed a NUL
-        # (spinel truncates its NUL-terminated storage there) and a 128..255
-        # byte forms a multi-byte UTF-8 run that spinel's char-counting #length
-        # collapses -- both made .length flaky across builds. ASCII stays one
-        # byte == one char, so #length is deterministic.
+        # and a 128..255 byte would start a multi-byte UTF-8 run, so #length
+        # would count characters rather than bytes. ASCII keeps one byte to
+        # one character, which makes #length deterministic here.
         out = out + (rand(127) + 1).chr
         i += 1
       end

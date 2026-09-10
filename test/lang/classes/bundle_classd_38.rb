@@ -22,9 +22,8 @@ puts a.add(5)
 # === send_double_underscore ===
 # .__send__(:sym, args) and .__send__("sym", args) statically rewrite
 # to .sym(args) at parse time, identical to .send. CRuby exposes
-# __send__ as the overrides-resistant alias of send; Spinel does not
-# model the visibility distinction, so the two are semantically
-# equivalent here.
+# __send__ as the alias of send that a user override cannot shadow. Both
+# ignore visibility, so on a public method they answer alike.
 
 class T_send_double_underscore_Calc
   def add(a, b)

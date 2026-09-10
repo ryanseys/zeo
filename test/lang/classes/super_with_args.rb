@@ -1,6 +1,6 @@
-# super (bare or with explicit args) must propagate Child param
-# types to Parent params; otherwise spinel infers Parent's params
-# as default int and emits a wrong-type call.
+# super, bare or with explicit arguments, passes the child's argument VALUES
+# to the parent, so the parent's parameters take their types from what the
+# child actually hands over.
 class Parent
   def greet(name)
     puts "Parent: #{name}"

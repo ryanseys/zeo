@@ -135,14 +135,9 @@ puts cpu.boot
 puts T_method_param_unify_to_poly_User.new(cpu).reset
 
 # === method_redefinition_warning ===
-# Issue #667: spinel is an AOT compiler with static dispatch; method
-# redefinition is a documented subset limitation. The analyzer detects
-# the case in append_cls_meth and emits a stderr warning, then follows
-# "last def wins" semantics (matching class reopen for new methods).
-# This test verifies the program compiles and runs with the warning
-# emitted; full CRuby semantics ("original" then "redefined") would
-# require source-order call-site versioning, which is a separate
-# multi-day effort.
+# Redefining a method in a reopened class takes effect from that point on,
+# and not before: a call made BEFORE the second def answers the first body,
+# and a call after it answers the second.
 
 class T_method_redefinition_warning_Foo
   def test
@@ -176,9 +171,8 @@ puts f.test
 # runtime: cast the stored function pointer to the matching N-arg
 # signature and invoke).
 #
-# Out of scope: arity-mismatched calls (`proc { |a| } .call(1, 2)`)
-# stay UB on the C side. Spinel's static dispatch enforces match in
-# the test cases below.
+# The cases below all match arity; a proc called with the wrong number of
+# arguments is a separate question.
 
 # 1. Basic: forwarded `&block` invoked with 2 args.
 class T_multi_arg_block_call_App

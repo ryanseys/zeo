@@ -141,9 +141,8 @@ class T_if_static_false_skips_dead_branch_compile_Profiler
   end
 
   def run
-    # Dead branch when @mode is nil. Pre-fix, spinel emits the
-    # body anyway: `sp_str_sub("...", "MODE", iv_mode)` with
-    # iv_mode typed as `mrb_int` (its only init being `= nil`)
+    # A branch that cannot be taken when @mode is nil. Its body must not be
+    # compiled as though @mode had the type its only assignment suggests
     # — the 3rd arg fails -Wint-conversion.
     if @mode
       out = "label_MODE".sub("MODE", @mode)

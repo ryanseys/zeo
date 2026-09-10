@@ -96,9 +96,8 @@ puts ap.title
 
 # === issue208_inherited_class_method ===
 # Issue #208: a class method (`def self.<name>`) defined on the
-# parent class must dispatch when called via the subclass. Spinel
-# previously emitted "cannot resolve call to '<method>' on
-# class_<Subclass>" and substituted 0 because cls_cmethod lookup
+# parent class is reached through the subclass too. A lookup that asks only
+# the subclass's own table
 # only walked the immediate class.
 
 class T_issue208_inherited_class_method_Base

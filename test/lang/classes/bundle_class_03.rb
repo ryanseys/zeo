@@ -4,12 +4,9 @@
 
 # === chained_or_assign_collection_poly_array ===
 # `(arr[idx] ||= []) << v` — chained `||=` over a poly_array
-# element. Pre-fix the IndexOrWriteNode expression-form returned
-# the int default for non-hash receivers, so the chain receiver
-# collapsed to literal `0` and `<<` failed T_chained_or_assign_collection_poly_array_C compile.
-# Spinel now lowers the get-then-set into an sp_RbVal temp that
-# the chain reads — same shape as the *_poly_hash arms but with
-# in-bounds + auto-grow handling for the indexed access.
+# element. In expression position `a[i] ||= v` answers the value, so a `<<`
+# chained onto it receives the container and not a placeholder. An indexed
+# receiver also has to grow to fit the index first.
 
 class T_chained_or_assign_collection_poly_array_C
   def initialize

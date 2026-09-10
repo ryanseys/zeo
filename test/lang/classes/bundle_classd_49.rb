@@ -83,15 +83,9 @@ puts "ok"
 # === undef ===
 # UndefNode -- `undef foo` inside a class body.
 #
-# CRuby raises NoMethodError if the undef'd method is called. In
-# Spinel's AOT model we cannot dispatch at runtime (methods are
-# static T_undef_C functions resolved at compile time), so `undef foo`
-# becomes a compile-time error: any call to `.foo` on an instance
-# of this class fails to compile with a precise message.
-#
-# This test verifies that defining + calling another method on the
-# same class still works after undef -- undef removes only the
-# named method, not the whole class.
+# Calling the undef'd method raises NoMethodError. What this program checks
+# is the other half: undef removes only the method it names, so another
+# method on the same class still defines and calls.
 
 class T_undef_C
   def foo = "foo"
@@ -116,10 +110,9 @@ end
 puts T_undef_D.new.baz # baz
 
 # === uninit_attr_accessor_reads_as_nil ===
-# `attr_accessor :foo` with no `initialize`-time assignment must
-# read as nil before any write. Pre-fix spinel registered the
-# slot as the "int" placeholder, so the unset read returned 0
-# (the type's zero) and downstream `"[#{a.counter}]"` rendered
+# `attr_accessor :foo` with no assignment in initialize reads as nil before
+# any write -- not as the zero of whatever type the slot would hold, which
+# would make the interpolation below render
 # `[0]` instead of MRI's `[]`. Issue #634 shape B.
 #
 # The widening fires only when (a) the ivar is exposed via

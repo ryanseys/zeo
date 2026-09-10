@@ -4,11 +4,9 @@
 #   - isa_hash_narrow_typed_param
 
 # === intarray_slice_assign_from_intarray_ptr_array_first ===
-# `arr[start, len] = src` slice-assign where `src` came from
-# `<X>_ptr_array.first` (or `.last`). Spinel's compile_bracket_assign
-# already had a same-prefix slice-assign path for `int_array[i, n] =
-# int_array`, but `infer_type` for `.first` / `.last` fell through
-# to "int" on a `_ptr_array` receiver, so the slice-assign branch's
+# `arr[start, len] = src` where `src` came from `.first` or `.last` on an
+# array of arrays. Those answer the inner ARRAY, so the slice assignment
+# gets an array on its right-hand side; reading them as an Integer instead
 # `infer_type(arg_ids[2]) == "int_array"` test missed and the call
 # silently lowered to `arr[start] = len` (using arg_ids[1] as the
 # value, dropping arg_ids[2] entirely).
