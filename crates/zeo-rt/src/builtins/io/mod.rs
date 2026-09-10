@@ -39,14 +39,20 @@ pub use stdio::{
 pub use write::{display_bytes, render_puts, write_bytes, write_str, write_value};
 
 pub(crate) use handle::{
-    check_readable, check_writable, file_value, file_value_mode, io_is_closed, pipe_value,
-    pipe_value_named, raw_fd, set_handle_encodings, socket_from_raw_fd, socket_raw_fd,
-    stream_label, stream_of, uninit_io,
+    check_readable, check_writable, file_value, file_value_mode, io_is_closed, pipe_value, raw_fd,
+    set_handle_encodings, stream_of, uninit_io,
 };
 pub(crate) use open::{
     dup_fd_file, nonblock_raises, popen_value, set_fd_cloexec, set_fd_nonblock, would_block,
 };
-pub(crate) use read::{chomp_line, int_of, line_opts, offset_of, stat_value, with_file};
+pub(crate) use read::{int_of, offset_of, stat_value, with_file};
+
+// The only callers are extensions, so a build with the ext features off
+// reaches none of these.
+#[allow(unused_imports, reason = "each name is reached from an ext crate only")]
+pub(crate) use handle::{pipe_value_named, socket_from_raw_fd, socket_raw_fd, stream_label};
+#[allow(unused_imports, reason = "each name is reached from an ext crate only")]
+pub(crate) use read::{chomp_line, line_opts};
 pub(crate) use write::putc_bytes;
 
 /// The whole-file class methods (`IO.read`, `IO.foreach`, ...) are identical to
