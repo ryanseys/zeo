@@ -1,7 +1,7 @@
 # Array#fill's block form takes NO value argument: the positional args are the
 # index span (start[, length] or a range) and the value at each index comes from
-# the block, invoked with the index. Spinel previously treated the first arg as
-# the fill value and ignored the block entirely.
+# the block, called with the index. So the first positional argument is not
+# the fill value, and the block is not ignored.
 def f2(a); a.fill(1, 2) { |i| i }; end
 p f2([1, 2, 3, 4])            # [1, 1, 2, 4]
 

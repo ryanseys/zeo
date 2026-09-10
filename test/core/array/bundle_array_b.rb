@@ -44,8 +44,8 @@ def t_array_push
   puts ints[3]              # 4
   puts ints[4]              # 5
   
-  # Float values use non-integer fractional parts so Spinel's float-puts
-  # (which strips a trailing ".0") matches CRuby's output.
+  # The Float values have non-integer fractional parts, so the printed form
+  # does not depend on how a trailing ".0" is rendered.
   floats = [1.5, 2.5]
   floats.push(3.5)
   floats.push(4.25)

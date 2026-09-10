@@ -1,6 +1,5 @@
-# Enumerable methods on a Range that spinel does not handle natively are served
-# by materializing the range to an int array and dispatching the array method:
-# the non-collecting forms (reduce(:sym)/group_by/find/count/zip/tally). The
+# The Enumerable methods on a Range that do not collect as they go --
+# reduce(:sym), group_by, find, count, zip and tally. The
 # range is a local so the materialization runs at runtime.
 r = (1..5)
 

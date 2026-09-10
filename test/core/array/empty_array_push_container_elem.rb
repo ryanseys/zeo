@@ -9,10 +9,8 @@
 # element types (Hash, nested Array) fell through to the bottom
 # default and stayed at int_array.
 #
-# Fix: extend the push observation to recognise hash-type and
-# array-type arg types and promote to poly_array (spinel has no
-# <hash>_ptr_array or <array>_ptr_array_ptr_array slot — boxed
-# poly_array is the canonical container-of-containers shape, same
+# What decides the element type is the push: an array of hashes, or an array
+# of arrays, is an array whose elements are found at runtime, the same
 # as the literal `[{...}, {...}]` inference at
 # infer_array_elem_type_from_ids).
 

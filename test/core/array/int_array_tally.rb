@@ -1,6 +1,6 @@
-# Array#tally on int_array maps each distinct element to its
-# occurrence count. Result is an int_int_hash (new variant
-# alongside sym_int_hash / str_int_hash etc.).
+# Array#tally maps each distinct element to the number of times it occurs.
+# The result is an ordinary Hash: a key it does not hold answers nil, and
+# nil is not 0.
 result = [1, 2, 2, 3, 3, 3].tally
 puts result[1]
 puts result[2]
@@ -9,8 +9,7 @@ puts result.length
 puts result.inspect
 puts result.has_key?(2)
 puts result.has_key?(99)
-# missing-key returns 0 in spinel today (vs nil in CRuby) —
-# the broader nullable-hash semantics are tracked in #801.
+# A missing key is nil, so this is false rather than true.
 puts result[99] == 0
 __END__
 1

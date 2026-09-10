@@ -55,10 +55,9 @@ puts dec_excl
 
 # --- Block-param scoping ---
 
-# Block param doesn't leak when its name is distinct from outer
-# locals. (Same-name shadowing is a pre-existing spinel-wide
-# limitation in compile_each_block — both this fusion path and the
-# generic sp_Range path emit the block param as `lv_<name>`, which
+# A block parameter does not leak into the enclosing scope when its name is
+# distinct from the locals around it. A block parameter that SHADOWS an outer
+# local is a separate question, and a compiler that names both the same way
 # collides with an outer `lv_<name>` of the same name. Out of scope
 # for this perf PR; see PR body.)
 outer_v = 42

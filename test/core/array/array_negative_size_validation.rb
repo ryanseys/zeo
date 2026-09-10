@@ -1,7 +1,7 @@
 # Array size/index operations validate their argument: a negative count to
 # take/drop raises ArgumentError, and an out-of-range negative insert index
-# raises IndexError. Spinel previously proceeded silently (drop even returned a
-# tail slice; a too-negative insert clamped to the front).
+# raises IndexError. Neither one proceeds silently: drop does not answer a
+# tail slice, and a too-negative insert does not clamp to the front.
 def check
   yield
 rescue => e

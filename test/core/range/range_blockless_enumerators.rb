@@ -1,8 +1,6 @@
 # A blockless `each_slice`/`each_cons`/`each_with_index` over an ENDLESS Range
 # answers, because the Enumerator it returns re-invokes the block form, and
 # those roll a buffer through the source instead of materializing it first.
-#
-# The trailing comments record what spinel answered; zeo answers ruby's.
 r = ((1..5).cycle(2).to_a rescue $!.class)
 p r
 

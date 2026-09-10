@@ -1,4 +1,4 @@
-# spinel-dev#24: Array.new(size, fill) where `size` is a poly expression.
+# Array.new(size, fill) where `size` is an expression of no single type.
 #
 # When a factor of the size widens to poly (here Mat#initialize's `ncols`, bound
 # poly at the `Mat.new(1, @d)` call site where `@d` is an untyped ivar), the

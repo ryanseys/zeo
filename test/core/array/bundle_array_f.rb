@@ -7,10 +7,9 @@
 
 # === array_group_by_poly_each_chain ===
 def t_array_group_by_poly_each_chain
-  # Array#group_by + Hash#each chain on a poly_array of sym_poly_hashes.
-  # spinel fuses `<arr>.group_by(blk).each |k, rows|` into a single emit
-  # that builds a sp_PolyPolyHash keyed by the block's return value, with
-  # each slot holding a sp_PolyArray of elements (boxed as poly). The
+  # Array#group_by followed by Hash#each, over an array of hashes whose
+  # values are of mixed type. The grouping is keyed by the block's answer and
+  # each key holds an array of the elements that produced it. The
   # iteration loop then unboxes the slot back to a typed sp_PolyArray so
   # `rows.map { ... }` / `rows.sum` / `rows.size` reach the existing
   # poly_array dispatch arms.

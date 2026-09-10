@@ -11,9 +11,8 @@ def t_str_rindex_optional_narrow
   #
   #   tail = slash == nil ? p : p[(slash + 1)..(p.length - 1)]
   #
-  # Root cause: spinel widened `String#rindex` return to "poly"
-  # unconditionally (sp_str_rindex_poly returns sp_RbVal), even
-  # when the arg was a plain string. `slash + 1` then went through
+  # The hazard: `String#rindex` answers an Integer or nil, and giving its
+  # result a wider type than it needs sends `slash + 1` through
   # sp_poly_add and the result couldn't pass as the mrb_int start
   # arg.
   #
@@ -76,8 +75,8 @@ t_string_new_array_literal
 def t_string_split_with_limit
   # String#split with a positive `limit` argument caps the result at
   # `limit` elements; the last element keeps the unsplit remainder.
-  # Pre-fix spinel's two-arg split fell through to sp_str_split, which
-  # ignored the limit and split exhaustively. Issue #619 puzzle 2.
+  # A two-argument split must honour the limit rather than splitting
+  # exhaustively and dropping it.
   p "hi!".split("", 2) == ["h", "i!"]
   p "a,b,c,d".split(",", 2) == ["a", "b,c,d"]
   p "a,b,c,d".split(",", 3) == ["a", "b", "c,d"]

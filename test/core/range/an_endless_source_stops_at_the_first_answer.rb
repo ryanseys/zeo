@@ -2,9 +2,8 @@
 # scan, so they answer over an endless one. Each of these used to collect the
 # whole source first and so never returned.
 #
-# `find_index` is the one with no spinel coverage: it asks the same question as
-# `find`, which always stopped early, so the two disagreeing on an endless
-# source was a bug rather than a stated limitation.
+# `find_index` asks the same question as `find`, so the two have to agree on
+# an endless source: either both stop at the first answer or neither does.
 
 # take_while over an endless Range, an Enumerator, and a user Enumerable.
 p((1..).take_while { |x| x < 4 })

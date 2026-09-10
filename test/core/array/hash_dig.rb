@@ -42,8 +42,7 @@ puts deep.dig(:a, :b, :c)       # 42
 miss = { a: { b: 1 } }
 puts miss.dig(:nope)            # (blank)
 puts miss.dig(:a, :nope)        # (blank)
-# CRuby raises TypeError on `int.dig(:c)`; spinel returns nil. Not
-# probed here so `.expected` stays comparable to CRuby.
+# `dig` through a non-diggable value raises TypeError; that has its own test.
 
 # 7. Same shape for str_poly_hash.
 sph = { "user" => { "name" => "Bob", "age" => 25 } }

@@ -30,9 +30,9 @@ t_array_at_append_string_chomp_bang
 def t_array_eq_int_vs_sym_literal
   # `[0,0,0] == %i[a a a]` must answer FALSE -- CRuby compares element
   # classes too, so int 0 != sym :a even when their encoded ids match.
-  # Spinel's sym_array storage shares the sp_IntArray layout with
-  # int_array (sym ids stored as raw mrb_int), and sp_IntArray_eq
-  # compares raw bytes. With SPS_a == 0, both arrays' bytes are
+  # An array of Symbols that stores them as the numbers they intern to has
+  # the same bytes as an array of those numbers, so a comparison that reads
+  # only the bytes
   # [0,0,0] and the eq returned `true`, breaking `!=` to false.
   #
   # Fix: when the equality is between literal `[...]` and literal
@@ -66,14 +66,9 @@ t_array_eq_int_vs_sym_literal
 
 # === array_index_nil_for_not_found ===
 def t_array_index_nil_for_not_found
-  # `Array#index(x)` / `#find_index(x)` / `#rindex(x)` return
-  # Integer | nil in CRuby (nil when not found). spinel previously
-  # returned the raw -1 sentinel from `sp_*Array_index`, which
-  # diverged from CRuby's nil for the not-found case.
-  #
-  # spinel positions itself as a Ruby SUBSET, so documented Ruby
-  # APIs must match CRuby behavior. The fix: codegen now routes
-  # Array#index family through `sp_*Array_index_poly` wrappers
+  # `Array#index(x)`, `#find_index(x)` and `#rindex(x)` answer an Integer or
+  # nil, and nil is what a miss answers -- not -1, which is a valid index
+  # from the other end. The three go through wrappers
   # that box nil for not-found / box int for found. The type
   # inference returns "poly" for the call result so `.nil?` /
   # `== nil` checks dispatch through the standard poly-tag path.
@@ -100,10 +95,9 @@ t_array_index_nil_for_not_found
 
 # === array_keyed_hash_int_array_eql ===
 def t_array_keyed_hash_int_array_eql
-  # Array-keyed Hash. `entries[[a, b]] ||= ...` was broken because
-  # spinel's PolyPolyHash defaulted to pointer-identity comparison
-  # for SP_TAG_OBJ keys — every fresh `[a, b]` literal allocated a
-  # new IntArray, so identical-content keys never matched and the
+  # An Array used as a Hash key. `entries[[a, b]] ||= ...` needs the key
+  # compared by its CONTENTS: every `[a, b]` literal is a fresh array, so a
+  # comparison by identity never matches and the
   # `||=` never deduped. The cache grew unboundedly and reads with
   # a fresh `[a, b]` returned nil.
   #
@@ -166,11 +160,9 @@ t_array_new_n_fills_nil
 
 # === array_new_nil_fill ===
 def t_array_new_nil_fill
-  # `Array.new(n, nil)` -- the fill value is the nil singleton, so
-  # MRI fills each slot with `nil` and `.inspect` prints
-  # "[nil, nil, ...]". Spinel previously lowered the call to an
-  # int_array filled with the C default (0), and inspect printed
-  # "[0, 0, 0]". Lowering must produce a sp_PolyArray so the slot
+  # `Array.new(n, nil)` fills each slot with nil, so `.inspect` prints
+  # "[nil, nil, ...]" and not "[0, 0, 0]". The element type has to be one
+  # that can hold nil, so the slot
   # can carry the nil tag and `.inspect` / `[i].nil?` / etc. see
   # the actual nil.
   
@@ -185,10 +177,8 @@ t_array_new_nil_fill
 
 # === array_sum_init ===
 def t_array_sum_init
-  # Array#sum's init argument was silently dropped on the IntArray /
-  # FloatArray dispatch paths -- spinel emitted sp_IntArray_sum(rc)
-  # (no init parameter) and the block-form accumulator in
-  # compile_array_sum_block was hardcoded to `mrb_int t = 0;`.
+  # Array#sum's init argument counts, in the plain form and the block form
+  # alike: the accumulator starts at init and not at zero.
   # Pre-fix:
   #   [1,2,3].sum(10)             # => 6   (CRuby: 16)
   #   [].sum(7)                   # => 0   (CRuby: 7)
@@ -238,9 +228,8 @@ def t_array_sum_init
   # an mrb_float accumulator and compile_arg0_as_float when recv_type is
   # float_array, so the 0.5 seed and the float block result are no
   # longer truncated. Use distinct block-param names (`fx` / `fy`) so
-  # they don't get widened by the earlier int blocks' `|x|` -- spinel
-  # hoists block params to a shared function-scope local, an orthogonal
-  # limitation outside this PR's scope.
+  # they are not given the earlier int blocks' type. Two blocks whose
+  # parameters share a name is a separate question.
   puts [1.5, 2.5].sum(0.5) { |fx| fx }      # 4.5
   puts [1.0, 2.0].sum { |fy| fy * 1.5 }     # 4.5
   

@@ -1,6 +1,6 @@
-# #1224 I1: Array#to_h builds a hash from [key, value] pairs. Verified
-# via lookups + length (Spinel's hash #inspect format is a separate,
-# pre-existing concern and would only make this test fragile).
+# Array#to_h builds a hash from [key, value] pairs. This checks it through
+# lookups and length rather than through #inspect, whose exact rendering is
+# a different question.
 h1 = [[:a, 1], [:b, 2], [:c, 3]].to_h
 p h1[:a]
 p h1[:c]

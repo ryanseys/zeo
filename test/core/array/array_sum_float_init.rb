@@ -1,7 +1,7 @@
 # Array#sum with a Float initial value returns a Float, even for an integer
-# array: CRuby accumulates in floating point. Spinel had truncated the float
-# initial value through the integer sum (returning an Integer). Distinct
-# monomorphic helpers keep the int- and float-array receivers from unifying.
+# array, because the accumulation happens in floating point and the initial
+# value is not truncated into the element type. Each receiver goes through
+# its own helper, so the int and float arrays keep their own types.
 def ai(x); x; end
 def af(x); x; end
 

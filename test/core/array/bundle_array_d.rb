@@ -25,11 +25,8 @@ def t_array_dig
   # Negative indices — counts from the end.
   p a.dig(-1)
   p a.dig(-3)
-  # Out-of-bounds dig isn't covered here. Ruby returns nil; Spinel's
-  # Array#[] inherits its existing in-bounds-only contract on int_array
-  # (the single-arg dig delegates to []), so out-of-bounds reads behave
-  # like out-of-bounds [] reads. Adding nil-returning bounds checks is
-  # a separate scope (would widen the result type to poly).
+  # An out-of-bounds dig answers nil, which the out-of-bounds `[]` programs
+  # cover; this section is the in-bounds and negative cases.
 end
 t_array_dig
 

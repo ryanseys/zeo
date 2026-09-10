@@ -166,9 +166,8 @@ def t_array_fill
   puts d[4]    # 7
   
   # 3-arg with start beyond length: array grows.
-  # CRuby fills the gap with nil; Spinel's IntArray can't hold nil so it
-  # uses 0. The grown length and the explicit fill values are the same;
-  # we only assert on those (skip e[3]/e[4] which differ in formatting).
+  # The gap fills with nil. This checks the grown length and the explicit
+  # fill values; e[3] and e[4] are the gap itself.
   e = [1, 2, 3]
   e.fill(9, 5, 2)
   puts e.length   # 7

@@ -1,6 +1,5 @@
-# Issue #839: an extreme negative index on []= raises IndexError
-# per MRI. Spinel previously silently no-op'd when the index after
-# `+= len` was still negative.
+# An extreme negative index on `[]=` raises IndexError. Adding the length to
+# it leaves it negative, and that is a raise rather than a silent no-op.
 a = [1, 2, 3]
 begin
   a[-999] = 99

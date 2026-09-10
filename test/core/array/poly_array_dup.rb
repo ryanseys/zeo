@@ -43,10 +43,8 @@ puts empty2.empty? ? "yes" : "no"  # yes
 
 # first / last on poly_array.
 arr = [1, "two", :three]
-# Ruby's `first` on Array of mixed types returns the first elem;
-# spinel boxes it as sp_RbVal. We don't assert exact value (the
-# poly representation isn't easily printable here); just that
-# the call doesn't crash.
+# `first` on an Array of mixed types answers the first element. This checks
+# only that the call works, not the value.
 arr.first
 arr.last
 puts "ok"                          # ok

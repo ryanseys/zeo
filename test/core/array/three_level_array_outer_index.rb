@@ -1,8 +1,8 @@
 # `[a, b, c, d].map { (0...M).map { (0..N).map { ... } } }` builds a
-# 3-level Array<Array<IntArray>>. The outer .map's receiver is an
-# array literal; spinel's compile_map_expr stored that receiver in a
-# C-stack temp without registering it with the GC. When the block
-# body's nested allocations crossed the GC threshold (~272 inner
+# three-level nest of arrays. The outer .map's receiver is an array literal,
+# and it has to stay reachable by the collector for the whole iteration:
+# the block body allocates, and once those allocations cross the GC
+# threshold (~272 inner
 # rows triggered the first sp_gc_collect), the unrooted receiver was
 # freed mid-loop and the next iteration's `sp_IntArray_length(rc)`
 # read the len of whatever IntArray reused that heap slot — usually
@@ -22,10 +22,9 @@
 
 # Inner range is sized large enough (>= ~272) that an inner GC
 # triggers during the outer .map's iteration. Using runtime-bound
-# indices (i, j, k) to read TBL[a][b][c] avoids spinel emitting the
-# `int >> literal_index & 1` bit-index warning branch (spinel
-# can't statically tell that TBL[a] is always an array, so it
-# generates both branches; the int-branch shift count >= 64
+# indices (i, j, k) to read TBL[a][b][c] keeps `[]` from being read as an
+# Integer bit extract: nothing proves statically that TBL[a] is an array, so
+# both readings are live, and the Integer one's shift count >= 64
 # triggers -Werror in the test runner with literal indices).
 TBL = [10, 20, 30, 40].map do |a|
   (0...500).map do |i|

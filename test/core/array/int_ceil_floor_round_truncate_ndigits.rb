@@ -1,7 +1,6 @@
-# Integer#ceil/floor/round/truncate with ndigits argument.
-# Without ndigits these return self; with negative ndigits they
-# round to the nearest 10^(-ndigits). Previously spinel silently
-# emitted 0 for any call with an argument.
+# Integer#ceil, #floor, #round and #truncate with an ndigits argument. With
+# no argument each answers self; with a negative ndigits each rounds to the
+# nearest power of ten.
 
 p 1234.ceil(-2)       # 1300
 p 1234.floor(-2)      # 1200
