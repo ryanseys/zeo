@@ -24,7 +24,7 @@ p srv.instance_of?(TCPServer)
 p srv.instance_of?(IO)
 srv.close
 
-dir = "spinel_hier_test_dir"
+dir = "probe_hier_test_dir"
 Dir.mkdir(dir) unless Dir.exist?(dir)
 path = File.join(dir, "s.txt")
 File.write(path, "x\n")

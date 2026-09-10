@@ -4,7 +4,7 @@
 
 # === send ===
 # Test send(:literal_symbol)
-# Note: send rewrite requires Ruby parser (spinel_parse.rb)
+# Note: send rewrite requires Ruby parser (probe_parse.rb)
 x = [1,2,3]
 puts x.length
 

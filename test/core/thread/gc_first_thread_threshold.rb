@@ -1,6 +1,6 @@
 # Creating the first Thread sizes the object-heap collection budget for the
 # worker pool. It used to MULTIPLY the current threshold by the pool size --
-# and the pool is min(cores, SPINEL_WORKERS), not the thread count the program
+# and the pool is min(cores, PROBE_WORKERS), not the thread count the program
 # asked for, so the damage scaled with the machine. A program that had already
 # grown its heap before starting a thread got N x whatever the adaptive
 # threshold had become: 76MB -> 2.4GB on a 32-core box, with no collection

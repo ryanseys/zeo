@@ -2,7 +2,7 @@ class U; end
 r001 = (Comparable === U.new rescue $!.class)
 p r001
 
-r002 = (Enumerable === U.new rescue $!.class); p r002   # Ruby: false   Spinel: NoMethodError
+r002 = (Enumerable === U.new rescue $!.class); p r002   # Ruby: false
 
 p(Object === U.new)        # => true
 p(Kernel === U.new)        # => true

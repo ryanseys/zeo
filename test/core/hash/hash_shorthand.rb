@@ -1,7 +1,7 @@
 # Hash shorthand `{ x:, y: }` (Ruby 3.1+): an AssocNode whose value is
 # implicit. Prism wraps the implicit value in a PM_IMPLICIT_NODE that
 # carries the actual LocalVariableReadNode (or MethodCallNode for an
-# undeclared name) as its `value` child. spinel_parse unwraps the
+# undeclared name) as its `value` child. probe_parse unwraps the
 # ImplicitNode at the AST boundary so the codegen never sees the
 # wrapper, which means the shorthand reuses the existing
 # AssocNode + LocalVariableReadNode compile path with zero codegen

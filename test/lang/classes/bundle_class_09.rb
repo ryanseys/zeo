@@ -99,7 +99,7 @@ results = workers.map { |w| w.run(42) }
 # call site must unbox before the sp_file_write boundary.
 # Use cwd-relative path so Windows MinGW (no `/tmp`) passes —
 # memory: feedback_windows_tmp_path.
-path = "spinel_i643_test.txt"
+path = "probe_i643_test.txt"
 File.write(path, results[0])
 puts File.read(path)
 File.delete(path)

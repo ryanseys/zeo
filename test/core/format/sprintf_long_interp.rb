@@ -1,7 +1,7 @@
 # sp_sprintf truncated string-interpolation results to 4095 bytes.
 #
 # Every Ruby string interpolation ("...#{x}...") compiles to
-# sp_sprintf (see compile_interpolated in spinel_codegen.rb), which
+# sp_sprintf (see compile_interpolated in probe_codegen.rb), which
 # formatted into a fixed `char _sp_tmp[4096]` stack buffer and then
 # clamped the result length to sizeof(buf)-1 -- silently dropping
 # everything past 4095 bytes. vsnprintf already returns the would-be

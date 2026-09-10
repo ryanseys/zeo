@@ -16,7 +16,7 @@ s.close
 t.join
 srv.close
 
-dir = "spinel_sockkind_test_dir"
+dir = "probe_sockkind_test_dir"
 Dir.mkdir(dir) unless Dir.exist?(dir)
 path = File.join(dir, "sample.txt")
 File.write(path, "hello\n")

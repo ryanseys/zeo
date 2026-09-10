@@ -2,7 +2,7 @@
 #
 # Spinel inlines `require`/`require_relative` at parse time, so call
 # sites in different source files are not distinguished. `__FILE__`
-# always returns the toplevel script path passed to spinel_parse,
+# always returns the toplevel script path passed to probe_parse,
 # matching CRuby's behavior for top-level uses.
 #
 # This test exercises __FILE__ end-to-end: it must (a) emit the path,

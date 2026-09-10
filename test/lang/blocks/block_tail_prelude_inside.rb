@@ -37,7 +37,7 @@ end
 puts guarded_do(500)
 
 # File.open has the same shape: the setup would run before the file is opened
-path = "spinel_blocktail_#{Process.pid}.tmp"
+path = "probe_blocktail_#{Process.pid}.tmp"
 File.write(path, "xyz")
 acc = { "n" => 0 }
 r = File.open(path) { |f| acc["n"] += f.read.length }

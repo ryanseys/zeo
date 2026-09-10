@@ -190,12 +190,12 @@ class T_poly_recv_ivar_narrow_drops_unrelated_Pool
   end
 end
 
-T_poly_recv_ivar_narrow_drops_unrelated_Pool.new(T_poly_recv_ivar_narrow_drops_unrelated_Worker.new).go("a", "spinel_poly_recv_ivar_narrow_a.txt")
-T_poly_recv_ivar_narrow_drops_unrelated_Pool.new(T_poly_recv_ivar_narrow_drops_unrelated_Other.new).go("b", "spinel_poly_recv_ivar_narrow_b.txt")
-puts File.read("spinel_poly_recv_ivar_narrow_a.txt")
-puts File.read("spinel_poly_recv_ivar_narrow_b.txt")
-File.delete("spinel_poly_recv_ivar_narrow_a.txt")
-File.delete("spinel_poly_recv_ivar_narrow_b.txt")
+T_poly_recv_ivar_narrow_drops_unrelated_Pool.new(T_poly_recv_ivar_narrow_drops_unrelated_Worker.new).go("a", "probe_poly_recv_ivar_narrow_a.txt")
+T_poly_recv_ivar_narrow_drops_unrelated_Pool.new(T_poly_recv_ivar_narrow_drops_unrelated_Other.new).go("b", "probe_poly_recv_ivar_narrow_b.txt")
+puts File.read("probe_poly_recv_ivar_narrow_a.txt")
+puts File.read("probe_poly_recv_ivar_narrow_b.txt")
+File.delete("probe_poly_recv_ivar_narrow_a.txt")
+File.delete("probe_poly_recv_ivar_narrow_b.txt")
 
 # === poly_recv_setter_widens_ivar ===
 # #579 (Sam Ruby). `recv.attr = val` where `recv` is statically

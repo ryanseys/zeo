@@ -17,7 +17,7 @@ p b.afamily == Socket::AF_INET6
 p b.ipv6?
 p b.inspect
 
-u = Addrinfo.unix("/tmp/spinel_ai.sock")
+u = Addrinfo.unix("/tmp/probe_ai.sock")
 p u.afamily == Socket::AF_UNIX
 p u.unix?
 

@@ -15,7 +15,7 @@ p r.wait(0, :read).class
 r.close
 w.close
 
-dir = "spinel_iofd_test_dir"
+dir = "probe_iofd_test_dir"
 Dir.mkdir(dir) unless Dir.exist?(dir)
 path = File.join(dir, "sample.txt")
 File.write(path, "hello\n")

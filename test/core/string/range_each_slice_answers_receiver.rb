@@ -1,8 +1,8 @@
 v = (1..5).each_cons(2) { |s| s }
 p v
 
-v = (1..5).each_slice(2) { |s| s }; p v        # Ruby: 1..5    Spinel: [1, 2, 3, 4, 5]
-v = (1..5).each_cons(2) { |s| s }; p v.class   # Ruby: Range   Spinel: Array
+v = (1..5).each_slice(2) { |s| s }; p v        # Ruby: 1..5
+v = (1..5).each_cons(2) { |s| s }; p v.class   # Ruby: Range
 
 p((1..5).each_cons(2) { |s| s })                  # => 1..5
 p((1..5).each_slice(2) { |s| s })                 # => 1..5

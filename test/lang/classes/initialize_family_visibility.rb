@@ -7,9 +7,9 @@ class Hooked
 end
 p Hooked.private_method_defined?(:initialize_copy)
 
-p Hooked.public_method_defined?(:initialize_copy)     # Ruby: false   Spinel: true
+p Hooked.public_method_defined?(:initialize_copy)     # Ruby: false
 class Plain; def initialize(v); @v = v; end; end
-p Plain.private_method_defined?(:initialize_copy)     # Ruby: true    Spinel: false
+p Plain.private_method_defined?(:initialize_copy)     # Ruby: true
 
 class Plain2
   attr_accessor :v

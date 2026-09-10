@@ -8,7 +8,7 @@ require "stringio"
 BIN = "AB\x00CD"
 LEAD = "\x00AB"
 
-path = "spinel_binwrite_#{Process.pid}.tmp"
+path = "probe_binwrite_#{Process.pid}.tmp"
 
 # File#write, single and multi-arg
 File.open(path, "wb") { |f| f.write(BIN) }

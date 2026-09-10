@@ -21,7 +21,7 @@ p format(fmt, *args)
 printf("%s|%s\n", *args)
 $stdout.printf("%s;%s\n", *args)
 
-path = File.join(ZTMP, "spinel_format_splat_test.txt")
+path = File.join(ZTMP, "probe_format_splat_test.txt")
 File.open(path, "w") { |f| f.printf("%s=%s\n", *args) }
 p File.read(path)
 File.delete(path)

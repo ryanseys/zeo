@@ -20,7 +20,7 @@ e = t[0, 3]
 puts e.bytes.inspect
 puts e.length
 puts s[2]
-f = File.join(ZTMP, "spinel_nul_core_t.bin")
+f = File.join(ZTMP, "probe_nul_core_t.bin")
 File.write(f, s)
 r = File.read(f)
 puts r.bytes.inspect

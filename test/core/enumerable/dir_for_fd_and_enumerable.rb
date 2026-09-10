@@ -3,7 +3,7 @@
 # raw file descriptor.
 # Dir.for_fd's handle lists through the descriptor (it has no path), and Dir's
 # Enumerable surface routes through #entries.
-d = "spinel_dir_suite"
+d = "probe_dir_suite"
 Dir.mkdir(d) unless Dir.exist?(d)
 File.write(File.join(d, "a.txt"), "a")
 File.write(File.join(d, "b.txt"), "b")
@@ -40,4 +40,4 @@ nil
 true
 [".", "..", "A.TXT", "B.TXT"]
 ["a.txt", "b.txt"]
-"spinel_dir_suite"
+"probe_dir_suite"

@@ -1,7 +1,7 @@
 # A block-form Enumerator.new that captures enclosing locals builds a capture
 # struct handed to the generator. That struct must be GC-rooted before the
 # enumerator is allocated, or a collection triggered by the enumerator's own
-# allocation can reclaim it (use-after-free). Run under SPINEL_GC_STRESS=1 to
+# allocation can reclaim it (use-after-free). Run under PROBE_GC_STRESS=1 to
 # exercise the rooting. The captured values are routed through a method so they
 # are real captures, not constants.
 

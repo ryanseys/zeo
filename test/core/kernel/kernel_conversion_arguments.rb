@@ -10,12 +10,12 @@ p(Float(Rational(1, 2)))       # Ruby: 0.5
 p(Float(Complex(1.5, 0)))      # Ruby: 1.5
 
 class Conv004; def to_int; 8; end; end
-p(Integer(Conv004.new))        # Ruby: 8   Spinel: can't convert Conv004 into Integer (TypeError)
-p(Integer(Rational(4, 2)))     # Ruby: 2   Spinel: can't convert Rational into Integer (TypeError)
-p(Integer(Complex(3, 0)))      # Ruby: 3   Spinel: can't convert Complex into Integer (TypeError)
+p(Integer(Conv004.new))        # Ruby: 8
+p(Integer(Rational(4, 2)))     # Ruby: 2
+p(Integer(Complex(3, 0)))      # Ruby: 3
 
-r005 = (Float(true) rescue $!.class); p r005      # Ruby: TypeError   Spinel: 1.0
-r006 = (Float(:s) rescue $!.class); p r006        # Ruby: TypeError   Spinel: 0.0
+r005 = (Float(true) rescue $!.class); p r005      # Ruby: TypeError
+r006 = (Float(:s) rescue $!.class); p r006        # Ruby: TypeError
 
 r007 = (Integer([1]) rescue $!.class); p r007     # => TypeError
 r008 = (Integer(1..2) rescue $!.class); p r008    # => TypeError

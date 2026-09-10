@@ -1,7 +1,7 @@
 # flat_map's receiver is the array the loop walks, and the block body allocates
 # (the result array, each spliced value). A freshly built receiver -- here the
 # array `take` returns -- is held by nothing, so a collection inside the loop
-# freed it and the walk stopped early. Run under SPINEL_GC_STRESS=1 to see the
+# freed it and the walk stopped early. Run under PROBE_GC_STRESS=1 to see the
 # short count without the root.
 rings = [
   [-64.5630852, 46.2938887],

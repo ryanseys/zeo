@@ -1,10 +1,10 @@
 # Issue #408. Two coordinated changes here:
 #
 # 1. Port the per-block-body str-concat collector from codegen.rb
-#    to spinel_analyze.rb. The original #408 fix (commit 9ca01d77)
-#    added it to spinel_codegen.rb's narrow_param_hash_types_from_body_writes,
+#    to probe_analyze.rb. The original #408 fix (commit 9ca01d77)
+#    added it to probe_codegen.rb's narrow_param_hash_types_from_body_writes,
 #    but the analyze/codegen split (PR #416) moved the
-#    inference passes to spinel_analyze.rb; the codegen-side copy
+#    inference passes to probe_analyze.rb; the codegen-side copy
 #    no longer runs. The analyze-side copy now harvests the
 #    same str-concat hints from `pname.each do |k, v|` block
 #    bodies that the codegen copy used to.

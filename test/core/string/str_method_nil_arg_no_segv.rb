@@ -21,11 +21,11 @@ begin
 rescue TypeError => e
   puts "count: #{e.message}"
 end
-p "foo".delete   # CRuby: ArgumentError. spinel: "foo" unchanged (was: SEGV)
+p "foo".delete   # CRuby: ArgumentError.
 p "foo".rindex(/missing/)  # CRuby + spinel post-#532: nil. (was: -1)
-p "abcdabcd".rindex(/c/)   # CRuby & spinel: 6 (new sp_re_rindex helper)
+p "abcdabcd".rindex(/c/)   # CRuby &
 begin
-  "foo".send(:<<)          # CRuby: ArgumentError. spinel: FrozenError (after #886)
+  "foo".send(:<<)          # CRuby: ArgumentError.
   puts "no raise"
 rescue FrozenError => e
   puts "send-lshift: " + e.message

@@ -24,7 +24,7 @@ def t_file_binread
   
   # Set up a binary file with embedded NULs via a shell command.
   # spinel's File.write uses fputs and would stop at the first NUL.
-  path = "spinel_binread_test.bin"
+  path = "probe_binread_test.bin"
   `printf 'AB\\000CD\\000EF' > #{path}`
   
   # Pattern-matched: emits sp_file_binread_bytes(path) which reads
@@ -59,19 +59,19 @@ def t_fileio
   # across MSYS2 mingw64 ruby and native-Windows-built spinel binaries.
   
   # Write a file
-  File.write("spinel_test.txt", "Hello from Spinel!\nLine 2\n")
+  File.write("probe_test.txt", "Hello from Spinel!\nLine 2\n")
   
   # Read the file
-  content = File.read("spinel_test.txt")
+  content = File.read("probe_test.txt")
   puts content
   
   # File.exist?
-  puts File.exist?("spinel_test.txt")  # true
-  puts File.exist?("spinel_nonexistent.txt")  # false
+  puts File.exist?("probe_test.txt")  # true
+  puts File.exist?("probe_nonexistent.txt")  # false
   
   # Clean up
-  File.delete("spinel_test.txt")
-  puts File.exist?("spinel_test.txt")  # false
+  File.delete("probe_test.txt")
+  puts File.exist?("probe_test.txt")  # false
   
   puts "done"
 end
@@ -83,14 +83,14 @@ def t_fileopen
   # Uses a cwd-relative path for the same reason as test/fileio.rb.
   
   # Write with block
-  File.open("spinel_fopen_test.txt", "w") do |f|
+  File.open("probe_fopen_test.txt", "w") do |f|
     f.puts "line 1"
     f.puts "line 2"
     f.puts "line 3"
   end
   
   # Read with block
-  File.open("spinel_fopen_test.txt", "r") do |f|
+  File.open("probe_fopen_test.txt", "r") do |f|
     f.each_line do |line|
       puts line
     end
@@ -100,7 +100,7 @@ def t_fileopen
   # Skip — needs explicit close, less common
   
   # Cleanup
-  File.delete("spinel_fopen_test.txt")
+  File.delete("probe_fopen_test.txt")
   puts "done"
 end
 t_fileopen

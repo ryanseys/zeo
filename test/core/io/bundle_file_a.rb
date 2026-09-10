@@ -45,7 +45,7 @@ def t_file_class_methods_int_recv
   # resolves the same place as the CRuby reference. `/tmp/...` lands
   # in different directories on the two sides (see bundle_io_sys.rb).
   
-  path = "spinel_file_class_test"
+  path = "probe_file_class_test"
   
   File.binwrite(path, [72, 105, 33].pack("C*"))   # "Hi!"
   puts File.readable?(path)
@@ -57,7 +57,7 @@ t_file_class_methods_int_recv
 
 # === file_directory_predicates ===
 def t_file_directory_predicates
-  path = "spinel_file_predicate_test.txt"
+  path = "probe_file_predicate_test.txt"
   File.write(path, "x")
   
   puts File.directory?(".")
@@ -65,8 +65,8 @@ def t_file_directory_predicates
   puts File.directory?(path)
   puts File.file?(path)
   puts File.file?(".")
-  puts File.directory?("spinel_missing_predicate_path")
-  puts File.file?("spinel_missing_predicate_path")
+  puts File.directory?("probe_missing_predicate_path")
+  puts File.file?("probe_missing_predicate_path")
   
   File.delete(path)
 end
@@ -86,7 +86,7 @@ t_file_read_directory_error
 
 # === file_write_binary_string ===
 def t_file_write_binary_string
-  path = "spinel_file_write_binary_string.bin"
+  path = "probe_file_write_binary_string.bin"
   
   payload = "A" + 0.chr + "B"
   

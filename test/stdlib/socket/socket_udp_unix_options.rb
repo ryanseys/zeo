@@ -30,7 +30,7 @@ b.close
 a.close
 
 # --- UNIX domain ---
-path = "spinel_ux_suite.sock"
+path = "probe_ux_suite.sock"
 File.delete(path) if File.exist?(path)
 srv = UNIXServer.new(path)
 p srv.class

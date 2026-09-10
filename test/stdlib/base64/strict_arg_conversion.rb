@@ -214,9 +214,9 @@ p [1, 2].fill(0, nil)
 p(/a/.match(nil))
 p(/a/ =~ nil)
 p("ab" =~ nil)
-ENV["SPINEL_C3_T"] = "v"
-ENV["SPINEL_C3_T"] = nil
-p ENV["SPINEL_C3_T"].nil?
+ENV["PROBE_C3_T"] = "v"
+ENV["PROBE_C3_T"] = nil
+p ENV["PROBE_C3_T"].nil?
 
 # review-found edges: named-capture =~ nil subject; fill's nil length is "to
 # the end"; a boolean =~ operand is NoMethodError; File.read's nil length

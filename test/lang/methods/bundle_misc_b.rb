@@ -83,7 +83,7 @@ def t_numbered_block_params
   # `_1` was already supported via Prism's NumberedParametersNode + a
   # regular LocalVariableReadNode at the use site. Implicit `it` (Ruby
   # 3.4) was emitted as PM_IT_PARAMETERS_NODE / PM_IT_LOCAL_VARIABLE_READ_NODE
-  # which the codegen had no handler for. spinel_parse now lowers both
+  # which the codegen had no handler for. probe_parse now lowers both
   # to their `_1` equivalents so the codegen reuses the existing path.
   
   # 1. `_1` over an int array — each.

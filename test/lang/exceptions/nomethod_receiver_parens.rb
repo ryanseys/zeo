@@ -1,11 +1,11 @@
 r001 = (begin; ({a: 1}).nope; rescue NoMethodError => e001; e001.receiver; end); p r001
 
 p(begin; ({}).nope; rescue NoMethodError => e; e.receiver; end)
-# Ruby: {}   Spinel: nil
+# Ruby: {}
 p(begin; ({"x" => 1}).nope; rescue NoMethodError => e; e.receiver; end)
 # Ruby: {"x" => 1}   Spinel: nil
 p(begin; ({a: 1}).nope; rescue NoMethodError => e; e.receiver.class; end)
-# Ruby: Hash   Spinel: NilClass
+# Ruby: Hash
 
 h = {a: 1}
 p(begin; h.nope; rescue NoMethodError => e; e.receiver; end)      # => {a: 1}

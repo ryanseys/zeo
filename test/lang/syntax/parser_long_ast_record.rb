@@ -1,4 +1,4 @@
-# Regression for spinel_parse text-AST records longer than 4096 bytes.
+# Regression for probe_parse text-AST records longer than 4096 bytes.
 #
 # The parser's array field emitter already builds a growable string, but
 # the final out_add formatting step used to clamp the emitted line to a

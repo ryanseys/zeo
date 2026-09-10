@@ -3,7 +3,7 @@ class TS < StandardError
 end
 p(TS.new.message)
 
-r001 = (raise TS rescue $!.message); p r001   # Ruby: :sym   Spinel: "TS"
+r001 = (raise TS rescue $!.message); p r001   # Ruby: :sym
 
 p(TS.new.to_s)   # => :sym
 

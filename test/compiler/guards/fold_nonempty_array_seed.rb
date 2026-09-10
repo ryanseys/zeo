@@ -3,7 +3,7 @@ v = g.reduce([0]) { |a, r| a + r }
 p v
 
 g = [[1, 2], [3, 4]]
-v = g.inject([0]) { |a, r| a + r }; p v   # Ruby: [0, 1, 2, 3, 4]   Spinel: C compile abort
+v = g.inject([0]) { |a, r| a + r }; p v   # Ruby: [0, 1, 2, 3, 4]
 p g.inject([]) { |a, r| a + r }            # => [1, 2, 3, 4]
 
 g = [[1, 2], [3, 4]]

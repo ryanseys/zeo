@@ -1,4 +1,4 @@
-path = "spinel_file_seek_test_#{Process.pid}.txt"
+path = "probe_file_seek_test_#{Process.pid}.txt"
 File.open(path, "w") do |f|
   f.write("HELLOWORLDABCDEF")
 end

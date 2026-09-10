@@ -5,7 +5,7 @@
 # suggested partial wiring -- emit produced something but it
 # dereferenced wrong memory.
 #
-# Root cause: spinel_codegen.rb's `compile_array_method_expr`
+# Root cause: probe_codegen.rb's `compile_array_method_expr`
 # had a poly_array arm but only with `length` / `[]` / `push` /
 # `clear`. `.dup` fell through to the unresolved-warning path
 # which emits `0` for the dispatch -- when the caller used that

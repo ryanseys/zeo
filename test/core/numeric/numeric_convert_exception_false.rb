@@ -4,9 +4,9 @@
 p(Complex("bad", exception: false))
 
 p(Rational("x", exception: false))
-# Ruby: nil   Spinel: invalid value for Rational(): "x" (ArgumentError)
+# Ruby: nil
 c = Complex("bad", exception: false); p c
-# Ruby: nil   Spinel: invalid value for convert():  (ArgumentError)
+# Ruby: nil
 
 p(Complex("1+2i", exception: false))    # => (1+2i)
 p(Rational("1/2", exception: false))    # => (1/2)

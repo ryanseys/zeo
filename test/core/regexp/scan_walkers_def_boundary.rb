@@ -1,5 +1,5 @@
 # Audit follow-up to #450 cascade 1. Several AST-walking helpers in
-# spinel_analyze.rb recursively descend into nested DefNode /
+# probe_analyze.rb recursively descend into nested DefNode /
 # ClassNode / ModuleNode bodies without resetting scope context.
 # That leaks per-method state (locals, param-method observations,
 # push-element types) across method boundaries and pollutes the

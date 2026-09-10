@@ -2,9 +2,9 @@ D = Data.define(:v)
 r = ([D.new(2)].dig(0, :v) rescue $!.class)
 p r
 
-r = (D.new(2).dig(:v) rescue $!.class); p r          # Ruby: NoMethodError   Spinel: 2
+r = (D.new(2).dig(:v) rescue $!.class); p r          # Ruby: NoMethodError
 h = { k: D.new(2) }
-r = (h.dig(:k, :v) rescue $!.class); p r             # Ruby: TypeError       Spinel: 2
+r = (h.dig(:k, :v) rescue $!.class); p r             # Ruby: TypeError
 
 S = Struct.new(:w)
 p([S.new(3)].dig(0, :w))                             # => 3

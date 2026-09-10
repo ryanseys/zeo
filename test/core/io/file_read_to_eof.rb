@@ -10,7 +10,7 @@
 # through one reader.
 
 # an ordinary file still round-trips, in one allocation and one read
-path = "spinel_read_eof_#{Process.pid}.tmp"
+path = "probe_read_eof_#{Process.pid}.tmp"
 File.write(path, "abc\ndef\n")
 p File.read(path).length
 p File.read(path)

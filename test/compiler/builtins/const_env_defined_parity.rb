@@ -22,11 +22,11 @@ end
 p Widget.new.check
 
 # ENV.fetch with a default and with a KeyError
-ENV["SPINEL_PARITY_A"] = "set"
-p ENV.fetch("SPINEL_PARITY_A")
-p ENV.fetch("SPINEL_PARITY_MISSING", "fallback")
+ENV["PROBE_PARITY_A"] = "set"
+p ENV.fetch("PROBE_PARITY_A")
+p ENV.fetch("PROBE_PARITY_MISSING", "fallback")
 begin
-  ENV.fetch("SPINEL_PARITY_MISSING")
+  ENV.fetch("PROBE_PARITY_MISSING")
 rescue KeyError => e
   puts e.class
   puts e.message.lines.first
@@ -34,16 +34,16 @@ end
 
 # ENV[k] = nil through a runtime value deletes
 def env_set(k, v); ENV[k] = v; end
-env_set("SPINEL_PARITY_A", nil)
-p ENV["SPINEL_PARITY_A"]
+env_set("PROBE_PARITY_A", nil)
+p ENV["PROBE_PARITY_A"]
 
 # literal nil deletes too
-ENV["SPINEL_PARITY_B"] = "x"
-ENV["SPINEL_PARITY_B"] = nil
-p ENV["SPINEL_PARITY_B"]
+ENV["PROBE_PARITY_B"] = "x"
+ENV["PROBE_PARITY_B"] = nil
+p ENV["PROBE_PARITY_B"]
 
 # non-String RHS raises TypeError naming the class
-def env_set_poly(v); ENV["SPINEL_PARITY_C"] = v; end
+def env_set_poly(v); ENV["PROBE_PARITY_C"] = v; end
 vals = [7, "ok"]
 begin
   env_set_poly(vals[0])
@@ -51,7 +51,7 @@ rescue TypeError => e
   puts "#{e.class}: #{e.message}"
 end
 env_set_poly(vals[1])
-p ENV["SPINEL_PARITY_C"]
+p ENV["PROBE_PARITY_C"]
 
 # ENV.size counts the environment
 p ENV.size > 0
@@ -63,7 +63,7 @@ __END__
 "set"
 "fallback"
 KeyError
-key not found: "SPINEL_PARITY_MISSING"
+key not found: "PROBE_PARITY_MISSING"
 nil
 nil
 TypeError: no implicit conversion of Integer into String

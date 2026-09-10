@@ -29,7 +29,7 @@ r022 = (3.downto("a").to_a rescue $!.class); p r022
 r023 = (1.step("z", 1).to_a rescue $!.class); p r023
 r024 = (1.5.between?("a", "z") rescue $!.class); p r024
 
-r025 = (5.between?("a", "z") rescue $!.class); p r025   # Ruby: ArgumentError   Spinel: false
+r025 = (5.between?("a", "z") rescue $!.class); p r025   # Ruby: ArgumentError
 
 p((5.gcd("x") rescue $!.class))     # both: TypeError
 p((5.lcm("x") rescue $!.class))     # both: TypeError

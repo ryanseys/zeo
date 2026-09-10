@@ -32,7 +32,7 @@ class Store
   def drop = File.delete(@path)
 end
 
-path = "spinel_pathslot_#{Process.pid}.tmp"
+path = "probe_pathslot_#{Process.pid}.tmp"
 s = Store.new(path)
 s.write_it("hello")
 p s.exists

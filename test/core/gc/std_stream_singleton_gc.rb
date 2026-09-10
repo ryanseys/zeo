@@ -9,7 +9,7 @@
 # pointer read out of it.
 #
 # Whether that faults is luck: the byte before is whatever the linker put
-# there. This test is deterministic anyway -- SPINEL_GC_VERIFY names the object
+# there. This test is deterministic anyway -- PROBE_GC_VERIFY names the object
 # on the mark path regardless of whether the walk survives.
 
 $stderr = $stdout

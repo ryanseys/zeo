@@ -11,8 +11,8 @@ def store(path, data)
   File.write(path, data)
 end
 
-store("spinel_file_write_test.txt", "ok\n")
-puts File.read("spinel_file_write_test.txt")
-File.delete("spinel_file_write_test.txt")
+store("probe_file_write_test.txt", "ok\n")
+puts File.read("probe_file_write_test.txt")
+File.delete("probe_file_write_test.txt")
 __END__
 ok

@@ -1,7 +1,7 @@
 # A captured Proc rides in an sp_int cell -- an integer slot holding a
 # collectable object. The capture's scan marked the CELL and nothing marked the
 # proc, so a nested `proc { |v| two.call(v, v) }` called through freed memory
-# once full cycles were frequent (#4077). Run it under SPINEL_GC_FULL_INTERVAL=1
+# once full cycles were frequent (#4077). Run it under PROBE_GC_FULL_INTERVAL=1
 # to see the difference; the shape is what matters here.
 two = proc { |a, b| [a, b] }
 nested = proc { |v| two.call(v, v) }

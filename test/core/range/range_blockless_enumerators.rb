@@ -6,11 +6,11 @@
 r = ((1..5).cycle(2).to_a rescue $!.class)
 p r
 
-r = ((1..5).each_entry.to_a rescue $!.class); p r        # Ruby: [1, 2, 3, 4, 5]      Spinel: NoMethodError
-r = ((1..).each_slice(2).first(2) rescue $!.class); p r  # Ruby: [[1, 2], [3, 4]]     Spinel: RangeError
+r = ((1..5).each_entry.to_a rescue $!.class); p r        # Ruby: [1, 2, 3, 4, 5]
+r = ((1..).each_slice(2).first(2) rescue $!.class); p r  # Ruby: [[1, 2], [3, 4]]
 
-r = ((1..).each_cons(2).first(2) rescue $!.class); p r        # Ruby: [[1, 2], [2, 3]]   Spinel: RangeError
-r = ((1..).each_with_index.first(2) rescue $!.class); p r     # Ruby: [[1, 0], [2, 1]]   Spinel: NoMethodError
+r = ((1..).each_cons(2).first(2) rescue $!.class); p r        # Ruby: [[1, 2], [2, 3]]
+r = ((1..).each_with_index.first(2) rescue $!.class); p r     # Ruby: [[1, 0], [2, 1]]
 
 p((1..3).each_with_index.to_a)   # => [[1, 0], [2, 1], [3, 2]]
 

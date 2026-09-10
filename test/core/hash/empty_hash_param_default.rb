@@ -6,7 +6,7 @@ p memo_get(3)
 
 def probe(n002, memo002 = {})
   memo002[n002] = n002 * 2
-  p memo002.key?(n002)   # Ruby: true   Spinel: false
+  p memo002.key?(n002)   # Ruby: true
   p memo002.size         # both: 1
   memo002[n002]
 end

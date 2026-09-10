@@ -1,6 +1,6 @@
 # Rightward assignment `expr => var` (Ruby 3.0+). Prism encodes this
 # as a MatchRequiredNode whose `pattern` is a LocalVariableTargetNode.
-# spinel_parse rewrites the simple-target case to a LocalVariableWriteNode
+# probe_parse rewrites the simple-target case to a LocalVariableWriteNode
 # at the AST boundary so the codegen reuses the regular assignment path.
 
 # 1. Integer rightward assignment.

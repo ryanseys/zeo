@@ -3,7 +3,7 @@
 # across it -- otherwise a receiver that is only reachable as the call's
 # transient (e.g. the result of a method, not a named local) is freed mid-copy
 # and the copy reads freed memory. Exercised across every array kind under GC
-# pressure; verified clean under -fsanitize=address with SPINEL_GC_STRESS=1.
+# pressure; verified clean under -fsanitize=address with PROBE_GC_STRESS=1.
 def make_ints;  (1..200).to_a.reverse;            end
 def make_flts;  (1..200).map { |i| i.to_f }.reverse; end
 def make_strs;  (1..200).map { |i| "s#{1000 - i}" };  end

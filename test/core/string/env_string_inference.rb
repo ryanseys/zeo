@@ -9,7 +9,7 @@
 # segfault case Sam called out.
 
 # Use a variable that's vanishingly unlikely to be set in any environment.
-UNSET = "SPINEL_TEST_VAR_THAT_DOES_NOT_EXIST_129"
+UNSET = "PROBE_TEST_VAR_THAT_DOES_NOT_EXIST_129"
 
 # 1. nil? on unset → true. Was: constant-folded to false at codegen.
 puts ENV[UNSET].nil?                      # true

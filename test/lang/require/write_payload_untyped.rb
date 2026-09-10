@@ -8,7 +8,7 @@ ZTMP = Dir.mktmpdir
 
 require "stringio"
 
-dir = File.join(ZTMP, "spinel_write_payload_untyped")
+dir = File.join(ZTMP, "probe_write_payload_untyped")
 if Dir.exist?(dir)
   Dir.children(dir).each { |e| File.delete("#{dir}/#{e}") }
   Dir.rmdir(dir)

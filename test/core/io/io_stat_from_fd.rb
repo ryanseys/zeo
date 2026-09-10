@@ -7,7 +7,7 @@
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 
-path = File.join(ZTMP, "spinel_io_stat_from_fd.txt")
+path = File.join(ZTMP, "probe_io_stat_from_fd.txt")
 File.write(path, "hello")
 
 f = File.open(path)

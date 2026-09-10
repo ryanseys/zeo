@@ -1,7 +1,7 @@
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 
-root = File.join(ZTMP, "spinel_dir_entries_t")
+root = File.join(ZTMP, "probe_dir_entries_t")
 Dir.mkdir(root) unless Dir.exist?(root)
 File.write("#{root}/b.txt", "x")
 File.write("#{root}/a.txt", "x")
@@ -20,4 +20,4 @@ Dir.rmdir(root)
 __END__
 [".", "..", ".hidden", "a.txt", "b.txt"]
 [".hidden", "a.txt", "b.txt"]
-raised: Errno::ENOENT spinel_dir_entries_t/nope
+raised: Errno::ENOENT probe_dir_entries_t/nope

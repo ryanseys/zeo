@@ -23,6 +23,6 @@ puts total
 # frames held compiler-cached addresses of the ORIGINAL worker's __thread data,
 # corrupting both workers' GC shadow stacks. Threads are now pinned to their
 # first worker. The harness runs single-worker; the parallel behaviour is
-# exercised by SPINEL_WORKERS>=3 runs of this same program (issue repro).
+# exercised by PROBE_WORKERS>=3 runs of this same program (issue repro).
 __END__
 588890

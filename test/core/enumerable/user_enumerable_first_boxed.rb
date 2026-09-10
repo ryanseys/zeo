@@ -6,7 +6,7 @@ end
 
 p([Nums.new(1, 2), Nums.new(3, 4)].map { |n001| n001.first })
 
-[Nums.new(1, 2)].each { |n002| p n002.first }   # Ruby: 1   Spinel: nil
+[Nums.new(1, 2)].each { |n002| p n002.first }   # Ruby: 1
 
 arr = [Nums.new(1, 2), Nums.new(3, 4)]
 p(arr.map { |n003| n003.sum })         # => [3, 7]

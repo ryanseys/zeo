@@ -103,7 +103,7 @@ c = T_undef_C.new
 puts c.bar     # bar
 
 # Multi-name form: `undef foo, bar` exercises the names-array path in
-# spinel_parse.c (PM_UNDEF_NODE emits `names` as A(...)). Defining a
+# probe_parse.c (PM_UNDEF_NODE emits `names` as A(...)). Defining a
 # third method `baz` and undef'ing the other two verifies that exactly
 # the named methods are removed.
 class T_undef_D

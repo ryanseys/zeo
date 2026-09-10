@@ -1,9 +1,9 @@
 # Issue #669: `case arr in [a, b, c]` pattern matching with
-# LocalVariableTargetNode bindings. Pre-fix, spinel_parse emitted
+# LocalVariableTargetNode bindings. Pre-fix, probe_parse emitted
 # `UnsupportedNode { kind: "ArrayPatternNode" }` and the codegen
 # silently ran the body with lv_a / lv_b / lv_c never declared
 # (C compile failed with "undeclared identifier"). Fix wires the
-# pattern through spinel_parse + compile_array_pattern_arm so each
+# pattern through probe_parse + compile_array_pattern_arm so each
 # bound LV gets declared with the scrutinee's elem type and
 # initialised from the matching index.
 

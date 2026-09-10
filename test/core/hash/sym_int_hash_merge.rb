@@ -9,12 +9,12 @@
 # was numeric (sym_int_hash variant) the merge dropped silently.
 #
 # Fix:
-# 1. spinel_codegen.rb: new `sp_SymIntHash_merge` runtime helper
+# 1. probe_codegen.rb: new `sp_SymIntHash_merge` runtime helper
 #    (mirrors the sym_str_hash version with NULL-guard on the
 #    second arg per the #542 / #546 NULL-receiver pattern).
-# 2. spinel_codegen.rb: sym_int_hash recv dispatch block gains
+# 2. probe_codegen.rb: sym_int_hash recv dispatch block gains
 #    merge / dup / delete arms.
-# 3. spinel_codegen.rb: kwarg-shorthand merge (`h.merge(c: 3)`)
+# 3. probe_codegen.rb: kwarg-shorthand merge (`h.merge(c: 3)`)
 #    builds the matching sp_SymIntHash inline from the
 #    KeywordHashNode pairs, mirroring the kwarg-as-bundle path
 #    in compile_constructor_args.

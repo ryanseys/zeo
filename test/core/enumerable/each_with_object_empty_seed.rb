@@ -1,8 +1,8 @@
 p({ a: 1 }.each_with_object([]) { |x, a| a })
 
-p({ a: 1 }.each_with_object({}) { |x, a| a })          # Ruby: {}   Spinel: compile abort
-p({}.each_with_object([]) { |x, a| a })                # Ruby: []   Spinel: compile abort
-v = { a: 1 }.each_with_object([]) { |x, a| a }; p v    # Ruby: []   Spinel: compile abort
+p({ a: 1 }.each_with_object({}) { |x, a| a })          # Ruby: {}
+p({}.each_with_object([]) { |x, a| a })                # Ruby: []
+v = { a: 1 }.each_with_object([]) { |x, a| a }; p v    # Ruby: []
 
 p({ a: 1 }.each_with_object([1]) { |x, a| a })         # => [1]
 p({ a: 1 }.each_with_object(0) { |x, a| a })           # => 0

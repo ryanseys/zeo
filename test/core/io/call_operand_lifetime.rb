@@ -4,7 +4,7 @@
 # shape #4049 fixed for a constructor's members, which every other call had too.
 # Each operand binds to a rooted temp in front of the call now. A natural
 # collection does not reliably land in that window, so the lifetime half is
-# verified under SPINEL_GC_STRESS=1, where the first count was 40 of 40 before
+# verified under PROBE_GC_STRESS=1, where the first count was 40 of 40 before
 # the fix and 0 after. What this run asserts unconditionally is the shape
 # and the answer.
 def seg(tag, i)

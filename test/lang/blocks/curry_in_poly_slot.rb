@@ -2,13 +2,13 @@ l001 = ->(x001) { x001 }
 r001 = (l001.curry rescue $!.class)
 p r001.class
 
-r002 = (begin; l001.curry; rescue; nil; end); p r002.class                          # Spinel: NilClass
-r003 = (l001.curry rescue nil); p r003.class                                        # Spinel: NilClass
-r004 = (l001.curry(1) rescue $!.class); p r004.class                                # Spinel: NilClass
-r005 = (->(a005, b005) { a005 + b005 }.curry rescue $!.class); p r005.class         # Spinel: NilClass
-fs006 = [->(x006) { x006 }]; r006 = (fs006[0].curry rescue $!.class); p r006.class  # Spinel: NilClass
+r002 = (begin; l001.curry; rescue; nil; end); p r002.class
+r003 = (l001.curry rescue nil); p r003.class
+r004 = (l001.curry(1) rescue $!.class); p r004.class
+r005 = (->(a005, b005) { a005 + b005 }.curry rescue $!.class); p r005.class
+fs006 = [->(x006) { x006 }]; r006 = (fs006[0].curry rescue $!.class); p r006.class
 
-p((l001.curry rescue $!.class).call(5))   # Ruby: 5   Spinel: 0
+p((l001.curry rescue $!.class).call(5))   # Ruby: 5
 
 p(l001.curry.class)                                    # => Proc
 c007 = l001.curry; p c007.class                        # => Proc

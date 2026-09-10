@@ -14,7 +14,7 @@ ZTMP = Dir.mktmpdir
 require "pathname"
 require "stringio"
 
-dir = File.join(ZTMP, "spinel_implicit_conversion_protocol")
+dir = File.join(ZTMP, "probe_implicit_conversion_protocol")
 if Dir.exist?(dir)
   Dir.children(dir).each { |e| File.delete("#{dir}/#{e}") }
   Dir.rmdir(dir)
