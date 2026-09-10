@@ -1092,8 +1092,8 @@ fn resolve_cvars_and_consts(
     // (`Scope::lexical_home`), whose map the per-class loop above never
     // fills -- the scope itself is owned by the enclosing class. Resolve
     // those scopes' names against the surrogate too, so codegen's map
-    // lookup finds the lexical owner (`expr::const_owner_id_opt`
-    // self-defaults on a miss, which would wrongly claim the surrogate).
+    // lookup finds the lexical owner: a `const_owners` miss defaults to the
+    // reading class, which would wrongly claim the surrogate owns the name.
     let tagged: Vec<(ClassId, Vec<crate::hir::NodeId>)> = compiler
         .scopes
         .iter()
