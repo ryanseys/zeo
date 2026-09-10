@@ -1,6 +1,7 @@
 ---
 # Where `bundle install` puts the resolved gems. Gitignored via `/vendor/`,
-# rebuilt by `cargo xtask deps`.
+# rebuilt by `cargo xtask deps --oracle`, which is the one step that needs
+# a ruby on the machine.
 BUNDLE_PATH: "vendor/bundle"
 # A lock that does not match the Gemfile is an error, never a silent update.
 # The whole point of the file is that every machine resolves the same set, so

@@ -23,6 +23,15 @@ fn oracle_ruby() -> Option<PathBuf> {
         .map(|_| ruby)
 }
 
+/// The pinned ruby AND the oracle's own gem store, or `None`.
+///
+/// An upstream suite reaches `bundler/setup`, which resolves out of
+/// `vendor/bundle`. Only `cargo xtask deps --oracle` writes that tree, and
+/// a plain `cargo xtask deps` (what the build page and CI run) does not.
+fn oracle_ruby_with_store() -> Option<PathBuf> {
+    oracle_ruby().filter(|_| root().join("vendor/bundle/ruby").is_dir())
+}
+
 /// `ruby -I crates/zeo-rt/gems/<gem>/lib <args>`, ambient require hooks
 /// stripped so nothing but the pure tree and ruby's own stdlib can answer.
 fn pure_ruby(ruby: &Path, gem: &str, args: &[&dyn AsRef<std::ffi::OsStr>]) -> std::process::Output {
@@ -87,8 +96,8 @@ fn the_pure_string_io_matches_the_c_gems_recorded_output() {
 /// to run if the pure tree did not win the require.
 #[test]
 fn the_pure_string_io_passes_the_upstream_suite() {
-    let Some(ruby) = oracle_ruby() else {
-        eprintln!("skipping: this machine has no ruby to run the pure port");
+    let Some(ruby) = oracle_ruby_with_store() else {
+        eprintln!("skipping: no ruby, or no `cargo xtask deps --oracle` store");
         return;
     };
     let out = Command::new(&ruby)
@@ -111,8 +120,8 @@ fn the_pure_string_io_passes_the_upstream_suite() {
 /// refuses to run if the pure tree did not win the require.
 #[test]
 fn the_pure_string_scanner_passes_the_upstream_suite() {
-    let Some(ruby) = oracle_ruby() else {
-        eprintln!("skipping: this machine has no ruby to run the pure port");
+    let Some(ruby) = oracle_ruby_with_store() else {
+        eprintln!("skipping: no ruby, or no `cargo xtask deps --oracle` store");
         return;
     };
     let out = Command::new(&ruby)
@@ -136,8 +145,8 @@ fn the_pure_string_scanner_passes_the_upstream_suite() {
 /// zeo's Rust half, so the delegation layer is what differs.
 #[test]
 fn the_monitor_ruby_half_passes_the_upstream_suite() {
-    let Some(ruby) = oracle_ruby() else {
-        eprintln!("skipping: this machine has no ruby to run the suite");
+    let Some(ruby) = oracle_ruby_with_store() else {
+        eprintln!("skipping: no ruby, or no `cargo xtask deps --oracle` store");
         return;
     };
     let out = Command::new(&ruby)
