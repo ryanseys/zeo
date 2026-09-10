@@ -32,24 +32,101 @@ mod singleton;
 #[cfg(test)]
 mod tests;
 mod walk;
-pub use alloc::*;
-pub use caches::*;
-pub use classmeta::*;
-pub use define::*;
-pub use errors::*;
-pub use impls::*;
-pub use invoke::*;
-pub use ivars::*;
-pub use kwargs::*;
-pub use lookup::*;
-pub use object::*;
-pub use reflect::*;
-pub use registry::*;
-pub use relations::*;
-pub use send_obj::*;
-pub use send_value::*;
-pub use singleton::*;
-pub use walk::*;
+pub(crate) use alloc::{
+    allocate_of, ancestor_allocator_of, constructor_of, own_class_method_fn, registry_allocator,
+};
+pub use alloc::{const_miss, construct_by_class_id, user_const_missing};
+pub use caches::{
+    CallSite, ClassMethodSite, ClassNewSite, DynCallerSite, FCALL, class_new_cached,
+    send_class_cached, send_value_cached, send_value_dyn_cached, send_value_explicit_in,
+    send_value_vcall_cached,
+};
+pub(crate) use classmeta::{box_of_surrogate_class, box_surrogate_class, highest_compile_time_box};
+pub use classmeta::{
+    class_frozen, class_id_by_name, class_is_module, class_is_refinement, class_set_frozen,
+    frozen_class_error, guard_class_reopen, nested_class_names, refinement_of, refinements_of,
+    registered_class_id_by_name,
+};
+pub(crate) use define::{PARSE_SPECIAL_KERNEL, alias_target, class_alias_target};
+pub use define::{
+    alias_in_default_definee, define_in_default_definee, define_in_default_definee_vis,
+    eval_define, eval_definee, validate_alias_source, value_class,
+};
+use define::{builtin_class_row, builtin_row, builtin_row_in_chain};
+pub use errors::{
+    MissingReason, arity_error, coerce_raise_arg, coerce_raise_arg_with_message,
+    construct_exception_value, describe_receiver, make_name_error, raise_error,
+    raise_error_details, raise_error_id, raise_method_missing, raise_no_block_yield,
+    raise_stop_iteration, raise_with_cause, stamp_backtrace, wrong_arity,
+};
+pub use impls::{
+    AllocatorFn, ConstructorFn, DynMethodFn, MethodFn, MethodImpl, ValueImpl, ValueMethodFn,
+};
+pub use invoke::run_initialize;
+pub(crate) use invoke::{ancestors_contain, call_user_method};
+use invoke::{arity_debug_context, note_dispatch_gated};
+pub use ivars::{
+    instance_variable_get, instance_variable_set, instance_variables, ivar_defined, ivar_name_arg,
+    remove_instance_variable,
+};
+pub use kwargs::{BoundKwargs, bind_dynamic_kwargs, reject_marked_kwargs};
+pub use lookup::{Reflect, class_name, class_real_name, method_name_symbol, reflect_dispatch_in};
+pub(crate) use lookup::{
+    builtin_new_gave_way, builtin_row_impl, registry_lookup_cloned, registry_own_impl_cloned,
+    registry_value_method_impl, reopened_initialize_in_chain, value_method,
+};
+use object::main_mixin;
+pub(crate) use object::slot_ivar_name;
+pub use object::{
+    MAIN_PRIVATE_SINGLETONS, Object, downcast_robj, downcast_robj_ref, is_main_object,
+    is_main_private_singleton, ivar_frozen_error, ivar_get_dyn, ivar_get_dyn_isolated,
+    ivar_set_dyn, ivar_slot_get_dyn, ivar_slot_get_dyn_isolated, ivar_slot_set_dyn, main_object,
+};
+pub use reflect::{
+    MethodVisibility, VisFilter, ancestors_of_value, chain_index_of,
+    class_defines_own_class_method, class_defines_own_instance_method,
+    class_defines_own_instance_method_if_registered, class_method_defined_here,
+    class_method_extend_source, class_method_is_private, class_method_names_in, class_method_owner,
+    class_method_owner_after, class_method_owner_reported, guard_public_class_method,
+    has_notimplement_row, instance_method_names, instance_method_visibility, method_defined,
+    method_defined_inherit, method_owner, method_owner_after, object_singleton_visibility,
+    public_class_method_names, responds_to, responds_to_or_missing, responds_to_value,
+    singleton_chain_index_of, undefined_method_names,
+};
+pub(crate) use reflect::{
+    class_method_fn, frozen_ancestors, is_universal_tail, obj_dig, reachable_chain,
+};
+use reflect::{class_receiver_responds, extended_class_method_body};
+pub(crate) use registry::has_display_reopen;
+pub use registry::{ClassRegistry, has_instance_method, install_class_registry};
+use registry::{REGISTRY, registry};
+pub(crate) use relations::{
+    c_frame_label, class_extends, classes_with_ancestor, value_moved, with_c_frame,
+    with_c_frame_ids,
+};
+pub use relations::{
+    check_not_moved_obj, class_ids, direct_subclasses, is_a, is_a_value, module_cmp,
+    rescue_matches_any,
+};
+use send_obj::{method_missing_or_raise, send_in_reason};
+pub use send_obj::{send, send_in};
+use send_value::class_defines_user_hook;
+pub(crate) use send_value::missing_or_raise;
+pub use send_value::{
+    refined_method, refined_responds_to, refined_send_dynamic, refined_send_in, refinement_home,
+    send_value, send_value_in, send_value_public_in, send_value_vcall_in,
+};
+use singleton::super_class_defined;
+pub(crate) use singleton::{
+    ClassResume, singleton_owner_from, singleton_position_of, singleton_resolves_at_head,
+    singleton_seats_as_mixin, swap_class_mro_resume, with_ordinary_class_dispatch,
+};
+pub use singleton::{
+    call_singleton_super_target, send_class_chain, send_class_from, send_super_class_from,
+};
+pub(crate) use walk::{MroResume, note_chain, swap_mro_resume};
+use walk::{mro_duplicates, send_walking, with_mro_resume};
+pub use walk::{send_as_defined_in, send_below_overlay_at, send_super_from, super_defined};
 
 /// Identifies a Ruby class at runtime. This is the SHARED `zeo-abi` type --
 /// the compiler bakes the same numbering into generated code from the same

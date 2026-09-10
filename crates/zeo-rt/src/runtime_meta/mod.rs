@@ -30,12 +30,67 @@ mod frames;
 mod lock;
 mod resolver;
 mod watermark;
-pub use api::*;
-pub(crate) use dyn_object::*;
-pub use frames::*;
+pub use api::{
+    AttrKind, class_extend_at, defer_extended_class_method, extend_object_default,
+    install_boot_singleton, install_positional_visibility, mark_global_def_hook,
+    object_method_undefined, register_singleton_surrogate, runtime_alias_method, runtime_attr,
+    runtime_class_method_visibility, runtime_define_method, runtime_define_method_from_method,
+    runtime_define_singleton_from_method, runtime_define_singleton_method, runtime_extend,
+    runtime_include, runtime_module_function, runtime_prepend, runtime_remove_method,
+    runtime_replace_class_method_c, runtime_replace_method, runtime_replace_method_c,
+    runtime_set_visibility, runtime_undef_class_method_names, runtime_undef_method,
+    singleton_class_owner, singleton_owner_value, splice_mixin,
+};
+pub(crate) use api::{
+    DefEvent, class_method_undefined, overlay_class_method_private, overlay_class_undefs,
+    overlay_method_visibility, probe_def_hook, resolves_through_overlay, retire_names,
+    snapshot_below_overlay, snapshot_instance_method,
+};
+use api::{Placement, global_def_hook};
+pub(crate) use dyn_object::{blank_instance, compiled_subclass_construct, dyn_object_construct};
+// Reached only by the unit tests, which build an object of a class no
+// compiled program declares.
+use dyn_object::ClassSurrogate;
+#[cfg(test)]
+use dyn_object::DynObject;
+#[cfg(test)]
+pub(crate) use dyn_object::dyn_alloc;
+pub use frames::{
+    SINGLETON_DEFINING, bare_super_outside_a_method, call_value_singleton, dynamic_from_proc,
+    send_super_dynamic, super_defined_dynamic,
+};
+use frames::{current_frame_for, pop_method_frame, push_method_frame, update_frame_for};
+pub(crate) use frames::{
+    module_definee, singleton_definee, with_body_frame, with_singleton_definee,
+};
 pub(crate) use lock::OverlayLock;
-pub use resolver::*;
-pub use watermark::*;
+use resolver::{clear_extended_name, immediate_kind, record_extended_names, walk_runtime_class};
+pub(crate) use resolver::{coerce_method_body, coerce_method_name, runtime_class_method};
+pub use resolver::{
+    extended_name_source, has_singleton_class, has_singleton_prepend,
+    inherited_overlay_class_method, inherited_singleton_prepend, object_has_singleton_method,
+    overlay_ancestors, overlay_class_method, overlay_class_method_below_prepends,
+    overlay_class_name, overlay_class_removed, overlay_constructor, overlay_has_instance_method,
+    overlay_is_module, overlay_is_removed, overlay_is_undefined, overlay_own_method,
+    per_object_method_home, resolve_dynamic, runtime_allocate, runtime_class_id_by_name,
+    singleton_prepends_of,
+};
+pub use watermark::{
+    any_pending, call_value_body, class_is_uninitialized, fire_const_added, global_def_hook_owner,
+    intern_native_class, module_owner_class, module_subclass_construct,
+    name_runtime_class_if_anonymous, not_yet_defined, overlay_class_method_is_extended,
+    overlay_class_method_names, overlay_instance_method_names, overlay_refinement_of,
+    overlay_refinements_of, overlay_value_body, pending_defs_begin, pending_defs_end,
+    pending_defs_for, pending_here, refinement_import_methods, register_module_subclass,
+    runtime_class_allocate, runtime_class_dup, runtime_class_new, runtime_class_new_with,
+    runtime_module_dup, runtime_module_new, runtime_module_new_owned, runtime_refine,
+    runtime_singleton_class, set_temporary_class_name, with_pending_defs,
+};
+use watermark::{
+    extended_class_method, extended_value_method, module_extendable_method_names,
+    module_own_method_impl, splice_module_into,
+};
+pub(crate) use watermark::{module_subclass_defines, overlay_allocator};
 
 use crate::builtins::{arg_error, name_error, runtime_error, type_error};
 use crate::dispatch::{
