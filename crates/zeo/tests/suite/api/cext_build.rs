@@ -556,7 +556,7 @@ void Init_latch_probe(void)
             .arg("-e")
             .arg(format!("{prelude}{body}"))
             .env("ZEO_CACHE", "0")
-            .env("ZEO_LOG", "zeo_rt::gvl=debug")
+            .env("ZEO_LOG", "zeo_rt::concurrency::gvl=debug")
             .output()
             .expect("zeo runs");
         let stderr = String::from_utf8_lossy(&out.stderr).into_owned();

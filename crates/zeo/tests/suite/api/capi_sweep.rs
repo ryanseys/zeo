@@ -97,7 +97,10 @@ fn sweep(gem: &str) {
         .env("ZEO_CACHE", "0")
         // Only the load and latch lines are wanted; a full debug log is
         // megabytes.
-        .env("ZEO_LOG", "zeo_capi::load=debug,zeo_rt::gvl=debug")
+        .env(
+            "ZEO_LOG",
+            "zeo_capi::load=debug,zeo_rt::concurrency::gvl=debug",
+        )
         .env_remove("RUBYOPT")
         .env_remove("RUBYLIB")
         .output()

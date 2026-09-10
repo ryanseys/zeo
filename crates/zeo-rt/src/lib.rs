@@ -28,15 +28,11 @@ pub mod capi;
 pub mod capi_hooks;
 mod catch;
 pub mod cframes;
-mod civars;
 pub mod compiled_object;
 
-mod cvars;
-mod ec;
 mod enc;
 pub mod encoding;
 // Runtime string `eval`, and the seam the compiler is installed through.
-mod coroutine;
 pub mod eval;
 mod exec;
 mod ext;
@@ -46,27 +42,31 @@ pub mod ffi;
 /// `PlatformScalar` argument spells the target's own `zeo_rt::libc::mode_t`
 /// so rustc supplies the real width where the program builds.
 pub use libc;
-mod fiber;
-mod flipflop;
 pub mod gc;
-pub mod gvl;
 mod handling;
 
-mod lastmatch;
 pub mod log;
 mod method_meta;
 mod mt;
 pub mod pools;
-mod ractor;
 mod regexp;
 mod release_pool;
-mod stack_guard;
 mod symbol;
 #[cfg(test)]
 mod test_support;
-mod thread;
 #[macro_use]
 mod trace;
+
+// The two families that were flat files at this root. Declared after
+// `trace`, whose macros are textually scoped and which `constants` uses.
+// The old paths keep resolving, so no call site names the group.
+mod concurrency;
+mod vars;
+pub use concurrency::gvl;
+pub(crate) use concurrency::{coroutine, ec, fiber, ractor, stack_guard, thread};
+pub(crate) use vars::{civars, cvars, flipflop, lastmatch};
+#[doc(hidden)]
+pub use vars::{constants, globals};
 mod tramp;
 
 // The runtime's inside, as the C-API crate (`zeo-capi`) sees it. These are
@@ -75,13 +75,9 @@ mod tramp;
 #[doc(hidden)]
 pub mod builtins;
 #[doc(hidden)]
-pub mod constants;
-#[doc(hidden)]
 pub mod dispatch;
 #[doc(hidden)]
 pub mod frames;
-#[doc(hidden)]
-pub mod globals;
 #[doc(hidden)]
 pub mod rproc;
 #[doc(hidden)]
