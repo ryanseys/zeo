@@ -37,9 +37,9 @@ See the checklist at the top of `crates/zeo-rt/src/ext.rs`. In brief:
    mirror `base64` (module) or `stringio` (class with instances) — and the
    Ruby half, if it has one, goes in `lib/` beside it, with a `.gemspec` at
    the root where upstream ships one.
-2. **ABI row** — a `ClassId` const + `BUILTINS` row with `feature:
-   Some("<require-name>")` in `crates/zeo-abi/src/lib.rs` (ids are
-   append-only, contiguous).
+2. **ABI row** — a `ClassId` const in `crates/zeo-abi/src/ids.rs` plus a
+   `BUILTINS` row with `feature: Some("<require-name>")` in
+   `crates/zeo-abi/src/builtins.rs` (ids are append-only, contiguous).
 3. **Nothing.** `ruby_class!`/`ruby_module!` export the class's table under a
    `zeo_ctable_<ID>` symbol, `build.rs` scans the runtime sources for the
    `NAME = zeo_abi::ID` spelling to list it in `CLASS_TABLE_SYMBOLS`, and

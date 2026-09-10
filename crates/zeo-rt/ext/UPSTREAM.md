@@ -20,7 +20,7 @@ gem name becomes an underscore in the module and the cargo feature
 
 `io-console` is also the one library whose METHOD ROWS are not in its own
 directory. It adds 34 methods to `IO` itself, and one class owns one
-`ruby_class!` table, so the declarations sit in `builtins/io.rs` marked
+`ruby_class!` table, so the declarations sit in `builtins/io/mod.rs` marked
 `gated "io/console"` and forward here. Only `IO::ConsoleMode`, a class of its
 own, carries its table in this tree.
 

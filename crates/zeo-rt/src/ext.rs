@@ -61,9 +61,9 @@
 //!    with the `ruby_class!` (instances) or `ruby_module!` (module functions)
 //!    DSL -- mirror `base64` for a module, `stringio` for a class with
 //!    instances. Its Ruby half, if it has one, goes in `ext/<name>/lib/`.
-//! 2. **ABI row** in `zeo-abi/src/lib.rs`: a `ClassId` const (next free id)
-//!    and a `BUILTINS` row with `feature: Some("<require-name>")`. Ids are
-//!    append-only and contiguous.
+//! 2. **ABI row**: a `ClassId` const (next free id) in `zeo-abi/src/ids.rs`
+//!    and a `BUILTINS` row with `feature: Some("<require-name>")` in
+//!    `zeo-abi/src/builtins.rs`. Ids are append-only and contiguous.
 //! 3. **Cargo feature** `ext-<name>` in `zeo-rt/Cargo.toml`, added to the
 //!    `ext-all` umbrella (with `dep:` entries if it needs an optional crate).
 //! 4. **Nothing else.** The module declaration below is generated from the
