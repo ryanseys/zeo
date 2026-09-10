@@ -2,6 +2,9 @@
 # pair. Nothing here prints a timestamp or a whole compressed buffer -- gzip
 # headers carry the current time, and deflate output is only guaranteed to
 # ROUND-TRIP, not to be byte-identical across zlib implementations.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 require "zlib"
 require "stringio"
 
@@ -239,10 +242,10 @@ end
 
 # A file on disk, through both halves.
 show("open round-trip") do
-  Zlib::GzipWriter.open("zlib_classes_tmp.gz") { |w| w.write("through a file") }
-  Zlib::GzipReader.open("zlib_classes_tmp.gz") { |r| r.read }
+  Zlib::GzipWriter.open(File.join(ZTMP, "zlib_classes_tmp.gz")) { |w| w.write("through a file") }
+  Zlib::GzipReader.open(File.join(ZTMP, "zlib_classes_tmp.gz")) { |r| r.read }
 ensure
-  File.unlink("zlib_classes_tmp.gz")
+  File.unlink(File.join(ZTMP, "zlib_classes_tmp.gz"))
 end
 
 # Corruption. CRuby checks a member's footer only once the buffer it filled

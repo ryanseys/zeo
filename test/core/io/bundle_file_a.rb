@@ -7,6 +7,9 @@
 #   - file_write_directory_error
 
 # === file_binread_directory_error ===
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 def t_file_binread_directory_error
   begin
     File.binread(".")
@@ -43,7 +46,7 @@ def t_file_class_methods_int_recv
   #
   # A cwd-relative path, so ruby and zeo resolve it to the same file.
   
-  path = "probe_file_class_test"
+  path = File.join(ZTMP, "probe_file_class_test")
   
   File.binwrite(path, [72, 105, 33].pack("C*"))   # "Hi!"
   puts File.readable?(path)
@@ -55,7 +58,7 @@ t_file_class_methods_int_recv
 
 # === file_directory_predicates ===
 def t_file_directory_predicates
-  path = "probe_file_predicate_test.txt"
+  path = File.join(ZTMP, "probe_file_predicate_test.txt")
   File.write(path, "x")
   
   puts File.directory?(".")
@@ -84,7 +87,7 @@ t_file_read_directory_error
 
 # === file_write_binary_string ===
 def t_file_write_binary_string
-  path = "probe_file_write_binary_string.bin"
+  path = File.join(ZTMP, "probe_file_write_binary_string.bin")
   
   payload = "A" + 0.chr + "B"
   

@@ -22,7 +22,8 @@ program checks, not which issue it came from: a tracker id in a filename
 tells a red board nothing. And a program that writes files puts them under
 `Dir.mktmpdir` (`require "tmpdir"`) and never prints the directory — ruby
 and zeo each run it under their own scratch root, so a literal `/tmp/name`
-is shared with every case beside it.
+is shared with every case beside it. A bare `"out.txt"` is the same
+mistake pointed at `test/`, since that is the working directory.
 
 ## Where it goes
 

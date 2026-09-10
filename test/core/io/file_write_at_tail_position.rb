@@ -7,12 +7,15 @@
 # warned "cannot resolve call to 'write' on int" and returned
 # the literal 0, silently dropping the side effect.
 
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 def store(path, data)
   File.write(path, data)
 end
 
-store("probe_file_write_test.txt", "ok\n")
-puts File.read("probe_file_write_test.txt")
-File.delete("probe_file_write_test.txt")
+store(File.join(ZTMP, "probe_file_write_test.txt"), "ok\n")
+puts File.read(File.join(ZTMP, "probe_file_write_test.txt"))
+File.delete(File.join(ZTMP, "probe_file_write_test.txt"))
 __END__
 ok

@@ -19,6 +19,9 @@
 
 # nil / bool into Integer slots ("from nil to integer" wording)
 
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 begin
   p([10, 20, 30].take(nil))
 rescue TypeError, ArgumentError => e
@@ -233,11 +236,11 @@ begin
 rescue NoMethodError => e
   p [e.class, e.message]
 end
-File.write("sac-frd.txt", "hello")
+File.write(File.join(ZTMP, "sac-frd.txt"), "hello")
 begin
-  p File.read("sac-frd.txt", nil)
+  p File.read(File.join(ZTMP, "sac-frd.txt"), nil)
 ensure
-  File.delete("sac-frd.txt")
+  File.delete(File.join(ZTMP, "sac-frd.txt"))
 end
 
 # super(nil) into a builtin exception keeps CRuby's class-name default

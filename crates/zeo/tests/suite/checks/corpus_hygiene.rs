@@ -352,3 +352,84 @@ fn no_program_writes_under_a_literal_tmp_path() {
         bad.join("\n  ")
     );
 }
+
+/// Programs whose bare relative path is deliberate: each writes nothing, or
+/// its answer names the path, so a scratch directory would change what it
+/// records.
+const RELATIVE_BY_DESIGN: &[&str] = &[
+    // Every arity probe raises on the argument count before it opens
+    // anything, so no path here is ever reached.
+    "test/compiler/builtins/builtin_arity_class_methods.rb",
+];
+
+/// A program that writes to a BARE relative name writes into the harness's
+/// working directory, which is `test/` itself -- the corpus it belongs to.
+/// The file is usually deleted on the way out, so nothing is left behind and
+/// nothing goes red; what breaks is two cases sharing a name, and the golden
+/// group runs fourteen wide. A killed run leaves the file for good.
+///
+/// The fix is the same as for `/tmp`: `Dir.mktmpdir`. Where the answer names
+/// the file -- an errno message does -- the program makes the scratch
+/// directory its WORKING directory instead, so the name it prints stays bare.
+#[test]
+fn no_program_writes_into_the_working_directory() {
+    // A writer whose FIRST argument is a bare relative literal: no separator,
+    // so it cannot be anything but the working directory.
+    let writers = [
+        "File.write(",
+        "File.binwrite(",
+        "File.open(",
+        "File.new(",
+        "IO.write(",
+        "Dir.mkdir(",
+        "FileUtils.mkdir_p(",
+        "FileUtils.touch(",
+        "Zlib::GzipWriter.open(",
+    ];
+    let mut bad = Vec::new();
+    for (path, _) in programs() {
+        // `programs()` yields absolute paths; the allowlist names them from
+        // the repo root, which is the spelling a reader can check.
+        let from_root = path.strip_prefix(repo_root()).unwrap_or(&path);
+        if RELATIVE_BY_DESIGN.contains(&from_root.to_string_lossy().as_ref()) {
+            continue;
+        }
+        let text = program_text(&path);
+        // A program that moves into its own scratch directory has already
+        // answered the question: a bare name there is not `test/`.
+        if text.contains("Dir.chdir") {
+            continue;
+        }
+        for line in text.lines().filter(|l| !l.trim_start().starts_with('#')) {
+            for w in writers {
+                let Some(rest) = line.split_once(w).map(|(_, r)| r.trim_start()) else {
+                    continue;
+                };
+                let Some(quote) = rest.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+                    continue;
+                };
+                let Some(name) = rest[1..].split(quote).next() else {
+                    continue;
+                };
+                // A separator means the path is built, not bare; a bare name
+                // with no dot is usually a directory the program also makes.
+                if name.contains('/') || name.is_empty() || name == "." {
+                    continue;
+                }
+                bad.push(format!(
+                    "{} -- {w}{quote}{name}{quote}",
+                    from_root.display()
+                ));
+            }
+        }
+    }
+    bad.sort();
+    bad.dedup();
+    assert!(
+        bad.is_empty(),
+        "programs writing into the corpus directory -- put the files under \
+         `Dir.mktmpdir`, or make it the working directory when the answer \
+         names them:\n  {}",
+        bad.join("\n  ")
+    );
+}

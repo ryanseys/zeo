@@ -9,6 +9,9 @@
 #   - time
 
 # === file_binread ===
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 def t_file_binread
   # `File.binread(path).bytes` — sp_str_bytes uses null-termination
   # and stops at the first 0x00 byte, so for binary data (e.g. .nes
@@ -22,7 +25,7 @@ def t_file_binread
   
   # The binary file with embedded NULs is written by a shell command, so
   # what File.binread reads back was not written by the same runtime.
-  path = "probe_binread_test.bin"
+  path = File.join(ZTMP, "probe_binread_test.bin")
   `printf 'AB\\000CD\\000EF' > #{path}`
   
   # Pattern-matched: emits sp_file_binread_bytes(path) which reads
@@ -54,19 +57,19 @@ def t_fileio
   # test/) so ruby and zeo write to the same place.
   
   # Write a file
-  File.write("probe_test.txt", "Hello from the writer!\nLine 2\n")
+  File.write(File.join(ZTMP, "probe_test.txt"), "Hello from the writer!\nLine 2\n")
   
   # Read the file
-  content = File.read("probe_test.txt")
+  content = File.read(File.join(ZTMP, "probe_test.txt"))
   puts content
   
   # File.exist?
-  puts File.exist?("probe_test.txt")  # true
-  puts File.exist?("probe_nonexistent.txt")  # false
+  puts File.exist?(File.join(ZTMP, "probe_test.txt"))  # true
+  puts File.exist?(File.join(ZTMP, "probe_nonexistent.txt"))  # false
   
   # Clean up
-  File.delete("probe_test.txt")
-  puts File.exist?("probe_test.txt")  # false
+  File.delete(File.join(ZTMP, "probe_test.txt"))
+  puts File.exist?(File.join(ZTMP, "probe_test.txt"))  # false
   
   puts "done"
 end
@@ -78,14 +81,14 @@ def t_fileopen
   # Uses a cwd-relative path for the same reason as test/fileio.rb.
   
   # Write with block
-  File.open("probe_fopen_test.txt", "w") do |f|
+  File.open(File.join(ZTMP, "probe_fopen_test.txt"), "w") do |f|
     f.puts "line 1"
     f.puts "line 2"
     f.puts "line 3"
   end
   
   # Read with block
-  File.open("probe_fopen_test.txt", "r") do |f|
+  File.open(File.join(ZTMP, "probe_fopen_test.txt"), "r") do |f|
     f.each_line do |line|
       puts line
     end
@@ -95,7 +98,7 @@ def t_fileopen
   # Skip — needs explicit close, less common
   
   # Cleanup
-  File.delete("probe_fopen_test.txt")
+  File.delete(File.join(ZTMP, "probe_fopen_test.txt"))
   puts "done"
 end
 t_fileopen

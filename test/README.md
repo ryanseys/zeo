@@ -53,6 +53,12 @@ A program that writes files puts them under `Dir.mktmpdir` (`require
 their own scratch root, so a literal `/tmp/name` would be shared with every
 case running beside it and would outlive the run.
 
+A bare relative name is the same mistake: the working directory is `test/`
+itself, so `File.write("out.txt", …)` writes into the corpus. Where the
+recorded answer names the file — an errno message does — make the scratch
+directory the working directory (`Dir.chdir(Dir.mktmpdir)`) and keep the
+bare name.
+
 ## The rest
 
 - [The test format](../docs/reference/test-format.md) — directives, the

@@ -6,6 +6,11 @@
 # without a pty. The streams are a pipe and a regular file rather than STDIN:
 # the harness gives STDIN /dev/null, and tcgetattr on a character device
 # answers ENODEV on some platforms and ENOTTY on others.
+require "tmpdir"
+# The scratch directory is the WORKING directory: an ENOTTY message names
+# the file, so a bare name keeps the recording free of an absolute path.
+Dir.chdir(Dir.mktmpdir)
+
 require "io/console"
 
 p STDIN.tty?

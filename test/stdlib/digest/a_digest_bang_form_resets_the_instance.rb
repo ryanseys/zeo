@@ -2,6 +2,9 @@
 # the instance back to empty; the plain forms leave it alone. rubygems reaches
 # `hexdigest!` for every file it unpacks, so `zeo gem install` needed them.
 
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 require "digest"
 
 d = Digest::SHA256.new
@@ -18,9 +21,9 @@ p d.base64digest!
 p d.base64digest
 
 # The instance half of `file`, which answers self so a chain reads left to right.
-File.write("digest_bang_probe.txt", "abc")
-p Digest::SHA256.new.file("digest_bang_probe.txt").hexdigest
-File.unlink("digest_bang_probe.txt")
+File.write(File.join(ZTMP, "digest_bang_probe.txt"), "abc")
+p Digest::SHA256.new.file(File.join(ZTMP, "digest_bang_probe.txt")).hexdigest
+File.unlink(File.join(ZTMP, "digest_bang_probe.txt"))
 
 p Digest::SHA256.new.respond_to?(:hexdigest!)
 __END__

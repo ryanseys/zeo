@@ -14,6 +14,9 @@
 #
 # The bytes below are a real gzip header: 0x8b and 0xc8 are both invalid UTF-8
 # on their own, which is what makes them the case that catches this.
+require "tmpdir"
+ZTMP = Dir.mktmpdir
+
 RAW = [0x1f, 0x8b, 0x08, 0x00, 0xc8].pack("C*")
 
 def show(label)
@@ -53,20 +56,20 @@ show("array pack/unpack") { RAW.unpack("C*").pack("C*").bytes }
 
 # Files, both APIs.
 show("binwrite/binread") do
-  File.binwrite("binary_fidelity_tmp.bin", RAW)
-  File.binread("binary_fidelity_tmp.bin").bytes
+  File.binwrite(File.join(ZTMP, "binary_fidelity_tmp.bin"), RAW)
+  File.binread(File.join(ZTMP, "binary_fidelity_tmp.bin")).bytes
 end
 show("File#write then #read") do
-  File.open("binary_fidelity_tmp.bin", "wb") { |f| f.write(RAW) }
-  File.open("binary_fidelity_tmp.bin", "rb") { |f| f.read.bytes }
+  File.open(File.join(ZTMP, "binary_fidelity_tmp.bin"), "wb") { |f| f.write(RAW) }
+  File.open(File.join(ZTMP, "binary_fidelity_tmp.bin"), "rb") { |f| f.read.bytes }
 end
 show("File#read(n)") do
-  File.open("binary_fidelity_tmp.bin", "rb") { |f| f.read(3).bytes }
+  File.open(File.join(ZTMP, "binary_fidelity_tmp.bin"), "rb") { |f| f.read(3).bytes }
 end
 show("File#read(n) encoding") do
-  File.open("binary_fidelity_tmp.bin", "rb") { |f| f.read(3).encoding.to_s }
+  File.open(File.join(ZTMP, "binary_fidelity_tmp.bin"), "rb") { |f| f.read(3).encoding.to_s }
 ensure
-  File.unlink("binary_fidelity_tmp.bin")
+  File.unlink(File.join(ZTMP, "binary_fidelity_tmp.bin"))
 end
 
 # StringIO, which is a byte buffer that has to remember what its bytes mean.
