@@ -1999,6 +1999,7 @@ fn access_eff(path: &str, mode: libc::c_int) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::str_value;
 
     /// The File class methods are `ruby_class!`-generated (mangled Rust fn
     /// names), so the tests reach them the way dispatch does -- through the
@@ -2084,9 +2085,6 @@ mod tests {
         }
     }
 
-    fn s(v: &str) -> RubyValue {
-        RubyValue::Str(crate::collections::string_new(v.to_string()))
-    }
     fn cls() -> RubyValue {
         RubyValue::Class(zeo_abi::FILE_CLASS)
     }
@@ -2094,7 +2092,7 @@ mod tests {
     #[test]
     fn join_collapses_separators_at_the_seam() {
         let j = |parts: &[&str]| {
-            let args: Vec<RubyValue> = parts.iter().map(|p| s(p)).collect();
+            let args: Vec<RubyValue> = parts.iter().map(|p| str_value(p)).collect();
             file_join(&cls(), &args, None).unwrap().to_display_string()
         };
         assert_eq!(j(&["a", "b", "c"]), "a/b/c");
@@ -2108,14 +2106,18 @@ mod tests {
     /// `File.join` flattens a nested Array argument.
     #[test]
     fn join_flattens_an_array_argument() {
-        let arr = RubyValue::Array(crate::collections::array_new(vec![s("b"), s("c")]));
-        let got = file_join(&cls(), &[s("a"), arr], None).unwrap();
+        let arr = RubyValue::Array(crate::collections::array_new(vec![
+            str_value("b"),
+            str_value("c"),
+        ]));
+        let got = file_join(&cls(), &[str_value("a"), arr], None).unwrap();
         assert_eq!(got.to_display_string(), "a/b/c");
     }
 
     #[test]
     fn split_is_dirname_and_basename() {
-        let RubyValue::Array(parts) = file_split(&cls(), &[s("/a/b/c.rb")], None).unwrap() else {
+        let RubyValue::Array(parts) = file_split(&cls(), &[str_value("/a/b/c.rb")], None).unwrap()
+        else {
             panic!("expected an Array")
         };
         let got: Vec<String> = parts.lock().iter().map(|p| p.to_display_string()).collect();
@@ -2158,9 +2160,9 @@ mod tests {
     #[test]
     fn write_then_read_round_trips() {
         let p = tmp("roundtrip");
-        let n = file_write(&cls(), &[s(&p), s("hello\n")], None).unwrap();
+        let n = file_write(&cls(), &[str_value(&p), str_value("hello\n")], None).unwrap();
         assert!(matches!(n, RubyValue::Int(6)));
-        let got = file_read(&cls(), &[s(&p)], None).unwrap();
+        let got = file_read(&cls(), &[str_value(&p)], None).unwrap();
         assert_eq!(got.to_display_string(), "hello\n");
         let _ = std::fs::remove_file(&p);
     }
@@ -2170,13 +2172,16 @@ mod tests {
         let p = tmp("absent");
         for f in [file_exist_p, file_file_p, file_directory_p, file_zero_p] {
             assert!(
-                matches!(f(&cls(), &[s(&p)], None).unwrap(), RubyValue::Bool(false)),
+                matches!(
+                    f(&cls(), &[str_value(&p)], None).unwrap(),
+                    RubyValue::Bool(false)
+                ),
                 "a predicate raised or answered true for a missing path"
             );
         }
         // `size?` is nil (not 0, not an error) for a missing path.
         assert!(matches!(
-            file_size_p(&cls(), &[s(&p)], None).unwrap(),
+            file_size_p(&cls(), &[str_value(&p)], None).unwrap(),
             RubyValue::Nil
         ));
     }
@@ -2186,24 +2191,24 @@ mod tests {
         let p = tmp("predicates");
         std::fs::write(&p, "x").unwrap();
         assert!(matches!(
-            file_exist_p(&cls(), &[s(&p)], None).unwrap(),
+            file_exist_p(&cls(), &[str_value(&p)], None).unwrap(),
             RubyValue::Bool(true)
         ));
         assert!(matches!(
-            file_file_p(&cls(), &[s(&p)], None).unwrap(),
+            file_file_p(&cls(), &[str_value(&p)], None).unwrap(),
             RubyValue::Bool(true)
         ));
         assert!(matches!(
-            file_directory_p(&cls(), &[s(&p)], None).unwrap(),
+            file_directory_p(&cls(), &[str_value(&p)], None).unwrap(),
             RubyValue::Bool(false)
         ));
         let dir = std::env::temp_dir().to_string_lossy().into_owned();
         assert!(matches!(
-            file_directory_p(&cls(), &[s(&dir)], None).unwrap(),
+            file_directory_p(&cls(), &[str_value(&dir)], None).unwrap(),
             RubyValue::Bool(true)
         ));
         assert!(matches!(
-            file_file_p(&cls(), &[s(&dir)], None).unwrap(),
+            file_file_p(&cls(), &[str_value(&dir)], None).unwrap(),
             RubyValue::Bool(false)
         ));
         let _ = std::fs::remove_file(&p);
@@ -2214,30 +2219,30 @@ mod tests {
         let p = tmp("size");
         std::fs::write(&p, "12345").unwrap();
         assert!(matches!(
-            file_size(&cls(), &[s(&p)], None).unwrap(),
+            file_size(&cls(), &[str_value(&p)], None).unwrap(),
             RubyValue::Int(5)
         ));
         assert!(matches!(
-            file_size_p(&cls(), &[s(&p)], None).unwrap(),
+            file_size_p(&cls(), &[str_value(&p)], None).unwrap(),
             RubyValue::Int(5)
         ));
         assert!(matches!(
-            file_zero_p(&cls(), &[s(&p)], None).unwrap(),
+            file_zero_p(&cls(), &[str_value(&p)], None).unwrap(),
             RubyValue::Bool(false)
         ));
 
         std::fs::write(&p, "").unwrap();
         assert!(matches!(
-            file_zero_p(&cls(), &[s(&p)], None).unwrap(),
+            file_zero_p(&cls(), &[str_value(&p)], None).unwrap(),
             RubyValue::Bool(true)
         ));
         // An EMPTY file's `size?` is nil, though its `size` is 0.
         assert!(matches!(
-            file_size_p(&cls(), &[s(&p)], None).unwrap(),
+            file_size_p(&cls(), &[str_value(&p)], None).unwrap(),
             RubyValue::Nil
         ));
         assert!(matches!(
-            file_size(&cls(), &[s(&p)], None).unwrap(),
+            file_size(&cls(), &[str_value(&p)], None).unwrap(),
             RubyValue::Int(0)
         ));
         let _ = std::fs::remove_file(&p);
@@ -2247,7 +2252,8 @@ mod tests {
     fn readlines_keeps_the_newlines() {
         let p = tmp("readlines");
         std::fs::write(&p, "a\nb\nc").unwrap();
-        let RubyValue::Array(lines) = file_readlines(&cls(), &[s(&p)], None).unwrap() else {
+        let RubyValue::Array(lines) = file_readlines(&cls(), &[str_value(&p)], None).unwrap()
+        else {
             panic!("expected an Array")
         };
         let got: Vec<String> = lines.lock().iter().map(|l| l.to_display_string()).collect();
@@ -2263,10 +2269,10 @@ mod tests {
         let a = tmp("rename_from");
         let b = tmp("rename_to");
         std::fs::write(&a, "x").unwrap();
-        file_rename(&cls(), &[s(&a), s(&b)], None).unwrap();
+        file_rename(&cls(), &[str_value(&a), str_value(&b)], None).unwrap();
         assert!(!std::path::Path::new(&a).exists());
         assert!(std::path::Path::new(&b).exists());
-        let n = file_delete(&cls(), &[s(&b)], None).unwrap();
+        let n = file_delete(&cls(), &[str_value(&b)], None).unwrap();
         assert!(matches!(n, RubyValue::Int(1)));
         assert!(!std::path::Path::new(&b).exists());
     }
@@ -2275,7 +2281,9 @@ mod tests {
     /// registry-less, `raise_error` surfaces as a panic.
     #[test]
     fn reading_a_missing_file_raises_errno_enoent() {
-        let r = std::panic::catch_unwind(|| file_read(&cls(), &[s("/nope/definitely/not")], None));
+        let r = std::panic::catch_unwind(|| {
+            file_read(&cls(), &[str_value("/nope/definitely/not")], None)
+        });
         assert!(r.is_err());
     }
 

@@ -2539,6 +2539,7 @@ fn is_rb_strip_byte(b: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::str_value;
 
     fn imethod(name: &str) -> crate::builtins::BuiltinMethodFn {
         (crate::builtins::registered_table(zeo_abi::STRING_CLASS)
@@ -2550,41 +2551,55 @@ mod tests {
         .unwrap()
     }
 
-    fn s(v: &str) -> RubyValue {
-        RubyValue::Str(crate::string_new(v.to_string()))
-    }
-
     fn show(r: Result<RubyValue, Signal>) -> String {
         r.unwrap().inspect_string()
     }
 
     #[test]
     fn oct_and_hex_honor_prefixes_and_stop_at_garbage() {
-        assert_eq!(show(imethod("oct")(&s("777"), &[], None)), "511");
-        assert_eq!(show(imethod("oct")(&s("0x1f"), &[], None)), "31"); // 0x prefix overrides base 8
-        assert_eq!(show(imethod("hex")(&s("ff"), &[], None)), "255");
-        assert_eq!(show(imethod("hex")(&s("0xff"), &[], None)), "255");
-        assert_eq!(show(imethod("oct")(&s("12 z9"), &[], None)), "10"); // stops at 'z'
-        assert_eq!(show(imethod("hex")(&s(""), &[], None)), "0");
+        assert_eq!(show(imethod("oct")(&str_value("777"), &[], None)), "511");
+        assert_eq!(show(imethod("oct")(&str_value("0x1f"), &[], None)), "31"); // 0x prefix overrides base 8
+        assert_eq!(show(imethod("hex")(&str_value("ff"), &[], None)), "255");
+        assert_eq!(show(imethod("hex")(&str_value("0xff"), &[], None)), "255");
+        assert_eq!(show(imethod("oct")(&str_value("12 z9"), &[], None)), "10"); // stops at 'z'
+        assert_eq!(show(imethod("hex")(&str_value(""), &[], None)), "0");
     }
 
     #[test]
     fn casecmp_families() {
         assert_eq!(
-            show(imethod("casecmp")(&s("Hello"), &[s("hello")], None)),
+            show(imethod("casecmp")(
+                &str_value("Hello"),
+                &[str_value("hello")],
+                None
+            )),
             "0"
         );
-        assert_eq!(show(imethod("casecmp")(&s("A"), &[s("b")], None)), "-1");
         assert_eq!(
-            show(imethod("casecmp?")(&s("Hello"), &[s("HELLO")], None)),
+            show(imethod("casecmp")(&str_value("A"), &[str_value("b")], None)),
+            "-1"
+        );
+        assert_eq!(
+            show(imethod("casecmp?")(
+                &str_value("Hello"),
+                &[str_value("HELLO")],
+                None
+            )),
             "true"
         );
-        assert_eq!(show(imethod("casecmp?")(&s("a"), &[s("b")], None)), "false");
+        assert_eq!(
+            show(imethod("casecmp?")(
+                &str_value("a"),
+                &[str_value("b")],
+                None
+            )),
+            "false"
+        );
     }
 
     #[test]
     fn slice_bang_removes_in_place_and_returns_the_slice() {
-        let str = s("hello");
+        let str = str_value("hello");
         assert_eq!(
             show(imethod("slice!")(
                 &str,
@@ -2594,21 +2609,28 @@ mod tests {
             "\"el\""
         );
         assert_eq!(str.to_display_string(), "hlo");
-        let str2 = s("hello");
-        assert_eq!(show(imethod("slice!")(&str2, &[s("ll")], None)), "\"ll\"");
+        let str2 = str_value("hello");
+        assert_eq!(
+            show(imethod("slice!")(&str2, &[str_value("ll")], None)),
+            "\"ll\""
+        );
         assert_eq!(str2.to_display_string(), "heo");
     }
 
     #[test]
     fn split_empty_separator_yields_characters() {
         assert_eq!(
-            show(imethod("split")(&s("hello"), &[s("")], None)),
+            show(imethod("split")(
+                &str_value("hello"),
+                &[str_value("")],
+                None
+            )),
             "[\"h\", \"e\", \"l\", \"l\", \"o\"]"
         );
         assert_eq!(
             show(imethod("split")(
-                &s("hello"),
-                &[s(""), RubyValue::Int(2)],
+                &str_value("hello"),
+                &[str_value(""), RubyValue::Int(2)],
                 None
             )),
             "[\"h\", \"ello\"]"
@@ -2621,7 +2643,7 @@ mod tests {
             RubyValue::Regexp(crate::regexp_new("(\\w+) (\\w+)", false, false, false).unwrap());
         assert_eq!(
             show(imethod("[]")(
-                &s("hello world foo"),
+                &str_value("hello world foo"),
                 std::slice::from_ref(&re),
                 None
             )),
@@ -2629,7 +2651,7 @@ mod tests {
         );
         assert_eq!(
             show(imethod("[]")(
-                &s("hello world"),
+                &str_value("hello world"),
                 &[re, RubyValue::Int(2)],
                 None
             )),
@@ -2640,29 +2662,43 @@ mod tests {
     #[test]
     fn case_and_strip_families_match_the_oracle() {
         assert_eq!(
-            show(imethod("capitalize")(&s("hello world"), &[], None)),
+            show(imethod("capitalize")(&str_value("hello world"), &[], None)),
             "\"Hello world\""
         );
         assert_eq!(
-            show(imethod("swapcase")(&s("HeLLo"), &[], None)),
+            show(imethod("swapcase")(&str_value("HeLLo"), &[], None)),
             "\"hEllO\""
         );
-        assert_eq!(show(imethod("strip")(&s("  hi  "), &[], None)), "\"hi\"");
-        assert_eq!(show(imethod("lstrip")(&s("  hi"), &[], None)), "\"hi\"");
+        assert_eq!(
+            show(imethod("strip")(&str_value("  hi  "), &[], None)),
+            "\"hi\""
+        );
+        assert_eq!(
+            show(imethod("lstrip")(&str_value("  hi"), &[], None)),
+            "\"hi\""
+        );
     }
 
     #[test]
     fn split_covers_the_three_separator_shapes() {
         assert_eq!(
-            show(imethod("split")(&s("a b  c"), &[], None)),
+            show(imethod("split")(&str_value("a b  c"), &[], None)),
             "[\"a\", \"b\", \"c\"]"
         );
         assert_eq!(
-            show(imethod("split")(&s("a,b,,c"), &[s(",")], None)),
+            show(imethod("split")(
+                &str_value("a,b,,c"),
+                &[str_value(",")],
+                None
+            )),
             "[\"a\", \"b\", \"\", \"c\"]"
         );
         assert_eq!(
-            show(imethod("split")(&s("hello"), &[s("l")], None)),
+            show(imethod("split")(
+                &str_value("hello"),
+                &[str_value("l")],
+                None
+            )),
             "[\"he\", \"\", \"o\"]"
         );
     }
@@ -2679,15 +2715,27 @@ mod tests {
     #[test]
     fn tr_expands_ranges_and_repeats_the_last_target() {
         assert_eq!(
-            show(imethod("tr")(&s("hello"), &[s("el"), s("ip")], None)),
+            show(imethod("tr")(
+                &str_value("hello"),
+                &[str_value("el"), str_value("ip")],
+                None
+            )),
             "\"hippo\""
         );
         assert_eq!(
-            show(imethod("tr")(&s("hello"), &[s("a-y"), s("b-z")], None)),
+            show(imethod("tr")(
+                &str_value("hello"),
+                &[str_value("a-y"), str_value("b-z")],
+                None
+            )),
             "\"ifmmp\""
         );
         assert_eq!(
-            show(imethod("tr")(&s("a-b_c"), &[s("-_"), s(" ")], None)),
+            show(imethod("tr")(
+                &str_value("a-b_c"),
+                &[str_value("-_"), str_value(" ")],
+                None
+            )),
             "\"a b c\""
         );
     }
@@ -2696,11 +2744,19 @@ mod tests {
     fn tr_duplicate_from_char_uses_the_last_mapping() {
         // CRuby: a char repeated in `from` takes its LAST corresponding `to`.
         assert_eq!(
-            show(imethod("tr")(&s("a___b"), &[s("___"), s(".+-")], None)),
+            show(imethod("tr")(
+                &str_value("a___b"),
+                &[str_value("___"), str_value(".+-")],
+                None
+            )),
             "\"a---b\""
         );
         assert_eq!(
-            show(imethod("tr")(&s("abcaa"), &[s("aa"), s("xy")], None)),
+            show(imethod("tr")(
+                &str_value("abcaa"),
+                &[str_value("aa"), str_value("xy")],
+                None
+            )),
             "\"ybcyy\""
         );
     }
@@ -2708,35 +2764,39 @@ mod tests {
     #[test]
     fn lenient_conversions_match_the_oracle() {
         assert!(matches!(
-            imethod("to_i")(&s("42abc"), &[], None).unwrap(),
+            imethod("to_i")(&str_value("42abc"), &[], None).unwrap(),
             RubyValue::Int(42)
         ));
         assert!(matches!(
-            imethod("to_i")(&s("abc"), &[], None).unwrap(),
+            imethod("to_i")(&str_value("abc"), &[], None).unwrap(),
             RubyValue::Int(0)
         ));
         assert!(matches!(
-            imethod("to_i")(&s("0x1A"), &[], None).unwrap(),
+            imethod("to_i")(&str_value("0x1A"), &[], None).unwrap(),
             RubyValue::Int(0)
         ));
         assert!(matches!(
-            imethod("to_i")(&s("ff"), &[RubyValue::Int(16)], None).unwrap(),
+            imethod("to_i")(&str_value("ff"), &[RubyValue::Int(16)], None).unwrap(),
             RubyValue::Int(255)
         ));
         assert!(
-            matches!(imethod("to_f")(&s("42.5xyz"), &[], None).unwrap(), RubyValue::Float(f) if f == 42.5)
+            matches!(imethod("to_f")(&str_value("42.5xyz"), &[], None).unwrap(), RubyValue::Float(f) if f == 42.5)
         );
     }
 
     #[test]
     fn indexing_forms_match_the_oracle() {
         assert_eq!(
-            show(imethod("[]")(&s("hello"), &[RubyValue::Int(1)], None)),
+            show(imethod("[]")(
+                &str_value("hello"),
+                &[RubyValue::Int(1)],
+                None
+            )),
             "\"e\""
         );
         assert_eq!(
             show(imethod("[]")(
-                &s("hello"),
+                &str_value("hello"),
                 &[RubyValue::Int(1), RubyValue::Int(3)],
                 None
             )),
@@ -2747,9 +2807,16 @@ mod tests {
             Some(RubyValue::Int(3)),
             false,
         );
-        assert_eq!(show(imethod("[]")(&s("hello"), &[range], None)), "\"ell\"");
         assert_eq!(
-            show(imethod("[]")(&s("hello"), &[RubyValue::Int(99)], None)),
+            show(imethod("[]")(&str_value("hello"), &[range], None)),
+            "\"ell\""
+        );
+        assert_eq!(
+            show(imethod("[]")(
+                &str_value("hello"),
+                &[RubyValue::Int(99)],
+                None
+            )),
             "nil"
         );
     }
@@ -2758,43 +2825,58 @@ mod tests {
     fn padding_and_charset_rows_match_the_oracle() {
         assert_eq!(
             show(imethod("center")(
-                &s("hi"),
-                &[RubyValue::Int(7), s("*")],
+                &str_value("hi"),
+                &[RubyValue::Int(7), str_value("*")],
                 None
             )),
             "\"**hi***\""
         );
         assert_eq!(
             show(imethod("ljust")(
-                &s("hi"),
-                &[RubyValue::Int(5), s(".")],
+                &str_value("hi"),
+                &[RubyValue::Int(5), str_value(".")],
                 None
             )),
             "\"hi...\""
         );
         assert_eq!(
-            show(imethod("delete")(&s("hello"), &[s("l")], None)),
+            show(imethod("delete")(
+                &str_value("hello"),
+                &[str_value("l")],
+                None
+            )),
             "\"heo\""
         );
-        assert_eq!(show(imethod("squeeze")(&s("aabbcc"), &[], None)), "\"abc\"");
         assert_eq!(
-            show(imethod("squeeze")(&s("aabbcc"), &[s("a")], None)),
+            show(imethod("squeeze")(&str_value("aabbcc"), &[], None)),
+            "\"abc\""
+        );
+        assert_eq!(
+            show(imethod("squeeze")(
+                &str_value("aabbcc"),
+                &[str_value("a")],
+                None
+            )),
             "\"abbcc\""
         );
         assert_eq!(
-            show(imethod("count")(&s("hello world"), &[s("lo")], None)),
+            show(imethod("count")(
+                &str_value("hello world"),
+                &[str_value("lo")],
+                None
+            )),
             "5"
         );
     }
 
     #[test]
     fn mutating_rows_write_through_the_shared_payload() {
-        let orig = s("orig");
-        imethod("replace")(&orig, &[s("xyz")], None).unwrap();
+        let orig = str_value("orig");
+        imethod("replace")(&orig, &[str_value("xyz")], None).unwrap();
         assert_eq!(orig.to_display_string(), "xyz");
-        imethod("<<")(&orig, &[s("!")], None).unwrap();
+        imethod("<<")(&orig, &[str_value("!")], None).unwrap();
         assert_eq!(orig.to_display_string(), "xyz!");
-        imethod("prepend")(&orig, &[s("ab")], None).unwrap();
+        imethod("prepend")(&orig, &[str_value("ab")], None).unwrap();
         assert_eq!(orig.to_display_string(), "abxyz!");
     }
 }

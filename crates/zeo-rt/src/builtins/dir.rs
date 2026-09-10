@@ -965,6 +965,7 @@ fn read_names(path: &str) -> Result<Vec<String>, Signal> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::str_value;
 
     fn cmethod(name: &str) -> crate::builtins::BuiltinMethodFn {
         (crate::builtins::registered_table(zeo_abi::DIR_CLASS)
@@ -976,9 +977,6 @@ mod tests {
         .unwrap()
     }
 
-    fn s(v: &str) -> RubyValue {
-        RubyValue::Str(crate::collections::string_new(v.to_string()))
-    }
     fn cls() -> RubyValue {
         RubyValue::Class(zeo_abi::DIR_CLASS)
     }
@@ -1090,10 +1088,10 @@ mod tests {
     #[test]
     fn children_excludes_dot_entries_and_entries_includes_them() {
         let t = Tree::new("listing");
-        let kids = names_of(cmethod("children")(&cls(), &[s(&t.0)], None).unwrap());
+        let kids = names_of(cmethod("children")(&cls(), &[str_value(&t.0)], None).unwrap());
         assert_eq!(kids, vec![".hidden", "a", "x.rb", "y.txt"]);
 
-        let all = names_of(cmethod("entries")(&cls(), &[s(&t.0)], None).unwrap());
+        let all = names_of(cmethod("entries")(&cls(), &[str_value(&t.0)], None).unwrap());
         assert!(all.contains(&".".to_string()) && all.contains(&"..".to_string()));
         assert_eq!(all.len(), kids.len() + 2);
     }
@@ -1102,7 +1100,9 @@ mod tests {
     /// panic), rather than answering an empty list.
     #[test]
     fn listing_a_missing_directory_raises() {
-        let r = std::panic::catch_unwind(|| cmethod("entries")(&cls(), &[s("/nope/nope")], None));
+        let r = std::panic::catch_unwind(|| {
+            cmethod("entries")(&cls(), &[str_value("/nope/nope")], None)
+        });
         assert!(r.is_err());
     }
 
@@ -1110,16 +1110,16 @@ mod tests {
     fn exist_p_is_true_only_for_directories() {
         let t = Tree::new("exist");
         assert!(matches!(
-            cmethod("exist?")(&cls(), &[s(&t.0)], None).unwrap(),
+            cmethod("exist?")(&cls(), &[str_value(&t.0)], None).unwrap(),
             RubyValue::Bool(true)
         ));
         // A FILE is not a directory.
         assert!(matches!(
-            cmethod("exist?")(&cls(), &[s(&format!("{}/x.rb", t.0))], None).unwrap(),
+            cmethod("exist?")(&cls(), &[str_value(&format!("{}/x.rb", t.0))], None).unwrap(),
             RubyValue::Bool(false)
         ));
         assert!(matches!(
-            cmethod("exist?")(&cls(), &[s("/nope/nope")], None).unwrap(),
+            cmethod("exist?")(&cls(), &[str_value("/nope/nope")], None).unwrap(),
             RubyValue::Bool(false)
         ));
     }
@@ -1152,13 +1152,13 @@ mod tests {
     fn mkdir_and_rmdir_round_trip() {
         let t = Tree::new("mkdir");
         let p = format!("{}/fresh", t.0);
-        cmethod("mkdir")(&cls(), &[s(&p)], None).unwrap();
+        cmethod("mkdir")(&cls(), &[str_value(&p)], None).unwrap();
         assert!(std::path::Path::new(&p).is_dir());
         assert!(matches!(
-            cmethod("empty?")(&cls(), &[s(&p)], None).unwrap(),
+            cmethod("empty?")(&cls(), &[str_value(&p)], None).unwrap(),
             RubyValue::Bool(true)
         ));
-        cmethod("rmdir")(&cls(), &[s(&p)], None).unwrap();
+        cmethod("rmdir")(&cls(), &[str_value(&p)], None).unwrap();
         assert!(!std::path::Path::new(&p).exists());
     }
 

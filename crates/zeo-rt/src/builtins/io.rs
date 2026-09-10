@@ -4205,10 +4205,7 @@ pub fn seed_io_constants() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn s(v: &str) -> RubyValue {
-        RubyValue::Str(crate::string_new(v.to_string()))
-    }
+    use crate::test_support::str_value;
 
     /// A BINARY-tagged string holding raw bytes -- what `Integer#chr`
     /// (128..=255), `String#b`, and binary IO reads produce.
@@ -4234,7 +4231,7 @@ mod tests {
     #[test]
     fn display_bytes_renders_utf8_strings_and_non_strings_as_display_text() {
         let mut buf = Vec::new();
-        display_bytes(&s("héllo"), &mut buf).unwrap();
+        display_bytes(&str_value("héllo"), &mut buf).unwrap();
         display_bytes(&RubyValue::Int(42), &mut buf).unwrap();
         display_bytes(&RubyValue::Nil, &mut buf).unwrap(); // `print nil` -> ""
         assert_eq!(buf, "héllo42".as_bytes());
@@ -4262,14 +4259,14 @@ mod tests {
     #[test]
     fn render_puts_adds_one_newline_and_never_doubles_a_trailing_one() {
         let mut buf = Vec::new();
-        render_puts(&[s("a"), s("b\n")], &mut buf).unwrap();
+        render_puts(&[str_value("a"), str_value("b\n")], &mut buf).unwrap();
         assert_eq!(buf, b"a\nb\n");
     }
 
     #[test]
     fn render_puts_flattens_nested_arrays_recursively() {
-        let inner = RubyValue::Array(crate::array_new(vec![s("b"), s("c")]));
-        let outer = RubyValue::Array(crate::array_new(vec![s("a"), inner]));
+        let inner = RubyValue::Array(crate::array_new(vec![str_value("b"), str_value("c")]));
+        let outer = RubyValue::Array(crate::array_new(vec![str_value("a"), inner]));
         let mut buf = Vec::new();
         render_puts(&[outer], &mut buf).unwrap();
         assert_eq!(buf, b"a\nb\nc\n");
@@ -4288,7 +4285,7 @@ mod tests {
 
     #[test]
     fn render_puts_marks_a_self_referential_array_instead_of_recursing() {
-        let arr = crate::array_new(vec![s("a")]);
+        let arr = crate::array_new(vec![str_value("a")]);
         arr.lock().push(RubyValue::Array(arr.clone()));
         let mut buf = Vec::new();
         render_puts(&[RubyValue::Array(arr)], &mut buf).unwrap();
@@ -4308,11 +4305,11 @@ mod tests {
     #[test]
     fn putc_bytes_takes_a_strings_first_character_in_its_own_encoding() {
         // UTF-8: the first CHARACTER (multibyte stays whole).
-        assert_eq!(putc_bytes(&s("ab")).unwrap(), b"a");
-        assert_eq!(putc_bytes(&s("éx")).unwrap(), "é".as_bytes());
+        assert_eq!(putc_bytes(&str_value("ab")).unwrap(), b"a");
+        assert_eq!(putc_bytes(&str_value("éx")).unwrap(), "é".as_bytes());
         // BINARY: exactly one raw byte, no UTF-8 promotion.
         assert_eq!(putc_bytes(&bin(&[0xb4, 0x01])).unwrap(), [0xb4]);
-        assert_eq!(putc_bytes(&s("")).unwrap(), Vec::<u8>::new());
+        assert_eq!(putc_bytes(&str_value("")).unwrap(), Vec::<u8>::new());
     }
 
     #[test]
@@ -4347,7 +4344,7 @@ mod tests {
     #[test]
     fn write_value_counts_a_utf8_strings_bytes_and_renders_non_strings() {
         let (io, path) = temp_file_io("mixed");
-        assert_eq!(write_value(&io, &s("é")).unwrap(), 2);
+        assert_eq!(write_value(&io, &str_value("é")).unwrap(), 2);
         assert_eq!(write_value(&io, &RubyValue::Int(42)).unwrap(), 2);
         assert_eq!(std::fs::read(&path).unwrap(), "é42".as_bytes());
         let _ = std::fs::remove_file(path);

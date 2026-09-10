@@ -120,6 +120,7 @@ ruby_module! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::str_value;
 
     /// A test-local dispatch helper wrapping `lookup`, so the coverage below
     /// reads uniformly: `None` = not a Comparable method.
@@ -131,19 +132,17 @@ mod tests {
         lookup(name).map(|f| f(recv, args, None))
     }
 
-    fn s(v: &str) -> RubyValue {
-        RubyValue::Str(crate::string_new(v.to_string()))
-    }
-
     #[test]
     fn string_ordering_resolves_through_the_string_spaceship_row() {
-        let r = comparable_send(&s("abc"), "<", &[s("abd")])
+        let r = comparable_send(&str_value("abc"), "<", &[str_value("abd")])
             .unwrap()
             .unwrap();
         assert!(matches!(r, RubyValue::Bool(true)));
-        let r = comparable_send(&s("b"), ">", &[s("a")]).unwrap().unwrap();
+        let r = comparable_send(&str_value("b"), ">", &[str_value("a")])
+            .unwrap()
+            .unwrap();
         assert!(matches!(r, RubyValue::Bool(true)));
-        let r = comparable_send(&s("m"), "clamp", &[s("a"), s("f")])
+        let r = comparable_send(&str_value("m"), "clamp", &[str_value("a"), str_value("f")])
             .unwrap()
             .unwrap();
         let RubyValue::Str(clamped) = r else { panic!() };
@@ -152,19 +151,23 @@ mod tests {
 
     #[test]
     fn between_drives_the_receivers_spaceship() {
-        let r = comparable_send(&s("m"), "between?", &[s("a"), s("z")])
-            .unwrap()
-            .unwrap();
+        let r = comparable_send(
+            &str_value("m"),
+            "between?",
+            &[str_value("a"), str_value("z")],
+        )
+        .unwrap()
+        .unwrap();
         assert!(matches!(r, RubyValue::Bool(true)));
     }
 
     #[test]
     fn incomparable_ordering_fails_loudly_eq_is_tolerant() {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            comparable_send(&s("a"), "<", &[RubyValue::Int(1)])
+            comparable_send(&str_value("a"), "<", &[RubyValue::Int(1)])
         }));
         assert!(r.is_err()); // registry-less: ArgumentError surfaces as a panic
-        let r = comparable_send(&s("a"), "==", &[RubyValue::Int(1)])
+        let r = comparable_send(&str_value("a"), "==", &[RubyValue::Int(1)])
             .unwrap()
             .unwrap();
         assert!(matches!(r, RubyValue::Bool(false)));
@@ -172,7 +175,7 @@ mod tests {
 
     #[test]
     fn non_comparable_names_fall_through() {
-        assert!(comparable_send(&s("a"), "upcase", &[]).is_none());
+        assert!(comparable_send(&str_value("a"), "upcase", &[]).is_none());
         assert!(lookup("between?").is_some());
         assert!(lookup("upcase").is_none());
     }

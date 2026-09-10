@@ -2016,10 +2016,7 @@ mod multi_assign_tests {
 #[cfg(test)]
 mod compare_by_identity_tests {
     use super::*;
-
-    fn s(text: &str) -> RubyValue {
-        RubyValue::Str(string_new(text.to_string()))
-    }
+    use crate::test_support::str_value;
 
     fn is_int(v: &RubyValue, n: i64) -> bool {
         matches!(v, RubyValue::Int(i) if *i == n)
@@ -2044,8 +2041,8 @@ mod compare_by_identity_tests {
     /// two distinct identity keys.
     #[test]
     fn equal_strings_split_under_identity() {
-        let a = s("hi");
-        let b = s("hi");
+        let a = str_value("hi");
+        let b = str_value("hi");
         assert!(hash_key_in(&a, false) == hash_key_in(&b, false));
         assert!(hash_key_in(&a, true) != hash_key_in(&b, true));
         // The SAME object keys to itself either way.
@@ -2060,8 +2057,8 @@ mod compare_by_identity_tests {
     #[test]
     fn ops_honor_identity_and_reprojection() {
         let h = hash_new(vec![]);
-        let a = s("k");
-        let b = s("k");
+        let a = str_value("k");
+        let b = str_value("k");
         hash_set(&h, a.clone(), RubyValue::Int(1));
         hash_set(&h, b.clone(), RubyValue::Int(2));
         // Structural: same key, size 1, last write wins.
@@ -2099,7 +2096,7 @@ mod compare_by_identity_tests {
     #[test]
     fn enable_is_idempotent() {
         let h = hash_new(vec![]);
-        hash_set(&h, s("a"), RubyValue::Int(1));
+        hash_set(&h, str_value("a"), RubyValue::Int(1));
         hash_enable_compare_by_identity(&h);
         let n = hash_len(&h);
         hash_enable_compare_by_identity(&h);
@@ -2128,10 +2125,10 @@ mod compare_by_identity_tests {
         // And end to end: a string key stored owned is found via the probe
         // paths (get/has_key/delete all take them).
         let h = hash_new(vec![]);
-        hash_set(&h, s("k"), RubyValue::Int(7));
-        assert!(is_int(&hash_get(&h, &s("k")), 7));
-        assert!(hash_has_key(&h, &s("k")));
-        assert!(is_int(&hash_delete(&h, &s("k")), 7));
-        assert!(!hash_has_key(&h, &s("k")));
+        hash_set(&h, str_value("k"), RubyValue::Int(7));
+        assert!(is_int(&hash_get(&h, &str_value("k")), 7));
+        assert!(hash_has_key(&h, &str_value("k")));
+        assert!(is_int(&hash_delete(&h, &str_value("k")), 7));
+        assert!(!hash_has_key(&h, &str_value("k")));
     }
 }

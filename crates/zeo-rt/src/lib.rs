@@ -62,6 +62,8 @@ mod regexp;
 mod release_pool;
 mod stack_guard;
 mod symbol;
+#[cfg(test)]
+mod test_support;
 mod thread;
 #[macro_use]
 mod trace;

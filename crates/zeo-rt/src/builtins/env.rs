@@ -454,6 +454,7 @@ fn remove_matching(p: &crate::RProc, remove_when: bool) -> Result<bool, crate::S
 mod tests {
     use super::*;
     use crate::Symbol;
+    use crate::test_support::str_value;
 
     /// Each test uses its own variable name: `std::env` is process-global and
     /// Rust runs tests in threads, so a shared name would race.
@@ -462,10 +463,6 @@ mod tests {
         let out = f();
         unsafe { std::env::remove_var(name) };
         out
-    }
-
-    fn s(v: &str) -> RubyValue {
-        RubyValue::Str(crate::collections::string_new(v.to_string()))
     }
 
     /// The rows are `ruby_class!`-generated, so their Rust fn names are
@@ -491,28 +488,28 @@ mod tests {
     #[test]
     fn get_reads_the_live_environment() {
         with_var("ZEO_TEST_GET", "yes", || {
-            let got = m("[]")(&env_value(), &[s("ZEO_TEST_GET")], None).unwrap();
+            let got = m("[]")(&env_value(), &[str_value("ZEO_TEST_GET")], None).unwrap();
             assert_eq!(got.to_display_string(), "yes");
         });
         // Absent after the scope: reads are live, not a startup snapshot.
-        let got = m("[]")(&env_value(), &[s("ZEO_TEST_GET")], None).unwrap();
+        let got = m("[]")(&env_value(), &[str_value("ZEO_TEST_GET")], None).unwrap();
         assert!(matches!(got, RubyValue::Nil));
     }
 
     #[test]
     fn set_then_get_round_trips_and_nil_deletes() {
         let e = env_value();
-        m("[]=")(&e, &[s("ZEO_TEST_SET"), s("v1")], None).unwrap();
+        m("[]=")(&e, &[str_value("ZEO_TEST_SET"), str_value("v1")], None).unwrap();
         assert_eq!(
-            m("[]")(&e, &[s("ZEO_TEST_SET")], None)
+            m("[]")(&e, &[str_value("ZEO_TEST_SET")], None)
                 .unwrap()
                 .to_display_string(),
             "v1"
         );
         // `ENV["X"] = nil` deletes.
-        m("[]=")(&e, &[s("ZEO_TEST_SET"), RubyValue::Nil], None).unwrap();
+        m("[]=")(&e, &[str_value("ZEO_TEST_SET"), RubyValue::Nil], None).unwrap();
         assert!(matches!(
-            m("[]")(&e, &[s("ZEO_TEST_SET")], None).unwrap(),
+            m("[]")(&e, &[str_value("ZEO_TEST_SET")], None).unwrap(),
             RubyValue::Nil
         ));
     }
@@ -520,7 +517,12 @@ mod tests {
     #[test]
     fn fetch_falls_back_to_a_default_then_a_block() {
         let e = env_value();
-        let d = m("fetch")(&e, &[s("ZEO_TEST_MISSING"), s("dflt")], None).unwrap();
+        let d = m("fetch")(
+            &e,
+            &[str_value("ZEO_TEST_MISSING"), str_value("dflt")],
+            None,
+        )
+        .unwrap();
         assert_eq!(d.to_display_string(), "dflt");
 
         let blk = RubyValue::Proc(crate::RProc::new(|args: &[RubyValue]| {
@@ -529,35 +531,36 @@ mod tests {
                 args[0].to_display_string()
             ))))
         }));
-        let b = m("fetch")(&e, &[s("ZEO_TEST_MISSING")], Some(blk)).unwrap();
+        let b = m("fetch")(&e, &[str_value("ZEO_TEST_MISSING")], Some(blk)).unwrap();
         assert_eq!(b.to_display_string(), "computed:ZEO_TEST_MISSING");
     }
 
     /// A bare `fetch` miss raises KeyError (registry-less: a panic).
     #[test]
     fn fetch_raises_key_error_with_no_default() {
-        let r =
-            std::panic::catch_unwind(|| m("fetch")(&env_value(), &[s("ZEO_TEST_ABSENT")], None));
+        let r = std::panic::catch_unwind(|| {
+            m("fetch")(&env_value(), &[str_value("ZEO_TEST_ABSENT")], None)
+        });
         assert!(r.is_err());
     }
 
     #[test]
     fn key_p_and_delete() {
         let e = env_value();
-        m("[]=")(&e, &[s("ZEO_TEST_DEL"), s("x")], None).unwrap();
+        m("[]=")(&e, &[str_value("ZEO_TEST_DEL"), str_value("x")], None).unwrap();
         assert!(matches!(
-            m("key?")(&e, &[s("ZEO_TEST_DEL")], None).unwrap(),
+            m("key?")(&e, &[str_value("ZEO_TEST_DEL")], None).unwrap(),
             RubyValue::Bool(true)
         ));
-        let old = m("delete")(&e, &[s("ZEO_TEST_DEL")], None).unwrap();
+        let old = m("delete")(&e, &[str_value("ZEO_TEST_DEL")], None).unwrap();
         assert_eq!(old.to_display_string(), "x");
         assert!(matches!(
-            m("key?")(&e, &[s("ZEO_TEST_DEL")], None).unwrap(),
+            m("key?")(&e, &[str_value("ZEO_TEST_DEL")], None).unwrap(),
             RubyValue::Bool(false)
         ));
         // Deleting an absent key is nil, not an error.
         assert!(matches!(
-            m("delete")(&e, &[s("ZEO_TEST_DEL")], None).unwrap(),
+            m("delete")(&e, &[str_value("ZEO_TEST_DEL")], None).unwrap(),
             RubyValue::Nil
         ));
     }

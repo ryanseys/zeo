@@ -1072,10 +1072,7 @@ fn read_until(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn s(v: &str) -> RubyValue {
-        RubyValue::Str(crate::string_new(v.to_string()))
-    }
+    use crate::test_support::str_value;
 
     #[test]
     fn the_oracle_directive_matrix() {
@@ -1097,12 +1094,16 @@ mod tests {
         // "%-8s|%+d|% d" % ["ab", 5, 7]
         let r = sprintf(
             "%-8s|%+d|% d",
-            &[s("ab"), RubyValue::Int(5), RubyValue::Int(7)],
+            &[str_value("ab"), RubyValue::Int(5), RubyValue::Int(7)],
         )
         .unwrap();
         assert_eq!(r, "ab      |+5| 7");
         // "Hello %s, you are %d"
-        let r = sprintf("Hello %s, you are %d", &[s("Bob"), RubyValue::Int(42)]).unwrap();
+        let r = sprintf(
+            "Hello %s, you are %d",
+            &[str_value("Bob"), RubyValue::Int(42)],
+        )
+        .unwrap();
         assert_eq!(r, "Hello Bob, you are 42");
     }
 
@@ -1123,7 +1124,7 @@ mod tests {
 
     #[test]
     fn named_references_angle_and_brace() {
-        let h = named(&[("x", RubyValue::Int(42)), ("y", s("hi"))]);
+        let h = named(&[("x", RubyValue::Int(42)), ("y", str_value("hi"))]);
         assert_eq!(
             sprintf("%<x>d and %<y>s", std::slice::from_ref(&h)).unwrap(),
             "42 and hi"
@@ -1156,7 +1157,10 @@ mod tests {
             sprintf("%-*d|", &[RubyValue::Int(5), RubyValue::Int(42)]).unwrap(),
             "42   |"
         );
-        assert_eq!(sprintf("%2$s %1$s", &[s("a"), s("b")]).unwrap(), "b a");
+        assert_eq!(
+            sprintf("%2$s %1$s", &[str_value("a"), str_value("b")]).unwrap(),
+            "b a"
+        );
         assert_eq!(sprintf("%.3d", &[RubyValue::Int(7)]).unwrap(), "007");
         assert_eq!(
             sprintf("%.*f", &[RubyValue::Int(2), RubyValue::Float(8.7654)]).unwrap(),
