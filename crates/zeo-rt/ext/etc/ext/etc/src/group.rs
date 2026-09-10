@@ -76,6 +76,12 @@ fn set(recv: &RubyValue, at: usize, v: &RubyValue) -> Result<RubyValue, crate::S
 }
 
 /// Copy a libc `struct group` into an owned `Etc::Group` value.
+///
+/// # Safety
+///
+/// `gr` is a non-NULL `struct group` libc filled, with its string fields and
+/// its NULL-terminated `gr_mem` still valid -- so before the next call into
+/// the group database.
 pub(crate) unsafe fn group_from(gr: *const libc::group) -> RubyValue {
     let gr = unsafe { &*gr };
     let mut mem = Vec::new();

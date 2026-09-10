@@ -38,6 +38,11 @@ pub(crate) use group::GROUP_MEMBERS;
 pub(crate) use passwd::PASSWD_MEMBERS;
 
 /// A libc C string to an owned Rust `String` (empty for NULL).
+///
+/// # Safety
+///
+/// `p` is NULL or points at a NUL-terminated string that stays valid for
+/// the call. libc's database readers own theirs until the next call.
 unsafe fn cstr(p: *const libc::c_char) -> String {
     if p.is_null() {
         String::new()

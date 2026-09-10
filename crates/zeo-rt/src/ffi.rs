@@ -1182,6 +1182,13 @@ pub unsafe fn call_variadic(
     Ok(unsafe { call_and_wrap(&cif, code, &args, ret) })
 }
 
+/// Make the libffi call and wrap its result as the ruby value `ret` names.
+///
+/// # Safety
+///
+/// `cif` describes `code`'s real signature and `args` matches it, and `ret`
+/// is the return kind `cif` was built with. Calling into C with any of those
+/// wrong is undefined.
 #[cfg(feature = "ext-ffi")]
 unsafe fn call_and_wrap(
     cif: &libffi::middle::Cif,
@@ -1309,6 +1316,12 @@ unsafe fn invoke_callback(
 
 /// Trampoline for a callback whose return fits a machine word (int / uint /
 /// bool / pointer / void). libffi writes the result as a full `ffi_arg`.
+///
+/// # Safety
+///
+/// Called by libffi with the closure it was registered on, so `args` holds
+/// one pointer per parameter of `data`'s declared signature and `data` is the
+/// `CallbackData` that registration leaked.
 #[cfg(feature = "ext-ffi")]
 unsafe extern "C" fn cb_trampoline_word(
     _cif: &libffi::low::ffi_cif,
@@ -1354,6 +1367,12 @@ pub fn panic_signal(where_: &str, payload: Box<dyn std::any::Any + Send>) -> Sig
 }
 
 /// Trampoline for a callback returning `float`/`double`.
+///
+/// # Safety
+///
+/// Called by libffi with the closure it was registered on, so `args` holds
+/// one pointer per parameter of `data`'s declared signature and `data` is the
+/// `CallbackData` that registration leaked.
 #[cfg(feature = "ext-ffi")]
 unsafe extern "C" fn cb_trampoline_float(
     _cif: &libffi::low::ffi_cif,

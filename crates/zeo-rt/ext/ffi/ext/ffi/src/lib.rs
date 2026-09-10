@@ -190,6 +190,11 @@ impl RPointer {
 
     /// Read `n` raw bytes at `off`. A zero-length read never touches the
     /// address, so it is valid even on NULL (fiddle's `NULL.to_str` -> `""`).
+    ///
+    /// # Safety
+    ///
+    /// `off..off + n` lies inside the block `base` points at, which is what
+    /// `check_bounds` answers.
     unsafe fn read_bytes_at(&self, off: usize, n: usize) -> Vec<u8> {
         if n == 0 {
             return Vec::new();
@@ -198,6 +203,11 @@ impl RPointer {
     }
 
     /// Write `bytes` at `off`; empty writes never touch the address.
+    ///
+    /// # Safety
+    ///
+    /// `off..off + bytes.len()` lies inside the block `base` points at, which
+    /// is what `check_bounds` answers, and the block is writable.
     unsafe fn write_bytes_at(&self, off: usize, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
@@ -205,6 +215,12 @@ impl RPointer {
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.base.add(off), bytes.len()) };
     }
 
+    /// Read an integer `bytes` wide at `off`, unaligned as C leaves it.
+    ///
+    /// # Safety
+    ///
+    /// `off..off + bytes` lies inside the block `base` points at, which is
+    /// what `check_bounds` answers.
     unsafe fn read_int(&self, off: usize, bytes: usize, signed: bool) -> i64 {
         unsafe {
             let p = self.base.add(off);
@@ -222,6 +238,12 @@ impl RPointer {
         }
     }
 
+    /// Write an integer `bytes` wide at `off`, unaligned as C leaves it.
+    ///
+    /// # Safety
+    ///
+    /// `off..off + bytes` lies inside the block `base` points at, which is
+    /// what `check_bounds` answers and the block is writable.
     unsafe fn write_int(&self, off: usize, bytes: usize, v: i64) {
         unsafe {
             let p = self.base.add(off);
@@ -235,6 +257,12 @@ impl RPointer {
         }
     }
 
+    /// Read a float `bytes` wide at `off`, unaligned as C leaves it.
+    ///
+    /// # Safety
+    ///
+    /// `off..off + bytes` lies inside the block `base` points at, which is
+    /// what `check_bounds` answers.
     unsafe fn read_float(&self, off: usize, bytes: usize) -> f64 {
         unsafe {
             let p = self.base.add(off);
@@ -246,6 +274,12 @@ impl RPointer {
         }
     }
 
+    /// Write a float `bytes` wide at `off`, unaligned as C leaves it.
+    ///
+    /// # Safety
+    ///
+    /// `off..off + bytes` lies inside the block `base` points at, which is
+    /// what `check_bounds` answers and the block is writable.
     unsafe fn write_float(&self, off: usize, bytes: usize, v: f64) {
         unsafe {
             let p = self.base.add(off);

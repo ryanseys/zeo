@@ -42,6 +42,14 @@ pub(crate) fn ruby_qsort<T>(items: &mut [T], mut cmp: impl FnMut(&T, &T) -> std:
     }
 }
 
+/// libc's comparator, whose argument order differs between the BSD and the
+/// glibc `qsort_r`.
+///
+/// # Safety
+///
+/// Called by `qsort_r` with the `arg` [`ruby_qsort`] handed it and two
+/// pointers into the slice being sorted, so all three point at live values of
+/// the right type.
 #[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
 unsafe extern "C" fn sort_trampoline<T>(
     arg: *mut std::ffi::c_void,
@@ -51,6 +59,14 @@ unsafe extern "C" fn sort_trampoline<T>(
     unsafe { sort_call::<T>(arg, a, b) }
 }
 
+/// libc's comparator, whose argument order differs between the BSD and the
+/// glibc `qsort_r`.
+///
+/// # Safety
+///
+/// Called by `qsort_r` with the `arg` [`ruby_qsort`] handed it and two
+/// pointers into the slice being sorted, so all three point at live values of
+/// the right type.
 #[cfg(not(any(target_vendor = "apple", target_os = "freebsd")))]
 unsafe extern "C" fn sort_trampoline<T>(
     a: *const std::ffi::c_void,
@@ -60,6 +76,12 @@ unsafe extern "C" fn sort_trampoline<T>(
     unsafe { sort_call::<T>(arg, a, b) }
 }
 
+/// The comparator body both trampolines share.
+///
+/// # Safety
+///
+/// `arg` is the `*mut SortCmp<T>` [`ruby_qsort`] handed libc, and `a`/`b`
+/// point at live `T`s in the slice being sorted.
 unsafe fn sort_call<T>(
     arg: *mut std::ffi::c_void,
     a: *const std::ffi::c_void,

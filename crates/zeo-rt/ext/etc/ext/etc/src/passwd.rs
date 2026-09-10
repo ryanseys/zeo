@@ -93,6 +93,11 @@ fn set(recv: &RubyValue, at: usize, v: &RubyValue) -> Result<RubyValue, crate::S
 }
 
 /// Copy a libc `struct passwd` into an owned `Etc::Passwd` value.
+///
+/// # Safety
+///
+/// `pw` is a non-NULL `struct passwd` libc filled, with its string fields
+/// still valid -- so before the next call into the passwd database.
 pub(crate) unsafe fn passwd_from(pw: *const libc::passwd) -> RubyValue {
     let pw = unsafe { &*pw };
     #[allow(unused_mut)] // pushed to under cfg(target_vendor = "apple") only
