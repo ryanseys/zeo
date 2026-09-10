@@ -1,6 +1,7 @@
-//! Two limits on the tracked tree that nothing else notices.
+//! Limits on the tracked tree that nothing else notices.
 //!
-//! Both once broke silently, and both are cheap enough to ask on every run.
+//! Each one broke silently at least once, and each is cheap enough to ask on
+//! every run.
 
 use std::path::Path;
 use std::process::Command;
