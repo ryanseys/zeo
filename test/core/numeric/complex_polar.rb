@@ -4,10 +4,8 @@
 #   iq += Complex.polar(level1, theta2)
 #   clr = y + (Complex.polar(g, t) * iq.conjugate).real
 #
-# Spinel models Complex as a 16-byte value type (sp_Complex with
-# `re` and `im` fields). Allocation-free; passes by value.
-# Methods: `Complex.polar(magnitude, angle)`, instance-side
-# `.real / .imaginary / .conjugate`, plus `+ *` between two
+# The surface here is `Complex.polar(magnitude, angle)`, the readers
+# `.real`, `.imaginary` and `.conjugate`, and `+` and `*` between two
 # Complex values.
 
 # Polar form: r=2, theta=0 → (2, 0)

@@ -1,7 +1,6 @@
-# CRuby names the offending value in a coercion TypeError by its CLASS, except
-# nil / true / false, which it spells as themselves. spinel used the class name
-# for all of them, so `[[]].sum {}` reported "NilClass can't be coerced into
-# Integer" where CRuby says "nil can't be coerced into Integer".
+# A coercion TypeError names the offending value by its CLASS, except nil,
+# true and false, which it spells as themselves: `[[]].sum {}` says "nil
+# can't be coerced into Integer", not "NilClass".
 #
 # The two messages disagree about Symbol, and deliberately: "no implicit
 # conversion" names the CLASS, while "can't be coerced" spells the symbol.

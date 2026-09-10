@@ -1,6 +1,5 @@
-# Issue #731. `(a..b).step(k)` without a block should return an
-# IntArray of stepped values. spinel used to fall through to the
-# unresolved-call warning, then `.to_a` on the int 0 segfaulted.
+# `(a..b).step(k)` with no block answers something `.to_a` turns into the
+# stepped values.
 
 puts (1..10).step(3).to_a.inspect
 puts (0..20).step(5).to_a.inspect

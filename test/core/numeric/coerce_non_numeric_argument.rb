@@ -14,8 +14,7 @@
 # Integer#coerce / Float#coerce with a non-numeric argument. CRuby answers
 # `[Float(other), Float(self)]`, so the errors are Float()'s: a TypeError for
 # nil / true / an Array / a Symbol, and an ArgumentError for an unparseable
-# String. spinel put the argument straight into the Integer pair's slot, so a
-# String stopped the C BUILD and a nil answered a coerced 0 (#4011).
+# String. The argument is never quietly forced into the Integer's own type.
 
 [nil, true, false, "x", [1], { a: 1 }, :s].each do |v|
   begin

@@ -33,7 +33,7 @@ def t_integer_literal_large
   puts 16_777_621 % mod
 
   hash = 2_166_136_261
-  data = "spinel"
+  data = "sample"
   i = 0
   while i < data.length
     hash = (hash * 16_777_619 + data.getbyte(i)) % mod
@@ -171,7 +171,7 @@ __END__
 1.25
 4294967296
 16777621
-3601407474
+1924217071
 true
 true
 11

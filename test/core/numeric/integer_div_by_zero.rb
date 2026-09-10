@@ -4,10 +4,8 @@
 # rescue keyword unwinds — see the now-stale comment in
 # test/endless_method_rescue.rb.
 #
-# Test uses `puts e` directly (which prints the message string in
-# spinel) rather than e.message — the .message dispatch lives on a
-# separate exception-bindings PR. The semantic test (raises and is
-# catchable) is independent.
+# The program prints the exception itself rather than `.message`; what it
+# checks is that the division raises and the raise is catchable.
 
 # Bare / catches as ZeroDivisionError
 begin
@@ -74,8 +72,8 @@ rescue => e
   puts "bare-rescue: #{e}"
 end
 
-# Float division by zero is NOT affected — IEEE 754 returns
-# Infinity / NaN. Spinel matches CRuby; no exception is raised.
+# Float division by zero is NOT affected: IEEE 754 answers Infinity or NaN
+# and nothing is raised.
 puts (1.0 / 0.0).infinite?
 puts (0.0 / 0.0).nan?
 __END__

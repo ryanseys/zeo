@@ -1,6 +1,6 @@
-# CRuby's Float rounding return type is value-based on ndigits:
-# Integer when ndigits <= 0 (or absent), Float when > 0. Spinel used to
-# be presence-based (any arg => Float), so round(0)/round(-1) were Float.
+# Float rounding answers a type decided by the VALUE of ndigits, not by
+# whether an argument was given: Integer when ndigits is absent or <= 0, and
+# Float when it is > 0. So `round(0)` and `round(-1)` are Integers.
 p 1.9.round
 p 1.9.round.class
 p 1.9.round(0)

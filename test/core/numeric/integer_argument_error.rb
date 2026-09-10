@@ -1,6 +1,5 @@
-# Integer(s) raises ArgumentError on unparseable input, matching
-# CRuby semantics. Previously spinel emitted bare strtoll(s, NULL, 10)
-# which silently returned 0 for invalid input — that meant
+# Integer(s) raises ArgumentError on input it cannot parse, rather than
+# answering the 0 that the C library's strtoll would. Answering 0 would mean
 # `Integer(s) rescue 0` always took the main branch and the rescue
 # never fired.
 #
@@ -68,11 +67,8 @@ trail_only_ws   = (Integer("42 ") rescue -1);          puts trail_only_ws       
 lead_junk    = (Integer("x42") rescue -1);    puts lead_junk
 lead_ws_junk = (Integer(" x 42") rescue -1);  puts lead_ws_junk
 
-# Hex prefixes ("0x10") and underscore separators ("12_345") are
-# CRuby-supported but Spinel's base-10 strtoll path doesn't parse
-# them. Documented in the PR's "Out of scope" — not exercised here
-# because the test compares spinel output against MRI directly,
-# and we'd diverge.
+# Hex prefixes ("0x10") and underscore separators ("12_345") have tests of
+# their own; this program is about the raise.
 
 # Bare rescue catches and lets us see the error message.
 # Also exercises the GC-root path: the message is allocated via

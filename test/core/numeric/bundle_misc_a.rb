@@ -91,9 +91,8 @@ t_class_threeq
 def t_do_while_post_test_loop
   # Prism's PM_LOOP_FLAGS_BEGIN_MODIFIER (= 4, bit 2) marks
   # `begin..end while cond` / `begin..end until cond` as post-test
-  # loops — body runs at least once. Spinel was treating them as
-  # plain pre-test `while`, so a body that should have run once but
-  # whose condition was false on entry never ran at all.
+  # loops: the body runs at least once, even when the condition is false on
+  # entry. A plain pre-test `while` would never run it.
   
   ran = 0
   begin
@@ -180,8 +179,7 @@ def t_float
   # reductions / slicing / shift, and Float#ceil/floor/round/truncate
   # with a precision arg. Was five separate tests; merged. No class
   # collisions; locals reused across the originals (`f`, `arr`, `a`)
-  # get per-section prefixes so spinel's local-type inference doesn't
-  # unify them.
+  # get per-section prefixes, so the compiler cannot give them one type.
   
   # === FloatArray reductions: min / max / sum / first / last ===
   fr_arr = [1.5, 2.5, 0.5, 3.5]
@@ -254,8 +252,8 @@ def t_float
   puts 3.14.ceil
   puts 3.14.floor
   puts 3.14.truncate
-  # Negative precision: bool-compare for type-stable output across
-  # CRuby's Integer-return rule vs. Spinel's uniform Float inference.
+  # Negative precision: compared to a literal, so the printed line is a
+  # boolean whatever type the rounding answers.
   puts 12345.6789.floor(-2) == 12300
   puts 12345.6789.ceil(-2) == 12400
   puts 12345.6789.round(-1) == 12350
@@ -328,8 +326,7 @@ def t_math
   puts (Math.exp(0.0) * 1000).to_i        # 1000
   
   # Float-typed result (would print "1" / "0" if inferred as int).
-  # Use the *1000+to_i idiom to dodge precision-formatting differences
-  # between Spinel's float-puts and CRuby's.
+  # The *1000+to_i idiom keeps the answer clear of float formatting.
   puts (Math.log2(3.0) * 1000).to_i       # 1584
   puts (Math.log10(3.0) * 1000).to_i      # 477
   

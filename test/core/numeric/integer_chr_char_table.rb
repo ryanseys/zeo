@@ -2,9 +2,9 @@
 # malloc, free and the GC sweep walking what they left. The static table that
 # now serves 1-byte slices serves this too, so nothing is allocated.
 #
-# It stays on the PLAIN table, not the BINARY one. spinel does not let a
-# program name an encoding, so nothing but pack and String#b asks for BYTES,
-# and a chr result is not one of those. Tagging it BINARY would have matched
+# It stays on the PLAIN table, not the BINARY one: a chr result is a
+# character, and only pack and String#b ask for bytes. Tagging it BINARY
+# would have matched
 # CRuby on two more surfaces (255.chr.encoding, 1.chr.inspect) and diverged on
 # two others; leaving it plain changes nothing observable at all.
 #

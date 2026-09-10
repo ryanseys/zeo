@@ -1,8 +1,7 @@
-# `===` on a scalar-comparable receiver (bool/int/float/string/symbol) is case
-# equality == value equality. When the argument unifies to a poly type across
-# call sites while the receiver stays a single scalar type, Spinel previously
-# rejected the call; it now boxes the receiver and compares by the poly runtime
-# rule (numbers cross-compare, other tags by tag).
+# `===` on a scalar receiver -- Boolean, Integer, Float, String, Symbol -- is
+# value equality. The argument here is of no single type across the call
+# sites, so the comparison happens at runtime: numbers compare across their
+# kinds, and anything else compares only within its own.
 
 # In each method the receiver keeps one scalar type; the second argument varies
 # across call sites (Integer / Float / true / nil / String / Symbol), so the

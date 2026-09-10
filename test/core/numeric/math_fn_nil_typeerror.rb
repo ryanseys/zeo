@@ -1,6 +1,6 @@
-# Math.<fn> accepts only a real Numeric: nil, a String, a Symbol, or any other
-# non-numeric argument raises TypeError (Math does not parse strings). Spinel
-# previously coerced nil to 0.0 and a String cast was a C compile error.
+# Math.<fn> accepts only a real Numeric: nil, a String, a Symbol or any other
+# non-numeric argument raises TypeError. Math does not parse strings, and nil
+# is not 0.0.
 def ms(x); Math.sqrt(x); end
 
 [nil, :sym, "2", [1]].each do |v|

@@ -28,11 +28,9 @@ puts n[3]                # 1
 
 # Hash-subscript shape on an unpinned param — the bug's repro.
 # Without the fix, `row[:k]` emits `(row >> SPS_k) & 1` and gcc/
-# clang flag the shift count. With the fix, this falls through to
-# the unresolved-call placeholder (the param type is unknown to
-# spinel here, since the function is never called), which is the
-# correct behavior — compilation succeeds without the bogus
-# bit-extract.
+# clang flag the shift count. The parameter's type is unknown here, since
+# nothing calls the method, so the right answer is to compile it without
+# deciding that `[]` means a bit extract.
 def from_raw(row)
   row[:id] || 0
 end

@@ -1,7 +1,6 @@
-# Math.* methods raise Math::DomainError on out-of-domain input,
-# matching CRuby semantics. Previously spinel called bare libc
-# sqrt(-1.0) etc. which returns NaN silently. Math::DomainError is
-# now in the known-exception list and the ancestry walker wires it
+# Math.* methods raise Math::DomainError on out-of-domain input rather than
+# answering the NaN that the C library function underneath would. The class
+# is a real exception class, so the ancestry walker wires it
 # as < StandardError < Exception, so the natural CRuby idiom works:
 #
 #   x = Math.sqrt(input) rescue 0.0

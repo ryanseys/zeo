@@ -1,6 +1,5 @@
-# Spinel's integers are mrb_int (long long); Ruby integers don't
-# overflow in the same range. But emitting a plain `24329 * 256 *
-# 500` in C lets the C compiler fold the constant using `int`
+# A Ruby integer does not overflow where a 32-bit one would. Folding
+# `24329 * 256 * 500` at compile time in a narrower type
 # arithmetic, overflowing at 3,114,112,000 to a wrong negative
 # result on 32-bit-int platforms.
 #

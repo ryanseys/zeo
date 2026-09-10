@@ -1,7 +1,5 @@
-# Integer arithmetic that overflows mrb_int (int64) raises
-# RangeError rather than silently wrapping. spinel uses
-# `__builtin_add_overflow` / `_sub_overflow` / `_mul_overflow`
-# at the codegen-emit step for binary `+ - *` on int operands;
+# Integer arithmetic that overflows a machine word raises RangeError rather
+# than silently wrapping, for binary `+`, `-` and `*` alike;
 # the helpers (defined as statement-expression macros in
 # sp_runtime.h) raise on overflow and otherwise reduce to the
 # bare arithmetic op. BIGINT.md option β.

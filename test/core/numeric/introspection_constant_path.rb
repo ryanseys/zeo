@@ -19,9 +19,6 @@
 # - Class-as-local (`k = Mod::Klass; obj.is_a?(k)`) emits the const
 #   name as a bare C identifier — a separate ConstantPathNode-to-local
 #   assignment bug, distinct from the introspection-arg fix here.
-# - Built-in ancestor (`obj.is_a?(Object)`) returns false in spinel
-#   today; spinel's class registry doesn't materialize Object as an
-#   ancestor of user classes. Separate gap.
 
 module Mod
   class Base

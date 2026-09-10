@@ -1,6 +1,6 @@
-# Negative Float ** fractional exponent raises Math::DomainError loudly
-# (CRuby promotes to a Complex; documented divergence in
-# docs/limitations.md -- expected file pins the spinel behavior).
+# A negative Float raised to a fractional power has no real answer, so the
+# result is a Complex rather than a NaN or a raise. An integral exponent on
+# the same negative base stays real.
 begin
   p((-2.0) ** 0.5)
 rescue => e

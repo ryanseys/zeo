@@ -1,8 +1,6 @@
-# Arithmetic and abs/abs2/magnitude on a Complex read out of a poly container
-# (the poly `+`/`-`/`*`/`/` and sp_poly_abs dispatch the Complex tag). Complex
-# division with integer components follows spinel's float-backed Complex
-# (a documented divergence from CRuby's rational components), so the divisor
-# here is chosen to divide cleanly.
+# Arithmetic, and abs/abs2/magnitude, on a Complex read out of a container
+# the compiler cannot give one element type: the operators have to find the
+# Complex at runtime. The divisor divides cleanly, so the answers stay whole.
 xs = [Complex(1, 2), Complex(3, -4)]
 c = xs.first
 p (c + Complex(5, 5))

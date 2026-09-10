@@ -5,9 +5,7 @@
 # this guard, `(mrb_int)floor(rc / 0.0)` would consume an
 # Infinity/NaN and produce undefined C behaviour at the cast.
 #
-# Test uses `puts e` directly (which prints the message string in
-# spinel) — exception object methods like .message live on a
-# separate exception-bindings PR.
+# The program prints the exception itself rather than `.message`.
 
 # Sanity: divmod with non-zero divisor still works.
 q, r = 5.0.divmod(2.0)
