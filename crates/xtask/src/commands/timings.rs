@@ -95,7 +95,9 @@ pub fn run(args: &[String]) -> Result<(), Error> {
         ))
     })?;
 
-    let wall = attr(&xml, "time").and_then(|t| t.parse().ok()).unwrap_or(0.0);
+    let wall = attr(&xml, "time")
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(0.0);
     let cases = parse_cases(&xml);
     if cases.is_empty() {
         return Err(Error::new(format!("{}: no cases in it", path.display())));
@@ -131,9 +133,11 @@ fn parse_cases(xml: &str) -> Vec<Case> {
     let mut out = Vec::new();
     for tag in xml.split("<testcase").skip(1) {
         let head = &tag[..tag.find('>').unwrap_or(tag.len())];
-        let (Some(name), Some(class), Some(secs)) =
-            (attr(head, "name"), attr(head, "classname"), attr(head, "time"))
-        else {
+        let (Some(name), Some(class), Some(secs)) = (
+            attr(head, "name"),
+            attr(head, "classname"),
+            attr(head, "time"),
+        ) else {
             continue;
         };
         let Ok(secs) = secs.parse::<f64>() else {

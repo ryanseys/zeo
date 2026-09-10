@@ -237,8 +237,9 @@ pub const NATIVE_FEATURES: &[&str] = &[
 /// [`is_builtin_feature`] accepts.
 /// `rbconfig` is on the list because rubygems requires it before the program
 /// starts, so its answer is `false` there too.
-pub const PRELOADED_AT_BOOT: &[&str] =
-    &["set", "monitor", "rational", "complex", "thread", "rbconfig"];
+pub const PRELOADED_AT_BOOT: &[&str] = &[
+    "set", "monitor", "rational", "complex", "thread", "rbconfig",
+];
 
 /// Features ruby folded into CORE, keeping the name only so old code still
 /// loads: it has NO FILE for them anywhere, so
@@ -251,7 +252,8 @@ pub const PRELOADED_AT_BOOT: &[&str] =
 /// `rbconfig` sits here for zeo's own reason: ruby generates rbconfig.rb at
 /// build time, but zeo synthesizes `RbConfig` in the compiler and ships no
 /// file, so `nil` is the honest answer.
-pub const CORE_WITH_NO_FILE: &[&str] = &["set", "fiber", "thread", "rational", "complex", "rbconfig"];
+pub const CORE_WITH_NO_FILE: &[&str] =
+    &["set", "fiber", "thread", "rational", "complex", "rbconfig"];
 
 /// A `require` spelling mapped to its canonical in-tree `ext/` feature name.
 /// Sub-path and alias spellings of one extension collapse to a single
@@ -266,9 +268,7 @@ pub fn canonical_ext_feature(feature: &str) -> &str {
         // `digest/*` arm made `require "digest/nope"` answer false, which
         // starved `Digest.const_missing` of the LoadError it re-raises --
         // and swallowed `digest/version`, a real file in the gem's lib tree.
-        "digest" | "digest/md5" | "digest/sha1" | "digest/sha2" | "digest/bubblebabble" => {
-            "digest"
-        }
+        "digest" | "digest/md5" | "digest/sha1" | "digest/sha2" | "digest/bubblebabble" => "digest",
         other => other,
     }
 }

@@ -163,5 +163,7 @@ pub fn measured(name: &str) -> u64 {
         .iter()
         .find(|(n, _)| *n == name)
         .map(|(_, v)| *v)
-        .unwrap_or_else(|| panic!("{name} was not measured; run `cargo xtask check-c-headers layout`"))
+        .unwrap_or_else(|| {
+            panic!("{name} was not measured; run `cargo xtask check-c-headers layout`")
+        })
 }

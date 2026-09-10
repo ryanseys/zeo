@@ -315,7 +315,9 @@ fn locate(gem: &str, root: &Path) -> Option<PathBuf> {
 fn version_of(dir: &Path) -> Option<String> {
     let name = dir.file_name()?.to_string_lossy().into_owned();
     let (_, version) = name.rsplit_once('-')?;
-    version.starts_with(|c: char| c.is_ascii_digit()).then(|| version.to_string())
+    version
+        .starts_with(|c: char| c.is_ascii_digit())
+        .then(|| version.to_string())
 }
 
 /// What to `require`. A gem's entry file is usually its own name, sometimes
@@ -513,7 +515,10 @@ mod tests {
 
     #[test]
     fn a_version_is_read_off_the_directory_only_when_it_is_one() {
-        assert_eq!(version_of(Path::new("/x/csv-3.3.6")).as_deref(), Some("3.3.6"));
+        assert_eq!(
+            version_of(Path::new("/x/csv-3.3.6")).as_deref(),
+            Some("3.3.6")
+        );
         // The big corpus is unversioned, and `io-console` is not a version.
         assert_eq!(version_of(Path::new("/x/io-console")), None);
         assert_eq!(version_of(Path::new("/x/rake")), None);

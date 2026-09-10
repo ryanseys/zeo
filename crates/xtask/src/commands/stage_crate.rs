@@ -102,7 +102,9 @@ fn check_staged(
         }
     }
     check_package_list(surface_dest.is_file(), gems_dest.is_file())?;
-    println!("stage-crate --check: staged artifacts match (or are absent), and the package lists every file the build reads.");
+    println!(
+        "stage-crate --check: staged artifacts match (or are absent), and the package lists every file the build reads."
+    );
     Ok(())
 }
 
@@ -113,7 +115,14 @@ fn check_staged(
 fn check_package_list(surface_staged: bool, gems_staged: bool) -> Result<(), Error> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let out = exec::run(
-        &[cargo.as_str(), "package", "--list", "-p", "zeo", "--allow-dirty"],
+        &[
+            cargo.as_str(),
+            "package",
+            "--list",
+            "-p",
+            "zeo",
+            "--allow-dirty",
+        ],
         root(),
         &[],
         Capture::Stdout,

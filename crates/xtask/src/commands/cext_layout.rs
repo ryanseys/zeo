@@ -479,7 +479,9 @@ fn render(facts: &Facts) -> String {
          \x20       .iter()\n\
          \x20       .find(|(n, _)| *n == name)\n\
          \x20       .map(|(_, v)| *v)\n\
-         \x20       .unwrap_or_else(|| panic!(\"{name} was not measured; run `cargo xtask check-c-headers layout`\"))\n\
+         \x20       .unwrap_or_else(|| {\n\
+         \x20           panic!(\"{name} was not measured; run `cargo xtask check-c-headers layout`\")\n\
+         \x20       })\n\
          }\n",
     );
     s
