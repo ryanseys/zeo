@@ -545,9 +545,9 @@ fn struct_eql(recv: &RubyValue, other: &RubyValue) -> bool {
     let a = slots_of(recv);
     let b = slots_of(other);
     a.len() == b.len()
-        && a.iter().zip(b.iter()).all(|(x, y)| {
-            crate::collections::hash_key(x) == crate::collections::hash_key(y)
-        })
+        && a.iter()
+            .zip(b.iter())
+            .all(|(x, y)| crate::collections::hash_key(x) == crate::collections::hash_key(y))
 }
 
 pub(crate) fn deconstruct_keys(recv: &RubyValue, keys: &RubyValue) -> Result<RubyValue, Signal> {

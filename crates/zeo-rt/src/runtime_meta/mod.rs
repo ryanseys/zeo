@@ -32,8 +32,8 @@ mod resolver;
 mod watermark;
 pub use api::*;
 pub(crate) use dyn_object::*;
-pub(crate) use lock::OverlayLock;
 pub use frames::*;
+pub(crate) use lock::OverlayLock;
 pub use resolver::*;
 pub use watermark::*;
 
@@ -904,10 +904,9 @@ pub(super) fn mark_extends_seated(seated: u32) {
     if seated == 0 {
         return;
     }
-    let left = PENDING_EXTEND_NAMES
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-            Some(n.saturating_sub(seated))
-        });
+    let left = PENDING_EXTEND_NAMES.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        Some(n.saturating_sub(seated))
+    });
     if left.is_ok_and(|before| before.saturating_sub(seated) == 0) {
         GATES.fetch_and(!GATE_PENDING_EXTENDS, Ordering::Release);
     }

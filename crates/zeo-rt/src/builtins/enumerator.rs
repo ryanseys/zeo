@@ -480,7 +480,10 @@ fn ended_by_stop_iteration(sig: Signal) -> Result<RubyValue, Signal> {
 /// carries at exhaustion).
 /// `Enumerator.allocate` -- an enumerator with nothing to iterate.
 fn enumerator_allocate() -> RubyValue {
-    RubyValue::Enumerator(Arc::new(EnumeratorData::new(EnumSource::Uninitialized, None)))
+    RubyValue::Enumerator(Arc::new(EnumeratorData::new(
+        EnumSource::Uninitialized,
+        None,
+    )))
 }
 
 /// The receiver of a row that needs something to ITERATE. `#inspect` and the
@@ -606,14 +609,13 @@ fn product_walk(
 /// fresh Array payload (CRuby's `next_ii` packs `argc/argv` the same
 /// way), and the shuttle's return value is the block's value inside the
 /// iterated method (the value `#feed` injected, else nil).
-fn ensure_fiber(e: &REnumerator) -> u64 {
+fn ensure_fiber(e: &REnumerator) -> Result<u64, Signal> {
     let mut st = e.state.lock();
     if let Some(id) = st.fiber {
-        assert!(
-            st.owner == Some(std::thread::current().id()),
-            "FiberError: an Enumerator's iteration fiber can only be resumed on the thread that started it"
-        );
-        return id;
+        if st.owner != Some(std::thread::current().id()) {
+            return Err(crate::builtins::fiber_error!("fiber called across threads"));
+        }
+        return Ok(id);
     }
     let id = NEXT_ITER_ID.fetch_add(1, Ordering::Relaxed);
     let source = e.source();
@@ -645,7 +647,7 @@ fn ensure_fiber(e: &REnumerator) -> u64 {
     ENUM_FIBERS.with(|f| f.borrow_mut().insert(id, coro));
     st.fiber = Some(id);
     st.owner = Some(std::thread::current().id());
-    id
+    Ok(id)
 }
 
 /// Pulls one element (as its arity-preserving value vector), `Ok(None)` at
@@ -675,11 +677,13 @@ fn get_next_values(e: &REnumerator) -> Result<Vec<RubyValue>, Signal> {
     if let Some(result) = e.state.lock().done.clone() {
         return Err(raise_stop_iteration(result));
     }
-    let id = ensure_fiber(e);
+    let id = ensure_fiber(e)?;
+    // Absent from the table means the fiber is the one running right now, so
+    // this `next` came from inside its own iteration and would resume itself.
     let Some(mut coro) = ENUM_FIBERS.with(|f| f.borrow_mut().remove(&id)) else {
-        panic!(
-            "Enumerator#next re-entered while its own iteration is running (the fiber can't resume itself)"
-        );
+        return Err(crate::builtins::fiber_error!(
+            "attempt to resume the current fiber"
+        ));
     };
     // The same execution-context swap as `Fiber#resume` (fiber.rs): the
     // iteration runs with its own `$!`/rescue-nesting stack.

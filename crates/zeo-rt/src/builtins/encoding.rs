@@ -81,9 +81,7 @@ pub fn regexp_pinned_encoding(re: &crate::RRegexp) -> Option<EncodingId> {
         zeo_abi::RegexpEncoding::Windows31j => Some(encoding::WINDOWS_31J),
         zeo_abi::RegexpEncoding::Utf8 => Some(encoding::UTF_8),
         zeo_abi::RegexpEncoding::None => Some(encoding::ASCII_8BIT),
-        zeo_abi::RegexpEncoding::Source => {
-            (!re.source.is_ascii()).then_some(encoding::UTF_8)
-        }
+        zeo_abi::RegexpEncoding::Source => (!re.source.is_ascii()).then_some(encoding::UTF_8),
     }
 }
 

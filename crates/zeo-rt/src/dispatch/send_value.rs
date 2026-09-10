@@ -429,7 +429,8 @@ fn send_value_in_reason_inner(
         // Retired by an `undef` inside `class << self` -- checked before any
         // table, so an ancestor's still-live `def self.x` cannot answer past
         // it. See `OverlayEntry::class_undefs`.
-        if crate::runtime_meta::gates_live(g) && crate::runtime_meta::class_method_undefined(*cid, name)
+        if crate::runtime_meta::gates_live(g)
+            && crate::runtime_meta::class_method_undefined(*cid, name)
         {
             return Err(raise_method_missing(recv, &name.to_string(), args, reason));
         }
@@ -531,9 +532,7 @@ fn send_value_in_reason_inner(
                 return crate::runtime_meta::call_value_body(owner, name, &p, recv, args, block);
             }
             if let Some(f) = extended_class_method_body(owner, name) {
-                return with_c_frame_ids(owner, name, '#', || {
-                    f.call(recv, args, block)
-                });
+                return with_c_frame_ids(owner, name, '#', || f.call(recv, args, block));
             }
         }
         // A MINTED struct/data class's OWN singleton methods (`Point.members`,

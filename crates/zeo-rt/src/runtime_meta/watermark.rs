@@ -474,7 +474,11 @@ pub fn overlay_instance_method_names(
     // runtime-defined names, which is CRuby's listing order.
     let mut named: Vec<Symbol> = named.into_iter().collect();
     named.sort_unstable_by_key(|s| s.to_u32());
-    let mut undefs: Vec<Symbol> = entries.iter().flat_map(|e| e.undefs.iter()).copied().collect();
+    let mut undefs: Vec<Symbol> = entries
+        .iter()
+        .flat_map(|e| e.undefs.iter())
+        .copied()
+        .collect();
     undefs.sort_unstable_by_key(|s| s.to_u32());
     undefs.dedup();
     undefs
@@ -483,7 +487,9 @@ pub fn overlay_instance_method_names(
         .chain(named.into_iter().map(|n| {
             // The box's own mark wins: it is the nearer record.
             let vis = entries.iter().rev().find_map(|e| e.methods_vis.get(&n));
-            let vis = vis.copied().unwrap_or(crate::dispatch::MethodVisibility::Public);
+            let vis = vis
+                .copied()
+                .unwrap_or(crate::dispatch::MethodVisibility::Public);
             (n, Some(vis))
         }))
         .collect()
@@ -504,10 +510,7 @@ pub fn overlay_value_body(id: ClassId, name: Symbol) -> Option<RProc> {
     let root = crate::boxes::overlay_root(id.0);
     let mine = crate::boxes::box_record_for_read(crate::boxes::current_box(), root);
     let c = maps().classes.read().unwrap();
-    let pick = |key: u32| {
-        c.get(&key)
-            .and_then(|e| e.value_bodies.get(&name).cloned())
-    };
+    let pick = |key: u32| c.get(&key).and_then(|e| e.value_bodies.get(&name).cloned());
     // The running box's own record for the class first, then the shared one
     // -- `resolver::box_first`'s rule for a value receiver, which is where
     // a box's patch to `String` or `Array` lands.

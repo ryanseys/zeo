@@ -315,9 +315,7 @@ pub const DATA_NAMES: &[&str] = &[
 pub fn data_addr(name: &str) -> Option<*const u8> {
     match name {
         "zeo_rt_gates" => Some(&crate::runtime_meta::zeo_rt_gates as *const _ as *const u8),
-        "zeo_rt_patched_bits" => {
-            Some(crate::runtime_meta::zeo_rt_patched_bits.as_ptr().cast())
-        }
+        "zeo_rt_patched_bits" => Some(crate::runtime_meta::zeo_rt_patched_bits.as_ptr().cast()),
         "zeo_rt_pending_interrupts" => {
             Some(&crate::gvl::zeo_rt_pending_interrupts as *const _ as *const u8)
         }

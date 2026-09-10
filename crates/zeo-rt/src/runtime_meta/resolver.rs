@@ -77,8 +77,7 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
             // the next ancestor answers. A later definition clears the
             // tombstone, so a live row is never behind one.
             let tomb = |pick: &dyn Fn(&super::OverlayEntry) -> bool| {
-                mine.and_then(|k| c.get(&k)).is_some_and(pick)
-                    || c.get(&shared).is_some_and(pick)
+                mine.and_then(|k| c.get(&k)).is_some_and(pick) || c.get(&shared).is_some_and(pick)
             };
             if tomb(&|e: &super::OverlayEntry| e.undefs.contains(&name)) {
                 return None;
@@ -462,8 +461,10 @@ pub fn object_has_singleton_method(recv: &RubyValue, name: Symbol) -> bool {
 pub fn overlay_has_instance_method(id: ClassId, name: Symbol) -> bool {
     let id = crate::boxes::overlay_root(id.0);
     let c = maps().classes.read().unwrap();
-    let has =
-        |key: u32| c.get(&key).is_some_and(|e| e.methods.contains_key(&name) || e.prepended.contains_key(&name));
+    let has = |key: u32| {
+        c.get(&key)
+            .is_some_and(|e| e.methods.contains_key(&name) || e.prepended.contains_key(&name))
+    };
     crate::boxes::box_record_for_read(crate::boxes::current_box(), id).is_some_and(has) || has(id)
 }
 

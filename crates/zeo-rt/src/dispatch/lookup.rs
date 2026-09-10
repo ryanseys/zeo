@@ -221,7 +221,9 @@ pub(crate) fn registry_own_impl_cloned(id: ClassId, name: Symbol) -> Option<Meth
 /// object's singleton table. Read for the RUNNING box: a module compiled
 /// inside a `Ruby::Box` registers its rows under that box's id.
 pub(crate) fn registry_value_method_impl(id: ClassId, name: Symbol) -> Option<MethodImpl> {
-    let f = REGISTRY.get()?.lookup_value_method(id, crate::boxes::current_box(), name)?;
+    let f = REGISTRY
+        .get()?
+        .lookup_value_method(id, crate::boxes::current_box(), name)?;
     Some(value_fn_impl(f))
 }
 

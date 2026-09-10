@@ -141,7 +141,10 @@ fn pack_token(v: &RubyValue) -> u64 {
     }
 }
 
-pub fn pack(elems: &[RubyValue], template: &str) -> Result<(Vec<u8>, Option<Vec<RubyValue>>), Signal> {
+pub fn pack(
+    elems: &[RubyValue],
+    template: &str,
+) -> Result<(Vec<u8>, Option<Vec<RubyValue>>), Signal> {
     let mut out: Vec<u8> = Vec::new();
     let mut associated: Option<Vec<RubyValue>> = None;
     let mut idx = 0usize;
@@ -196,9 +199,7 @@ pub fn pack(elems: &[RubyValue], template: &str) -> Result<(Vec<u8>, Option<Vec<
                             _ => 0,
                         };
                         if have < want {
-                            return Err(err(format!(
-                                "too short buffer for P({have} for {want})"
-                            )));
+                            return Err(err(format!("too short buffer for P({have} for {want})")));
                         }
                     }
                     1
@@ -1087,8 +1088,14 @@ mod tests {
     #[test]
     fn pack_integers_with_endianness() {
         assert_eq!(pack(&ints(&[65, 66, 67]), "C*").unwrap().0, b"ABC");
-        assert_eq!(pack(&ints(&[1, 2]), "nN").unwrap().0, vec![0, 1, 0, 0, 0, 2]);
-        assert_eq!(pack(&ints(&[1, 2]), "vV").unwrap().0, vec![1, 0, 2, 0, 0, 0]);
+        assert_eq!(
+            pack(&ints(&[1, 2]), "nN").unwrap().0,
+            vec![0, 1, 0, 0, 0, 2]
+        );
+        assert_eq!(
+            pack(&ints(&[1, 2]), "vV").unwrap().0,
+            vec![1, 0, 2, 0, 0, 0]
+        );
         assert_eq!(pack(&ints(&[-1]), "c").unwrap().0, vec![255]);
         assert_eq!(pack(&ints(&[258]), "S>").unwrap().0, vec![1, 2]);
     }
@@ -1113,7 +1120,10 @@ mod tests {
             pack(&[str_val("abc")], "A5").unwrap().0,
             vec![97, 98, 99, 32, 32]
         );
-        assert_eq!(pack(&[str_val("abc")], "Z*").unwrap().0, vec![97, 98, 99, 0]);
+        assert_eq!(
+            pack(&[str_val("abc")], "Z*").unwrap().0,
+            vec![97, 98, 99, 0]
+        );
         assert_eq!(strs(&unpack(b"abc\0\0", "A5", None).unwrap()), ["abc"]);
         assert_eq!(strs(&unpack(b"abc\0de", "Z*", None).unwrap()), ["abc"]);
     }
@@ -1133,7 +1143,10 @@ mod tests {
 
     #[test]
     fn utf8_codepoints() {
-        assert_eq!(pack(&ints(&[0x3042]), "U").unwrap().0, "\u{3042}".as_bytes());
+        assert_eq!(
+            pack(&ints(&[0x3042]), "U").unwrap().0,
+            "\u{3042}".as_bytes()
+        );
         assert_eq!(
             i64s(&unpack("\u{3042}".as_bytes(), "U*", None).unwrap()),
             [0x3042]

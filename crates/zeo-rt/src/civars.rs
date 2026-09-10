@@ -214,8 +214,10 @@ pub fn class_ivar_set(class_id: u32, name: &str, value: RubyValue) -> Result<(),
             class_id,
         )));
     }
-    let class_id =
-        crate::boxes::box_record_for_write(crate::boxes::current_box(), crate::boxes::overlay_root(class_id));
+    let class_id = crate::boxes::box_record_for_write(
+        crate::boxes::current_box(),
+        crate::boxes::overlay_root(class_id),
+    );
     intern(class_id, name).put(value);
     Ok(())
 }

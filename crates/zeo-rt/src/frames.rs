@@ -394,7 +394,13 @@ impl FrameGuard {
     pub fn push(file: &'static str, method: &'static str, line: u32, end_line: u32) -> FrameGuard {
         // A Rust-side guard brackets no pool scope (RAII drops own its
         // temporaries); the pop skips the drain.
-        push_frame(Frame::with_label(file, method, line, end_line, Frame::NO_MARK));
+        push_frame(Frame::with_label(
+            file,
+            method,
+            line,
+            end_line,
+            Frame::NO_MARK,
+        ));
         #[cfg(feature = "ext-tracepoint")]
         if end_line != 0 && crate::ext::tracepoint::tracing() {
             crate::ext::tracepoint::fire_entry(file, method, line);
@@ -820,9 +826,18 @@ mod layout_tests {
         assert_eq!(std::mem::offset_of!(FrameHot, top), a::FRAMEHOT_TOP);
         assert_eq!(std::mem::offset_of!(FrameHot, base), a::FRAMEHOT_BASE);
         assert_eq!(std::mem::offset_of!(FrameHot, end), a::FRAMEHOT_END);
-        assert_eq!(std::mem::offset_of!(FrameHot, pool_top), a::FRAMEHOT_POOL_TOP);
-        assert_eq!(std::mem::offset_of!(FrameHot, pool_base), a::FRAMEHOT_POOL_BASE);
-        assert_eq!(std::mem::offset_of!(FrameHot, pool_end), a::FRAMEHOT_POOL_END);
+        assert_eq!(
+            std::mem::offset_of!(FrameHot, pool_top),
+            a::FRAMEHOT_POOL_TOP
+        );
+        assert_eq!(
+            std::mem::offset_of!(FrameHot, pool_base),
+            a::FRAMEHOT_POOL_BASE
+        );
+        assert_eq!(
+            std::mem::offset_of!(FrameHot, pool_end),
+            a::FRAMEHOT_POOL_END
+        );
         assert_eq!(std::mem::offset_of!(Frame, file), a::FRAME_FILE_PTR);
         assert_eq!(std::mem::offset_of!(Frame, method_ptr), a::FRAME_METHOD_PTR);
         assert_eq!(std::mem::offset_of!(Frame, method_len), a::FRAME_METHOD_LEN);

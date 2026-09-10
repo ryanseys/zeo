@@ -512,9 +512,7 @@ pub unsafe extern "C" fn zeo_rt_native_row_exists(recv: *const RubyValue, sym: u
     let n = Symbol::from_u32(sym).name_str();
     let found = crate::dispatch::ancestors_of_value(recv.class_id())
         .iter()
-        .any(|&anc| {
-            crate::builtins::class_table(anc).is_some_and(|lookup| lookup(n).is_some())
-        });
+        .any(|&anc| crate::builtins::class_table(anc).is_some_and(|lookup| lookup(n).is_some()));
     i32::from(found)
 }
 
@@ -540,9 +538,7 @@ pub unsafe extern "C" fn zeo_rt_native_row_call(
         });
     let r = match row {
         Some((anc, f)) => {
-            crate::dispatch::with_c_frame_ids(anc, name, '#', || {
-                f(recv, args, block)
-            })
+            crate::dispatch::with_c_frame_ids(anc, name, '#', || f(recv, args, block))
         }
         None => Err(crate::dispatch::raise_method_missing(
             recv,

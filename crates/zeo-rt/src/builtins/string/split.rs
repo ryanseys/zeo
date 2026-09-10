@@ -67,7 +67,11 @@ pub(super) fn str_partition(
     // receiver's own encoding rather than the engine's decoded UTF-8.
     let part = |s: &str| crate::builtins::string::str_value_in_enc(enc, s);
     Ok(match span {
-        Some((start, end)) => [part(&text[..start]), part(&text[start..end]), part(&text[end..])],
+        Some((start, end)) => [
+            part(&text[..start]),
+            part(&text[start..end]),
+            part(&text[end..]),
+        ],
         None if from_end => [part(""), part(""), part(text)],
         None => [part(text), part(""), part("")],
     })

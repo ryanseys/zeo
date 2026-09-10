@@ -430,83 +430,83 @@ impl Writer {
     }
 
     /// What `Marshal.dump` refuses, and why -- both were silently DUMPED before,
-/// losing the very thing that made them undumpable.
-///
-/// A SINGLETON METHOD cannot round-trip: the body has no name in the stream.
-/// The test is on the METHODS, not on having a singleton class, because
-/// `obj.extend(M)` gives an object a singleton class and IS dumpable (the
-/// `e` records carry it).
-///
-/// A stream, a directory handle, a Method and a Binding all wrap process
-/// state that means nothing in another process. The class named is the
-/// RECEIVER's own -- a `File` says `can't dump File`, not `IO`.
-fn refuse_undumpable(v: &RubyValue, cid: crate::ClassId) -> Result<(), Signal> {
-    // A method from an EXTENDED module is not an own singleton method:
-    // zeo's `extend` COPIES the module's methods into the singleton table,
-    // so they show up here, and `obj.extend(M)` IS dumpable -- the `e`
-    // records carry it. Only a body with no name in the stream refuses.
-    let from_modules: Vec<Symbol> = crate::runtime_meta::extended_modules(v)
-        .into_iter()
-        .flat_map(|mid| {
-            crate::dispatch::instance_method_names(mid, crate::dispatch::VisFilter::All, true)
-        })
-        .collect();
-    if crate::runtime_meta::singleton_method_names(v)
-        .iter()
-        .any(|m| !from_modules.contains(m))
-    {
-        return Err(type_error!("singleton can't be dumped"));
+    /// losing the very thing that made them undumpable.
+    ///
+    /// A SINGLETON METHOD cannot round-trip: the body has no name in the stream.
+    /// The test is on the METHODS, not on having a singleton class, because
+    /// `obj.extend(M)` gives an object a singleton class and IS dumpable (the
+    /// `e` records carry it).
+    ///
+    /// A stream, a directory handle, a Method and a Binding all wrap process
+    /// state that means nothing in another process. The class named is the
+    /// RECEIVER's own -- a `File` says `can't dump File`, not `IO`.
+    fn refuse_undumpable(v: &RubyValue, cid: crate::ClassId) -> Result<(), Signal> {
+        // A method from an EXTENDED module is not an own singleton method:
+        // zeo's `extend` COPIES the module's methods into the singleton table,
+        // so they show up here, and `obj.extend(M)` IS dumpable -- the `e`
+        // records carry it. Only a body with no name in the stream refuses.
+        let from_modules: Vec<Symbol> = crate::runtime_meta::extended_modules(v)
+            .into_iter()
+            .flat_map(|mid| {
+                crate::dispatch::instance_method_names(mid, crate::dispatch::VisFilter::All, true)
+            })
+            .collect();
+        if crate::runtime_meta::singleton_method_names(v)
+            .iter()
+            .any(|m| !from_modules.contains(m))
+        {
+            return Err(type_error!("singleton can't be dumped"));
+        }
+        // Ruby refuses these by TYPE, in `w_object` itself, before it looks for
+        // any dump hook.
+        const CANT_DUMP: &[zeo_abi::ClassId] = &[
+            zeo_abi::IO_CLASS,
+            zeo_abi::FILE_CLASS,
+            zeo_abi::MATCH_DATA_CLASS,
+            zeo_abi::QUEUE_CLASS,
+            zeo_abi::CONDITION_VARIABLE_CLASS,
+        ];
+        // Ruby reaches these as a `T_DATA` and refuses for the missing hook
+        // instead, which is a DIFFERENT message for the same impossibility. The
+        // split is ruby's, not a distinction zeo draws.
+        const NO_DUMP_DATA: &[zeo_abi::ClassId] = &[
+            zeo_abi::DIR_CLASS,
+            zeo_abi::METHOD_CLASS,
+            zeo_abi::UNBOUND_METHOD_CLASS,
+            zeo_abi::BINDING_CLASS,
+            zeo_abi::PROC_CLASS,
+            zeo_abi::THREAD_CLASS,
+            zeo_abi::FIBER_CLASS,
+            zeo_abi::MUTEX_CLASS,
+            zeo_abi::THREAD_GROUP_CLASS,
+            zeo_abi::WEAKMAP_CLASS,
+            zeo_abi::ENUMERATOR_CLASS,
+            zeo_abi::STRINGIO_CLASS,
+            zeo_abi::STRING_SCANNER_CLASS,
+            zeo_abi::ZLIB_DEFLATE_CLASS,
+            zeo_abi::ZLIB_INFLATE_CLASS,
+            zeo_abi::DIGEST_MD5_CLASS,
+            zeo_abi::DIGEST_SHA1_CLASS,
+            zeo_abi::DIGEST_SHA2_CLASS,
+            zeo_abi::DIGEST_SHA256_CLASS,
+            zeo_abi::DIGEST_SHA384_CLASS,
+            zeo_abi::DIGEST_SHA512_CLASS,
+        ];
+        let chain = crate::dispatch::ancestors_of_value(cid);
+        let named = || crate::dispatch::class_name(cid).unwrap_or_default();
+        if chain.iter().any(|a| CANT_DUMP.contains(a)) {
+            return Err(type_error!("can't dump {}", named()));
+        }
+        if chain.iter().any(|a| NO_DUMP_DATA.contains(a)) {
+            return Err(type_error!(
+                "no _dump_data is defined for class {}",
+                named()
+            ));
+        }
+        Ok(())
     }
-    // Ruby refuses these by TYPE, in `w_object` itself, before it looks for
-    // any dump hook.
-    const CANT_DUMP: &[zeo_abi::ClassId] = &[
-        zeo_abi::IO_CLASS,
-        zeo_abi::FILE_CLASS,
-        zeo_abi::MATCH_DATA_CLASS,
-        zeo_abi::QUEUE_CLASS,
-        zeo_abi::CONDITION_VARIABLE_CLASS,
-    ];
-    // Ruby reaches these as a `T_DATA` and refuses for the missing hook
-    // instead, which is a DIFFERENT message for the same impossibility. The
-    // split is ruby's, not a distinction zeo draws.
-    const NO_DUMP_DATA: &[zeo_abi::ClassId] = &[
-        zeo_abi::DIR_CLASS,
-        zeo_abi::METHOD_CLASS,
-        zeo_abi::UNBOUND_METHOD_CLASS,
-        zeo_abi::BINDING_CLASS,
-        zeo_abi::PROC_CLASS,
-        zeo_abi::THREAD_CLASS,
-        zeo_abi::FIBER_CLASS,
-        zeo_abi::MUTEX_CLASS,
-        zeo_abi::THREAD_GROUP_CLASS,
-        zeo_abi::WEAKMAP_CLASS,
-        zeo_abi::ENUMERATOR_CLASS,
-        zeo_abi::STRINGIO_CLASS,
-        zeo_abi::STRING_SCANNER_CLASS,
-        zeo_abi::ZLIB_DEFLATE_CLASS,
-        zeo_abi::ZLIB_INFLATE_CLASS,
-        zeo_abi::DIGEST_MD5_CLASS,
-        zeo_abi::DIGEST_SHA1_CLASS,
-        zeo_abi::DIGEST_SHA2_CLASS,
-        zeo_abi::DIGEST_SHA256_CLASS,
-        zeo_abi::DIGEST_SHA384_CLASS,
-        zeo_abi::DIGEST_SHA512_CLASS,
-    ];
-    let chain = crate::dispatch::ancestors_of_value(cid);
-    let named = || crate::dispatch::class_name(cid).unwrap_or_default();
-    if chain.iter().any(|a| CANT_DUMP.contains(a)) {
-        return Err(type_error!("can't dump {}", named()));
-    }
-    if chain.iter().any(|a| NO_DUMP_DATA.contains(a)) {
-        return Err(type_error!(
-            "no _dump_data is defined for class {}",
-            named()
-        ));
-    }
-    Ok(())
-}
 
-/// Serialize a heap object, choosing CRuby's tag by protocol: `marshal_dump`
+    /// Serialize a heap object, choosing CRuby's tag by protocol: `marshal_dump`
     /// -> `U`, else `_dump` -> `u`, else a Struct -> `S`, else a value-builtin
     /// subclass -> `C`, else a plain `o` with inline ivars.
     fn write_object(&mut self, v: &RubyValue, o: &RObj) -> Result<(), Signal> {

@@ -803,10 +803,9 @@ fn hash_key_rec(v: &RubyValue, by_identity: bool, seen: &mut Seen) -> HashKey {
         // dispatch away from where ruby raises it.
         RubyValue::Object(o) => {
             match crate::dispatch::call_user_method(o, crate::symbol::wk::hash(), &[]) {
-                Some(Ok(v)) => HashKey::Computed(
-                    Box::new(hash_key_rec(&v, false, seen)),
-                    EqlProbe(o.clone()),
-                ),
+                Some(Ok(v)) => {
+                    HashKey::Computed(Box::new(hash_key_rec(&v, false, seen)), EqlProbe(o.clone()))
+                }
                 Some(Err(sig)) => {
                     park_key_raise(sig);
                     HashKey::Identity(Arc::as_ptr(o) as *const () as usize)

@@ -16,7 +16,7 @@ mod load;
 mod random;
 
 use crate::builtins::inherited_row;
-use crate::builtins::{arg_error, block_or_enum, local_jump_error, need_block, type_error};
+use crate::builtins::{arg_error, block_or_enum, need_block, type_error};
 use crate::{RubyValue, Signal, Symbol};
 use zeo_macros::ruby_module;
 
@@ -389,10 +389,7 @@ ruby_module! {
         let tag = tag
             .cloned()
             .unwrap_or_else(|| crate::runtime_meta::blank_instance(zeo_abi::OBJECT_CLASS));
-        let blk = block.ok_or_else(|| {
-            local_jump_error!("no block given (yield)")
-        })?;
-        crate::kernel_catch(tag, blk)
+        crate::kernel_catch(tag, block)
     }
     module_function def "throw" as kernel_throw cfunc (_recv, _tag, _value?) {
         crate::catch::throw_impl(__args)

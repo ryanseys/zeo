@@ -2010,7 +2010,11 @@ pub fn system(
     if raising && !status.success() {
         return Err(raise_error(
             "RuntimeError",
-            format!("Command failed with {}: {}", failure_shape(&status), launch_target(args)),
+            format!(
+                "Command failed with {}: {}",
+                failure_shape(&status),
+                launch_target(args)
+            ),
         ));
     }
     Ok(RubyValue::Bool(status.success()))

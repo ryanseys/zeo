@@ -305,7 +305,8 @@ pub fn validate_alias_source(id: ClassId, old: Symbol) -> Result<(), Signal> {
     }
     let has = |anc: ClassId| {
         r.lookup(anc, old).is_some()
-            || r.lookup_value_method(anc, crate::boxes::current_box(), old).is_some()
+            || r.lookup_value_method(anc, crate::boxes::current_box(), old)
+                .is_some()
             || crate::builtins::class_table(anc).is_some_and(|t| t(n).is_some())
             || crate::runtime_meta::overlay_own_method(anc, old).is_some()
     };

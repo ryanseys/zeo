@@ -238,12 +238,11 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
                 value_fn(r.f.expect("a super-target row carries its fn")),
             ),
             abi::REG_CONCEAL_CLASS => crate::constants::conceal_class(r.class),
-            abi::REG_CONCEAL_METHOD => conceal_methods.push((
-                r.class,
-                Symbol::intern(text(r.a)),
-                r.flag != 0,
-                unsafe { *r.ids },
-            )),
+            abi::REG_CONCEAL_METHOD => {
+                conceal_methods.push((r.class, Symbol::intern(text(r.a)), r.flag != 0, unsafe {
+                    *r.ids
+                }))
+            }
             // Both handled in the pre-pass above.
             abi::REG_REGISTER_BUILTIN | abi::REG_SET_ANCESTORS => {}
             abi::REG_MARK_REFINEMENT => {
@@ -288,7 +287,13 @@ pub(crate) unsafe fn register_program(desc: &ProgramDesc) {
             }
             abi::REG_ALIAS => {
                 let box_id = unsafe { *r.ids };
-                registry.register_alias(ClassId(r.class), box_id, text(r.a), text(r.b), r.flag == 1);
+                registry.register_alias(
+                    ClassId(r.class),
+                    box_id,
+                    text(r.a),
+                    text(r.b),
+                    r.flag == 1,
+                );
             }
             abi::REG_CLASS_ALIAS => {
                 let box_id = unsafe { *r.ids };

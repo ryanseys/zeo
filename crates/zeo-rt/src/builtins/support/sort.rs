@@ -185,7 +185,10 @@ impl<F: FnMut(&RubyValue, &RubyValue) -> Result<i32, Signal>> Nmin<F> {
             let mut i = left;
             while i <= right - num_pivots {
                 let c = {
-                    let (a, b) = (self.buf[i as usize].0.clone(), self.buf[pivot as usize].0.clone());
+                    let (a, b) = (
+                        self.buf[i as usize].0.clone(),
+                        self.buf[pivot as usize].0.clone(),
+                    );
                     self.ordered(&a, &b)?
                 };
                 if c == 0 {

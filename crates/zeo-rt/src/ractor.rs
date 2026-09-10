@@ -414,7 +414,7 @@ pub(crate) fn port_send_in(port: &RPort, value: &RubyValue, move_it: bool) -> Re
         Some(q) if !q.closed => {
             q.items.push_back(crossed);
             crate::gvl::deadlock::note_progress();
-    r.recv_cv.notify_all();
+            r.recv_cv.notify_all();
             Ok(())
         }
         _ => Err(closed_port_error()),
@@ -550,7 +550,7 @@ fn finish(r: &RRactor, result: Result<RubyValue, Signal>, aborted: bool) {
         let mut t = r.ports.lock();
         t.ports.clear();
         crate::gvl::deadlock::note_progress();
-    r.recv_cv.notify_all();
+        r.recv_cv.notify_all();
     }
     let token = Symbol::intern(if aborted { "aborted" } else { "exited" });
     let monitors = std::mem::take(&mut *r.monitors.lock());

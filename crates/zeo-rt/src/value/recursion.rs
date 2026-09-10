@@ -115,7 +115,11 @@ mod tests {
         let mut seen = Visited::default();
         let inner = seen.with(&a, |seen| seen.with(&a, |_| 1));
         assert_eq!(inner, Some(None), "a inside a recurses");
-        assert_eq!(seen.with(&a, |_| 1), Some(1), "the frame popped on the way out");
+        assert_eq!(
+            seen.with(&a, |_| 1),
+            Some(1),
+            "the frame popped on the way out"
+        );
     }
 
     #[test]
@@ -131,7 +135,10 @@ mod tests {
     fn an_immediate_has_no_identity() {
         let mut seen = Visited::default();
         let one = RubyValue::Int(1);
-        assert_eq!(seen.with(&one, |seen| seen.with(&one, |_| 1)), Some(Some(1)));
+        assert_eq!(
+            seen.with(&one, |seen| seen.with(&one, |_| 1)),
+            Some(Some(1))
+        );
     }
 
     #[test]

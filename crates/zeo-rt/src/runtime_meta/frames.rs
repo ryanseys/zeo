@@ -104,7 +104,11 @@ fn check_method_call_shape(body: &RProc, name: Symbol, args: &[RubyValue]) -> Re
         if required.is_empty() {
             return Err(err);
         }
-        let label = if required.len() == 1 { "keyword" } else { "keywords" };
+        let label = if required.len() == 1 {
+            "keyword"
+        } else {
+            "keywords"
+        };
         let max = match max {
             Some(hi) if hi == req => format!("{req}"),
             Some(hi) => format!("{req}..{hi}"),
@@ -129,7 +133,11 @@ fn check_method_call_shape(body: &RProc, name: Symbol, args: &[RubyValue]) -> Re
             })
             .collect();
         if !unknown.is_empty() {
-            let label = if unknown.len() == 1 { "keyword" } else { "keywords" };
+            let label = if unknown.len() == 1 {
+                "keyword"
+            } else {
+                "keywords"
+            };
             let _ = name;
             return Err(crate::builtins::arg_error!(
                 "unknown {label}: {}",

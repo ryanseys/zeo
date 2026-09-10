@@ -1032,7 +1032,13 @@ impl ClassRegistry {
             // `extern "C"` boundary that cannot unwind, so a panic here
             // aborts the process rather than raising. A box's
             // `class << self; alias_method ...; end` reaches this arm.
-            tracing::warn!(class = id.0, box_id, new, old, "alias on an unregistered class");
+            tracing::warn!(
+                class = id.0,
+                box_id,
+                new,
+                old,
+                "alias on an unregistered class"
+            );
             return;
         };
         entry
@@ -1052,7 +1058,13 @@ impl ClassRegistry {
     /// `ClassEntry::class_aliases`.
     pub fn register_class_alias(&mut self, id: ClassId, box_id: u32, new: &str, old: &str) {
         let Some(entry) = self.entries.get_mut(&id.0) else {
-            tracing::warn!(class = id.0, box_id, new, old, "class alias on an unregistered class");
+            tracing::warn!(
+                class = id.0,
+                box_id,
+                new,
+                old,
+                "class alias on an unregistered class"
+            );
             return;
         };
         entry
@@ -1062,7 +1074,13 @@ impl ClassRegistry {
 
     /// The alias indirection `box_id` sees for `id`, by the same rule the
     /// method tables use: the box's own, then the shared one.
-    pub(super) fn alias_target(&self, id: ClassId, box_id: u32, name: Symbol, class_side: bool) -> Option<Symbol> {
+    pub(super) fn alias_target(
+        &self,
+        id: ClassId,
+        box_id: u32,
+        name: Symbol,
+        class_side: bool,
+    ) -> Option<Symbol> {
         let entry = self.entries.get(&id.0)?;
         let table = match class_side {
             true => &entry.class_aliases,
@@ -1277,7 +1295,11 @@ impl ClassRegistry {
         // to the ancestor that really defines the name -- which is what
         // ruby's walk finds while the `require` is still ahead.
         let hidden = |cid: ClassId| super::concealed::is_concealed(cid.0, name, false);
-        if let Some(e) = self.entries.get(&id.0).filter(|_| !removed(id) && !hidden(id)) {
+        if let Some(e) = self
+            .entries
+            .get(&id.0)
+            .filter(|_| !removed(id) && !hidden(id))
+        {
             if let Some(m) = e.methods.get(&name) {
                 // The flattened row may have come from an ANCESTOR that a
                 // runtime `undef_method` has since retired -- `module M; def

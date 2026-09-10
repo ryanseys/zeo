@@ -122,9 +122,7 @@ pub(crate) fn swap_eval_homes(next: Vec<EvalHome>) -> Vec<EvalHome> {
 }
 
 /// See [`crate::ec`] -- per-fiber, like `swap_eval_homes`.
-pub(crate) fn swap_cref_stack(
-    next: Vec<Vec<zeo_abi::ClassId>>,
-) -> Vec<Vec<zeo_abi::ClassId>> {
+pub(crate) fn swap_cref_stack(next: Vec<Vec<zeo_abi::ClassId>>) -> Vec<Vec<zeo_abi::ClassId>> {
     CREF_STACK.with(|h| std::mem::replace(&mut *h.borrow_mut(), next))
 }
 

@@ -20,9 +20,12 @@ pub(crate) fn swap_catch_tags(new: Vec<RubyValue>) -> Vec<RubyValue> {
 }
 
 /// `Kernel#catch(tag) { ... }` / `Kernel#throw(tag[, value])`.
-pub fn kernel_catch(tag: RubyValue, block: RubyValue) -> Result<RubyValue, Signal> {
-    let RubyValue::Proc(p) = &block else {
-        panic!("Kernel#catch requires a block");
+///
+/// A block-less `catch` is `rb_need_block`'s LocalJumpError, whose message
+/// carries no `(yield)` suffix -- unlike a bare `yield` with no block.
+pub fn kernel_catch(tag: RubyValue, block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let Some(RubyValue::Proc(p)) = &block else {
+        return Err(crate::builtins::local_jump_error!("no block given"));
     };
     CATCH_TAGS.with(|s| s.borrow_mut().push(tag.clone()));
     let result = p.call(std::slice::from_ref(&tag));

@@ -76,8 +76,7 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     // not hand main the row. A class the box owns, and every write from
     // main, still name the shared record.
     let this_box = crate::boxes::current_box();
-    let write_key =
-        crate::boxes::box_record_for_write(this_box, crate::boxes::overlay_root(id.0));
+    let write_key = crate::boxes::box_record_for_write(this_box, crate::boxes::overlay_root(id.0));
     {
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(write_key).or_insert_with(OverlayEntry::delta);
