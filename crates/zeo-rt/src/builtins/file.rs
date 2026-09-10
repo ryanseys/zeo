@@ -166,7 +166,6 @@ fn write_bytes(v: &RubyValue) -> Vec<u8> {
 /// the external (or `"ext:int"` both); `external_encoding:`/
 /// `internal_encoding:` override each. Defaults to
 /// `(Encoding.default_external, nil)`.
-#[allow(clippy::type_complexity)]
 fn read_encodings(
     trailing: Option<&RubyValue>,
 ) -> Result<
@@ -187,7 +186,6 @@ fn read_encodings(
 /// tail does not know warns and falls back, where the `encoding:` option
 /// raises. Both asymmetries are CRuby's; neither is derivable from the other
 /// side.
-#[allow(clippy::type_complexity)]
 pub(crate) fn read_encodings_with(
     trailing: Option<&RubyValue>,
     mode_enc: Option<&str>,

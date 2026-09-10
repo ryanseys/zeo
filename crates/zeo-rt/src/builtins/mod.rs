@@ -908,7 +908,10 @@ pub(crate) fn kw_take(src: Option<&RubyValue>, name: &str) -> Option<RubyValue> 
 /// measured, not assumed: a live diff of `#parameters` over 3,526 of ruby's
 /// own rows finds zero `keyreq` -- hence the allow. Deleting this breaks
 /// that macro arm.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "used only from a `ruby_class!` arm the unit-test build takes"
+)]
 #[inline(always)]
 pub(crate) fn kw_required(src: Option<&RubyValue>, name: &str) -> Result<RubyValue, Signal> {
     kw_take(src, name).ok_or_else(|| crate::builtins::arg_error!("missing keyword: :{name}"))
@@ -924,7 +927,10 @@ pub(crate) fn kw_required(src: Option<&RubyValue>, name: &str) -> Result<RubyVal
 /// no ruby builtin row declares named keywords AND a keyrest -- the shapes
 /// that carry a keyrest all carry the ANONYMOUS forwarding trio (`*, **, &`)
 /// instead. Deleting this breaks that macro arm.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "used only from a `ruby_class!` arm the unit-test build takes"
+)]
 #[inline(always)]
 pub(crate) fn kw_rest(src: Option<&RubyValue>, taken: &[&str]) -> Option<RubyValue> {
     let RubyValue::Hash(h) = src? else {

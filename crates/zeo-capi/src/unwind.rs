@@ -78,13 +78,8 @@ macro_rules! cext_fn {
     )*) => {$(
         $(#[$meta])*
         #[unsafe(no_mangle)]
-        // The immediately-called closure gives the body a frame of its own,
-        // so the `Result` is matched with nothing of the body's alive.
-        #[allow(clippy::redundant_closure_call)]
-        // Every one of these is a C ABI entry point with one contract --
-        // C calls it with arguments matching the declared signature -- so
-        // 400 identical `# Safety` sections would say nothing this does not.
-        #[allow(clippy::missing_safety_doc)]
+        #[allow(clippy::redundant_closure_call, reason = "the immediately-called closure gives the body a frame of its own, so the `Result` is matched with nothing of the body's alive")]
+        #[allow(clippy::missing_safety_doc, reason = "one C ABI contract for every row -- C calls it with arguments matching the declared signature -- so 400 identical `# Safety` sections would say nothing this does not")]
         pub unsafe extern "C-unwind" fn $name($($arg : $ty),*) -> $ret {
             let outcome: ::std::result::Result<$ret, ::zeo_rt::Signal> = (|| $body)();
             match outcome {

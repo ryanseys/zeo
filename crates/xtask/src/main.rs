@@ -13,19 +13,34 @@ use std::path::{Path, PathBuf};
 // The corpus file format and suite table, shared with the harness so the
 // contract is written once (`crates/zeo/tests/corpus/`).
 #[path = "../../zeo/tests/corpus/case.rs"]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod case;
 #[path = "../../zeo/tests/corpus/compare.rs"]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod compare;
 #[path = "../../zeo/tests/corpus/normalize.rs"]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod normalize;
 #[path = "../../zeo/tests/corpus/oracle.rs"]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod oracle;
 #[path = "../../zeo/tests/corpus/suites.rs"]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod suites;
 
 mod commands;

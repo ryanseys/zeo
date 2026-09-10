@@ -35,7 +35,10 @@ pub fn zeo_cli() -> Result<PathBuf, String> {
 /// The rule belongs to the PRODUCT: `zeo` itself brings a dev tree's archive
 /// up to date before it links anything, and the suites ask the same question
 /// (`zeo::backend::link::runtime_archive`), so the two cannot disagree.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 pub fn runtime_archive() -> Result<PathBuf, String> {
     zeo::backend::link::runtime_archive()
 }
@@ -121,7 +124,10 @@ fn idle(dir: &Path) -> bool {
 }
 
 /// A fresh, empty directory under the scratch root for one test.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 pub fn scratch_dir(name: &str) -> Result<PathBuf, String> {
     let dir = scratch_root()?
         .join("tmp")

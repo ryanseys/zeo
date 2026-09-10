@@ -327,7 +327,7 @@ fn build_closure(
     )
 }
 
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "one closure-emission entry: the block's own shape plus the three facts only its writing site knows -- which method-body form it is, what frame ruby names it after, and whether an `*_eval` re-homes its self"
 )]
@@ -509,7 +509,7 @@ fn build_closure_with(
 /// params bind through `zeo_rt_bind_block_params` (ruby's lenient block
 /// rules, full shape), `next` is the ok-exit, `break` arms the Break
 /// signal, `redo` re-enters at the binding head.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "one closure-emission entry: the block's own shape, its capture list, and the two method-body distinctions each say something different"
 )]

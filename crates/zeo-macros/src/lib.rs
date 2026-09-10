@@ -384,7 +384,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
         let mod_ident = format_ident!("__ruby_class_{}", n.name.to_string().to_lowercase());
         let inner = expand(n);
         quote! {
-            #[allow(non_snake_case)]
+            #[allow(non_snake_case, reason = "the module is named after the ruby class it wraps")]
             mod #mod_ident {
                 use super::*;
                 #inner
@@ -671,53 +671,53 @@ fn gen_method_table(
                 _ => None,
             }
         }
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "one accessor per emitted table; a call site uses some of them")]
         pub(crate) fn #names_fn() -> &'static [&'static str] {
             &[ #( #name_lits ),* ]
         }
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "one accessor per emitted table; a call site uses some of them")]
         pub(crate) fn #arity_fn(name: &str) -> Option<i64> {
             match name {
                 #( #arity_arms )*
                 _ => None,
             }
         }
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "one accessor per emitted table; a call site uses some of them")]
         pub(crate) fn #params_fn(name: &str) -> Option<crate::builtins::ParamRows> {
             match name {
                 #( #params_arms )*
                 _ => None,
             }
         }
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "one accessor per emitted table; a call site uses some of them")]
         pub(crate) fn #private_fn(name: &str) -> bool {
             match name {
                 #( #private_arms )*
                 _ => false,
             }
         }
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "one accessor per emitted table; a call site uses some of them")]
         pub(crate) fn #protected_fn(name: &str) -> bool {
             match name {
                 #( #protected_arms )*
                 _ => false,
             }
         }
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "one accessor per emitted table; a call site uses some of them")]
         pub(crate) fn #allocs_fn(name: &str) -> bool {
             match name {
                 #( #allocs_arms )*
                 _ => false,
             }
         }
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "one accessor per emitted table; a call site uses some of them")]
         pub(crate) fn #inherits_fn(name: &str) -> bool {
             match name {
                 #( #inherits_arms )*
                 _ => false,
             }
         }
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "one accessor per emitted table; a call site uses some of them")]
         pub(crate) fn #gate_fn(name: &str) -> Option<&'static str> {
             #gate_body
         }

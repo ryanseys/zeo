@@ -1083,7 +1083,7 @@ mod tests {
         let r = sprintf(
             "%05.1f|%x|%o|%b|%e|%g|%%",
             &[
-                #[allow(clippy::approx_constant)] // an arbitrary fixture, not pi
+                #[expect(clippy::approx_constant, reason = "an arbitrary fixture, not pi")]
                 RubyValue::Float(3.14159),
                 RubyValue::Int(255),
                 RubyValue::Int(8),

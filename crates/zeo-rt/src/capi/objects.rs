@@ -1176,10 +1176,6 @@ pub unsafe extern "C" fn zeo_rt_eval_class_open(
 /// Run a `class`/`module` BODY written inside a run-time `eval` -- one more
 /// `class_eval`, which is what a class body IS (see `eval::class_body`).
 #[unsafe(no_mangle)]
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one class body's own shape: the class, its source, where it was written, and the cref it inherits"
-)]
 pub unsafe extern "C" fn zeo_rt_eval_class_body(
     class_val: *const RubyValue,
     src: *const u8,

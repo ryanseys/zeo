@@ -17,18 +17,30 @@
 // Shared with the `corpus` binary and with `cargo xtask bless`, so each uses
 // a part of each.
 #[path = "../corpus/case.rs"]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod case;
 #[path = "../common/mod.rs"]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod common;
 #[path = "../corpus/normalize.rs"]
 mod normalize;
 #[path = "../corpus/oracle.rs"]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod oracle;
 #[path = "../corpus/suites.rs"]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod suites;
 
 /// The names the test modules use for the shared helpers.

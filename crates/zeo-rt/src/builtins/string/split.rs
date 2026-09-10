@@ -80,7 +80,6 @@ pub(super) fn str_partition(
 /// The `count`/`delete` char-set arguments as `(chars, negated)` specs: a
 /// leading `^` negates (a bare `"^"` stays literal), `a-z` expands to a
 /// range. Zero arguments is CRuby's `ArgumentError`.
-#[allow(clippy::type_complexity)]
 pub(super) fn charset_specs(
     args: &[RubyValue],
 ) -> Result<Vec<(std::collections::HashSet<char>, bool)>, Signal> {

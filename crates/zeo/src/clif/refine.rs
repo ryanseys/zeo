@@ -143,7 +143,7 @@ pub(crate) fn refined_call(fx: &mut Fx, site: NodeId) -> CResult<Option<Operand>
     }))
 }
 
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "one refined-call entry: the call's whole written shape plus the candidate set the site's `using` decided"
 )]

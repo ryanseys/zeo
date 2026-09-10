@@ -1728,7 +1728,10 @@ impl Loader {
 
     /// One recognized require/require_relative/load statement: validate the
     /// shape, resolve the target, splice (or skip, for a deduped require).
-    #[allow(clippy::too_many_arguments)] // one context param per resolution
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one context param per resolution"
+    )]
     // dimension (dir/file/box) -- bundling them into a struct would obscure
     // the loading-box propagation this fn exists to thread.
     fn lower_require_statement(

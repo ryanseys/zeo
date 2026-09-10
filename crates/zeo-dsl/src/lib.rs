@@ -1083,7 +1083,10 @@ fn parse_def(
 /// what makes the argument-count guard and the reported arity derivable at all.
 /// Post-required parameters (`(a, *r, b)`) are rejected: no builtin needs them,
 /// and they would make the guard a two-sided split for no gain.
-#[allow(clippy::type_complexity)]
+#[expect(
+    clippy::type_complexity,
+    reason = "one tuple per parsed parameter list, read at one call site"
+)]
 fn parse_params(
     input: ParseStream,
 ) -> syn::Result<(

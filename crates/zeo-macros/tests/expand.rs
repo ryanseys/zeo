@@ -6,7 +6,10 @@
 //!
 //! The registration attribute names zeo-rt's `unit-tables` feature, which
 //! this crate does not declare; the cfg is checked where the macro lands.
-#![allow(unexpected_cfgs)]
+#![allow(
+    unexpected_cfgs,
+    reason = "the cfg names zeo-rt's feature, checked where the macro lands"
+)]
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum RubyValue {

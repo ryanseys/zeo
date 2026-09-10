@@ -608,7 +608,7 @@ pub(crate) struct Broken {
 impl Broken {
     /// A `date`-side instant: civil fields the caller already resolved against
     /// the calendar-reform start, plus the offset the date carries.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "one civil field per parameter")]
     pub(crate) fn from_date(
         year: i64,
         mon: i64,

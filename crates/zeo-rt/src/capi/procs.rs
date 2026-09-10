@@ -212,7 +212,7 @@ pub unsafe extern "C" fn zeo_rt_cell_store(cell: *mut Cell, v: *mut RubyValue) {
 /// The shared head of the two construction entries: the retained cells,
 /// the borrowed views, the env, the `#binding` capture and the home.
 /// Params/location/outer differ per entry and are added by the caller.
-#[allow(clippy::too_many_arguments)] // one C argument per parameter
+#[expect(clippy::too_many_arguments, reason = "one C argument per parameter")]
 unsafe fn proc_builder_of(
     f: BlockFn,
     cells: *const *mut Cell,

@@ -38,7 +38,6 @@ use std::time::{Duration, Instant};
 /// inline load is plain (the Rust reader is Relaxed too); a checkpoint
 /// that races a post sees it on the next iteration, same as today.
 #[unsafe(no_mangle)]
-#[allow(non_upper_case_globals)]
 pub static zeo_rt_pending_interrupts: AtomicU32 = AtomicU32::new(0);
 use self::zeo_rt_pending_interrupts as PENDING_GLOBAL;
 
@@ -847,7 +846,10 @@ mod rendezvous {
     static COLLECTING: Mutex<()> = Mutex::new(());
 
     /// Hold the world stopped for as long as this lives.
-    pub(crate) struct Stopped(#[allow(dead_code)] parking_lot::MutexGuard<'static, ()>);
+    pub(crate) struct Stopped(
+        #[expect(dead_code, reason = "held for its lifetime, never read")]
+        parking_lot::MutexGuard<'static, ()>,
+    );
 
     impl Drop for Stopped {
         fn drop(&mut self) {

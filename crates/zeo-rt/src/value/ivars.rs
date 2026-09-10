@@ -78,7 +78,10 @@ struct Inner<V, Q> {
     /// module is about object footprint, and `Option<Vec<_>>` is 24 bytes on
     /// EVERY object where `Option<Box<Vec<_>>>` is 8. The extra allocation is
     /// paid only by an object that actually invents an ivar.
-    #[allow(clippy::box_collection)]
+    #[expect(
+        clippy::box_collection,
+        reason = "the Box is the point: it keeps an ivar-less object at 8 bytes"
+    )]
     invented: Option<Box<Vec<Invented>>>,
 }
 

@@ -1985,7 +1985,10 @@ fn collect_redef_scopes(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)] // the emitter's state, one table per parameter
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the emitter's state, one table per parameter"
+)]
 fn emit_singleton_super_targets(
     compiler: &crate::compiler::Compiler,
     em: &mut Emitter,

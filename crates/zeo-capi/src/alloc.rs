@@ -101,8 +101,7 @@ macro_rules! alloc_fn {
     )*) => {$(
         $(#[$meta])*
         #[unsafe(no_mangle)]
-        // A C ABI entry point with MRI's own contract, stated per row above.
-        #[allow(clippy::missing_safety_doc)]
+        #[allow(clippy::missing_safety_doc, reason = "a C ABI entry point with MRI's own contract, stated per row above")]
         pub unsafe extern "C-unwind" fn $name($($arg : $ty),*) -> $ret $body
     )*};
 }

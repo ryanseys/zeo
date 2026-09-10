@@ -729,10 +729,6 @@ pub(crate) fn dynamic_send_ptr(
     dynamic_send_argv(fx, recv_ptr, recv_class, name, argv_ptr, argc, false)
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one send's own shape: receiver, its static class, name, argv, arity, barrier"
-)]
 fn dynamic_send_argv(
     fx: &mut Fx,
     recv_ptr: cranelift_codegen::ir::Value,
@@ -1254,7 +1250,6 @@ pub(crate) fn build_zsuper_args(
 /// (`value_super`). Bare `super` forwards the current method's own params
 /// by NAME (splat rest, keywords as one marked hash); the current
 /// block forwards unless the site writes one.
-#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 pub(crate) fn lower_super(
     fx: &mut Fx,
     site: NodeId,

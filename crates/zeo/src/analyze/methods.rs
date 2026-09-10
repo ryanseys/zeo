@@ -913,7 +913,10 @@ pub(crate) fn method_local_types(
 /// `defining_class` is whichever class/module's HIR body `params`/`body`
 /// actually came from -- equal to `owner` for an ordinary own-body method,
 /// an ancestor otherwise (see `compiler::Scope::defining_class`'s docs).
-#[allow(clippy::too_many_arguments)] // one fact per parameter; a bundle struct would just rename them
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one fact per parameter; a bundle struct would just rename them"
+)]
 pub(super) fn register_method(
     compiler: &mut Compiler,
     owner: ClassId,

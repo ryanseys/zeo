@@ -25,7 +25,10 @@
 
 // Shared with `bless`, `checks` and `api`, so each binary uses a part of
 // each: the reader here, the writer there.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod case;
 #[path = "../common/mod.rs"]
 mod common;
@@ -33,10 +36,16 @@ mod compare;
 mod golden;
 mod legs;
 mod normalize;
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod oracle;
 mod run;
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod suites;
 
 use std::path::Path;

@@ -1474,7 +1474,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
 /// `recv&.name(...)`: the nil-test diamond. A nil receiver answers nil
 /// without evaluating the arguments or building the block (ruby's rule,
 /// oracle-verified) -- so the whole argument build sits in the call arm.
-#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
+#[expect(clippy::too_many_arguments, reason = "one lowering fact per parameter")]
 fn safe_nav_call(
     fx: &mut Fx,
     id: NodeId,
@@ -1926,7 +1926,7 @@ fn nil_p_call(fx: &mut Fx, id: NodeId, recv: NodeId) -> CResult<Option<Operand>>
 
 /// A keyword-carrying send: the all-required direct-fill shape first,
 /// then the kw/splat entries with the block on its usual channel.
-#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
+#[expect(clippy::too_many_arguments, reason = "one lowering fact per parameter")]
 fn keyword_call(
     fx: &mut Fx,
     id: NodeId,
@@ -2145,7 +2145,6 @@ pub(crate) fn pure_literal(parts: &[StrPart]) -> Option<String> {
 /// INHERITED entry and a by-name capture would recurse forever through
 /// the later override (rspec-support's `NEW_MUTEX_METHOD =
 /// Mutex.method(:new)` / `def self.new = NEW_MUTEX_METHOD.call` pair).
-#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 fn method_capture_intrinsic(
     fx: &mut Fx,
     receiver: Option<NodeId>,
@@ -2744,7 +2743,7 @@ pub(crate) fn binding_value_with_self(
 /// stack replaced it -- only the runtime can say, so both candidates go);
 /// a literal `define_method(:m){}` is an ordinary `Module#define_method`
 /// send, which raises `NoMethodError` when `self` is no Module.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the DefMethod node's own fields, each deciding a different part of the install"
 )]

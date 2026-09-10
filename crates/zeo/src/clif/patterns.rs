@@ -412,7 +412,7 @@ fn range_value(
 
 /// `[pre.., *rest, post..]` -- `#deconstruct`, a length check, then the
 /// element sub-patterns.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "an array pattern's parts (constant guard, pre, rest, post) each carry their own meaning; bundling them into a struct would only move the list"
 )]
@@ -472,7 +472,7 @@ fn array_pattern(
 
 /// `[*, mid.., *]` -- `mid` must match SOME contiguous window, searched
 /// left to right, first hit winning. Inherently a runtime loop.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "a find pattern's four independent parts (constant guard, both splat names, the window) each carry their own meaning; bundling them into a struct would only move the list"
 )]

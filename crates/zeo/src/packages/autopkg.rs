@@ -216,7 +216,10 @@ pub(crate) fn candidates(hir: &crate::hir::Hir) -> Vec<(Candidate, Vec<String>, 
 /// `Hit` is much the larger variant, and that is fine here: a `Consult` is
 /// produced, matched and dropped one at a time -- none is ever stored or
 /// collected, so the unused bytes of a `Miss` never accumulate.
-#[allow(clippy::large_enum_variant)] // built once per definition; never stored in bulk
+#[expect(
+    clippy::large_enum_variant,
+    reason = "built once per definition; never stored in bulk"
+)]
 enum Consult {
     /// A valid artifact, its parsed manifest, and the source files its
     /// cache entry vouches for (re-read, for the program manifest).

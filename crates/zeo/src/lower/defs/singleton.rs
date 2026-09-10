@@ -79,7 +79,6 @@ fn desugar_singleton_items(
     // A short-lived local `Vec<Item>` built and consumed in this one function;
     // boxing the wide `Def` variant to shave the enum would trade a real
     // allocation per def for a lint that doesn't matter at this lifetime.
-    #[allow(clippy::large_enum_variant)] // built once per definition; never stored in bulk
     enum Item {
         Def(String, Params, Vec<NodeId>, crate::hir::Visibility),
         /// `def self.x` in a `class << obj` body -- see its emission arm.

@@ -279,23 +279,38 @@ pub fn blocking_checkpoint() -> Result<(), Signal> {
 // macOS than on Linux, and `c_char` is signed on macOS and x86-64 but not on
 // aarch64 Linux, so a bare `as` is a conversion on one platform and an
 // "unnecessary cast" clippy error on the other. These convert on both.
-#[allow(clippy::unnecessary_cast)]
+#[allow(
+    clippy::unnecessary_cast,
+    reason = "a conversion on one target and a no-op on the other"
+)]
 pub fn c_char_u8(c: libc::c_char) -> u8 {
     c as u8
 }
-#[allow(clippy::unnecessary_cast)]
+#[allow(
+    clippy::unnecessary_cast,
+    reason = "a conversion on one target and a no-op on the other"
+)]
 pub(crate) fn mode_u32(mode: libc::mode_t) -> u32 {
     mode as u32
 }
-#[allow(clippy::unnecessary_cast)]
+#[allow(
+    clippy::unnecessary_cast,
+    reason = "a conversion on one target and a no-op on the other"
+)]
 pub(crate) fn dev_u64(dev: libc::dev_t) -> u64 {
     dev as u64
 }
-#[allow(clippy::unnecessary_cast)]
+#[allow(
+    clippy::unnecessary_cast,
+    reason = "a conversion on one target and a no-op on the other"
+)]
 pub(crate) fn blksize_i64(blksize: libc::blksize_t) -> i64 {
     blksize as i64
 }
-#[allow(clippy::unnecessary_cast)]
+#[allow(
+    clippy::unnecessary_cast,
+    reason = "a conversion on one target and a no-op on the other"
+)]
 pub fn usec_i64(usec: libc::suseconds_t) -> i64 {
     usec as i64
 }
@@ -378,7 +393,7 @@ macro_rules! ruby_class {
         // A caller may pass a mangled, deliberately non-CamelCase Rust
         // name for a nested class; a top-level class's plain name
         // already is CamelCase.
-        #[allow(non_camel_case_types)]
+        #[allow(non_camel_case_types, reason = "named after the ruby class, whose nested name is not CamelCase")]
         pub struct $name {
             /// `.freeze`'s per-object flag -- read through
             /// `RubyObject::is_frozen` and by the guard the emitter places

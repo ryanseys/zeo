@@ -381,7 +381,6 @@ struct OverlayMaps {
 /// answers "quiet". Nonzero falls back to asking the real question
 /// through capi. Rust-side readers keep their named accessors.
 #[unsafe(no_mangle)]
-#[allow(non_upper_case_globals)]
 pub static zeo_rt_gates: AtomicU16 = AtomicU16::new(0);
 use self::zeo_rt_gates as GATES;
 const GATE_OVERLAY: u16 = 1;
@@ -714,7 +713,6 @@ const _: () = assert!(
 /// Exported, because the emitted typed-direct-call guard reads its word
 /// inline: both the address and the mask are compile-time constants there.
 #[unsafe(no_mangle)]
-#[allow(non_upper_case_globals)]
 pub static zeo_rt_patched_bits: [AtomicU64; (PATCHED_BITS_IDS / 64) as usize] =
     [const { AtomicU64::new(0) }; (PATCHED_BITS_IDS / 64) as usize];
 use self::zeo_rt_patched_bits as PATCHED_BITS;

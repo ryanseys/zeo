@@ -155,10 +155,6 @@ fn seg_matches(pat: &str, name: &str, dotmatch: bool) -> bool {
     match_segment(&p, &n)
 }
 
-/// Walk `dir` against the remaining glob segments, pushing every match onto
-/// `out`. `prefix` is the path built so far (as the caller wants it echoed
-/// back -- glob answers paths relative to the same root the pattern was).
-#[allow(clippy::too_many_arguments)]
 /// One pattern segment, plus the literal text that precedes it.
 ///
 /// `Dir["./*.c"]` answers `["./probe.c"]` -- ruby keeps a `.` or a doubled
@@ -170,6 +166,9 @@ struct Seg<'a> {
     pat: &'a str,
 }
 
+/// Walk `dir` against the remaining glob segments, pushing every match onto
+/// `out`. `prefix` is the path built so far (as the caller wants it echoed
+/// back -- glob answers paths relative to the same root the pattern was).
 fn glob_walk(
     base: &str,
     prefix: &str,

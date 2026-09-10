@@ -39,7 +39,10 @@
 
 // The corpus file format: the recorded answer under `__END__`.
 #[path = "../tests/corpus/case.rs"]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared through `#[path]`; each binary uses a part of it"
+)]
 mod case;
 
 use std::cell::OnceCell;

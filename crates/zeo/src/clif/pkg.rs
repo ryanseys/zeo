@@ -404,8 +404,10 @@ fn m_meta_row(r: &MetaRowSpec) -> MMetaRow {
 /// The host side: append each merged manifest's rows to this program's
 /// own, declaring every named symbol as an import. A no-op when nothing
 /// merges, which keeps ordinary compiles byte-identical.
-#[allow(clippy::too_many_arguments)] // one spec vec per desc table; a struct
-// would only relocate the argument list into emit_program.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one spec vec per desc table; a struct would only relocate the argument list into emit_program"
+)]
 pub(crate) fn merge_rows(
     em: &mut Emitter,
     analyzed: &Analyzed,

@@ -17,7 +17,7 @@ use std::collections::HashMap;
 /// The one module the emitter writes into. Both arms take the identical
 /// lowering -- the enum (not two emitters) is what makes "JIT runs the
 /// same code AOT links" a structural fact.
-#[allow(
+#[expect(
     clippy::large_enum_variant,
     reason = "one ClifModule exists per compile; boxing would buy nothing"
 )]

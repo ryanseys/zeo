@@ -55,7 +55,7 @@ pub struct EvalSpec<'a> {
 /// call into `entry`; `zeo::eval` keeps both for the process's life, as
 /// CRuby keeps an eval's iseq.
 pub struct EvalProgram {
-    #[allow(dead_code, reason = "owns the code memory `entry` points into")]
+    #[expect(dead_code, reason = "owns the code memory `entry` points into")]
     module: JITModule,
     pub entry: *const u8,
     /// Interns the snippet's symbols and initialises its cache slots --

@@ -433,7 +433,7 @@ ruby_module! {
             |v: Option<&RubyValue>| matches!(v, Some(x) if !x.is_nil() && !matches!(x, RubyValue::Bool(false)));
         let nochdir = if truthy(arg1) { 1 } else { 0 };
         let noclose = if truthy(arg2) { 1 } else { 0 };
-        #[allow(deprecated)]
+        #[expect(deprecated, reason = "`daemon` is the call ruby's Process.daemon names")]
         let ret = unsafe { libc::daemon(nochdir, noclose) };
         if ret != 0 {
             return Err(errno_fail("daemon"));

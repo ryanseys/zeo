@@ -1070,7 +1070,10 @@ impl SumAcc {
     }
     // Not `std::ops::Add`: this add is fallible (a `Generic` leg dispatches
     // a user `+`) and consumes self by design.
-    #[allow(clippy::should_implement_trait)]
+    #[expect(
+        clippy::should_implement_trait,
+        reason = "this add is fallible and consumes self"
+    )]
     pub fn add(self, v: RubyValue) -> Result<SumAcc, Signal> {
         Ok(match (self, v) {
             (SumAcc::Int(a), RubyValue::Int(b)) => match a.checked_add(b) {

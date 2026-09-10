@@ -404,7 +404,7 @@ impl Future {
     }
 }
 
-#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
+#[expect(clippy::too_many_arguments, reason = "one lowering fact per parameter")]
 fn surviving(
     compiler: &Compiler,
     class: ClassId,

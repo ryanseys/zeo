@@ -564,7 +564,6 @@ fn define_plain_trampoline(
 
 /// An `attr_reader`/`attr_writer` trampoline -- the slot access IS the
 /// method (no body fn).
-#[allow(clippy::too_many_arguments)] // one lowering fact per parameter
 pub(crate) fn define_accessor(
     em: &mut Emitter,
     tramp: FuncId,

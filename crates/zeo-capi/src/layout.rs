@@ -14,7 +14,7 @@
 //! Nothing here is public API: [`super::view`] fills these and
 //! [`super::handles`] writes the flag constants into an object.
 
-#![allow(non_camel_case_types)]
+#![allow(non_camel_case_types, reason = "the C type names are the ABI spelling")]
 
 use std::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 
@@ -302,7 +302,9 @@ mod tests {
             let (_, want) = facts::SIZES
                 .iter()
                 .find(|(name, _)| *name == c)
-                .unwrap_or_else(|| panic!("{c} was not measured; run `cargo xtask check-c-headers layout`"));
+                .unwrap_or_else(|| {
+                    panic!("{c} was not measured; run `cargo xtask check-c-headers layout`")
+                });
             assert_eq!(have, *want, "sizeof({c})");
             self.seen.insert((c, ""));
         }
