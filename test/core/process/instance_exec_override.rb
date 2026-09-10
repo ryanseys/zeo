@@ -2,26 +2,17 @@
 # compile-time intrinsic. Ordinary method dispatch resolves to the
 # user's method instead of the lift.
 #
-# Before the override check landed in iexec_rewrite_call /
-# ieval_rewrite_call, Spinel silently bypassed user overrides by
-# rewriting the call to __sp_iexec_<N> at the analyze level. CRuby
-# would have dispatched to the user's method; Spinel did not.
-#
-# A fuller approach (registering BasicObject and routing every
-# intrinsic through method-resolution from the start) would
-# rearchitect the class table. The lighter version here -- a
-# cls_find_method check that bails out of the rewrite when the
-# user has their own method -- gets the correctness win without
-# the rearchitecture risk.
+# The hazard the program guards is a compiler that rewrites the call site
+# before it looks for a user method: the override is then silently bypassed
+# and the block runs against the receiver anyway.
 
 class Wrap
   def initialize
     @marker = 0
   end
 
-  # User-defined instance_exec on Wrap. Spinel should NOT lift the
-  # block at the call site below; it should dispatch to this method
-  # instead, matching CRuby.
+  # User-defined instance_exec on Wrap. The call site below must reach THIS
+  # method, not the compile-time lift.
   def instance_exec(x, &b)
     @marker = x + 100
     @marker
@@ -58,11 +49,9 @@ end
 
 w3 = Wrap2.new
 w4 = Wrap2.new
-# Block body is a no-op -- the user method ignores it. We use a noop
-# rather than `@tag = "intrinsic-ran"` because the latter would force
-# Spinel to compile the block as a proc literal even though it's
-# never invoked, and proc compilation of a toplevel-ivar string
-# assignment trips an unrelated proc-return-type issue.
+# The block body is a no-op, since the user method ignores it. Writing an
+# ivar here instead would compile the block as a proc that never runs, which
+# is a different thing to test.
 w3.instance_eval { 1 }   # block ignored by user method
 puts w3.tag           # user-instance-eval-ran
 

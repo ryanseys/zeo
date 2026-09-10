@@ -8,8 +8,8 @@ v2 = h_ss.delete(:x)
 puts v2
 puts h_ss.size
 
-# delete missing key on sym_int_hash returns 0 (spinel int default,
-# diverges from CRuby's nil but matches existing has_key fallback)
+# Deleting a key the hash does not hold answers nil, whatever the value type
+# of the keys it does hold.
 h2 = { a: 1 }
 puts h2.delete(:b)
 puts h2.size

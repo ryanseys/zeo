@@ -1,7 +1,6 @@
-# Hash#each_key / #each_value with a block across every typed-hash
-# variant spinel offers. Keys and values are yielded in insertion
-# order. Poly (boxed-object) slots are printed via to_s so array
-# payloads render on a single line.
+# Hash#each_key and #each_value with a block, over hashes of every key and
+# value type. Keys and values come out in insertion order. A value that is
+# itself a container prints through to_s, so it renders on one line.
 
 # sym_int_hash
 h_sym_int = { a: 1, b: 2, c: 3 }

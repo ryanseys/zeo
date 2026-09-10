@@ -1,8 +1,6 @@
-# #546. Sibling of #510 -- merge / dup / delete dispatch was
-# missing on sym_int_hash (Symbol-key, Int-value). #510 fixed
-# the same surface for sym_str_hash and sym_poly_hash. Spinel
-# emitted `cannot resolve call to 'merge' on sym_int_hash
-# (emitting 0)` and the call no-op'd.
+# merge, dup and delete on a Symbol-keyed, Integer-valued hash. The sibling
+# programs beside this one cover the same surface for String and mixed
+# values.
 #
 # Trigger in roundhouse: `ActionView::ViewHelpers.link_to`
 # builds an HTML-attrs hash via `.merge`; when the value type

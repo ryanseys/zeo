@@ -1,11 +1,9 @@
-# trap / Signal.trap / ::Signal.trap compile to no-ops at every shape;
-# Spinel has no signal-handler runtime, so the block body (if any)
-# never fires. Expression position returns "DEFAULT" -- CRuby's value
-# for any signal that was never previously trapped.
+# trap / Signal.trap / ::Signal.trap at every shape. No signal is delivered,
+# so no handler body runs; in expression position the call answers "DEFAULT",
+# the value for a signal that was never trapped before.
 #
-# Each section uses a distinct signal name so no signal's state is
-# observed twice (CRuby would return the prior handler on the second
-# touch, which Spinel does not yet model).
+# Each section uses a distinct signal name, so no signal's state is observed
+# twice: a second trap of the same name answers the handler set by the first.
 
 # Stmt position, implicit-self.
 trap("INT") { puts "handler" }

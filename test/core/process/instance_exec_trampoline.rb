@@ -9,32 +9,13 @@
 #   end
 #   b.configure(10) { |n| add(n) }   # n == 10 inside the spliced block
 #
-# Same AOT compromise as instance_eval: detected at compile time by
-# shape match (def m(p1..pN, &b); instance_exec(p1..pN, &b); end),
-# inlined at the call site with self rebound to the receiver and block
-# params bound to fresh suffixed C locals carrying the call-site arg
-# values. A non-trampoline shape falls through to ordinary dispatch; an
-# arity mismatch between block params and forwarded args is a hard error.
+# Self is rebound to the receiver for the length of the block, so a bare call
+# inside it reaches the receiver's own methods, and an arity mismatch between
+# the block's parameters and the forwarded arguments raises.
 #
-# Limitations exercised by the asymmetry note in section A below:
-#   - Direct `recv.instance_exec(args) { ... }` (outside a trampoline
-#     method) lifts to a static function and cannot capture outer
-#     locals (a follow-up adds pointer capture on the direct path).
-#   - Trampoline body must forward params 1:1, no literals / ivars /
-#     splat (relaxed in follow-ups).
-#   - Value-typed receivers crash on the pointer cast in the splice
-#     today; multi-instance classes (which Spinel keeps heap-allocated)
-#     are the workaround until the TODO in
-#     compile_instance_exec_inlined_stmt is fixed.
-
-# A. Asymmetry note
-#
-# Outer-local capture works on THIS path (trampoline) because the
-# block body is spliced at the call site, so outer locals are in
-# scope. The direct form `obj.instance_exec(args) { ... }` does NOT
-# capture outer locals -- its lifted static function cannot see the
-# caller's locals. Use the trampoline form when you need capture; a
-# follow-up closes this gap on the direct path.
+# Section 3 below is the one worth keeping in mind: an outer local is still
+# in scope inside the block, so the block reads and writes the caller's
+# variables as well as the receiver's state.
 
 # 1. Single fixed arg, statement form: forwards the call-site arg
 #    into the block param, then bare method calls dispatch against

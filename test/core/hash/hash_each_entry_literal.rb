@@ -1,7 +1,7 @@
 p({}.each_entry { |e| e })
 
 p({ a: 1, b: 2 }.each_entry { |e| e })    # Ruby: {a: 1, b: 2}
-p({ "a" => 1 }.each_entry { |e| e })      # Ruby: {"a" => 1}     Spinel: no output
+p({ "a" => 1 }.each_entry { |e| e })      # Ruby: {"a" => 1}
 
 h = { a: 1, b: 2 }
 o = []; h.each_entry { |e| o << e }; p o   # => [[:a, 1], [:b, 2]]

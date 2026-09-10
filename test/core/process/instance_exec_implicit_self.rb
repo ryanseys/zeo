@@ -3,17 +3,12 @@
 #     instance_exec(10) { |n| add(n) }   # no explicit receiver
 #   end
 #
-# CRuby resolves this to `self.instance_exec(10) { |n| add(n) }`.
-# Spinel's analyze pass picks up @current_class_idx for the
-# receiver type when both:
-#   - The call has no explicit receiver
-#   - The block is a literal `{ ... }` (not `&proc_var`)
+# This resolves to `self.instance_exec(10) { |n| add(n) }`, so the block runs
+# against the receiver and `add` reaches the instance method.
 #
-# Distinguishing from the trampoline-body case is critical: a
-# trampoline body's `instance_exec(args, &b)` has the &b arg
-# stored in @nd_block as a BlockArgumentNode (not a literal
-# BlockNode), so the analyze rewrite skips it and leaves the
-# call site for codegen's trampoline-pattern detector.
+# The shape that must NOT be treated the same way is a trampoline body, whose
+# `instance_exec(args, &b)` passes a block ARGUMENT rather than a literal
+# block. `instance_exec_trampoline.rb` covers that one.
 
 class Builder
   def initialize

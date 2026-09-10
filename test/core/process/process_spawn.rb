@@ -16,11 +16,9 @@
 #   Process::Status#pid         -> pid
 #
 # Process::Status has no public constructor in CRuby: the only way to
-# obtain one is Process.waitpid2 on a real subprocess. Both CRuby and
-# spinel must produce the same predicate answers here; the boxed-comparison
-# path (status.exitstatus == 0) is exercised by other tests, this one
-# focuses on the four predicates that the bash tool's signal-check path
-# actually uses (exited? / success? / signaled? / pid).
+# obtain one is Process.waitpid2 on a real subprocess. This program checks
+# the four predicates a shell-out path reads -- exited?, success?, signaled?
+# and pid; the boxed comparison `status.exitstatus == 0` has its own tests.
 
 # 1) Normal exit, success path. /bin/echo exits 0.
 r, w = IO.pipe
@@ -32,8 +30,7 @@ puts out == "hello"               # the spawned process actually ran
 puts status.exited?               # exited normally
 puts status.success?              # exited 0
 puts status.signaled? == false    # not killed by signal
-# status.pid is tested in (4) via the destructure, not via the boxed
-# == path that the spinel poly-comparison route doesn't handle yet.
+# status.pid is read in (4) through the destructure.
 
 # 2) Nonexistent command -> Errno::ENOENT.
 ok = false

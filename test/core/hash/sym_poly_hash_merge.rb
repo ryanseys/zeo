@@ -1,9 +1,6 @@
-# `Hash#merge` on a Symbol-keyed hash with heterogeneous values
-# (Symbol => {Integer | String | Boolean | nil}) -- spinel
-# represents this as `sym_poly_hash`. Before this change spinel had
-# no dispatcher for non-mutating `merge` on sym_poly_hash, so the
-# call lowered to an empty hash and every subsequent lookup returned
-# nil.
+# `Hash#merge` on a Symbol-keyed hash whose values are of mixed type
+# (Integer, String, Boolean and nil together). The merge is non-mutating, so
+# the receiver keeps its own pairs and the result carries both sets.
 #
 # The poly-receiver `[]` arm covers the case where a local's static
 # type was widened to poly (e.g. by an `is_a?` branch) even though
@@ -24,13 +21,12 @@ puts m[:e]              # 16
 # 2. Original receiver is unchanged.
 puts DEFAULTS[:a]       # 1
 
-# 3. Symbol-key `[]` lookup on a poly-typed local. The is_a?(String)
-#    branch widens `opt`s static type to poly; the merge-result is
-#    boxed back into the same slot. spinel must dispatch the
-#    subsequent `opt[:k]` reads via the poly builtin path.
+# 3. Symbol-key `[]` lookup on a local the compiler cannot give one type:
+#    the `is_a?(String)` branch reassigns it, so the reads after the merge
+#    have to go through the general path.
 def lookup(opt)
-  # Mixed-value override hash so spinel infers sym_poly_hash for the
-  # `is_a?(String)` boxed branch (and the explicit-Hash call site too).
+  # A mixed-value override hash, so the branch and the call site disagree
+  # about the value type.
   opt = { a: 7, c: false } if opt.is_a?(String)
   merged = DEFAULTS.merge(opt)
   return merged[:a], merged[:b], merged[:e]

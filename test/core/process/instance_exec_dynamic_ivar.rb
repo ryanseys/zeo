@@ -2,7 +2,7 @@
 # must get a struct slot on the receiver's class. collect_ivars only
 # scans method bodies, so the lift registers the slot (typed from the
 # assignment). No method here references @w or @s -- the only writes are
-# inside the blocks. Box has a subclass so Spinel keeps it heap.
+# inside the blocks. Box is subclassed, so the receiver is a heap object.
 class Box
   def initialize
     @v = 1

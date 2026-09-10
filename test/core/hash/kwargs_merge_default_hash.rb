@@ -24,8 +24,8 @@ c2 = configure
 puts c2[:timeout]                 # 30
 puts c2[:host]                    # localhost
 
-# The same idiom inside a constructor, the shape the spinelgems
-# harvest cluster (rack-health, stream-chat-ruby, ...) uses.
+# The same idiom inside a constructor, which is how a gem usually spells an
+# options hash with defaults.
 class Client
   def initialize(opts = {})
     @config = DEFAULTS.merge(opts)

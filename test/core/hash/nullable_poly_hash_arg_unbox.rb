@@ -1,24 +1,11 @@
-# When a `sym_poly_hash?` (or `str_poly_hash?`) survives a nil-
-# guard and its `[]` value flows into a typed-param call site,
-# analyze's cached infer for `recv[k]` falls through to int
-# (the leaf-type dispatch rejects the `?`-suffixed recv name), so
-# downstream the call site sees `at == "int"` and skips the
-# poly→int unbox. The actual C emit is sp_<*PolyHash>_get(...)
-# returning sp_RbVal — the call then passes sp_RbVal into a
-# mrb_int slot.
+# A Hash that may be nil, past its nil-guard, whose `[]` value is then passed
+# straight into a method that expects a particular type. The value has to
+# arrive as itself: the guard tells you the hash is there, and the read has
+# to hand over a Symbol rather than whatever a mixed-value hash defaults to.
 #
-# Codegen-side fix: expr_emits_poly_rb_val recognizes the shape
-# at emit time (independent of analyze cache) and the unbox
-# fires in compile_expr_for_expected_type and the poly-dispatch
-# arm.
-#
-# Real repro lives in roundhouse spinel-blog main.rb:
-#   matched = Router.match(...)
-#   return if matched.nil?           # matched still : sym_poly_hash?
-#   controller = Main.instantiate_controller(matched[:controller])
-#   controller.process_action(matched[:action])
-# Both `instantiate_controller` (Symbol param) and the poly
-# dispatch of `process_action` (Symbol param) caught the bug.
+# The idiom is a router: `matched = Router.match(...)`, `return if
+# matched.nil?`, then `matched[:controller]` and `matched[:action]` into two
+# methods that each take a Symbol.
 
 module Counter
   def self.double(n)

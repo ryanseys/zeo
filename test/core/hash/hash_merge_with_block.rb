@@ -1,6 +1,6 @@
-# Hash#merge with a conflict-resolution block. For colliding keys
-# the block sees (key, this-value, other-value); spinel's int
-# variant supports it.
+# Hash#merge with a conflict-resolution block. For a colliding key the block
+# is called with (key, this-value, other-value) and its answer is the value
+# that lands in the result.
 
 h1 = {a: 1, b: 2}
 h2 = {b: 99, c: 3}

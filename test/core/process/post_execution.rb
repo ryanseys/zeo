@@ -1,8 +1,6 @@
 # PostExecutionNode -- `END { ... }`.
 #
-# CRuby runs END blocks at program exit in REVERSE order of
-# registration. Spinel emits each END body as a static C function
-# and registers it via atexit() during main() startup.
+# END blocks run at program exit, in REVERSE order of registration.
 
 puts "middle"
 

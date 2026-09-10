@@ -1,6 +1,5 @@
-# Issue #738 (partial -- value? / has_value?). Hash#value?(v) returns
-# true if any value in the hash equals v, else false. spinel used to
-# fall through to the unresolved-call warning.
+# Hash#value? and its alias has_value? answer true when any value in the hash
+# equals the argument, across every value type a hash can hold.
 
 # sym_int_hash
 h = { a: 1, b: 2 }

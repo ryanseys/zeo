@@ -1,9 +1,7 @@
-# #560 (Sam Ruby). poly_poly_hash variant gained fetch + dup
-# dispatch arms (mirror of #551's str_poly_hash / sym_poly_hash
-# work). When two writers to the same ivar use keys of
-# incompatible inferred types (int-defaulted param + sym
-# literal), spinel widens the storage to poly_poly_hash; the
-# read side then needs the dispatch cells to lower correctly.
+# fetch and dup on a hash whose keys AND values are both of mixed type. Two
+# writers store into the same ivar under keys the compiler cannot give one
+# type -- an Integer-defaulted parameter and a Symbol literal -- so the reads
+# afterwards have to go through the general path.
 
 module M
   @h = {}

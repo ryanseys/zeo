@@ -1,12 +1,9 @@
-# A hash-typed slot holding nil is a NULL pointer, and boxing it into a poly
-# wrapped that NULL in a truthy SP_TAG_OBJ instead of answering nil. So
-# `h.nil?` was false for a hash that WAS nil, `unless h` fell through, and the
-# first read of it dereferenced NULL -- a segfault with a silent-corruption
-# stage in front of it. (matz/spinel#4134, reduced from #4132)
+# An omitted optional parameter whose declared shape is a Hash is nil, and it
+# has to answer as nil however it is read: `h.nil?` is true, `unless h` takes
+# the branch, and nothing dereferences it.
 #
-# What makes the slot nil is an omitted optional parameter, which is why an
-# explicit `nil` at the same call site behaved differently from omitting it:
-# both paths have to box the same NULL.
+# Omitting the argument and passing an explicit `nil` are the same thing, so
+# the two call sites answer alike.
 class Req
   def initialize(method, path, initheader = nil)
     @method = method
