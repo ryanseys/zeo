@@ -1,5 +1,4 @@
-# Ported from spinel's ffi_callback trampoline to the real ffi gem API: a
-# `callback` type declares a C function-pointer type, and a Ruby proc passed
+# A `callback` type declares a C function-pointer type, and a Ruby proc passed
 # to an argument of that type becomes a C-callable trampoline -- so Ruby code
 # can be handed to qsort's comparator and bsearch's. Exercising both qsort
 # (`void *base`) and bsearch (`const void *base`) keeps the original's

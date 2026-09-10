@@ -1,6 +1,5 @@
-# Ported from spinel's bundled sp_net.c FFI surface. sp_net_shell_capture is
-# spinel-private (Kernel backticks are the Ruby spelling of the same thing);
-# getpid stays a real FFI binding through the ffi gem.
+# Two ways to reach the operating system side by side: Kernel backticks for
+# a shell capture, and getpid as a real FFI binding through the ffi gem.
 #
 # Cross-platform-deterministic smoke: shell capture + getpid produce the
 # same output on every POSIX target, so the .expected holds for Linux +

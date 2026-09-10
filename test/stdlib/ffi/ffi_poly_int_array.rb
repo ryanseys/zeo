@@ -1,8 +1,8 @@
 # An int array whose static type poly-collapsed (a param union widened it)
 # must still marshal its element data at an FFI array boundary, and a poly
-# value holding a non-array must raise instead of marshalling NULL. Ported
-# from spinel's :int_array spec to the real ffi gem API: the array's elements
-# land in an FFI::MemoryPointer via write_array_of_int64, and the observer is
+# value holding a non-array must raise instead of marshalling NULL. The
+# array's elements land in an FFI::MemoryPointer via write_array_of_int64,
+# and the observer is
 # read_string over the marshalled bytes -- int64 65 is "A\0..." little-endian,
 # so a correct marshal reads back "A".
 require "ffi"

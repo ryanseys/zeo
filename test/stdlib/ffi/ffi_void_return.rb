@@ -1,5 +1,4 @@
-# Void-returning FFI functions through the real ffi gem API (ported from
-# spinel's ffi_func).
+# Void-returning FFI functions through the ffi gem.
 require "ffi"
 
 module LibC

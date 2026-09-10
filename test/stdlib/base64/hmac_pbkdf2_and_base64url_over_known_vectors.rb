@@ -1,6 +1,5 @@
-# Ported from spinel's bundled sp_crypto.c FFI surface. Those C symbols are
-# spinel-private, so the port keeps the same deterministic vectors through
-# Ruby's own primitives: HMAC-SHA256 built from Digest::SHA256 (RFC 2104
+# Deterministic crypto vectors through Ruby's own primitives: HMAC-SHA256
+# built from Digest::SHA256 (RFC 2104
 # construction), Base64URL via the base64 stdlib, PBKDF2 with one iteration
 # (HMAC(password, salt || 0x00000001)), and core Random bytes for the random
 # leg.

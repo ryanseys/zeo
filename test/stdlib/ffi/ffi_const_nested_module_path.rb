@@ -1,9 +1,8 @@
 # A constant in an FFI-library module referenced through a NESTED constant
 # path (Outer::CMath::MODE) must still resolve parent-qualified by the
 # module's leaf name -- a leaf-keyed plain-constant table would otherwise
-# claim the reference for a same-leaf constant in another module. Ported from
-# spinel's ffi_const to the real ffi gem API: the constant is a plain Ruby
-# constant on the FFI::Library module.
+# claim the reference for a same-leaf constant in another module. The
+# constant is an ordinary Ruby constant on the FFI::Library module.
 require "ffi"
 
 module Verbs

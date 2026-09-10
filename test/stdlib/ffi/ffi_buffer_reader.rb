@@ -1,5 +1,4 @@
-# Ported from spinel's ffi_buffer/ffi_read_* readers to the real ffi gem API:
-# an FFI::MemoryPointer allocation is zero-filled, so reading it back through
+# An FFI::MemoryPointer allocation is zero-filled, so reading it back through
 # every reader kind at every offset proves the storage + read-pointer
 # arithmetic line up.
 require "ffi"

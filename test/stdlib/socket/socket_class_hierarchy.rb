@@ -1,7 +1,7 @@
 # The socket classes sit in CRuby's chain, and a handle answers #is_a? from it.
 require "socket"
-# first(5) stops before IO's own mixins: Spinel's IO does not carry
-# File::Constants / Enumerable yet, which is a separate gap.
+# first(5) stops at IO, so the list does not depend on which modules IO
+# itself mixes in.
 p TCPServer.ancestors.first(5)
 p TCPSocket.superclass
 p UDPSocket.superclass

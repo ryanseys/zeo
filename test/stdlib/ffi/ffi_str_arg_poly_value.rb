@@ -1,8 +1,7 @@
 # An FFI :string arg call site receiving a poly-typed value (an ivar widened
 # by a mixed-type initializer) must coerce the boxed string rather than
-# passing the box itself. Ported from spinel's ffi_func (#502) to the real
-# ffi gem API; libc's atoi(const char *) exercises the :string coercion
-# through a real, always-available external function.
+# passing whatever wrapper it arrived in. libc's atoi(const char *) is the
+# external function, so the coercion is exercised against a real one.
 require "ffi"
 
 class Sink

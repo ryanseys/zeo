@@ -1,6 +1,5 @@
-# Ported from spinel's ffi_const to the real ffi gem API: the gem has no
-# ffi_const directive -- C-side flag values are plain Ruby constants on the
-# library module, combinable with the usual Integer bit ops.
+# C-side flag values are ordinary Ruby constants on the library module, and
+# they combine with the usual Integer bit operations.
 require "ffi"
 
 module Flags

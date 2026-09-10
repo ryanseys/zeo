@@ -1,8 +1,7 @@
 # A foreign pointer (malloc'd C memory) kept alive in an ivar must not be
 # traced by the GC as a heap object. Heavy allocation churns GC cycles that
 # scan the holder; a collector that followed the foreign pointer would crash.
-# Ported from spinel's ffi_buffer to the real ffi gem API: the foreign
-# address comes from libc malloc through attach_function.
+# The foreign address comes from libc malloc through attach_function.
 require "ffi"
 
 module F

@@ -3,10 +3,8 @@
 # loaded the wrong width would fold in its neighbours. Little-endian target
 # (x86_64 / arm64), which is what the FFI layer assumes.
 #
-# Ported from spinel's ffi_read_write_widths, whose `ffi_buffer` /
-# `ffi_read_u32` / `ffi_write_i16` class macros are compile-time spinel DSL
-# with no CRuby analog. The real ffi gem spells the same accesses as
-# FFI::MemoryPointer#put_*/#get_* at an offset, which is what this checks.
+# The accesses are spelled FFI::MemoryPointer#put_* and #get_* at a byte
+# offset, one pair per width.
 require "ffi"
 
 buf = FFI::MemoryPointer.new(:uint8, 32)

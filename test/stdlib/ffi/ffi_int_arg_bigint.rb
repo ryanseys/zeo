@@ -1,7 +1,6 @@
 # An FFI :int argument fed by an integer computed through repeated
 # multiplication (a value a widening analysis could have promoted) still
-# marshals as a plain C int. Ported from spinel's ffi_func to the real ffi
-# gem API.
+# marshals as a plain C int.
 require "ffi"
 
 module M

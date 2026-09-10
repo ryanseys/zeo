@@ -33,9 +33,7 @@ p e.strftime("%Y-%m-%d %H:%M:%S %z")
 p e.iso8601
 p Time.new(2000, 1, 1, 12, 0, 0, "+09:00").iso8601
 
-# a fixed-offset time has no zone NAME, so %Z is empty. (CRuby's Time#zone
-# returns nil for this kind where spinel returns ""; making #zone nilable is a
-# return-type change, not a formatter one, so it is left alone here.)
+# a fixed-offset time has no zone NAME, so %Z is empty.
 p t.strftime("%Z")
 
 # the UTC and host-local kinds are unchanged

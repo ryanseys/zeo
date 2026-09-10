@@ -1,6 +1,4 @@
-# i1011, ported to the real ffi gem API. The original exercised spinel's
-# ffi_cflags compile-time string folding (__dir__, File.expand_path,
-# String#+), which has no gem analogue; the surviving intent is the strlen
+# The shape under test is the strlen
 # binding those flags decorated.
 require "ffi"
 

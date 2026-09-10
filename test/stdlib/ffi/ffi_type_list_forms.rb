@@ -1,11 +1,7 @@
-# Imported from the spinel corpus at c55d9bdb.
 # An ffi type list may be written the way a real adapter writes a long one:
 # a constant, a repeated array, a word list, any of them frozen or
 # parenthesised. Every form names the same function as the plain literal.
-#
-# Ported from spinel's ffi_type_list_forms, whose `ffi_func` class macro is
-# compile-time spinel DSL with no CRuby analog. The real ffi gem spells it
-# `attach_function`, which takes the same argument-type array.
+
 require "ffi"
 
 module Demo

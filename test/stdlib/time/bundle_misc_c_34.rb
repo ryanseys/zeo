@@ -84,10 +84,10 @@ t_times_map_nested_array
 
 # === toplevel_ivar_array ===
 def t_toplevel_ivar_array
-  # Top-level instance variables: `@x` at script scope binds to the
-  # main object, the same as inside an instance method. Spinel currently
-  # emits `self->iv_x = ...` for ivar access but the script's top-level
-  # function has no `self` parameter, so the C compiler errors with
+  # Top-level instance variables: `@x` at script scope binds to the main
+  # object, the same way it does inside an instance method. So the top level
+  # has a self to hold them, which a compiler emitting a bare struct write
+  # would need too -- without one it fails with
   # `use of undeclared identifier 'self'`. The ivar read also falls
   # through type inference and gets defaulted to `int`, producing a
   # bogus "cannot resolve call to 'push' on int" warning before the

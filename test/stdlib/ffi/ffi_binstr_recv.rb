@@ -1,5 +1,4 @@
-# Ported from spinel's :binstr FFI return mode to the real ffi gem API: a
-# binary payload with embedded NULs survives a byte-count read
+# A binary payload with embedded NULs survives a byte-count read
 # (read_string(len)), where the C-string read (read_string with no length,
 # strlen-based) truncates at the first NUL -- fatal for binary protocols
 # (WebSocket frames carry 0x00). A plain strlen view reports length 1.

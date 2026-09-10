@@ -1,6 +1,5 @@
-# Ported from spinel's :binstr regression (matz/spinel#1466 / ac1e0d2c) to the
-# real ffi gem API: a binary payload's embedded NUL bytes must survive the FFI
-# boundary. The motivating case is a WebSocket frame: an inbound
+# A binary payload's embedded NUL bytes survive the FFI boundary. The
+# motivating case is a WebSocket frame: an inbound
 # (client->server) frame is masked, and an ActionCable "subscribe" payload is
 # >125 bytes, so the WS extended 2-byte length field is used -- its high byte
 # is 0x00 (lengths 126..255) at frame index 2. A strlen-based read

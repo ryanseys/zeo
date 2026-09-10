@@ -1,7 +1,7 @@
 # What a `require` answers, and where one may stand. Each line pins CRuby's
 # answer: true when this require is what loaded the library, false when it
 # was already there -- including `require "rational"`/"complex", the default
-# gems folded into core, which answer false. (Imported from spinel.)
+# gems folded into core, which answer false.
 r1 = require 'stringio'
 p r1
 p r1.class

@@ -1,8 +1,7 @@
 # A constant in an FFI-library module whose leaf name collides with a plain
 # constant in another module must resolve parent-qualified (a leaf-keyed
-# constant table would silently rebind the reference and its type). Ported
-# from spinel's ffi_const to the real ffi gem API: the constant is a plain
-# Ruby constant on the FFI::Library module.
+# constant table would silently rebind the reference and its type). The
+# constant is an ordinary Ruby constant on the FFI::Library module.
 require "ffi"
 
 module Verbs

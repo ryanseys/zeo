@@ -110,10 +110,9 @@ t_time_accessors
 
 # === time_iso8601_strftime ===
 def t_time_iso8601_strftime
-  # Issue #414. `Time#iso8601` and `Time#strftime` were unresolved on
-  # a Time receiver -- spinel emitted a `cannot resolve call to ...
-  # on time (emitting 0)` warning and the result fell back to int.
-  # Downstream `.length` / string concat then either cascaded more
+  # `Time#iso8601` and `Time#strftime` on a Time receiver answer Strings, so
+  # the `.length` and the concatenation after them work. A result that fell
+  # back to a number would either cascade more
   # (emitting 0) warnings or surfaced as a C-compile error at any
   # typed-string sink.
   #

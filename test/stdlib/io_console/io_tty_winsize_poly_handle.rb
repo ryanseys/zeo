@@ -7,9 +7,8 @@
 #
 # What is pinned is reachability, not any particular terminal geometry: the
 # test runs with stdout redirected to a file, so it must not depend on a tty
-# existing. winsize is only asserted to answer WITHOUT NoMethodError, because
-# a non-tty answer legitimately differs between the engines (CRuby raises
-# Errno::ENOTTY; Spinel reports zeroes from the ioctl).
+# existing. winsize is only asserted to answer WITHOUT NoMethodError: what a
+# non-tty answers is not part of what this checks.
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

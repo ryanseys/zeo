@@ -1,8 +1,8 @@
 # Monitor is a REENTRANT mutex, and that is the whole reason it exists: a
 # synchronized method calling another synchronized method of the same object
-# is the ordinary way to write one. Spinel aliased Monitor to Mutex, so the
-# inner acquire raised "deadlock; recursive locking" where CRuby just goes
-# deeper. A Mutex must still raise there, so reentrancy is per-object.
+# is the ordinary way to write one, so the inner acquire goes deeper rather
+# than raising "deadlock; recursive locking". A Mutex must still raise there,
+# which is why Monitor cannot simply be another name for Mutex.
 require "monitor"
 
 m = Monitor.new

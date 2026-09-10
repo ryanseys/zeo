@@ -1,5 +1,5 @@
-# put_*/get_* round-trips through the real ffi gem API (ported from spinel's
-# ffi_write_*/ffi_read_* DSL): each writer stores a value at a byte offset
+# put_* and get_* round trips through the ffi gem: each writer stores a value
+# at a byte offset
 # into a buffer and the matching reader recovers it, including a pointer slot
 # whose NULL reads back nil-equal.
 require "ffi"

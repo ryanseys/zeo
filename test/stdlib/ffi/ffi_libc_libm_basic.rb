@@ -1,6 +1,5 @@
-# Basic libc + libm bindings through the real ffi gem API (ported from
-# spinel's ffi_func): scalar doubles in/out, a string argument measured by
-# strlen, and a no-arg int return.
+# Basic libc and libm bindings through the ffi gem: scalar doubles in and
+# out, a string argument measured by strlen, and a no-arg int return.
 require "ffi"
 
 module LibM

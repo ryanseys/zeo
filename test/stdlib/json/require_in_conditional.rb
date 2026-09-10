@@ -1,6 +1,6 @@
-# A `require` is a compile-time directive in Spinel; one that survives into
-# codegen -- indented inside an `if`, a method body, or used in value position
-# -- is a runtime no-op rather than an "unsupported CallNode" hard error.
+# A `require` works wherever it is written: indented inside an `if`, inside a
+# method body where it runs when the method does, and in value position where
+# it answers whether it did the loading.
 
 if 1 > 0
   require "set"

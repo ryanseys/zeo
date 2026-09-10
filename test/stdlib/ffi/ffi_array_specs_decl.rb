@@ -1,6 +1,5 @@
-# Ported from spinel's :float_array/:int_array bulk-transfer specs (#474) to
-# the real ffi gem API: a Ruby array's numeric contents cross the FFI boundary
-# as a contiguous C buffer. write_array_of_* fills an FFI::MemoryPointer,
+# A Ruby array's numeric contents cross the FFI boundary as a contiguous C
+# buffer. write_array_of_* fills an FFI::MemoryPointer,
 # memcpy moves the raw bytes C-side, and read_array_of_* recovers the
 # elements -- the same bulk-transfer contract the original declared.
 require "ffi"

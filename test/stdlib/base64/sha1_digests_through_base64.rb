@@ -1,6 +1,4 @@
-# Ported from spinel's bundled sp_crypto.c SHA-1 FFI surface. Those C
-# symbols are spinel-private, so the port keeps the same deterministic
-# vectors through Digest::SHA1 + Base64.
+# SHA-1 through Digest::SHA1 and Base64, over deterministic vectors.
 #
 # SHA-1 is a legacy hash, only kept for the WebSocket handshake (RFC 6455
 # 1.3 explicitly requires it for Sec-WebSocket-Accept). The two FIPS-180

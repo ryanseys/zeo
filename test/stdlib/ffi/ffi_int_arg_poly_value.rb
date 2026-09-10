@@ -1,8 +1,6 @@
 # An FFI numeric arg (:int) call site receiving a poly-typed value (an ivar
 # widened by a mixed-type initializer) must coerce the boxed integer rather
-# than passing the box itself. Ported from spinel's ffi_func (#626) to the
-# real ffi gem API; the symptom shape -- a within-class poly slot created by
-# a mixed-type initializer -- is preserved.
+# than passing whatever wrapper it arrived in.
 require "ffi"
 
 class Sink

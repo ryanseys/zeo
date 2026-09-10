@@ -1,6 +1,4 @@
-# Ported from spinel's ffi_cflags test to the real ffi gem API. ffi_cflags
-# has no gem analogue (the gem links against built libraries, it doesn't
-# compile C), so the surviving intent is the multi-module shape it decorated:
+# The shape under test is several FFI::Library modules in one program:
 # two library modules each bind their own functions out of libm.
 require "ffi"
 

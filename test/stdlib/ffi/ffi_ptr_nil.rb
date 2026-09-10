@@ -1,5 +1,5 @@
-# Pointer/nil equality through the real ffi gem API (ported from spinel's
-# ffi_read_ptr): a live malloc result is not nil-equal, and a NULL pointer
+# Pointer and nil equality through the ffi gem: a live malloc result is not
+# nil-equal, and a NULL pointer
 # (read out of a zero-filled MemoryPointer) is.
 require "ffi"
 
