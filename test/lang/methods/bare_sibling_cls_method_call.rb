@@ -1,11 +1,9 @@
 # Issue #405. A bare call to a sibling `def self.X` inside another
 # `def self.Y` body in the same module/class used to emit a
 # `cannot resolve call to 'X' on (no receiver) (emitting 0)`
-# warning, with the callee's params defaulting to mrb_int (no
-# call-site signal reached the inference pass). CRuby treats the
-# bare call as `self.X(...)`, which spinel now mirrors via:
-#   - infer_type bare-call arm extended to look up
-#     `<Class>_cls_<m>` in @meth_* (modules) or @cls_cmeth_*
+# call, so the callee's parameters take their types from what the caller
+# passes. A bare call inside a class method is `self.X(...)`, so the lookup
+# has to reach the sibling CLASS method
 #     (real classes) when @current_method_name carries the
 #     `_cls_` marker (inference) or @current_method_has_self == 0
 #     and @current_class_idx pins the owner (emission).

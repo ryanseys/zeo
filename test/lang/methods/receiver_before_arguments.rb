@@ -1,6 +1,6 @@
-# Ruby evaluates a call's receiver before its arguments. Spinel handed both to
-# one C call, where the order among the operands is unspecified: gcc picks
-# right-to-left and clang picks left-to-right, so the same program printed the
+# Ruby evaluates a call's receiver BEFORE its arguments, so a receiver and an
+# argument that both have side effects run in that order. Leaving the order to
+# the machine below would print the
 # argument's trace before the receiver's on Linux and after it on macOS. The
 # receiver binds to a temp in front of the call now, in place rather than at the
 # statement above, so an expression inside a block body still evaluates where it

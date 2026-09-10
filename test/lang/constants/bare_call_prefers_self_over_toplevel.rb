@@ -5,7 +5,7 @@
 # top-level method instead whenever one shared the name, which left the real
 # callee's parameters to be typed by its own body -- and where the two
 # disagreed on a container's shape the C build stopped. Renaming the top-level
-# method, or writing the receiver out, made it compile. (matz/spinel#4106)
+# method, or writing the receiver out, hid the problem.
 module Blocks
   def self.read
     state = { "key" => nil }

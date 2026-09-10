@@ -1,7 +1,7 @@
 # `include A` brings A's nested constants/modules into the includer's
-# constant lookup chain. The bug: spinel tracked `include` on
-# `@cls_includes` only when it appeared in a class body, so a module
-# that itself does `include X` never had X recorded anywhere. When a
+# constant lookup chain. An `include` inside a MODULE body counts as much as
+# one inside a class body, so a module that itself includes X passes X along.
+# When a
 # downstream class then included that module and a method body
 # referenced a bare nested constant from X, the lookup walked the
 # class's direct includes once and bailed (`X` wasn't a class in

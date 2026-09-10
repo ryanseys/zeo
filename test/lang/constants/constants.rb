@@ -2,7 +2,7 @@
 
 MAX_SIZE = 100
 PI_APPROX = 3
-NAME = "spinel"
+NAME = "sample"
 
 module Config
   VERSION = 42
@@ -12,7 +12,7 @@ end
 
 puts MAX_SIZE         # 100
 puts PI_APPROX        # 3
-puts NAME             # spinel
+puts NAME             # sample
 puts Config::VERSION  # 42
 puts Config::GREETING # hello
 puts Config::ENABLED  # true
@@ -45,7 +45,7 @@ puts "done"
 __END__
 100
 3
-spinel
+sample
 42
 hello
 true

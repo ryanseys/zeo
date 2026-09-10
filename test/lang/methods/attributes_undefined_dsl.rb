@@ -1,6 +1,6 @@
-# The spinel-era compile-time `attributes` DSL does not exist: CRuby (and
-# zeo) raise NoMethodError when the class body executes. Rescued inside
-# the body so the output is path-portable.
+# There is no `attributes` class-body DSL, so the call raises NoMethodError
+# when the class body runs. The rescue is inside the body, which keeps the
+# output free of a path.
 class BadAttributes
   begin
     attributes "name"

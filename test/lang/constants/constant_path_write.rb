@@ -1,6 +1,5 @@
-# `Mod::X = v` assigns through a constant path. Spinel requires the constant to
-# be declared first (registered by analysis); reassigning it then works, as the
-# `M::X ||= v` / `M::X += v` forms already did. (Output is compared on stdout;
+# `Mod::X = v` assigns through a constant path, and reassigning afterwards
+# works, as `M::X ||= v` and `M::X += v` do. (Output is compared on stdout;
 # Ruby's "already initialized constant" warning goes to stderr.)
 
 module M
@@ -11,8 +10,8 @@ end
 M::COUNT = 5
 p M::COUNT                  # 5
 
-M::NAME = "spinel"
-p M::NAME.upcase            # "SPINEL"
+M::NAME = "sample"
+p M::NAME.upcase            # "SAMPLE"
 
 # reassign using the constant's own value
 M::COUNT = M::COUNT + 10
@@ -48,7 +47,7 @@ E::TBL = {}
 p E::TBL                   # {}
 __END__
 5
-"SPINEL"
+"SAMPLE"
 15
 42
 7
@@ -56,19 +55,19 @@ __END__
 []
 {}
 #@ stderr
-lang/constants/constant_path_write.rb:11: warning: already initialized constant M::COUNT
-lang/constants/constant_path_write.rb:7: warning: previous definition of COUNT was here
-lang/constants/constant_path_write.rb:14: warning: already initialized constant M::NAME
-lang/constants/constant_path_write.rb:8: warning: previous definition of NAME was here
-lang/constants/constant_path_write.rb:18: warning: already initialized constant M::COUNT
-lang/constants/constant_path_write.rb:11: warning: previous definition of COUNT was here
-lang/constants/constant_path_write.rb:27: warning: already initialized constant A::B::LEVEL
-lang/constants/constant_path_write.rb:24: warning: previous definition of LEVEL was here
+lang/constants/constant_path_write.rb:10: warning: already initialized constant M::COUNT
+lang/constants/constant_path_write.rb:6: warning: previous definition of COUNT was here
+lang/constants/constant_path_write.rb:13: warning: already initialized constant M::NAME
+lang/constants/constant_path_write.rb:7: warning: previous definition of NAME was here
+lang/constants/constant_path_write.rb:17: warning: already initialized constant M::COUNT
+lang/constants/constant_path_write.rb:10: warning: previous definition of COUNT was here
+lang/constants/constant_path_write.rb:26: warning: already initialized constant A::B::LEVEL
+lang/constants/constant_path_write.rb:23: warning: previous definition of LEVEL was here
+lang/constants/constant_path_write.rb:33: warning: already initialized constant N::V
+lang/constants/constant_path_write.rb:31: warning: previous definition of V was here
 lang/constants/constant_path_write.rb:34: warning: already initialized constant N::V
-lang/constants/constant_path_write.rb:32: warning: previous definition of V was here
-lang/constants/constant_path_write.rb:35: warning: already initialized constant N::V
-lang/constants/constant_path_write.rb:34: warning: previous definition of V was here
-lang/constants/constant_path_write.rb:45: warning: already initialized constant E::NUMS
-lang/constants/constant_path_write.rb:42: warning: previous definition of NUMS was here
-lang/constants/constant_path_write.rb:47: warning: already initialized constant E::TBL
-lang/constants/constant_path_write.rb:43: warning: previous definition of TBL was here
+lang/constants/constant_path_write.rb:33: warning: previous definition of V was here
+lang/constants/constant_path_write.rb:44: warning: already initialized constant E::NUMS
+lang/constants/constant_path_write.rb:41: warning: previous definition of NUMS was here
+lang/constants/constant_path_write.rb:46: warning: already initialized constant E::TBL
+lang/constants/constant_path_write.rb:42: warning: previous definition of TBL was here

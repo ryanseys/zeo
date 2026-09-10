@@ -1,7 +1,6 @@
 # `module_function` in a module body installs the subsequent
 # `def name` as both an instance method (for include-mixin)
-# and a class method (`Mod.name`). Spinel only models the
-# class-method form here.
+# and a class method (`Mod.name`).
 #
 # The namespace-resolution bug surfaces independently of
 # `module_function`: any method body inside a module needs

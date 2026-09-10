@@ -22,10 +22,10 @@ vop1.data[0] += 1.5
 vop1.data[1] -= 0.5
 vop1.data[2] *= 4.5
 vop1.data[3] /= 0.5
-puts vop1.data[0]   # 2  (spinel strips ".0")
-puts vop1.data[1]   # 0
+puts vop1.data[0]   # 2.0
+puts vop1.data[1]   # 0.0
 puts vop1.data[2]   # 2.25
-puts vop1.data[3]   # 1
+puts vop1.data[3]   # 1.0
 
 ints_op = Array.new(3, 10)
 ints_op[0] += 5

@@ -3,11 +3,8 @@
 # Reads `obj.attr`; if falsy, assigns `obj.attr = val`. Receiver
 # evaluated exactly once.
 #
-# Spinel's nil-to-empty-string conversion for string slots makes
-# the "fire when nil" branch hard to exercise in a CRuby-equivalent
-# way (CRuby sees nil-falsy; Spinel sees ""-truthy because it
-# sentinels nil to the empty string in typed string slots). This
-# test focuses on the don't-fire-when-truthy branch which agrees
+# This program covers the don't-fire-when-truthy branch, which is the one
+# where the single evaluation is observable. The fire-when-nil branch agrees
 # in both.
 
 class Cfg

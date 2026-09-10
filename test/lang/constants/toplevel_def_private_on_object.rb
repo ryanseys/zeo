@@ -1,8 +1,8 @@
 # A top-level `def` lands on Object as a PRIVATE method: CRuby answers an
 # explicit-receiver call with "private method called", never with the method.
-# Spinel counted such a def as owning the name for every receiver dispatch, so
-# a builtin arm stood down for it -- and with no user CLASS defining the name,
-# `v.upcase` on a boxed receiver compiled to an unconditional NoMethodError.
+# So a top-level def must not be counted as owning the name for every
+# receiver: a builtin that answers it still answers it, and `v.upcase` on a
+# receiver of unknown type still reaches String#upcase.
 def upcase(v) = "top-upcase:#{v}"
 def chars(v) = "top-chars:#{v}"
 def empty?(v) = v.nil?

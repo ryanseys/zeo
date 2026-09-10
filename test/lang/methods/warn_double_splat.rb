@@ -1,8 +1,7 @@
 # Kernel#warn accepts a forwarded keyword-rest (`**opts`) as its options
 # bundle rather than a message. A double-splat made solely of forwarded hashes
 # is evaluated for side effects and otherwise ignored; positional messages
-# still reach stderr. (Literal uplevel:/category: keywords are unsupported and
-# rejected at compile time, since spinel models neither.)
+# still reach stderr.
 def s(x); x; end
 
 opts = s({})

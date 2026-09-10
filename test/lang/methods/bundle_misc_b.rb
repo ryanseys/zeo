@@ -55,9 +55,8 @@ def t_multi_target_nested
   #   a, (b, c), d = 1, [2, 3], 4
   #
   # Each parenthesized group on the LHS is a MultiTargetNode that
-  # recursively unpacks its slot of the RHS. Spinel routes through
-  # emit_multi_write_target which dispatches on the target node type.
-  # The inner-array RHS slot must be a typed-array (int_array, str_array,
+  # recursively unpacks its slot of the right-hand side. The inner slot must
+  # itself be an array (
   # or float_array). Two-level nesting where intermediate slots are
   # heterogeneous (poly_array) is out of scope -- documented inline.
   
@@ -148,9 +147,8 @@ def t_numbered_params_destructure
   # sub-array's data buffer (OOB) when the yielded element was shorter
   # than the block's max numbered param. The fix bounds-checks each slot
   # read and pads with 0 (typed-nil analogue). This test computes the
-  # sum of `_1 + _2` only when `_2` is not nil (so CRuby gets the same
-  # numbers as Spinel — Spinel's typed-zero already passes the .nil?
-  # false branch). `_2` is mentioned in the block so destruct_n >= 2.
+  # sum of `_1 + _2` only where `_2` is not nil. `_2` is mentioned in the
+  # block, so the block destructures two values.
   short_total = 0
   [[1], [2, 20], [3, 30]].each { short_total = short_total + _1 + (_2.nil? ? 0 : _2) }
   puts short_total
@@ -220,9 +218,9 @@ def t_gc_root_map_accumulator
   # freed memory and corrupts malloc bookkeeping, surfacing as a
   # SIGSEGV in _int_malloc on the next allocation.
   #
-  # Each .map below crosses spinel's 256KB GC threshold mid-loop
-  # (each block iteration allocates a discarded scratch string
-  # alongside the kept result), so the outer accumulator must be
+  # Each .map below crosses the GC threshold mid-loop, since every block
+  # iteration allocates a scratch string it throws away beside the result it
+  # keeps. So the outer accumulator must be
   # rooted to survive a collection.
   
   # (1) int_array recv → StrArray accumulator (string-return block).

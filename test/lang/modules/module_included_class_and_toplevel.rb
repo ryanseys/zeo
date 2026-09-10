@@ -11,9 +11,8 @@
 # toplevel one, or the toplevel one without the class, both compile and run.
 # It is the combination that breaks.
 #
-# Found porting tobi/try (a Ruby CLI + TUI) to the Spinel subset: its TUI
-# helper module is mixed into the screen classes and also included at toplevel
-# so the script body can call the same helpers.
+# The idiom is a helper module mixed into several classes AND included at top
+# level, so the script body can call the same helpers the classes do.
 class Box
   attr_reader :ch
   def initialize(ch); @ch = ch; end

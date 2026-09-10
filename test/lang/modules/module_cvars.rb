@@ -26,9 +26,9 @@ puts Tep.session_secret           # hello
 # Read again to confirm the global persists
 puts Tep.session_secret           # hello
 
-# Moved out of the spinel mirror: the corpus claimed a bare top-level `@@x`
-# stores into the same namespace. It doesn't -- only a `class`/`module` body
-# opens the cref `@@x` resolves against, so Ruby raises here. See
+# A bare top-level `@@x` does NOT store into the same namespace: only a
+# `class` or `module` body opens the scope `@@x` resolves against, so this
+# raises. See
 # `class_variable_cref_scope.rb` for the full rule.
 begin
   @@plain = 42

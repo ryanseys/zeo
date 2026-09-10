@@ -4,9 +4,7 @@
 # coerces its argument to String and raises TypeError ("no implicit conversion
 # of Integer into String") where ruby runs Interp#eval. The explicit-receiver
 # spelling (`i.eval(3)`) already dispatches correctly, which is what makes the
-# recognizer the cause. (Imported from spinel, which had the same bug for a
-# different reason; its Kernel#eval-on-a-runtime-string refusal is separate
-# and stays.)
+# recognizer the cause: a user method named `eval` is an ordinary method.
 class Interp
   def initialize
     @visits = 0

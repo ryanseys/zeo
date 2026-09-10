@@ -10,7 +10,7 @@ class Q2 < P2
   alias old_greet2 greet
   def greet; "Q"; end
 end
-p Q2.new.old_greet2   # Ruby: "P"   Spinel: "Q"
+p Q2.new.old_greet2   # "P"
 
 class A
   def greet; "A"; end

@@ -1,7 +1,6 @@
-# A module's `def initialize` runs when an includer is constructed, and the
-# module itself has no `new`. Spinel emitted a constructor for the module all
-# the same, whose body called an sp_<Module>_initialize that nothing defines --
-# a module's methods are emitted into each includer, not under the module's own
+# A module's `def initialize` runs when an INCLUDER is constructed, and the
+# module itself has no `new`. So the module gets no constructor of its own:
+# its methods belong to each includer, not to the module's own
 # name -- so a compiler that rejects implicit declarations stopped the build.
 # `M.new` used to build one quietly; it is a NoMethodError in Ruby (#4167).
 module Outer

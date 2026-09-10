@@ -1,8 +1,8 @@
 # Module#const_defined? validates the constant name. A defined name answers
 # true, an undefined-but-well-formed name answers false, and a malformed name
 # (lowercase / leading underscore / a non-identifier byte) raises NameError
-# "wrong constant name <name>" -- Spinel previously answered false silently.
-# (Only a literal name argument is folded; a runtime name rejects separately.)
+# "wrong constant name <name>" rather than answering false. A literal name
+# and a name computed at runtime both reject.
 module M
   X = 1
 end

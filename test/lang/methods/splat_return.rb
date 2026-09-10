@@ -1,6 +1,6 @@
 # `return *x` returns the splat-to-array of x: a scalar wraps in a one-element
-# array, an array stays itself, nil becomes []. Spinel previously emitted C
-# whose return type (the splat's element type) conflicted with the array value.
+# array, an array stays itself, and nil becomes []. What the method answers is
+# the ARRAY, not the type of its elements.
 def f(x); return *x; end
 p f(1)              # [1]
 p f([1, 2, 3])      # [1, 2, 3]

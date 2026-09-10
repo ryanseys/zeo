@@ -27,9 +27,8 @@ class ArticlesController
   end
 end
 
-# A param with no upstream pinning. Spinel defaults the param to
-# mrb_int when no call site supplies a non-int. Without the fix,
-# the body's `.index` call hits compile_int_class_fallback_expr,
+# A parameter nothing pins: no call site says what it holds. Reading it as an
+# Integer by default sends the body's `.index` call to Integer's own rows,
 # which walks the user-class table and picks ArticlesController
 # (the first class defining `def index`), emitting a typed cast
 # `((sp_ArticlesController *)raw_key)->index_get(...)` that is
@@ -37,9 +36,9 @@ end
 # the int-recv fallback refuses primitive-shared method names and
 # the call lowers to the unresolved-call placeholder (literal 0).
 #
-# We don't call `find_first` from Ruby — defining it is enough for
-# spinel to emit and type-check the body, and avoiding the call
-# keeps MRI happy (Integer#index doesn't exist).
+# `find_first` is never called: defining it is enough to compile the body,
+# and not calling it keeps the program runnable, since Integer#index does
+# not exist.
 def find_first(raw_key)
   raw_key.index("[")
 end

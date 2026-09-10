@@ -44,10 +44,9 @@ mix(100, 200)         # a=100, b=200, rest=[]
 collect(7, *args)     # length 4, total 13
 collect(7, 8, *args, 9) # length 6, total 36
 
-# Mixed-type splat sources: poly_array source, mixed prefix/suffix.
-# Spinel's *rest is always int_array so element values are mrb_int bits
-# for non-int elements — but the length is correct and the bundle
-# round-trips intact for downstream splatting.
+# Splat sources of mixed element type, with a prefix and a suffix around the
+# splat. The `*rest` bundle keeps its length and its elements, and splats
+# onward intact.
 def count(*xs)
   puts xs.length
 end

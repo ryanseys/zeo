@@ -20,11 +20,11 @@ end
 
 def found(value) = value.include?("ruby")
 
-tags = Tags.new(["ruby", "spinel"])
+tags = Tags.new(["ruby", "crystal"])
 p found(tags)
 p tags.asked
 p found(["ruby"])
-p found(["spinel", "ruby"])
+p found(["crystal", "ruby"])
 p found(["none"])
 p found("a ruby string")
 p found({ "ruby" => 1 })

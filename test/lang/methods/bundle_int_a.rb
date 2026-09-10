@@ -52,10 +52,8 @@ t_int_array_replace_expr
 
 # === int_eq_nil_strict ===
 def t_int_eq_nil_strict
-  # Partial fix for #521. In CRuby `0 == nil` is false -- only nil
-  # equals nil. Spinel used to emit `(lc op rc)` for `int == nil`,
-  # where `rc` was "0" (compile_expr of NilNode); since unboxed ints
-  # share the C representation with the nil sentinel, this conflated
+  # `0 == nil` is false: only nil equals nil. A representation that spells
+  # nil as the number zero conflates
   # stored 0 with nil and made `0 == nil` return true.
   #
   # Fix: compile_eq has explicit value-type-vs-nil arms that

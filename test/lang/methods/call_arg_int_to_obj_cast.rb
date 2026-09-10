@@ -1,6 +1,6 @@
-# Issue #379: when a method returns `obj_<C> | nil` and Spinel
-# collapses the union to `mrb_int` upstream, the local catching
-# the call ends up declared `mrb_int`. Use sites that need the
+# A method that answers an object or nil. The local catching the call has to
+# hold either, so collapsing the two to a number upstream leaves the use
+# sites that need the
 # concrete class then differ in their handling: property accesses
 # (`local.id`) get a runtime cast inserted by
 # `compile_int_class_fallback_expr`, while call args that pass

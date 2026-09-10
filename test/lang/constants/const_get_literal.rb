@@ -1,6 +1,6 @@
 module M
   X = 7
-  NAME = "spinel"
+  NAME = "sample"
   module N
     Z = 1
   end
@@ -20,7 +20,7 @@ begin; Object.const_get(:Nope); rescue => e; puts "#{e.class}: #{e.message}"; en
 begin; M::N.const_get(:Missing); rescue => e; puts "#{e.class}: #{e.message}"; end
 __END__
 7
-spinel
+sample
 7
 NameError: uninitialized constant M::Missing
 NameError: wrong constant name lower

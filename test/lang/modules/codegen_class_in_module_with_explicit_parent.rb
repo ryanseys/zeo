@@ -2,10 +2,8 @@
 # `collect_class_with_prefix`. A `class Sub < Parent` written
 # inside a single-level `module M` triggers the parent-resolution
 # walk that strips trailing `_<segment>` from the module prefix.
-# `mp = "M"` has no underscore, so `mp.rindex("_")` returns nil
-# under CRuby (and -1 under spinel). The pre-fix `if idx < 0`
-# crashed on the CRuby path with `NoMethodError: undefined
-# method '<' for nil`.
+# `mp = "M"` has no underscore, so `mp.rindex("_")` answers nil, and `if idx
+# < 0` on nil raises NoMethodError. A miss is nil, not -1.
 
 module M
   class Sub < Object
