@@ -47,7 +47,7 @@ mod commands;
 mod exec;
 mod payload;
 mod ruby;
-mod scratch;
+mod tempdir;
 mod vendor;
 
 /// A chore that could not finish, with the reason a person needs.

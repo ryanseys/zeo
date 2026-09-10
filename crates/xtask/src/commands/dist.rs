@@ -25,7 +25,7 @@ use flate2::write::GzEncoder;
 use sha2::{Digest, Sha256};
 
 use crate::exec::{self, Capture};
-use crate::scratch::Scratch;
+use crate::tempdir::Scratch;
 use crate::{Error, payload, root, root_join};
 
 const USAGE: &str = "usage: cargo xtask dist [--target <triple>] [--pgo] [--no-smoke] \

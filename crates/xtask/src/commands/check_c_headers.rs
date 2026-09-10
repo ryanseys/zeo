@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 use crate::exec::{self, Capture};
-use crate::scratch::Scratch;
+use crate::tempdir::Scratch;
 use crate::{Error, root, root_join, vendor, write_if_changed};
 
 const USAGE: &str = "\

@@ -16,7 +16,7 @@
 use std::path::Path;
 
 use crate::exec::{self, Capture};
-use crate::scratch::Scratch;
+use crate::tempdir::Scratch;
 use crate::{Error, root, root_join, write_if_changed};
 
 const FACTS_RS: &str = "crates/zeo-capi/src/layout_facts.rs";
