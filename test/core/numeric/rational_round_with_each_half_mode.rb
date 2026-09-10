@@ -1,5 +1,4 @@
 # :even, :up and :down, the bare form, and a negative Rational.
-# (spinel issue #3047)
 p Rational(5, 2).round(half: :even)
 p Rational(5, 2).round(half: :up)
 p Rational(5, 2).round(half: :down)

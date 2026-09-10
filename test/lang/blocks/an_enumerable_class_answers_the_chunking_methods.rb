@@ -1,5 +1,4 @@
 # each_slice, each_cons and the rest, over the each it defines.
-# (spinel issue #2982)
 class Nums
   include Enumerable
   def initialize(*xs); @xs = xs; end

@@ -1,5 +1,4 @@
 # `in { user: User[name:] }` reaches through both levels.
-# (spinel issue #3180)
 User = Data.define(:name)
 h = { user: User.new("Alice") }
 case h

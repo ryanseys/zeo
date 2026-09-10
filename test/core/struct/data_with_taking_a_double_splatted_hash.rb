@@ -1,5 +1,4 @@
 # One member, both, a mix of keyword and splat, and an empty splat.
-# (spinel issue #2972)
 Point = Data.define(:x, :y)
 a = Point.new(1, 2)
 p a.with(**{x: 10})

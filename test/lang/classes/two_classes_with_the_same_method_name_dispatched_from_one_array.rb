@@ -1,5 +1,4 @@
 # Circle and Square each define area; an array holding both answers each one's.
-# (spinel issue #2888)
 class Circle
   def initialize(r) = @r = r
   def area = 3.14 * @r * @r

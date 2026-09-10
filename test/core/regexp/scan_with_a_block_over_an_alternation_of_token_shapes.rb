@@ -1,5 +1,4 @@
 # A tokenizer collecting the first capture of each match.
-# (spinel issue #3187)
 def tok(expr)
   tokens = []
   expr.scan(/\s*(\d+\.\d+|\d+|[+\-*\/()]|[a-z]+)/) { |m| tokens << m[0] }

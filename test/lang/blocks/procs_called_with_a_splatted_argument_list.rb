@@ -1,6 +1,5 @@
 # `call(*args)` for a proc in a hash, for handlers registered under a default
 # block, and for lambdas taking two arguments.
-# (spinel issue #3178)
 #@ gccheck: cycle leak: 5 objects (Proc x2, Array x1, D x1, Hash x1)
 h = { a: ->(x) { "got #{x}" } }
 p h[:a].call(*["z"])

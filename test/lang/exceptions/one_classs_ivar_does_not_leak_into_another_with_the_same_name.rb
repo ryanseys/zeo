@@ -1,5 +1,4 @@
 # Two classes each holding @key keep their own; the second's `||=` default is not the first's value.
-# (spinel issue #3210)
 class Foo
   def initialize
     @key = :enabled

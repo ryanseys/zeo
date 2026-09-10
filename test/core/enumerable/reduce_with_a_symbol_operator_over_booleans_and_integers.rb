@@ -1,5 +1,4 @@
 # `reduce(:&)`, `(:|)` and `(:^)` over booleans, and the same over Integers.
-# (spinel issue #2951)
 bits = [true, false, true]
 p bits.reduce(:&)
 p bits.reduce(:|)

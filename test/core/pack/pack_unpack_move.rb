@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # String#unpack does not support the X (back up) directive.
 #
 p "abcdef".unpack("a2X2a4")

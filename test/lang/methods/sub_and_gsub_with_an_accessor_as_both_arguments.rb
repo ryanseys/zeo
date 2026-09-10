@@ -1,5 +1,4 @@
 # The pattern and the replacement both read the same attr_accessor.
-# (spinel issue #3198)
 class Config
   attr_accessor :name
 end

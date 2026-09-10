@@ -1,5 +1,4 @@
 # Struct.new given symbols held in variables, one and two of them.
-# (spinel issue #3112)
 name = :port
 S = Struct.new(name)
 p S.members

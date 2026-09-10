@@ -1,5 +1,4 @@
 # (1.0/0.0).divmod raises FloatDomainError, and the message names the value.
-# (spinel issue #3008)
 def t
   yield
 rescue FloatDomainError => e

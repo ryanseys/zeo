@@ -1,6 +1,5 @@
 # Two classes each declaring accessors the initializer only partly assigns: the
 # unassigned one is nil, the assigned one is not.
-# (spinel issue #3136)
 class A
   attr_accessor :b, :i
   def initialize

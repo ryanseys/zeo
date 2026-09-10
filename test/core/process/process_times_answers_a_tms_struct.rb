@@ -1,5 +1,4 @@
 # The constant exists and each of its five fields answers.
-# (spinel issue #3044)
 p Process::Tms
 p Process.times.class
 p Process.times.utime.class

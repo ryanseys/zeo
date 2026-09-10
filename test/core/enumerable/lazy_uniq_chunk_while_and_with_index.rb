@@ -1,5 +1,4 @@
 # A lazy chain's uniq, chunk_while and with_index, beside the non-lazy uniq and a lazy map.
-# (spinel issue #2993)
 p([1, 1, 2, 3, 3].lazy.uniq.to_a)
 p([1, 2, 4, 5, 7].lazy.chunk_while { |a, b| b - a == 1 }.to_a)
 p([10, 20, 30].lazy.with_index.to_a)

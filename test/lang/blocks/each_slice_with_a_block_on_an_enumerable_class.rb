@@ -1,5 +1,4 @@
 # It answers nil, as ruby's does, rather than the slices.
-# (spinel issue #2981)
 class Nums
   include Enumerable
   def initialize(*xs); @xs = xs; end

@@ -1,6 +1,5 @@
 # `uniq` and `size` as members answer their values, not Object's methods, and
 # uniq still works on a plain array beside it.
-# (spinel issue #3341)
 require "ostruct"
 
 class Flag

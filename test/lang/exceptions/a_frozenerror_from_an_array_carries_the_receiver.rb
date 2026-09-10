@@ -1,5 +1,4 @@
 # FrozenError#receiver is the very array that refused the push.
-# (spinel issue #3002)
 a = [1, 2].freeze
 r = begin; a << 3; rescue FrozenError => e; e.receiver.equal?(a); end
 p r

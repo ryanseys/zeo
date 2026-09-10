@@ -1,6 +1,5 @@
 # A parser combinator whose inner each rebinds the outer local, which the
 # lambda then answers.
-# (spinel issue #3175)
 def seq(parsers)
   ->(s) {
     rest = s

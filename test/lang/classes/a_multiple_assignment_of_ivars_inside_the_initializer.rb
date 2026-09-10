@@ -1,6 +1,5 @@
 # `@foo, @bar = nil, nil` and `@x, @y = 1, 2` both bind, read back through a
 # reader.
-# (spinel issue #3273)
 class MyClass
   def initialize
     @foo, @bar = nil, nil

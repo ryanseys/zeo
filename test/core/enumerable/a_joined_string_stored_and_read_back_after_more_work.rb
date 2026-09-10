@@ -1,6 +1,5 @@
 # An array joined with no separator, stored, and read after further
 # allocation: the bytes are still there.
-# (spinel issue #3151)
 def build(chars)
   buf = []
   chars.each { |c| buf << c }

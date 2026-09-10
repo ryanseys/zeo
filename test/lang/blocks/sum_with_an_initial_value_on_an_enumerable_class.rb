@@ -1,5 +1,4 @@
 # A class defining only each sums its Floats from an Integer seed.
-# (spinel issue #2959)
 class Nums
   include Enumerable
   def initialize(*xs); @xs = xs; end

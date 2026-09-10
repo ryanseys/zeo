@@ -1,5 +1,4 @@
 # `raise SignalException, "INT"` gives an exception whose signo and message name that signal.
-# (spinel issue #3074)
 begin
   raise SignalException, "INT"
 rescue SignalException => e

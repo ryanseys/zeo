@@ -1,5 +1,4 @@
 # Splitting on & and = and appending into `params[key] ||= []`.
-# (spinel issue #2927)
 def parse(qs)
   qs.split("&").each_with_object({}) do |pair, params|
     key, value = pair.split("=", 2)

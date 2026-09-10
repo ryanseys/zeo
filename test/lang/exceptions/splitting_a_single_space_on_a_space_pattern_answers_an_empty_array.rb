@@ -1,5 +1,4 @@
 # `" ".split(/ /)` is [], through a method that may answer nil instead.
-# (spinel issue #3212)
 def maybe_string(flag)
   flag ? " " : nil
 end

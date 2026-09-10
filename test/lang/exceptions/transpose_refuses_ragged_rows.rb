@@ -1,5 +1,4 @@
 # Array#transpose raises IndexError when the rows are not all the same length, and transposes when they are.
-# (spinel issue #2979)
 r = ([[1, 2], [3]].transpose rescue $!.class); p r
 p([[1, 2], [3, 4]].transpose)
 p([[1], [2], [3]].transpose)

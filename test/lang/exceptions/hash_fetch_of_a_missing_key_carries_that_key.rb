@@ -1,5 +1,4 @@
 # Hash#fetch raises KeyError whose #key is the key that missed, for a Symbol and an Integer.
-# (spinel issue #3028)
 begin
   {}.fetch(:sym)
 rescue KeyError => e

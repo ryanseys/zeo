@@ -1,5 +1,4 @@
 # On a top-level method, through a local, and on an instance method.
-# (spinel issue #3252)
 def dbl(n) = n * 2
 p(method(:dbl).clone.call(5))
 p(method(:dbl).dup.call(5))

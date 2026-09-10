@@ -1,6 +1,5 @@
 # Range#group_by whose block calls another method of the same object, beside
 # the plain forms over a Range and an array of strings.
-# (spinel issue #2902)
 class Graph
   def key(x) = x % 3
   def buckets = (0...6).group_by { |x| key(x) }

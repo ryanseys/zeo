@@ -1,5 +1,4 @@
 # And the address and the dead state.
-# (spinel issue #3126)
 t = Thread.new { 1 }
 t.join
 p t.inspect.include?(__FILE__)

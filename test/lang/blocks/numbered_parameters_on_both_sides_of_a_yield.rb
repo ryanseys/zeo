@@ -1,6 +1,5 @@
 # The callee's tap block and the caller's block each use _1 for a different
 # object, and neither captures the other's.
-# (spinel issue #3281)
 class Config
   def str(*opts, default: nil, required: false, choices: [])
     "str:#{opts.first}:#{required}"

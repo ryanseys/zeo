@@ -1,5 +1,4 @@
 # `arr[0].upcase!` and `arr[1] << "!"` change the array's own elements.
-# (spinel issue #3227)
 arr = ["hello", "world"]
 arr[0].upcase!
 arr[1] << "!"

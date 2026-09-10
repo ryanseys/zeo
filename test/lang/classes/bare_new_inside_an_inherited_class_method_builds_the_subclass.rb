@@ -1,6 +1,5 @@
 # `Article.create` running `Base.create`'s body, whose bare `new` must reach
 # Article's own constructor.
-# (spinel issue #224)
 
 # Basic: bare `new`, no args.
 class Base

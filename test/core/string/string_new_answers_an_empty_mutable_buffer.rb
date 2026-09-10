@@ -1,5 +1,4 @@
 # Bare String.new, appended to with <<, and with an initial value.
-# (spinel issue #203)
 
 # Bare String.new — empty mutable buffer.
 io = String.new

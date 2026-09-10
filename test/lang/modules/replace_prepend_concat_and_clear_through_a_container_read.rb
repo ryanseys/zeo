@@ -1,5 +1,4 @@
 # Each swaps or extends the shared buffer the array holds.
-# (spinel issue #3227)
 arr = [+"abc"]
 arr[0].replace("xyz")
 p arr

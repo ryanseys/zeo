@@ -1,6 +1,5 @@
 # String#chr answers the first character, and `%c` renders a codepoint and a
 # character.
-# (spinel issue #3083)
 p "あいう".chr
 p "abc".chr
 p "".chr

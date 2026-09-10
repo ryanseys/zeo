@@ -1,5 +1,4 @@
 # <<, index assignment and the rest are visible through both.
-# (spinel issue #3227)
 s = "hello world"
 arr = [s]
 s << "!"

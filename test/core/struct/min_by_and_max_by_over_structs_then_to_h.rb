@@ -1,5 +1,4 @@
 # Struct and Data values selected by a member and rendered as hashes.
-# (spinel issue #2906)
 Point = Struct.new(:x, :y)
 pts = [Point.new(1, 2), Point.new(3, 4)]
 p pts.min_by { |pt| pt.x }.to_h

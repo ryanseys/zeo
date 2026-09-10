@@ -1,5 +1,4 @@
 # A block answering a number, a boolean, or nil, and one that never matches.
-# (spinel issue #3067)
 p((0.0..10.0).bsearch { |x| x * x - 4 >= 0 ? x * x - 4 : nil })
 p((0.0..10.0).bsearch { |x| 4 - x*x })
 p((0.0..10.0).bsearch { |x| x*x - 4 })

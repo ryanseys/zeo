@@ -1,6 +1,5 @@
 # Method#box is nil for a method in no namespace, #curry applies one argument
 # at a time, and clone and dup keep the signature.
-# (spinel issue #3304)
 def dbl(n) = n * 2
 def add(a, b) = a + b
 p(method(:dbl).box)

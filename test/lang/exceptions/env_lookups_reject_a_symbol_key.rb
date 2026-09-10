@@ -1,5 +1,4 @@
 # ENV#assoc, #key, #slice and #values_at each raise TypeError for a Symbol, and answer for a String.
-# (spinel issue #3000)
 ENV['ZZ_A'] = 'zzv'
 def cls; begin; yield; rescue => e; e.class; end; end
 p(cls { ENV.assoc(:sym) })

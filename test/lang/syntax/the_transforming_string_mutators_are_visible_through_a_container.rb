@@ -1,5 +1,4 @@
 # upcase! and its siblings, not only <<.
-# (spinel issue #3227)
 m = "low"
 box = [m]
 m.upcase!

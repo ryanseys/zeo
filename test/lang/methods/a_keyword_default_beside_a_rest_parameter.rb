@@ -1,6 +1,5 @@
 # `def f(*a, foo: nil)` and its variants: the positionals collect and the
 # keyword takes its default or the value given.
-# (spinel issue #3114)
 def f(*a, foo: nil); p a; p foo; end
 f("xyz", "bar")
 f("xyz", "bar", foo: 9)

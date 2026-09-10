@@ -1,5 +1,4 @@
 # Array#to_s on a destructured element, on an indexed one, and through `map(&:to_s)`.
-# (spinel issue #3007)
 [[:x, :y]].each { |e| p e.to_s }
 x = [[:x, :y]]
 p x[0].to_s

@@ -1,6 +1,5 @@
 # to_hash, with, members, deconstruct_keys and to_a reached through methods the
 # block defines.
-# (spinel issue #3226)
 D = Data.define(:a, :b) do
   def to_hash = to_h
   def bump = with(b: b + 1)

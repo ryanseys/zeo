@@ -1,4 +1,3 @@
-# From the spinel corpus (fa06b601).
 #
 # `/i` folds only ASCII, so a non-ASCII literal does not match its
 # counterpart.

@@ -1,5 +1,4 @@
 # Writing to the copy leaves the original row alone.
-# (spinel issue #2946)
 board = [["a", "b"], ["c", "d"]]
 copy = board[0].dup
 copy[1] = "X"

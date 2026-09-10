@@ -1,4 +1,3 @@
-# From the spinel corpus (fa06b601).
 #
 # Comparing a Float against a BIGNUM answers the wrong way for the values
 # that do not fit a double's integer range.

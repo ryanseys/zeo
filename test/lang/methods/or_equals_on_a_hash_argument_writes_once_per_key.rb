@@ -1,6 +1,5 @@
 # `memo[n] ||= n * 10` in a method called three times leaves two keys, the
 # repeat not overwriting.
-# (spinel issue #3158)
 def store(memo, n)
   memo[n] ||= n * 10
 end

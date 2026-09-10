@@ -1,5 +1,4 @@
 # Each runs the block with the receiver bound, answering the block's value.
-# (spinel issue #2956)
 a001 = (nil.instance_eval { 42 } rescue $!.class); p a001
 a002 = (nil.instance_exec(5) { |y| y } rescue $!.class); p a002
 v = nil.instance_eval { 42 }; p v

@@ -1,5 +1,4 @@
 # Index assignment and an append inside a method both reach the caller's array.
-# (spinel issue #3157)
 def setit(arr, i)
   arr[i] = 99
 end

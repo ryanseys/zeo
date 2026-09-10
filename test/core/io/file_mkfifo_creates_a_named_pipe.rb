@@ -1,5 +1,4 @@
 # It exists afterwards, and the call answers rather than raising.
-# (spinel issue #3118)
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

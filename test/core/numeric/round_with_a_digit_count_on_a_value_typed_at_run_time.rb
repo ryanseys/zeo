@@ -1,5 +1,4 @@
 # `.round(2)` on a zip-sum divided by a Float, and on a sum with a block.
-# (spinel issue #2926)
 p ([1, 2].zip([3, 4]).sum { |x, y| x * y } / 2.0).round(2)
 a = [3.14159, 2.71828]
 x = a.sum { |v| v * 1 }

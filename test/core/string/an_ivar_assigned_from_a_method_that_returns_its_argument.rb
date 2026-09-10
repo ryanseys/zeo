@@ -1,6 +1,5 @@
 # `@help_flag = add_flag(Flag.new([...]))` where add_flag answers what it was
 # given.
-# (spinel issue #3317)
 class Config
   def str(*opts) = add_flag(Flag.new(opts))
   def prepare! = @help_flag = add_flag(Flag.new(["x"]))

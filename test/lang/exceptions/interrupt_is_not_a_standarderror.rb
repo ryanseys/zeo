@@ -1,5 +1,4 @@
 # `rescue StandardError` does not catch Interrupt; `rescue Exception` does.
-# (spinel issue #3032)
 begin
   raise Interrupt
 rescue StandardError

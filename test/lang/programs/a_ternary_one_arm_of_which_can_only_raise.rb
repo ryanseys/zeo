@@ -1,6 +1,5 @@
 # The arm that raises and the arm that answers a value coexist; the condition
 # is decided at run time.
-# (spinel issue #2949)
 arr = [nil]
 u = arr.first
 flag = ARGV.length > 5

@@ -1,5 +1,4 @@
 # The mode set is the mode stat reports.
-# (spinel issue #3005)
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

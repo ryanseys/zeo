@@ -1,6 +1,5 @@
 # Splat, single and rest parameters, and no arguments at all, on a class
 # descending from BasicObject.
-# (spinel issue #2957)
 class BO < BasicObject
   def initialize; @x = 0; end
 end

@@ -1,5 +1,4 @@
 # Setting an ivar the initializer did not create works, and the object then reports both.
-# (spinel issue #3059)
 class Obj9
   def initialize; @x = 7; end
 end

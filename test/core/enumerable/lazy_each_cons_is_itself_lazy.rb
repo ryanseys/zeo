@@ -1,6 +1,5 @@
 # Enumerator::Lazy#each_cons yields windows on demand, so an infinite source is
 # workable and first(n) stops it.
-# (spinel issue #3313)
 r = ((1..Float::INFINITY).lazy.select { |n| n > 2 }.each_cons(2).first(3) rescue $!.class)
 p r
 p((1..10).lazy.each_cons(3).first(2))

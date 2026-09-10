@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Array#[]= on a frozen array raises TypeError for the bad index before
 # FrozenError for the frozen receiver; ruby checks frozenness first.
 #

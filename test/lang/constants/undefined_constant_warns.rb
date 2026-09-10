@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # The uninitialized-constant message is namespaced ("Object::AlsoMissing");
 # ruby names the constant alone.
 #

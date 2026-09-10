@@ -1,5 +1,4 @@
 # Two methods of the same shape through one yielding method.
-# (spinel issue #3329)
 class A; def id; 1; end; end
 class B; def id; 2; end; end
 def txn; result = yield; result; end

@@ -1,5 +1,4 @@
 # Its class and size, and a stat held in a local answering the same.
-# (spinel issue #3041)
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

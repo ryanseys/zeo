@@ -1,5 +1,4 @@
 # `pipe.last.call(6)` -- the index read is the receiver of the call.
-# (spinel issue #2942)
 pipe = [->(x) { x * 2 }, ->(x) { x + 1 }]
 p pipe.last.call(6)
 p pipe.first.call(6)

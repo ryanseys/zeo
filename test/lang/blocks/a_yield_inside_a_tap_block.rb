@@ -1,5 +1,4 @@
 # `Crash.new.tap { yield(_1) }` hands the tapped object to the caller's block.
-# (spinel issue #3140)
 class Crash
   def hi = "hi"
 end

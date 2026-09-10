@@ -1,6 +1,5 @@
 # Index assignment and `+=` through `m[-1]` and `m[-2]` reach the inner rows,
 # for Integer and String elements.
-# (spinel issue #3168)
 m = [[1, 4], [2, 5]]
 m[-1][1] = 99
 m[0][0] = 7

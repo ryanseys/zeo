@@ -1,7 +1,6 @@
 # A method that stores a mutable string AND returns it: the caller's binding
 # is the same object, so a later append is visible through both. Also with
 # two candidates and a branch choosing which to return.
-# (spinel issue #3227)
 $store = []
 def make_held
   s = +"kept"

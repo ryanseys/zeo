@@ -1,6 +1,5 @@
 # to_a is the member values and members the field names, on a value max_by
 # picked out of an array.
-# (spinel issue #2937)
 E = Struct.new(:a, :b)
 x = [E.new(1, 2), E.new(3, 4)].max_by(&:b)
 p x.to_h

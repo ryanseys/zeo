@@ -1,5 +1,4 @@
 # &, |, merge, subtract and - each raise for a non-enumerable operand.
-# (spinel issue #3072)
 require "set"
 
 r1 = (Set[1, 2] & 5 rescue $!.class); p r1

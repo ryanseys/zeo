@@ -1,6 +1,5 @@
 # round(2) and round(3) on tiny negatives, on both zeros, and through a local
 # and an array element.
-# (spinel issue #3235)
 p((-0.0001).round(2))
 p((-0.0).round(3))
 p((0.0).round(3))

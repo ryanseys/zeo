@@ -1,6 +1,5 @@
 # Month 13 and day 32 raise; February 30 rolls over; hour 25 raises and second
 # 60 is accepted.
-# (spinel issue #3099)
 def cls; begin; yield; rescue => e; e.class; end; end
 p(cls { Time.utc(2020,13,1) })
 p(cls { Time.utc(2020,1,32) })

@@ -1,6 +1,5 @@
 # The writer and the index form each raise FrozenError; an unfrozen one accepts
 # both.
-# (spinel issue #3078)
 Pt = Struct.new(:x, :y)
 a = Pt.new(1, 2).freeze
 p(begin; a.x = 5; rescue => e; e.class; end)

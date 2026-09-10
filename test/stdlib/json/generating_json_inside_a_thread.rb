@@ -1,5 +1,4 @@
 # A thread writing JSON into a StringIO, joined and read afterwards.
-# (spinel issue #3342)
 require "json"
 require "stringio"
 

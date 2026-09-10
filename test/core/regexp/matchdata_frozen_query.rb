@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # MatchData#frozen? answers false; ruby freezes MatchData.
 #
 m001 = "hello".match(/l+/)

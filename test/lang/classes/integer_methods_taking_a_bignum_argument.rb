@@ -1,6 +1,5 @@
 # pow with a modulus, digits, gcd, lcm, clamp, coerce and bit read, each given
 # a number too large for a machine word.
-# (spinel issue #3006)
 b = 2 ** 70
 p 5.pow(3, b).class
 p 255.digits(b).class

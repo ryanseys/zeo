@@ -1,5 +1,4 @@
 # A constant hash filled by each_char.with_index is read back by a reduce in another method.
-# (spinel issue #2879)
 TBL = {}
 "abc".each_char.with_index { |ch, i| TBL[ch] = i }
 

@@ -1,6 +1,5 @@
 # times, upto and downto without a block, then with_index with and without an
 # offset.
-# (spinel issue #3305)
 p 4.times.with_index(1).to_a
 p 3.upto(5).with_index(1).to_a
 p 5.downto(3).with_index(1).to_a

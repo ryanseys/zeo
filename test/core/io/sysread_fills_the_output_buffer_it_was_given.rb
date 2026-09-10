@@ -1,5 +1,4 @@
 # It answers that same object, so the caller can read the bytes back out of it.
-# (spinel issue #3336)
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

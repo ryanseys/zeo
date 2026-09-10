@@ -1,6 +1,5 @@
 # A clean NameError, the same path as any undefined constant, rescued so the
 # output is deterministic.
-# (spinel issue #3135)
 begin
   o = OpenStruct.new(a: 1)
   p o.a

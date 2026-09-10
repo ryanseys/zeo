@@ -1,5 +1,4 @@
 # The members come from the array, and each reader answers.
-# (spinel issue #2973)
 syms = [:sx, :sy, :sz]
 K = Data.define(*syms)
 p K.members

@@ -1,5 +1,4 @@
 # (1..).max is a RangeError, and the message says so.
-# (spinel issue #3065)
 def t
   yield
 rescue RangeError => e

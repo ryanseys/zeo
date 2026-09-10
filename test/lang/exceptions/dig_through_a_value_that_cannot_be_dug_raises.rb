@@ -1,5 +1,4 @@
 # Array#dig raises TypeError when an intermediate value does not respond to dig, and answers nil for a miss.
-# (spinel issue #2983)
 def cls; begin; yield; rescue => e; e.class; end; end
 p(cls { [1, [2]].dig(1, 0, 3) })
 p [1, [2]].dig(1, 0)

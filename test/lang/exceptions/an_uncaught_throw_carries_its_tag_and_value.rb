@@ -1,5 +1,4 @@
 # A throw with no matching catch is an UncaughtThrowError whose #tag and #value are the throw's arguments.
-# (spinel issue #3087)
 p(begin; throw :nope, 42; rescue => e; e.class; end)
 v = begin; throw :y; rescue UncaughtThrowError => e; e.tag; end
 p v

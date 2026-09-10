@@ -1,5 +1,4 @@
 # A pair, a scalar, an array element, and a block that always answers nil.
-# (spinel issue #2992)
 h = {a: 1, b: 2}
 p h.filter_map { |k, v| [k, v] if v > 1 }
 p h.filter_map { |k, v| v * 10 if v > 1 }

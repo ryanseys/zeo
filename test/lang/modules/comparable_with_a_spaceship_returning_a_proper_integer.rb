@@ -1,5 +1,4 @@
 # A Money class whose <=> answers an Integer gets the whole Comparable surface.
-# (spinel issue #2961)
 class Money
   include Comparable
   attr_reader :cents

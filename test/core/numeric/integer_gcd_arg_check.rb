@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Integer#gcd with a non-integer raises the coercion message; ruby raises
 # "not an integer".
 #

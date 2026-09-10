@@ -1,5 +1,4 @@
 # `object[:name] = "bob"` changes what the reader answers.
-# (spinel issue #3201)
 require "ostruct"
 class Main
   def parse(args)

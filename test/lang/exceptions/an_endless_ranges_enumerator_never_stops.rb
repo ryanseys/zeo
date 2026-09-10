@@ -1,5 +1,4 @@
 # (1..).each answers an Enumerator whose next and peek keep advancing.
-# (spinel issue #3229)
 p((1..).each.next)
 e = (1..).each
 p e.next

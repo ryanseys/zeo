@@ -1,5 +1,4 @@
 # `=~` and index answer character offsets, and nil for a miss.
-# (spinel issue #3056)
 p("あいうえお" =~ /う/)
 p "あいうえお".index(/う/)
 p "abcdef".index(/d/)

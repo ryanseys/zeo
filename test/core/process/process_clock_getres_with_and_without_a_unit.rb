@@ -1,5 +1,4 @@
 # The default, :nanosecond and :float_second, for two clocks.
-# (spinel issue #3045)
 r = Process.clock_getres(Process::CLOCK_MONOTONIC)
 puts r.class
 puts r > 0

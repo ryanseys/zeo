@@ -1,5 +1,4 @@
 # Enumerator#first with and without a count, on each, each_with_index, a lazy map, and an empty array.
-# (spinel issue #2994)
 p([1, 2, 3].each.first)
 p([1, 2, 3].each.first(2))
 p([1, 2, 3].each_with_index.first)

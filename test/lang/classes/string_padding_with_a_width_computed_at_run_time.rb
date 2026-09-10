@@ -1,6 +1,5 @@
 # rjust, ljust and center whose width comes from `keys.max`, with and without a
 # pad string.
-# (spinel issue #3169)
 counts = Hash.new(0)
 counts[1] = 1; counts[4] = 1
 w = counts.keys.max

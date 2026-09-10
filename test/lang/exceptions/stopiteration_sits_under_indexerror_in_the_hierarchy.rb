@@ -1,5 +1,4 @@
 # The StopIteration an exhausted Enumerator raises is a StandardError, an IndexError and an Exception.
-# (spinel issue #3096)
 e001 = [1].each; e001.next
 ex001 = (begin; e001.next; rescue StopIteration => z001; z001; end)
 p ex001.class

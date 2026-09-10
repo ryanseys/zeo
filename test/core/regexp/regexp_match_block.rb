@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # `re.match(str) { |m| ... }` yields the MatchData on a hit and evaluates to
 # the block's value. Only the String-receiver form had the arm, so with a
 # Regexp receiver the block never ran and the MatchData itself was the value.

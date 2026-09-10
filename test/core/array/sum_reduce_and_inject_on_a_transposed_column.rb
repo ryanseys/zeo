@@ -1,5 +1,4 @@
 # With and without a seed, and on the transpose read inline.
-# (spinel issue #3312)
 cols = [[1, 2], [3, 4]].transpose
 p cols[0].sum
 r1 = (cols[0].reduce(0) { |a, x| a + x } rescue $!.class); p r1

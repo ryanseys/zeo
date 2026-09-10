@@ -1,6 +1,5 @@
 # Two sets with the same members in a different order hash alike; a different
 # one does not.
-# (spinel issue #3069)
 require "set"
 a = Set[1, 2, 3]
 b = Set[3, 2, 1]

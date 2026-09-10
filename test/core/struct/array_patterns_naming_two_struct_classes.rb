@@ -1,5 +1,4 @@
 # `in A[x]` and `in B[y]` pick the arm by class and bind the member.
-# (spinel issue #3179)
 A = Struct.new(:x)
 B = Struct.new(:y)
 def ev(node)

@@ -1,5 +1,4 @@
 # Two calls push onto a global array; a third method iterates what they left.
-# (spinel issue #3263)
 $clients = []
 def add(x) = $clients << x
 def show

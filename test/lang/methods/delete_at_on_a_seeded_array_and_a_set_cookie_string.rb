@@ -1,6 +1,5 @@
 # An array seeded with one element and emptied by delete_at, then filled, and
 # a "Set-Cookie" string beside it.
-# (spinel issue #3298)
 class R
   attr_accessor :cookies
   def initialize

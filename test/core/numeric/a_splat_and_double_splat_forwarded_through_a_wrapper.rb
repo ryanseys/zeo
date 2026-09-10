@@ -1,5 +1,4 @@
 # `build(*args, **kwargs)` passes both through, with and without keywords.
-# (spinel issue #3176)
 def build(name, **extra)
   "#{name}/#{extra.size}"
 end

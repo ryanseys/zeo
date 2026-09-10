@@ -1,5 +1,4 @@
 # It raises FrozenError regardless, with and without a replacement.
-# (spinel issue #3338)
 s1 = "hello"; r1 = (s1.scrub! rescue $!.class); p r1
 s2 = "hello"; r2 = (s2.scrub!("?") rescue $!.class); p r2
 p("hello".scrub!)

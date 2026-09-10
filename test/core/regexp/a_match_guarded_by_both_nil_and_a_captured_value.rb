@@ -1,5 +1,4 @@
 # `if m && m[1].to_i < 999` over strings that match and one that does not.
-# (spinel issue #2896)
 ["12-a", "xx", "999-z"].each do |s|
   m = s.match(/^(\d+)-/)
   if m && m[1].to_i < 999

@@ -1,5 +1,4 @@
 # A predicate, a value to match, and the plain form.
-# (spinel issue #3102)
 p(("a".."e").count { |s| s < "c" })
 p(("a".."e").count)
 p(("a".."e").count("b"))

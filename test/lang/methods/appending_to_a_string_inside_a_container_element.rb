@@ -1,6 +1,5 @@
 # An array of objects, emptied and refilled, whose first element's String ivar
 # is appended to in place.
-# (spinel issue #3307)
 class Sub
   attr_accessor :topic, :fd, :mode
   def initialize(topic, fd, mode)

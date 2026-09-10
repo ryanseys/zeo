@@ -1,5 +1,4 @@
 # Each answers the nanoseconds the requested precision leaves.
-# (spinel issue #3089)
 t = Time.at(1234567890.123456789)
 p t.floor(1).nsec
 p t.floor(3).nsec

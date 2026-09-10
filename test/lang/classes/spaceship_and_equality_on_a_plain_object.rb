@@ -1,6 +1,5 @@
 # `o <=> o` is 0 and against another object nil, beside the String and Array
 # answers.
-# (spinel issue #3017)
 o = Object.new
 p(o <=> o)
 p(o <=> Object.new)

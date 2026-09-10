@@ -1,6 +1,5 @@
 # Array#include? over value objects finds an equal-but-distinct one, because
 # the class defines ==.
-# (spinel issue #2884)
 class Point
   attr_reader :x
   def initialize(x) = @x = x

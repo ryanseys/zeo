@@ -1,6 +1,5 @@
 # Objects built inside a map over pairs, their areas summed with a block and
 # rounded.
-# (spinel issue #2933)
 class Shape
   def initialize(s) = @s = s
   def area = @s * 3.14

@@ -1,6 +1,5 @@
 # transpose, fill, rotate, product and zip, each with an empty operand or
 # receiver.
-# (spinel issue #3223)
 p([].transpose)
 p([].fill(1))
 p([].rotate(3))

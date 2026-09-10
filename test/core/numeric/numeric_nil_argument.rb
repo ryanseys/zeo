@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # An Integer or Float operation with a nil argument raises TypeError, for
 # coerce, pow, fdiv, divmod, round and digits alike.
 #

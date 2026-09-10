@@ -1,6 +1,5 @@
 # `reduce(:>>)` and `reduce(:<<)` over lambdas, called directly and passed with
 # &.
-# (spinel issue #3167)
 pl = [->(x) { x * x }, ->(x) { x + 1 }].reduce(:>>)
 p pl.call(3)
 p [1, 2, 3].map(&pl)

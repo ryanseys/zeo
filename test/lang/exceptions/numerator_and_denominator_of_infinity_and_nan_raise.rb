@@ -1,5 +1,4 @@
 # Float#numerator and #denominator raise FloatDomainError for Infinity and NaN, and answer for a finite Float.
-# (spinel issue #3011)
 r1 = (Float::INFINITY.numerator rescue $!.class); p r1
 r2 = (Float::INFINITY.denominator rescue $!.class); p r2
 r3 = (Float::NAN.numerator rescue $!.class); p r3

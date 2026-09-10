@@ -1,5 +1,4 @@
 # It is still a hash of arrays, alone and beside a non-empty one.
-# (spinel issue #2916)
 p({ "empty" => [] })
 h = { "a" => [1], "empty" => [] }
 p h

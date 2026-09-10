@@ -1,5 +1,4 @@
 # Random#bytes answers an empty String for 0 and raises ArgumentError for a negative count.
-# (spinel issue #3050)
 r = Random.new(42)
 puts r.bytes(0).bytesize
 begin

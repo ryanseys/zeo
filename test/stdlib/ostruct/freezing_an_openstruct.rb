@@ -1,6 +1,5 @@
 # It is not frozen at first, accepts a new member, and refuses one after
 # freeze.
-# (spinel issue #3272)
 require "ostruct"
 o = OpenStruct.new(a: 1)
 p o.frozen?

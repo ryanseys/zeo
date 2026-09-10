@@ -1,6 +1,5 @@
 # Members from the constructor hash, a new one assigned afterwards, and the
 # readers for each.
-# (spinel issue #3135)
 require "ostruct"
 
 o = OpenStruct.new(a: 1, b: "hi")

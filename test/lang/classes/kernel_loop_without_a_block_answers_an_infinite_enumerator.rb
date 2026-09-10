@@ -1,5 +1,4 @@
 # It yields nil forever, so first, take and repeated next all answer.
-# (spinel issue #3236)
 e = loop
 p e.class
 p loop.first(3)

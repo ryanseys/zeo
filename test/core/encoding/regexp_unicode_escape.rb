@@ -1,4 +1,3 @@
-# From the spinel corpus (fa06b601).
 #
 # `\u{...}` with more than one codepoint is a PARSE ERROR:
 #

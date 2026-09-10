@@ -1,5 +1,4 @@
 # `word[0] = "z"` on `path.last`, and a per-index copy built inside a block.
-# (spinel issue #3172)
 def f(word)
   word[0] = "z"
   word

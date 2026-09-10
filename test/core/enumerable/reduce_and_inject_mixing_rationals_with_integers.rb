@@ -1,6 +1,5 @@
 # An Integer seed folding Rationals, a Rational seed, and the plain Integer and
 # Float cases beside them.
-# (spinel issue #3220)
 p([Rational(1, 2), Rational(1, 4)].reduce(0, :+))
 p([2, -3].inject(0) { |a, c| a + Rational(1, 2) })
 p([1, 2, 3].reduce(0, :+))

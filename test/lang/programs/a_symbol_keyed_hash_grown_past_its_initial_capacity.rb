@@ -1,5 +1,4 @@
 # Every key is still findable after the rehash.
-# (spinel issue #3146)
 h = {x: 1}
 p h[:x]
 

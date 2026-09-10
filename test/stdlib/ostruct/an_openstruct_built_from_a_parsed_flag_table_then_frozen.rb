@@ -1,6 +1,5 @@
 # A Config collecting Flags, whose keys come from a switch name, wrapped in a
 # frozen OpenStruct.
-# (spinel issue #3288)
 require "ostruct"
 
 class Config

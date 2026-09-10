@@ -1,5 +1,4 @@
 # Both are reachable, and Dir's own methods still answer.
-# (spinel issue #3321)
 class Dir
   VERSION = '1.0.0'
   def self.dot?(name)

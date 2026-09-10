@@ -1,5 +1,4 @@
 # `break kept.concat(list)` ends the loop with that value.
-# (spinel issue #3297)
 list, kept = ["--", "x"], []
 while (i = list.shift)
   case i

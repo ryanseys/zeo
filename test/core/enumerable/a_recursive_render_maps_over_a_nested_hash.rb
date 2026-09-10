@@ -1,5 +1,4 @@
 # A method that recurses into Hash values through map and join renders a two-level hash.
-# (spinel issue #2873)
 def render(v)
   return v.to_s unless v.is_a?(Hash)
   "{" + v.map { |k, val| "#{k}=#{render(val)}" }.join(",") + "}"

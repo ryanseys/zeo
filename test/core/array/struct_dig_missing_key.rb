@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Struct#dig answers nil for an unknown member, and for an index past the
 # last one.
 #

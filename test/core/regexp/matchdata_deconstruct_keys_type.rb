@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # MatchData#deconstruct_keys raises TypeError for an argument that is
 # neither nil nor an Array of Symbols.
 #

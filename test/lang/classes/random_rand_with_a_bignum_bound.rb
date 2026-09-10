@@ -1,6 +1,5 @@
 # Random#rand and Kernel#rand answer a non-negative Integer for a bound too
 # large for a machine word.
-# (spinel issue #3058)
 r = Random.new(5)
 p r.rand(2 ** 70).class
 p r.rand(2 ** 70) >= 0

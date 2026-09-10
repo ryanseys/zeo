@@ -1,5 +1,4 @@
 # A Config indexing flags by both their key symbol and each switch string.
-# (spinel issue #3331)
 require "ostruct"
 class Config
   attr_reader :flags, :lookup

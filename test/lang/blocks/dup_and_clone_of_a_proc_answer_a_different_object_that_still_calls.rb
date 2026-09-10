@@ -1,5 +1,4 @@
 # Neither is equal? to the original, and both call the same body.
-# (spinel issue #3048)
 pr = proc { |x| (x || 0) + 1 }
 d = pr.dup
 p d.equal?(pr)

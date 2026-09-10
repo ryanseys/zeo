@@ -1,5 +1,4 @@
 # Both elements are there, of different types.
-# (spinel issue #2989)
 def m(order)
   order << :sym
 end

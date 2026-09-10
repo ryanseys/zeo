@@ -1,6 +1,5 @@
 # initialize calls a method that builds a local array, then taps an object into
 # the collection it was handed.
-# (spinel issue #3196)
 class Flag; end
 class Crash
   attr_reader :flags

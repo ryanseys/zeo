@@ -1,5 +1,4 @@
 # Two calls to a method that assigns one hash key leave both keys behind.
-# (spinel issue #2894)
 def mark(h, k)
   h[k] = true
 end

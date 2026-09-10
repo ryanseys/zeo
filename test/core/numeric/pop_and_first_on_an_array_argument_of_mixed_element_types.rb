@@ -1,6 +1,5 @@
 # A method popping its array argument, reached through a rest parameter, for
 # String, Integer and Float elements.
-# (spinel issue #3137)
 def fn(opts) = opts.pop
 def fn2(*opts) = fn(opts)
 p fn([""])

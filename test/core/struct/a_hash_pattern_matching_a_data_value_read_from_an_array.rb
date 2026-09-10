@@ -1,5 +1,4 @@
 # `in { x:, y: }` binds both members.
-# (spinel issue #3161)
 Vec = Data.define(:x, :y)
 
 top = [Vec.new(3, 4)].first

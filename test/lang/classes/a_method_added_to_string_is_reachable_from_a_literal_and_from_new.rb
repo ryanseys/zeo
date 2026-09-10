@@ -1,6 +1,5 @@
 # Reopening String and calling the new method on a literal and on a String
 # built with new and appended to.
-# (spinel issue #3109)
 class String
   def shout
     upcase + "!"

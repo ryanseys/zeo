@@ -1,5 +1,4 @@
 # Object#remove_instance_variable returns the removed value, for each of two ivars.
-# (spinel issue #3020)
 class Box
   def initialize; @v = 1; @s = "hi"; end
   def drop; remove_instance_variable(:@v); end

@@ -1,5 +1,4 @@
 # Integer, Float and Rational bounds, and a receiver below the range.
-# (spinel issue #3233)
 p(Rational(5, 2).clamp(1, 2))
 p(Rational(5, 2).clamp(1.0, 2.0))
 p(Rational(5, 2).clamp(Rational(0, 1), Rational(3, 1)))

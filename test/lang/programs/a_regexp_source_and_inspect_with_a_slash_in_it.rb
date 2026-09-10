@@ -1,5 +1,4 @@
 # A %r{} literal holding a slash, and one written with an escape.
-# (spinel issue #3061)
 r = %r{a/b}
 puts r.source
 puts r.inspect

@@ -1,6 +1,5 @@
 # An equal-but-distinct value object is found in a Set, and 1 and 1.0 are
 # distinct members.
-# (spinel issue #2917)
 require "set"
 
 class Point

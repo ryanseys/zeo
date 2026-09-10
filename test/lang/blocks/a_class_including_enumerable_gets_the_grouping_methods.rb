@@ -1,5 +1,4 @@
 # A class defining only each answers the Enumerable methods over its elements.
-# (spinel issue #2958)
 class Tags
   include Enumerable
   def initialize(*xs); @xs = xs; end

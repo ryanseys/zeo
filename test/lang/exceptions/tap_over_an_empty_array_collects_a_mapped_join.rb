@@ -1,5 +1,4 @@
 # `[].tap { |r| r << values.map { _1 }.join(", ") }.join(" ")` answers the single mapped element.
-# (spinel issue #3200)
 class Item
   attr_reader :values
   def initialize = @values = ["a"]

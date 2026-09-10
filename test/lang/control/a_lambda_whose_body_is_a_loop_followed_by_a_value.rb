@@ -1,5 +1,4 @@
 # The loop breaks and the lambda answers the value after it, for three shapes.
-# (spinel issue #3310)
 g = ->() { loop { break }; 42 }
 p g.call
 h = ->() { r = []; loop { break }; [r, 1] }

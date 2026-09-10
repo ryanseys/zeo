@@ -1,5 +1,4 @@
 # Index assignment inside the builder, read back through the index form.
-# (spinel issue #3193)
 require "ostruct"
 
 class Main

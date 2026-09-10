@@ -1,5 +1,4 @@
 # The other arm answers an Integer, so the return type is not one class.
-# (spinel issue #3197)
 require "ostruct"
 
 class Crash

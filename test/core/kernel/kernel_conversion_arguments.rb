@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Kernel conversion functions raise TypeError for an argument with no
 # conversion, and consult to_f/to_int where there is one.
 #

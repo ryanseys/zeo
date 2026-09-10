@@ -1,6 +1,5 @@
 # Each of them called on the array bound by an outer map's block parameter,
 # including a nested destructuring reject and an unused each_index parameter.
-# (spinel issue #2930)
 p([[1, 2, 0], [3, 0, 4]].map { |row| row.reject(&:zero?) })
 p([[1, 2, 0]].map { |r| r.select { |x| x > 1 } })
 p([[1, 2, 0]].map { |r| r.filter { |x| x > 0 } })

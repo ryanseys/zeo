@@ -1,5 +1,4 @@
 # Each raises FrozenError rather than writing into it.
-# (spinel issue #3335)
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

@@ -1,5 +1,4 @@
 # An exception object reaching a rescue clause is mutable, whether raised by message or by class.
-# (spinel issue #3004)
 begin
   raise "x"
 rescue => e

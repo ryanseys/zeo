@@ -1,5 +1,4 @@
 # A switch list assembled by popping a trailing description and concatenating raises on a repeated switch and passes otherwise.
-# (spinel issue #3341)
 class Flag
   attr_reader :switches, :help
   def initialize(opts)

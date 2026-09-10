@@ -1,6 +1,5 @@
 # A Struct with a block-defined method, grouped by one member and summed by
 # that method.
-# (spinel issue #2872)
 Item = Struct.new(:cat, :qty) do
   def value = qty
 end

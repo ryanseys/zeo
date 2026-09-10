@@ -1,5 +1,4 @@
 # The reduce accumulator holds what the method answers, through both shapes.
-# (spinel issue #3240)
 def reducer(state, action)
   case action
   in { type: :inc, by: }

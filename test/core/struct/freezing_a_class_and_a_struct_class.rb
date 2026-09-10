@@ -1,5 +1,4 @@
 # `C.freeze` makes only that class frozen, and a Struct class behaves the same.
-# (spinel issue #3101)
 class C; end
 class D; end
 C.freeze

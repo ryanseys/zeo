@@ -1,5 +1,4 @@
 # nil.clone(freeze: true) and a bare clone both answer nil; freeze: false raises.
-# (spinel issue #3033)
 x = nil
 r = begin; x.clone(freeze: false); rescue => e; e.class; end
 p r

@@ -1,5 +1,4 @@
 # The reader, members, to_h and inspect all carry the name as written.
-# (spinel issue #3110)
 S = Struct.new(:verbose?, :name)
 o = S.new(true, "x")
 p o.verbose?

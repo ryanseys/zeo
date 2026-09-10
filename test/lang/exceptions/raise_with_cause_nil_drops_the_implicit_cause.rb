@@ -1,5 +1,4 @@
 # `raise "msg", cause: nil` inside a rescue clause suppresses the exception that would otherwise be the cause.
-# (spinel issue #2990)
 def m
   raise "inner"
 rescue

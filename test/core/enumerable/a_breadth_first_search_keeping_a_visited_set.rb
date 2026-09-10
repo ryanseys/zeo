@@ -1,6 +1,5 @@
 # A BFS over a constant graph, using a Set for the visited nodes and comparing
 # each node against the goal.
-# (spinel issue #2877)
 require "set"
 
 GRAPH = {

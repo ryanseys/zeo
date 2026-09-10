@@ -1,6 +1,5 @@
 # `arr.each { |x| x << "!" }` and upcase! in the same shape change the array's
 # own elements.
-# (spinel issue #3227)
 arr = [+"a", +"b"]
 arr.each { |x| x << "!" }
 p arr

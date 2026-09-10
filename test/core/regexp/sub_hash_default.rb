@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # A Hash replacement in #sub/#gsub answers its default for a key it does not
 # have; the empty string was hard-coded (#3824).
 h = Hash.new("?")

@@ -1,6 +1,5 @@
 # A method splitting "1/2" into a Rational, called from each and from map, and
 # the mapped values folded with inject.
-# (spinel issue #3186)
 def to_frac(str)
   num, den = str.split("/").map(&:to_i)
   Rational(num, den || 1)

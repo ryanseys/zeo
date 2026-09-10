@@ -1,6 +1,5 @@
 # The lambda answers the rebound value, for one parameter, for two, and in a
 # proc.
-# (spinel issue #3309)
 f = ->(s) { s = s[1..]; s }
 p f.call("abc")
 f2 = ->(a, b) { a = a + 1; b = b * 2; [a, b] }

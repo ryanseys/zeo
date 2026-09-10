@@ -1,6 +1,5 @@
 # The enumerator's class and next, the block forms beside them, and
 # `select.with_index`.
-# (spinel issue #3062)
 x = (1..3).select
 p x.class
 p x.next

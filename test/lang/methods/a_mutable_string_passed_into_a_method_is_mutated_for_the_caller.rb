@@ -1,6 +1,5 @@
 # A method appending to its parameter changes the caller's string, and an alias
 # taken through a reader outside the class does too.
-# (spinel issue #3227)
 def scream(x)
   x << "!"
 end

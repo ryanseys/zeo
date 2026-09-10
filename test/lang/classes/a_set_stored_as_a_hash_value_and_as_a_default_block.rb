@@ -1,6 +1,5 @@
 # Appending to a Set held in a hash, and to one a default block creates per
 # key.
-# (spinel issue #3174)
 require 'set'
 h = { a: Set.new }
 h[:a] << 1

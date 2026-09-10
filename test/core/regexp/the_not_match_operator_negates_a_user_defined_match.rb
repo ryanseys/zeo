@@ -1,5 +1,4 @@
 # `!~` answers the negation of the class's own `=~`.
-# (spinel issue #3019)
 class Pat
   def initialize(s); @s = s; end
   def =~(str); str.include?(@s) ? 0 : nil; end

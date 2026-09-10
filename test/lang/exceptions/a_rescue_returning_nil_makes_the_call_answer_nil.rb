@@ -1,5 +1,4 @@
 # A `begin` whose rescue clause ends in a `puts` answers nil, so the caller's ternary takes the other branch.
-# (spinel issue #2900)
 class Resp
   def code = 200
 end

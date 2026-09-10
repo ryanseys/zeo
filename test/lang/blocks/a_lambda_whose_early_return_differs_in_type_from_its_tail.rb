@@ -1,6 +1,5 @@
 # An each with `return out if out`, falling through to a different kind of
 # value.
-# (spinel issue #3241)
 f = ->(items) {
   items.each do |pr|
     out = pr.call

@@ -1,5 +1,4 @@
 # The arm checks the value is a hash with those keys, beside an array arm.
-# (spinel issue #2931)
 def f(v)
   case v
   in [x, y]

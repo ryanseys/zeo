@@ -1,6 +1,5 @@
 # Built with a name and an argument list, each answers #name, #args and
 # #message.
-# (spinel issue #3042)
 e = NoMethodError.new("msg", :meth, [1, 2])
 p e.args
 p e.name

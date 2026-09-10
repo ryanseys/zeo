@@ -1,6 +1,5 @@
 # map over pairs calling chars, split, chars.length and to_s on the first
 # element.
-# (spinel issue #2929)
 r = [["ab", "cd"]].map { |a, b| a.chars }
 p r
 p [["a,b", "c"]].map { |a, b| a.split(",") }

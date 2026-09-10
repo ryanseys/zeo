@@ -1,5 +1,4 @@
 # `def self.fn(&) = new(&).fn` hands the caller's block to initialize's yield.
-# (spinel issue #3209)
 class Foo
   def initialize = @hash = {}
   def empty? = @hash.empty?

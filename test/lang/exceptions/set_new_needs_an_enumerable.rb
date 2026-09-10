@@ -1,5 +1,4 @@
 # Set.new raises for an Integer, accepts an Array or nothing, and applies its block.
-# (spinel issue #3071)
 require "set"
 
 r1 = (Set.new(5) rescue $!.class); p r1

@@ -1,5 +1,4 @@
 # Through the each it defines, with and without a block.
-# (spinel issue #2960)
 class Nums
   include Enumerable
   def initialize(*xs); @xs = xs; end

@@ -1,5 +1,4 @@
 # It answers 0, changing nothing.
-# (spinel issue #3104)
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

@@ -1,6 +1,5 @@
 # `options[0] = flag.parse_param(0, param)` answers the assigned value, over
 # several parameter types.
-# (spinel issue #3316)
 module Slap
   class Flag
     def initialize(kind)

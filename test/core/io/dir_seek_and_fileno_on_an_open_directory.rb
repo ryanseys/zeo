@@ -1,5 +1,4 @@
 # Both answer rather than raising, on a directory opened with Dir.new.
-# (spinel issue #2967)
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

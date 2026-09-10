@@ -1,6 +1,5 @@
 # Four calls whose receiver is only known at run time: a lambda's arity, a
 # destructured String's ljust, an Integer's to_s(2), and map! on a row.
-# (spinel issue #3162)
 ranges = [(1..3)]
 p ranges[0].to_a
 p [->(x) { x }].map(&:arity)                     # Ruby [1]        Spinel: NoMethodError 'arity' (Proc)

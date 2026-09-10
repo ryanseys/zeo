@@ -1,5 +1,4 @@
 # KeyError answers #key and #receiver; the StopIteration from an exhausted Enumerator answers its class.
-# (spinel issue #3120)
 e = begin; {5 => 0}.fetch(9); rescue KeyError => x; x; end
 p e.key
 p e.receiver

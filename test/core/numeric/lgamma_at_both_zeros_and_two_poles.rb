@@ -1,5 +1,4 @@
 # Negative zero, positive zero, and two negative integers.
-# (spinel issue #3116)
 p Math.lgamma(-0.0)
 p Math.lgamma(0.0)
 p Math.lgamma(-1.0)

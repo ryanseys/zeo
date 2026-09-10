@@ -1,5 +1,4 @@
 # Each answers the offset and the shifted hour.
-# (spinel issue #3093)
 t = Time.utc(2001, 2, 3, 4, 5, 6)
 puts t.getlocal(3600).utc_offset
 puts t.getlocal(3600).hour

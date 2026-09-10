@@ -1,5 +1,4 @@
 # A percent-encoder building each hex digit with getbyte arithmetic and chr.
-# (spinel issue #3328)
 def hexd(n)
   n < 10 ? ("0".getbyte(0) + n).chr : ("A".getbyte(0) + n - 10).chr
 end

@@ -1,5 +1,4 @@
 # NoMethodError#receiver answers the String, Integer or nil the missing method was called on.
-# (spinel issue #3068)
 begin
   "s".no_such
 rescue NoMethodError => e

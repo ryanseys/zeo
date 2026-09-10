@@ -1,5 +1,4 @@
 # Array#<=> compares element by element and falls back to length, and answers 0 for two empties.
-# (spinel issue #2984)
 r = ([] <=> [] rescue $!.class); p r
 p([1, 2] <=> [1, 2])
 p([1] <=> [1, 2])

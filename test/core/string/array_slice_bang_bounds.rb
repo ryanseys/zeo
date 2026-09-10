@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Array#slice! answers nil for a range that starts past the end, and for a
 # negative length.
 #

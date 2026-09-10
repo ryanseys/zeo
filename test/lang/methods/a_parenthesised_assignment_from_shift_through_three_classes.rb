@@ -1,6 +1,5 @@
 # `(item = queue.shift)` as a method's whole body, reached through two
 # forwarding classes, with an empty array.
-# (spinel issue #3303)
 module Slap
   def self.parse(argv = ARGV) = Main.new.parse(argv)
 

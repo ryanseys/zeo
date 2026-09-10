@@ -1,6 +1,5 @@
 # The priority is an Integer, groups are all Integers, and the three PRIO
 # constants exist.
-# (spinel issue #3046)
 puts Process.getpriority(Process::PRIO_PROCESS, 0).class
 g = Process.groups
 puts g.class

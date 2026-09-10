@@ -1,6 +1,5 @@
 # `def fill(h) = h[1] = 100` changes the caller's hash, with an Integer key and
 # with a Symbol.
-# (spinel issue #2871)
 def fill(h)
   h[1] = 100
 end

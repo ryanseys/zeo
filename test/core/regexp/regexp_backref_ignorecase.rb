@@ -1,4 +1,3 @@
-# From the spinel corpus (fa06b601).
 #
 # A backreference compares case-SENSITIVELY even when the pattern is folded,
 # so `/(a)\1/i` does not match `"aA"` where CRuby's does.

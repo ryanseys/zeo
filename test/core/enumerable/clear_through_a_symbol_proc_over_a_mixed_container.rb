@@ -1,5 +1,4 @@
 # each(&:clear) and map(&:clear) over an array holding both Arrays and Hashes.
-# (spinel issue #3199)
 items = [[1], {a: 1}]
 items.each(&:clear)
 p items

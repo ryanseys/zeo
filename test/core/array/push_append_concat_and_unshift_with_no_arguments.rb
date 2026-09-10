@@ -1,5 +1,4 @@
 # Each answers the receiver and changes nothing.
-# (spinel issue #3340)
 a001 = [1, 2]
 p a001.push
 p a001

@@ -1,6 +1,5 @@
 # all? and map over each_with_index, where the receiver is a parameter
 # defaulting to [].
-# (spinel issue #3243)
 def safe?(placement = [])
   placement.each_with_index.all? { |c, r| c > r }
 end

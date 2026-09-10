@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # MatchData#values_at with a Range argument wraps the result in an extra
 # array.
 #

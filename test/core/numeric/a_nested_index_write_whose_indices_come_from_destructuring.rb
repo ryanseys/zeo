@@ -1,6 +1,5 @@
 # `g[r][c] = v` where r and c were bound by a multiple assignment lands on the
 # inner array.
-# (spinel issue #2944)
 grid = [["a", "b"], ["c", "d"]]
 cells = [[0, 1]]
 r, c = cells.first

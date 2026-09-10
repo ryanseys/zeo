@@ -1,5 +1,4 @@
 # `r += x`, `-=`, `*=` and `/=` each rebind the local to a reduced Rational.
-# (spinel issue #2918)
 t = Rational(0, 1)
 t += Rational(1, 2)
 p t

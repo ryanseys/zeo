@@ -1,5 +1,4 @@
 # `TrueClass === true` and the case form, and the false side of each.
-# (spinel issue #2966)
 b = true
 p(TrueClass === b)
 p(case b when TrueClass then :yes else :no end)

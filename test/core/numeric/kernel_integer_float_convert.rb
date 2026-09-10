@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Kernel#Integer / #Float: `exception: false` asks for nil rather than a raise,
 # and the keyword hash is not one of the value arguments (passed through as one
 # it landed in the base slot as a pointer). A value with no integer conversion

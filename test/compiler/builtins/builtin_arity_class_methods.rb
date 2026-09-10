@@ -1,4 +1,3 @@
-# From the spinel corpus (fa06b601).
 #
 # A builtin CLASS method's declared arity is wider than CRuby's, so a call
 # CRuby rejects is accepted and the ArgumentError names the wrong range:

@@ -1,5 +1,4 @@
 # Random#rand raises for Infinity, negative Infinity, NaN and an endless-infinite range; 0.0 answers a Float.
-# (spinel issue #3049b)
 r = Random.new(5)
 p((r.rand(Float::INFINITY) rescue $!.class))
 p((r.rand(-Float::INFINITY) rescue $!.class))

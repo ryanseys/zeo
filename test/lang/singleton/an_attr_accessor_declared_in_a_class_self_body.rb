@@ -1,5 +1,4 @@
 # The module's own reader and writer, read from another of its methods.
-# (spinel issue #3108)
 module Config
   class << self
     attr_accessor :env_slot

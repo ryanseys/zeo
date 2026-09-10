@@ -1,6 +1,5 @@
 # Method objects held in an array and in a hash answer call and arity,
 # including one taking a rest parameter.
-# (spinel issue #3231)
 def square(x) = x * x
 arr = [method(:square)]
 m = arr[0]

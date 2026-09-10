@@ -1,5 +1,4 @@
 # `@value ||= /<(.*)>/.match(text)[1].to_sym` where text may be nil.
-# (spinel issue #3219)
 class Crash
   attr_reader :text
   def initialize(text) = @text = text

@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Complex() and Rational() with `exception: false` answer nil for a value
 # they cannot convert.
 #

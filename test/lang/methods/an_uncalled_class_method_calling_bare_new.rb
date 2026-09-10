@@ -1,6 +1,5 @@
 # A class method nothing calls, whose body calls `new` with an argument count
 # its own initialize does not take. It compiles, because nothing reaches it.
-# (spinel issue #229)
 
 # Variant 1: solo class. Base.create is defined but never called.
 # Pre-fix: `sp_Base_cls_create` emits `return sp_Base_new(lv_attrs)`

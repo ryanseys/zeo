@@ -1,5 +1,4 @@
 # `Regexp#===` sets `Regexp.last_match` and `$~` exactly as `=~` does.
-# (spinel issue #3301)
 case "hello world"
 when /(h\w+) (w\w+)/
   p Regexp.last_match(1)

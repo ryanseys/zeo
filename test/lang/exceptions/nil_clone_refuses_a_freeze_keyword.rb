@@ -1,5 +1,4 @@
 # nil.clone(freeze: false) raises ArgumentError, because nil cannot be unfrozen.
-# (spinel issue #3021)
 r = (nil.clone(freeze: false) rescue $!.class); p r
 r2 = (nil.clone(freeze: false) rescue :err); p r2
 r3 = (Integer("x") rescue $!.class); p r3

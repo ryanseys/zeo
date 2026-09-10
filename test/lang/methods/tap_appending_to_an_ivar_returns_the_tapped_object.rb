@@ -1,6 +1,5 @@
 # `list.tap { foo << _1 }` pushes the argument and answers it, with a numbered
 # and an explicit block parameter.
-# (spinel issue #3144)
 class Crash
   attr_reader :foo
 

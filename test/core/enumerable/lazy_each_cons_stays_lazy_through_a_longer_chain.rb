@@ -1,6 +1,5 @@
 # each_cons followed by map and first, bound to a local, and re-lazied before a
 # select.
-# (spinel issue #3318)
 r = (1..Float::INFINITY).lazy.each_cons(2).map { |a, b| a + b }.first(3)
 p r
 lz = (1..Float::INFINITY).lazy.each_cons(2)

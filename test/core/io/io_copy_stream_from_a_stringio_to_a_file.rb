@@ -1,5 +1,4 @@
 # It answers the byte count, and the file holds them.
-# (spinel issue #3217)
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

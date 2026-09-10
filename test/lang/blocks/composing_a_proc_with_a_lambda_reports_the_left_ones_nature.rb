@@ -1,5 +1,4 @@
 # `f >> g` is a lambda only when f is, and its arity is f's.
-# (spinel issue #3051)
 f = proc { |x| x + 1 }
 g = proc { |x| x * 2 }
 l = lambda { |x| x + 10 }

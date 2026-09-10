@@ -1,6 +1,5 @@
 # `[].tap` with a splatted map inside it: the pushes land in order and the
 # join answers them joined.
-# (spinel issue #3208)
 values = ["<url>"]
 result = [].tap do |words|
   words << "Usage:"

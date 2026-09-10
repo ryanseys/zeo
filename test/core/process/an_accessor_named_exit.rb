@@ -1,5 +1,4 @@
 # Reading it answers the ivar rather than calling Kernel#exit.
-# (spinel issue #3207)
 class Crash
   attr_accessor :exit
   def fn

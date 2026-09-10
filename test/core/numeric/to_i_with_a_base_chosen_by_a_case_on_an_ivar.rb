@@ -1,6 +1,5 @@
 # A parser whose base depends on the object's kind, so the receiver's type is
 # only known at run time.
-# (spinel issue #3299)
 class Item
   attr_reader :kind
   def initialize(kind) = @kind = kind

@@ -1,6 +1,5 @@
 # One method hands its ivar array to another that appends to it, through the
 # reader and through the ivar directly.
-# (spinel issue #3154)
 class Flag ; end
 class Config
   attr_reader :flags

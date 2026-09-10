@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Regexp.last_match with a Symbol name raises "no implicit conversion";
 # ruby accepts a name.
 #

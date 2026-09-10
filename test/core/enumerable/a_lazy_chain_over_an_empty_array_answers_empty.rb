@@ -1,5 +1,4 @@
 # map, select, to_a and first over an empty array's lazy enumerator.
-# (spinel issue #2996)
 p([].lazy.map { |x| x * 2 }.to_a)
 p([].lazy.to_a)
 p([].lazy.first(2))

@@ -1,5 +1,4 @@
 # `next unless _1.is_a?(String)` skips the push for every non-String argument.
-# (spinel issue #3142)
 def crash(*values)
   result = []
   values.each do

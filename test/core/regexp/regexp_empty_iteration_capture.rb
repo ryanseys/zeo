@@ -1,4 +1,3 @@
-# From the spinel corpus (fa06b601).
 #
 # A repetition whose body can match EMPTY runs one final iteration that
 # consumes nothing, and CRuby's captured group holds the empty string at the

@@ -1,5 +1,4 @@
 # Two blocks of the same shape returning different classes through one method.
-# (spinel issue #3337)
 class A; def id; 1; end; end
 class B; def id; 2; end; end
 def txn; r = yield; r; end

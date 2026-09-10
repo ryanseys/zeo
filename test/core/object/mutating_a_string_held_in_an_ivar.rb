@@ -1,6 +1,5 @@
 # It shares with local aliases and containers, instances stay independent, and
 # a read through the reader is a copy.
-# (spinel issue #3227)
 class Doc
   attr_reader :title
   def initialize(t)

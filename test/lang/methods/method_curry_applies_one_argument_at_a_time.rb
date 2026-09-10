@@ -1,6 +1,5 @@
 # Method#curry over a two- and a three-argument method, several arguments at
 # once, and on an instance method.
-# (spinel issue #3290)
 def add(a, b) = a + b
 def add3(a, b, c) = a + b + c
 p(method(:add).curry[1][2])

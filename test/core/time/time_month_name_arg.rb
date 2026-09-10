@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Time.utc does not accept a month NAME ("feb") in the month position.
 #
 # The month argument of the civil constructors takes an English month

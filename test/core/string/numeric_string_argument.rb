@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # A numeric method with a String argument raises the ArgumentError ruby
 # raises, not a TypeError.
 #

@@ -1,6 +1,5 @@
 # class, member reads, index reads and to_h, each checked against an expected
 # value.
-# (spinel issue #3155)
 require "ostruct"
 def assert_equal(expected, actual)
   raise unless expected == actual

@@ -1,6 +1,5 @@
 # A leading local assignment inside a do...end sum block, and the same over
 # Floats.
-# (spinel issue #2945)
 r = [1, 2, 3].sum do |t|
   x = t * 2
   x

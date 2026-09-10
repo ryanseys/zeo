@@ -1,6 +1,5 @@
 # `==` evaluates its operands left to right, so a side effect in the left
 # one is visible to the right. Also in the form without `tap`.
-# (spinel issue #3148)
 class Crash
   attr_reader :foo
   def initialize = @foo = []

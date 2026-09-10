@@ -1,6 +1,5 @@
 # Method#=== calls the method, and #super_method is nil at the top level and
 # the parent's Method in a subclass.
-# (spinel issue #3247)
 def dbl(n) = n * 2
 p method(:dbl) === 5
 p method(:dbl).super_method

@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # A character-set escape in a String method argument is not expanded, so
 # the range collapses.
 #

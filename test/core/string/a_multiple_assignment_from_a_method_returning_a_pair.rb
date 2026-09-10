@@ -1,5 +1,4 @@
 # The second element is a nested array, bound whole.
-# (spinel issue #2924)
 def k
   [5, [[1, 2, 3], [4, 5, 6]]]
 end

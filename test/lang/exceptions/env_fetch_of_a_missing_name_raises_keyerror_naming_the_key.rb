@@ -1,5 +1,4 @@
 # ENV.fetch raises KeyError whose key and message name the variable, and takes a default instead.
-# (spinel issue #3027)
 begin
   ENV.fetch("SPINEL_NO_SUCH_VAR_XYZ")
 rescue KeyError => e

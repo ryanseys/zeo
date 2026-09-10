@@ -1,5 +1,4 @@
 # `counts[k] += 1` where k is a pair from product, read back by the same pair.
-# (spinel issue #2911)
 counts = Hash.new(0)
 [0].product([0]).each { |k| counts[k] += 1 }
 p counts[[0, 0]]

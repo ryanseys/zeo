@@ -1,6 +1,5 @@
 # `method(:m).to_proc.curry` applied one argument at a time and two at once,
 # beside a Struct.
-# (spinel issue #3183)
 def greet3(g, n) = "#{g}, #{n}!"
 cg = method(:greet3).to_proc.curry
 p cg["Hi"]["there"]

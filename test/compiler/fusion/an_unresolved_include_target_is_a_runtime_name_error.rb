@@ -1,6 +1,5 @@
 # include, extend and prepend are ordinary calls, so the error comes from the
 # class body's own line rather than from the compile.
-# (spinel issue #3330)
 module Sock
   extend FFI
   ffi_lib "c"
@@ -20,6 +19,6 @@ end
 puts "ok"
 __END__
 #@ stderr
-compiler/fusion/an_unresolved_include_target_is_a_runtime_name_error.rb:5:in '<module:Sock>': uninitialized constant Sock::FFI (NameError)
-	from compiler/fusion/an_unresolved_include_target_is_a_runtime_name_error.rb:4:in '<main>'
+compiler/fusion/an_unresolved_include_target_is_a_runtime_name_error.rb:4:in '<module:Sock>': uninitialized constant Sock::FFI (NameError)
+	from compiler/fusion/an_unresolved_include_target_is_a_runtime_name_error.rb:3:in '<main>'
 #@ exit 1

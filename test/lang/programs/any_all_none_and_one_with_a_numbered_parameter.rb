@@ -1,6 +1,5 @@
 # Each predicate over integers and over nils, with `_1` and with a named
 # parameter.
-# (spinel issue #3141)
 p [123].any? { _1 }
 p [1,2,3].any? { |x| x > 2 }
 p [1,2,3].all? { _1 }

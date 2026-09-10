@@ -1,6 +1,5 @@
 # <<, upcase!, replace, slice! and insert on a local alias, and the same
 # through a container and an ivar.
-# (spinel issue #3227)
 puts "== local alias =="
 a1=+"x"; a2=a1; a1<<"1"; p a2
 b1=+"x"; b2=b1; b1.upcase!; p b2

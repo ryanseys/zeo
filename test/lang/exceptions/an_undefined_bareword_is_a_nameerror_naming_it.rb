@@ -1,5 +1,4 @@
 # A bare undefined identifier raises NameError, not NoMethodError, and the message names it.
-# (spinel issue #3037)
 begin
   undefined_bareword_thing
 rescue NameError => e

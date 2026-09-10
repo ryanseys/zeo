@@ -1,5 +1,4 @@
 # delete, clear, merge! and replace each raise FrozenError on a frozen Hash, and work on an unfrozen one.
-# (spinel issue #3001)
 h = {a: 1, b: 2}.freeze
 p (h.delete(:a) rescue $!.class); p h
 p (h.clear rescue $!.class)

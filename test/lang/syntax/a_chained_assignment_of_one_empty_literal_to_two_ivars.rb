@@ -1,5 +1,4 @@
 # `@a = @b = {}` and the array form leave both readable and independent.
-# (spinel issue #236)
 
 # Hash: both slots promoted to str_str_hash via @h["k"] = "v" writes.
 class HashOwner

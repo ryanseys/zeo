@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # A missing key in a `%{name}` / `%<name>s` format is CRuby's KeyError, not a
 # nil that rendered as the empty string, and a String argument to an integer
 # conversion goes through Integer()'s parse, so unparseable text raises rather

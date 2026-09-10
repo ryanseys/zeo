@@ -1,5 +1,4 @@
 # `param = "x" if assign` leaves param defined and nil when the guard is false.
-# (spinel issue #3295)
 def value(assign)
   param = "x" if assign
   param

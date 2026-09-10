@@ -1,6 +1,5 @@
 # `a === b` is identity for a class with no ===, and follows the definition for
 # one that has it.
-# (spinel issue #3018)
 class Point
   def initialize(x); @x = x; end
 end

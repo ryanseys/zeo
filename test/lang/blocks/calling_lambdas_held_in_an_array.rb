@@ -1,6 +1,5 @@
 # Each element called with an Integer, and one taking a String through a
 # parameter whose type is not known.
-# (spinel issue #2883)
 callbacks = []
 callbacks << ->(e) { p e }
 callbacks << ->(e) { p e * 10 }

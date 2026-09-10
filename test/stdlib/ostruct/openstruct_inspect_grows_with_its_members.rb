@@ -1,5 +1,4 @@
 # After one assignment and after a second of a different type.
-# (spinel issue #3270)
 require "ostruct"
 o = OpenStruct.new
 o.x = 1

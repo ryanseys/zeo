@@ -1,5 +1,4 @@
 # EXTENDED, MULTILINE, IGNORECASE, a combination, zero and none.
-# (spinel issue #3055)
 puts Regexp.new("a", Regexp::EXTENDED).options
 puts Regexp.new("a", Regexp::MULTILINE).options
 puts Regexp.new("a", Regexp::IGNORECASE).options

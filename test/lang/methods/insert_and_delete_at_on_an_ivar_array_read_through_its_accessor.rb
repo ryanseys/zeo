@@ -1,6 +1,5 @@
 # insert at 0 and -1 through the reader, a while loop building a string from
 # the elements, and delete_at in and out of range.
-# (spinel issue #3306)
 class R
   attr_accessor :cookies
   def initialize

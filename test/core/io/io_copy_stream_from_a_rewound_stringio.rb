@@ -1,5 +1,4 @@
 # The bytes reach the destination, through a method taking both.
-# (spinel issue #3216)
 require 'stringio'
 
 def http_resp(dst, src)

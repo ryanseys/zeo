@@ -1,5 +1,4 @@
 # A default-zero Hash sorted by [-count, word] and its first two rows printed.
-# (spinel issue #2876)
 counts = Hash.new(0)
 counts["the"] = 3
 counts["dog"] = 1

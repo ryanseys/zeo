@@ -1,5 +1,4 @@
 # reduce(0, :+) and reduce(1, :*) over Floats, Integers, a mix, and a Range.
-# (spinel issue #3181)
 p [1.0, 2.0].reduce(0, :+)
 p [1.0, 2.0, 3.0].reduce(1, :*)
 p [1, 2].reduce(0, :+)

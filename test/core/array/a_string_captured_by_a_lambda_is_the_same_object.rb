@@ -1,5 +1,4 @@
 # Mutating it inside the lambda is visible outside, and rebinding is not.
-# (spinel issue #3227)
 s = +"cap"
 t = s
 cb = -> { s << "!" }

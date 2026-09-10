@@ -1,5 +1,4 @@
 # An array assembled by insert(0, v) inside a block answers bsearch, beside a literal one.
-# (spinel issue #2892)
 def ins(arr, v) = arr.insert(0, v)
 s = []
 [5, 2, 8].each { |n| ins(s, n) }

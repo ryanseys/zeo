@@ -1,5 +1,4 @@
 # class, frozen? and nil? on each.
-# (spinel issue #3124)
 t = Thread.new { 1 }
 p t.class
 p t.frozen?

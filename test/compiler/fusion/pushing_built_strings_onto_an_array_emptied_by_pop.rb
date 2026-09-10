@@ -1,6 +1,5 @@
 # An array seeded with one element and popped, then each push building its own
 # string.
-# (spinel issue #3327)
 class Res
   attr_accessor :cookies
   def initialize

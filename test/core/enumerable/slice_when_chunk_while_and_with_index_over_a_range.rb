@@ -1,6 +1,5 @@
 # slice_when and chunk_while grouping consecutive members, and with_index with
 # and without an offset.
-# (spinel issue #3228)
 p((1..10).slice_when { |i, j| j.even? }.to_a)
 p((1..8).chunk_while { |i, j| j == i + 1 }.map { |r| r.sum })
 p((1..8).chunk_while { |i, j| j == i + 1 }.to_a)

@@ -1,5 +1,4 @@
 # Kernel#abort raises SystemExit with status 1 and the message it was given, and the line after it never runs.
-# (spinel issue #3077)
 begin
   abort("bye now")
   puts "unreached"

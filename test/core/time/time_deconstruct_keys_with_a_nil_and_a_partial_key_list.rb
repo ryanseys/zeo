@@ -1,5 +1,4 @@
 # All the fields for nil, and only the one asked for otherwise.
-# (spinel issue #2866)
 t = Time.utc(2026, 7, 16, 13, 45, 30)
 p t.deconstruct_keys(nil)
 p t.deconstruct_keys([:zone])

@@ -1,5 +1,4 @@
 # The `acc = []` default is an array the caller can go on using.
-# (spinel issue #2919)
 def make(n, acc = [])
   acc << n
   acc

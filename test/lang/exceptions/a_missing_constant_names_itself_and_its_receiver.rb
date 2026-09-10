@@ -1,5 +1,4 @@
 # NameError from const_get carries #name, a message naming the constant, and #receiver.
-# (spinel issue #3034)
 begin
   Object.const_get(:Nope)
 rescue NameError => e

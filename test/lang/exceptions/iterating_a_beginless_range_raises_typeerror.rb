@@ -1,5 +1,4 @@
 # (..5).each cannot start anywhere, so it raises, and the message says so.
-# (spinel issue #3066)
 begin
   (..5).each { |x| x }
   puts "no-raise-1"

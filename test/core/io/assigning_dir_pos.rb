@@ -1,5 +1,4 @@
 # `dd.pos = 0` answers the position rather than raising.
-# (spinel issue #2968)
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

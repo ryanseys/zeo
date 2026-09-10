@@ -1,5 +1,4 @@
 # def_delegators generates the forwarding methods and module_evals them.
-# (spinel issue #3300)
 require "forwardable"
 
 class Wrapped

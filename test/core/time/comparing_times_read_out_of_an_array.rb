@@ -1,5 +1,4 @@
 # `<=>` directly and through index reads, and min, sort and sort_by over them.
-# (spinel issue #3311)
 p(Time.new(2026, 1, 2) <=> Time.new(2026, 1, 1))
 a = [Time.new(2026, 1, 2), Time.new(2026, 1, 1)]
 p(a[0] <=> a[1])

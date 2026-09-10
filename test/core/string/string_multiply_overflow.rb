@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # String#* overflow raises "string size too big"; ruby 4.0.6 says "argument
 # too big".
 #

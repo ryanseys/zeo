@@ -1,6 +1,5 @@
 # deconstruct answers the member values, destructured into two locals, for a
 # value read out of an array.
-# (spinel issue #2940)
 V = Data.define(:x, :y)
 first = [V.new(1, 2)].first
 a, b = first.deconstruct

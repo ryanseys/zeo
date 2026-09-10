@@ -1,6 +1,5 @@
 # Keywords whose values are arrays, hashes, strings and symbols, and a call
 # with none.
-# (spinel issue #3111)
 def f(**k); p k; end
 f(value: ["x"])
 f(value: {x: "x"})

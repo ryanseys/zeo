@@ -1,5 +1,4 @@
 # The block decides the value for a name that already exists.
-# (spinel issue #2998)
 ENV["SP_A"] = "1"
 ENV.update({ "SP_A" => "2", "SP_B" => "9" }) { |k, o, n| o + n }
 p ENV["SP_A"]

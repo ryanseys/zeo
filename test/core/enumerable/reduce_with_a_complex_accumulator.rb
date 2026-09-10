@@ -1,6 +1,5 @@
 # A reduce seeded with Complex(0, 0) folding + over Complex elements, and the
 # same with * .
-# (spinel issue #2881)
 zs = [Complex(1, 2), Complex(3, -4)]
 total = zs.reduce(Complex(0, 0)) { |acc, z| acc + z }
 p total

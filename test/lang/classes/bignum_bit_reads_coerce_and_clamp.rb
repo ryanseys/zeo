@@ -1,6 +1,5 @@
 # Bit reads at low and high positions, coerce, clamp, and the same on a
 # negative bignum.
-# (spinel issue #3129)
 b = 2 ** 80
 p b[3]
 p b[79]

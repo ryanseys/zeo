@@ -1,5 +1,4 @@
 # owned?, exist?, file? and directory?.
-# (spinel issue #2997)
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

@@ -1,6 +1,5 @@
 # A forward range answers a member, a backwards one nil, and an exclusive one
 # stays below its end.
-# (spinel issue #3221)
 a = (2..5)
 r = rand(a)
 p (2..5).include?(r)

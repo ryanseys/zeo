@@ -1,5 +1,4 @@
 # SignalException built from a signal number reports #message, #signo and #signm; a name with a message raises.
-# (spinel issue #3073)
 e = SignalException.new(9, "custom")
 p e.message
 p e.signo

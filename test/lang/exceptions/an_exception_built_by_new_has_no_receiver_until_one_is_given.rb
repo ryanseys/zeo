@@ -1,5 +1,4 @@
 # KeyError#key, and #receiver on KeyError, FrozenError and NoMethodError, raise when the exception was built by hand; the keyword form answers.
-# (spinel issue #3030)
 p((KeyError.new("m").key rescue $!.class))
 p((KeyError.new("m").receiver rescue $!.class))
 p((FrozenError.new("m").receiver rescue $!.class))

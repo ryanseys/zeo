@@ -1,6 +1,5 @@
 # A class that defines `length` beside methods taking Integer arrays: the
 # arrays are still arrays.
-# (spinel issue #266)
 
 class Mat
   attr_accessor :flat, :nrows, :ncols

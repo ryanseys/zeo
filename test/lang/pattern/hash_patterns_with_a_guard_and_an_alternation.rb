@@ -1,5 +1,4 @@
 # A guarded arm, the same pattern unguarded, an alternation of two, and else.
-# (spinel issue #3185)
 def describe7(event)
   case event
   in { type: :move, dx:, dy: } if dx == 0 && dy == 0 then "no movement"

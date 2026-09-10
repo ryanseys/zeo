@@ -1,5 +1,4 @@
 # Sorting and comparing versions parsed into integer parts.
-# (spinel issue #3189)
 class Version
   include Comparable
   attr_reader :parts

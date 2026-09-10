@@ -1,5 +1,4 @@
 # Its class, size and ftype.
-# (spinel issue #2986)
 p001 = "sp_issue_2986.tmp"
 File.write(p001, "xyz")
 s001 = File.lstat(p001)

@@ -1,6 +1,5 @@
 # Both raise ArgumentError, and the known keywords build normally, including a
 # partly-omitted one.
-# (spinel issue #3079)
 KW = Struct.new(:a, :b, keyword_init: true)
 r = (begin; KW.new(a: 1, z: 9); "no error"; rescue ArgumentError => e; e.class; end); p r
 p(KW.new(a: 1, b: 2).to_a)

@@ -1,6 +1,5 @@
 # NaN as the start or the limit yields nothing; an infinite start yields
 # forever, so the block breaks.
-# (spinel issue #3010)
 Float::NAN.step(2.0, 0.5) { |x| p x }; puts "a"
 1.0.step(Float::NAN, 0.5) { |x| p x }; puts "b"
 n = 0

@@ -1,5 +1,4 @@
 # upcase!, reverse!, slice!, insert and replace each raise FrozenError on a frozen String.
-# (spinel issue #3003)
 s = "abc".freeze
 p (s.upcase! rescue $!.class); p s
 p ("xyz".freeze.reverse! rescue $!.class)

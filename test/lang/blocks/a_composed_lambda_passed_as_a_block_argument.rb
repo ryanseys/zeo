@@ -1,5 +1,4 @@
 # `&(f >> g)` and `&(f << g)` inline and through a local.
-# (spinel issue #3117)
 p([1, 2, 3].map(&(->(x) { x + 1 } >> ->(x) { x * 2 })))
 p([1, 2, 3].map(&(->(x) { x + 1 } << ->(x) { x * 2 })))
 f = ->(x) { x + 1 }

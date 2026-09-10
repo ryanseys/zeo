@@ -1,5 +1,4 @@
 # A lazy map bound to a local, a lazy without a block, and a lazy select over an infinite range.
-# (spinel issue #3012)
 b = [10, 20, 30].lazy.map { |x| x + 1 }
 p(b.first(2))
 c = [1, 2, 3].lazy

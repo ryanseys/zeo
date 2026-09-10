@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Float#remainder by zero raises ZeroDivisionError, for a Float or an
 # Integer divisor and through a local.
 #

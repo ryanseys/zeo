@@ -1,5 +1,4 @@
 # The pattern parses where it sits, and the enclosing constants still answer.
-# (spinel issue #3322)
 module YarnLockParser
   class Parser
     TOKEN_TYPES = {

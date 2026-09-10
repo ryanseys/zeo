@@ -1,6 +1,5 @@
 # `create` calls `build`, which calls `new` on whichever class extended the
 # module.
-# (spinel issue #3177)
 module Factory
   def create(a, b)
     build(a, b)

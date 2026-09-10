@@ -1,6 +1,5 @@
 # `defined?(::Rails)` inside `Underscore::Rails` asks about the top-level one,
 # not the enclosing module of the same name.
-# (spinel issue #3320)
 module Underscore
   module Rails
     if defined?(::Rails)

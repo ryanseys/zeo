@@ -1,5 +1,4 @@
 # class, to_s, inspect, begin, end, first and last on ("a".."e").
-# (spinel issue #3064)
 a = ("a".."e")
 p a.class
 p a.to_s

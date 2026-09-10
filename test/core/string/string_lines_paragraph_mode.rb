@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # String#lines in paragraph mode (a "" separator) does not split on the
 # blank line.
 #

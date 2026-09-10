@@ -1,5 +1,4 @@
 # Kernel#rand raises for Infinity and for NaN as its bound.
-# (spinel issue #3049)
 inf = 1.0 / 0.0
 nan = 0.0 / 0.0
 begin

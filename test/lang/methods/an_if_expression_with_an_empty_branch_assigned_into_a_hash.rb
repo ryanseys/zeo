@@ -1,6 +1,5 @@
 # A module method assigning an if/elsif/else into a hash value, where the
 # first branch has no body, called through a second module.
-# (spinel issue #3283)
 module TypedStore
   def self.parse(serialized)
     h = {}

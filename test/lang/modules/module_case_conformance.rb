@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Module#=== / ancestors ordering includes a module ruby leaves out of the
 # match.
 #

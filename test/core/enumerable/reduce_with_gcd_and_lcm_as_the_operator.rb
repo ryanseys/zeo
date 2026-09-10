@@ -1,5 +1,4 @@
 # `reduce(:gcd)` and `reduce(:lcm)`, beside `reduce(:+)` with and without an initial value.
-# (spinel issue #3125)
 p [12, 18, 24].reduce(:gcd)
 p [2, 3, 4].reduce(:lcm)
 p [1, 2, 3].reduce(:+)

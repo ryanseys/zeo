@@ -1,5 +1,4 @@
 # `map(&:reverse).transpose` for two and three rows, and transpose alone.
-# (spinel issue #2921)
 p [[1, 2, 3], [4, 5, 6]].map(&:reverse).transpose
 p [[1, 2], [3, 4]].transpose
 p [["a", "b"], ["c", "d"]].transpose

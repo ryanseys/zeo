@@ -1,5 +1,4 @@
 # :+.to_proc takes two arguments, :sub takes three, and arity is -2; a symbol naming a one-argument method raises when given two.
-# (spinel issue #3097)
 r1 = (:pow.to_proc.call(2, 3) rescue $!.class); p r1
 s = :+; r2 = (s.to_proc.call(4, 5) rescue $!.class); p r2
 p :+.to_proc.call(4, 5)

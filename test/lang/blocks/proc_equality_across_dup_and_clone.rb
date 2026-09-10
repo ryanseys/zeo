@@ -1,6 +1,5 @@
 # A copy is == and eql? to its original but not equal?, and two separately
 # written lambdas are not ==.
-# (spinel issue #3163)
 l = ->(a) { a }
 p l.dup == l
 p l.clone == l

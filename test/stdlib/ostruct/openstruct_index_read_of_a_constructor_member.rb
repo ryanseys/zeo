@@ -1,5 +1,4 @@
 # `object[:a]` answers what the hash held.
-# (spinel issue #3194)
 require "ostruct"
 hash = {a: 1}
 object = OpenStruct.new(hash)

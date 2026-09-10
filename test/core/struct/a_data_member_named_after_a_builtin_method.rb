@@ -1,5 +1,4 @@
 # Members called `class` and `hash` shadow Object's, on Data and on Struct.
-# (spinel issue #2975)
 C = Data.define(:class, :hash)
 c = C.new("k", 5)
 p(c.class)

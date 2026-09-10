@@ -1,6 +1,5 @@
 # One class taking a positional hash, keyword parameters, and a positional
 # beside a hash.
-# (spinel issue #3191)
 class V
   def run(data); "#{data[:age]}/#{data.size}"; end
   def kw(name:, age: 0); "#{name}:#{age}"; end

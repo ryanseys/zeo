@@ -1,6 +1,5 @@
 # A block answering a scalar, an array, either by condition, and the
 # collect_concat alias.
-# (spinel issue #3063)
 p (1..3).flat_map { |x| x * 2 }
 p (1..3).flat_map { |x| [x, x] }
 p (1..4).flat_map { |x| x.even? ? [x, x] : x }

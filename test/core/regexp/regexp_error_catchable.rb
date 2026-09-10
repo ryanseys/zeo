@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # The RegexpError message reads "unterminated character class"; ruby
 # 4.0.6's Onigmo says "premature end of char-class".
 #

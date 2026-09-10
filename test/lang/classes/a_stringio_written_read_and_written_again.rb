@@ -1,5 +1,4 @@
 # Reading #string between two rounds of appends, five times over.
-# (spinel issue #3153)
 require "stringio"
 5.times do
   buf = StringIO.new

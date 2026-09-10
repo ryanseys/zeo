@@ -1,6 +1,5 @@
 # instance_variable_get and formatting answer a copy, so mutating the answer
 # does not reach the object; instance_variable_set does share.
-# (spinel issue #3227)
 class W
   attr_reader :a, :b
   def initialize

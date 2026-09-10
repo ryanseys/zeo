@@ -1,5 +1,4 @@
 # On a file just written, where the platform records one.
-# (spinel issue #2985)
 require "tmpdir"
 ZTMP = Dir.mktmpdir
 

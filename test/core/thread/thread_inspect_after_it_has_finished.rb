@@ -1,5 +1,4 @@
 # It opens with the class and reports the dead state.
-# (spinel issue #2977)
 t = Thread.new { 1 }
 t.join
 p t.inspect.start_with?("#<Thread")

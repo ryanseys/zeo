@@ -1,5 +1,4 @@
 # `Foo.name` answers the override rather than the module's real name.
-# (spinel issue #3285)
 module Foo
   def self.name
     "custom"

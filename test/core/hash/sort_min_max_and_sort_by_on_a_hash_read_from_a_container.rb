@@ -1,5 +1,4 @@
 # Each materializes the pairs.
-# (spinel issue #2935)
 h = [{ 20 => 2, 3 => 1 }].first
 p h.sort
 p h.min

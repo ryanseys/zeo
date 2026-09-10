@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Float#div by zero raises ZeroDivisionError.
 #
 # A Float that reaches a method through a boxed slot answers the whole

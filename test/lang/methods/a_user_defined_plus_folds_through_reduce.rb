@@ -1,5 +1,4 @@
 # A Money class defining + and to_s is summed with reduce and rendered.
-# (spinel issue #2886)
 class Money
   attr_reader :cents
   def initialize(c) = @cents = c

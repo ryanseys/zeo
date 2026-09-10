@@ -1,5 +1,4 @@
 # Only the keys asked for, all of them for nil, and an unknown key omitted.
-# (spinel issue #2974)
 Point = Data.define(:x, :y)
 p1 = Point.new(1, 2)
 p(p1.deconstruct_keys([:x, :nope]))

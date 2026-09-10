@@ -1,6 +1,5 @@
 # The leading assignment runs, and a nested Array#find reads it; also in an
 # Integer sum.
-# (spinel issue #2936)
 UNITS = [["d", 86400], ["h", 3600], ["m", 60], ["s", 1]]
 p ["1h", "30m"].sum { |t| label = t[-1]; UNITS.find { |l, _| l == label }[1] }
 # leading statement in an integer sum block

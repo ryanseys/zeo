@@ -1,5 +1,4 @@
 # Building the same string in two StringIOs, five times over, gives equal contents each time.
-# (spinel issue #3152)
 require "stringio"
 
 5.times do

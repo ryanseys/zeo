@@ -1,6 +1,5 @@
 # `def self.x(a, b = nil)` on a class and on a module, called with the optional
 # argument omitted and supplied.
-# (spinel issue #239)
 
 # Module form: cls method lives in @meth_* under "<Mod>_cls_<m>".
 # Two gaps: the dispatch path used the un-typed compile_call_args

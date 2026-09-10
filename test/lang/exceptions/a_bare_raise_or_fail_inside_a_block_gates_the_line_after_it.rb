@@ -1,5 +1,4 @@
 # `raise unless` and `fail unless` inside an each block both stop that iteration, so the push after them never runs for a bad value.
-# (spinel issue #3150)
 def str(*flags)
   out = []
   flags.each do

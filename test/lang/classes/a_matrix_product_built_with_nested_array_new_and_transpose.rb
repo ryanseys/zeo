@@ -1,5 +1,4 @@
 # Two nested each_with_index loops filling a result array from zip and sum.
-# (spinel issue #3190)
 a = [[1, 2, 3], [4, 5, 6]]
 b = [[7, 8], [9, 10], [11, 12]]
 result = Array.new(a.size) { Array.new(b.first.size, 0) }

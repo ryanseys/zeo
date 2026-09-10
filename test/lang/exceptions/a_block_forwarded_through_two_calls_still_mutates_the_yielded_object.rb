@@ -1,5 +1,4 @@
 # A block passed with `&` through a module method into a constructor's yield sets the object's ivar.
-# (spinel issue #3218)
 class Foo
   def initialize = @value = false
   def set(*names) = @value = true

@@ -1,6 +1,5 @@
 # A reduce whose accumulator is a lambda wrapping the previous one, for two and
 # three functions.
-# (spinel issue #2874)
 fns = [->(x) { x + 1 }, ->(x) { x * 2 }]
 composed = fns.reduce(->(x) { x }) { |acc, f| ->(x) { f.call(acc.call(x)) } }
 p composed.call(5)

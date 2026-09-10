@@ -1,6 +1,5 @@
 # Each answers its class and message, and is_a? StandardError or only
 # Exception.
-# (spinel issue #3023)
 e = LocalJumpError.new("no block given")
 p e.class
 p e.message

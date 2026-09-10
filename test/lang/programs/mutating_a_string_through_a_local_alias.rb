@@ -1,6 +1,5 @@
 # Two locals bound to one String: equal? holds, and an append is visible
 # through both.
-# (spinel issue #3227)
 s1 = "hello"
 s2 = s1
 p s1.equal?(s2)

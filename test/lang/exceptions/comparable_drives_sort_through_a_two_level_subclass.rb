@@ -1,5 +1,4 @@
 # A Shape hierarchy defining only <=> gets > and sort from Comparable, including through a subclass of a subclass.
-# (spinel issue #3188)
 class Shape
   include Comparable
   def area; raise NotImplementedError; end

@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # A Set algebra operation over a non-Set Enumerable does not preserve
 # ruby's result order.
 #

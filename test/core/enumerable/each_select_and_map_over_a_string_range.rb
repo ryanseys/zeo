@@ -1,5 +1,4 @@
 # ("a".."c") iterates, selects and maps its members.
-# (spinel issue #3103)
 r = []
 ("a".."c").each { |x| r << x }
 p r

@@ -1,5 +1,4 @@
 # One name, both, an unknown one, an empty list and nil.
-# (spinel issue #3015)
 m = "abc".match(/(?<x>b)(?<y>c)/)
 p m.deconstruct_keys([:x])
 p m.deconstruct_keys([:y, :x])

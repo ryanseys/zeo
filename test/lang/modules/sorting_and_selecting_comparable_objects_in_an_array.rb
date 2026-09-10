@@ -1,5 +1,4 @@
 # min, max, sort and between? over a Money array.
-# (spinel issue #3170)
 class Money
   include Comparable
   attr_reader :cents

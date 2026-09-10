@@ -1,6 +1,5 @@
 # `select(&:required?)` where the predicate is an alias_method of the reader,
 # and the same for a non-predicate alias.
-# (spinel issue #3296)
 require "ostruct"
 
 class Item

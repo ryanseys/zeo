@@ -1,5 +1,4 @@
 # `numbers, strings = [], []` gives two objects, each appended to separately.
-# (spinel issue #3213)
 def crash
   numbers, strings = [], []
   numbers << 1

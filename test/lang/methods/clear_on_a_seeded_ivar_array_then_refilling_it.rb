@@ -1,6 +1,5 @@
 # An array seeded with one element and cleared in initialize, pushed to, and
 # iterated; and a hash cleared through a method that returns it.
-# (spinel issue #3326)
 class Res
   attr_accessor :cookies
   def initialize

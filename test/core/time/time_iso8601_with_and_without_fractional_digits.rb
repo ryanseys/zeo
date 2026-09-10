@@ -1,5 +1,4 @@
 # Zero, three and six digits, and a value that has to be truncated.
-# (spinel issue #3095)
 t = Time.utc(2001, 2, 3, 4, 5, 6, 500000)
 puts t.iso8601
 puts t.iso8601(3)

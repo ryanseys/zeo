@@ -1,5 +1,4 @@
 # Interrupt#signo is SIGINT's number, whether raised as a class or with a message.
-# (spinel issue #3039)
 begin
   raise Interrupt
 rescue Interrupt => e

@@ -1,5 +1,4 @@
 # An array seeded with one element and popped, then refilled and iterated.
-# (spinel issue #3325)
 class Res
   attr_accessor :cookies
   def initialize

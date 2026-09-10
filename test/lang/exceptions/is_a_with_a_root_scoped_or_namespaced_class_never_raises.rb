@@ -1,5 +1,4 @@
 # `is_a?(::Integer)` and `is_a?(Outer::Thing)` answer true or false rather than raising, for matching and non-matching receivers.
-# (spinel issue #3258)
 module Outer; class Thing; end; end
 r1 = (5.is_a?(::Integer) rescue "raise:#{$!.class}")
 r2 = ("s".is_a?(Outer::Thing) rescue "raise:#{$!.class}")

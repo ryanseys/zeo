@@ -1,5 +1,4 @@
 # `best, lo, hi = ms(...)` binds all three from the returned array.
-# (spinel issue #2923)
 def ms(nums)
   [nums[0], 0, nums.length]
 end

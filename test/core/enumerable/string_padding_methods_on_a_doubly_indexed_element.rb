@@ -1,6 +1,5 @@
 # ljust, rjust, center and upcase on a String reached through two index reads,
 # with and without a pad argument.
-# (spinel issue #3222)
 s = [["a", "b"]][0][0]
 p(s.ljust(3))
 p(s.rjust(3))

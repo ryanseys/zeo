@@ -1,6 +1,5 @@
 # reduce called with a Symbol that is not a literal, over Integers and Floats,
 # with and without an initial value.
-# (spinel issue #2939)
 p [:+, :-, :*].map { |sym| [10, 3].reduce(sym) }
 p [:+, :*].map { |s| [2, 3, 4].reduce(10, s) }
 ops = [:&, :|]

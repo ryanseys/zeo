@@ -1,6 +1,5 @@
 # Appending to a string after putting it in an array is visible through the
 # array, and equal? holds.
-# (spinel issue #3227)
 s1 = "hi"
 arr = [s1]
 s1 << "!"

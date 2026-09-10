@@ -1,4 +1,3 @@
-# From the spinel corpus (c55d9bdb).
 # Three unrelated String surfaces: a Hash replacement in sub/gsub answering
 # its default for a key that misses, range index assignment, and split with
 # a block.

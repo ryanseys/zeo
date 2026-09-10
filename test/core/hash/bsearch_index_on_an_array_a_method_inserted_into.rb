@@ -1,5 +1,4 @@
 # And on one a method pushed to and returned.
-# (spinel issue #3165)
 def ins(arr, v) = arr.insert(0, v)
 sorted = []
 ins(sorted, 5)

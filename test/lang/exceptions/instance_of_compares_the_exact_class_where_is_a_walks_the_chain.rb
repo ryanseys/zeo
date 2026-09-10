@@ -1,5 +1,4 @@
 # instance_of? is true only for the exact class; is_a? is true up the hierarchy.
-# (spinel issue #3013)
 p ArgumentError.new.instance_of?(StandardError)
 p ArgumentError.new.instance_of?(ArgumentError)
 p ArgumentError.new.instance_of?(Exception)

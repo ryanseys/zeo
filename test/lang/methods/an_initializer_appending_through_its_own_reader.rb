@@ -1,6 +1,5 @@
 # `arr << "a"` inside initialize, reaching the ivar through the attr_reader,
 # fills the array the caller reads.
-# (spinel issue #3139)
 class C
   attr_reader :arr, :nums
   def initialize

@@ -1,5 +1,4 @@
 # Horner's rule with an Integer, a Rational and a Float argument.
-# (spinel issue #3308)
 def horner(coeffs, x)
   coeffs.inject(0) { |acc, c| acc * x + c }
 end

@@ -1,5 +1,4 @@
 # each_index.map and each_with_index.sum inside a map over rows, and each_index on a plain array.
-# (spinel issue #3160)
 p [[1, 2]].map { |row| row.each_index.map { |c| c } }
 # wrong value (no error):
 p [[10, 20, 30]].map { |row| row.each_with_index.sum { |v, i| v * i } }

@@ -1,6 +1,5 @@
 # :upcase has arity -2 and :+ takes two arguments, whether the symbol is a
 # literal or read from a local.
-# (spinel issue #3053)
 p :upcase.to_proc.arity
 p :+.to_proc.arity
 s = :upcase

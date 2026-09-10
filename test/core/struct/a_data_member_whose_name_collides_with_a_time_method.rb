@@ -1,6 +1,5 @@
 # `day` and `hour` answer the member, not Time's, for values flowing through a
 # block parameter.
-# (spinel issue #3239)
 Event = Data.define(:day, :hour)
 events = [Event.new("Mon", 9), Event.new("Wed", 14)]
 p events.map { |e| e.day }

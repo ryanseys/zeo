@@ -1,5 +1,4 @@
 # One character and a run of them, removed in place.
-# (spinel issue #3084)
 s = "あいうえお"
 s.slice!(1)
 p s

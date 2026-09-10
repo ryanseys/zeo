@@ -1,6 +1,5 @@
 # bytesplice and append_as_bytes are visible through another binding, and a
 # mutator inside a block reaches the container's element.
-# (spinel issue #3227)
 s = +"hello"
 t = s
 s.bytesplice(0, 1, "J")

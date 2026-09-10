@@ -1,6 +1,5 @@
 # `@switches += opts` and `+= []` inside initialize, and the same for a second
 # ivar, both readable afterwards.
-# (spinel issue #3289)
 class MyClass
   attr_reader :switches
   def initialize(opts)

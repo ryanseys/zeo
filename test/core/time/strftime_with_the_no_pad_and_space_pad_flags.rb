@@ -1,5 +1,4 @@
 # `%-d`, `%_d` and the rest beside the padded default.
-# (spinel issue #3090)
 t = Time.utc(2001, 2, 3, 4, 5, 6)
 puts t.strftime("%-d/%-m")
 puts t.strftime("%_d")

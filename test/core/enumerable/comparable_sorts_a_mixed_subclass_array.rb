@@ -1,5 +1,4 @@
 # A Shape hierarchy defining only <=> sorts an array holding two subclasses.
-# (spinel issue #3319)
 class Shape
   include Comparable
   def area; 0; end

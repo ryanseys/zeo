@@ -1,5 +1,4 @@
 # Method#inspect and #to_s open with the owner and the parameter names, and unbind answers an UnboundMethod that renders the same way.
-# (spinel issue #3249)
 def dbl(n) = n * 2
 def add(a, b) = a + b
 
