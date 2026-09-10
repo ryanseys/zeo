@@ -598,8 +598,11 @@ pub(super) fn collect_parse_warnings(
     let plain_regexp_conditions = plain_regexp_conditions(result);
     for warning in result.warnings() {
         let message = warning.message();
-        if !is_default_level(message, &plain_regexp_conditions, warning.location().start_offset())
-        {
+        if !is_default_level(
+            message,
+            &plain_regexp_conditions,
+            warning.location().start_offset(),
+        ) {
             continue;
         }
         let upto = warning.location().start_offset().min(source.len());

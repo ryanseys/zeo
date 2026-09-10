@@ -27,17 +27,13 @@ pub(crate) fn shadows_kernel(compiler: &Compiler, cid: Option<ClassId>, name: &s
 /// `module Kernel; def puts; end; end` made every folded `puts` in the
 /// program keep printing the builtin's output.
 pub(crate) fn overrides_kernel_universal(compiler: &Compiler, name: &str) -> bool {
-    compiler
-        .class(OBJECT_CLASS)
-        .ancestors
-        .iter()
-        .any(|&anc| {
-            compiler
-                .class(anc)
-                .own_methods
-                .iter()
-                .any(|&s| compiler.scope(s).name == name)
-        })
+    compiler.class(OBJECT_CLASS).ancestors.iter().any(|&anc| {
+        compiler
+            .class(anc)
+            .own_methods
+            .iter()
+            .any(|&s| compiler.scope(s).name == name)
+    })
 }
 
 /// The ancestor whose SINGLETON-chain slot holds `defining_class`: the class

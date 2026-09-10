@@ -97,7 +97,11 @@ fn process_top_stmt_inner(
             _ => None,
         };
         if let Some(v) = moved {
-            let file = compiler.hir.span(stmt).unwrap_or(crate::hir::Span::SYNTH).file;
+            let file = compiler
+                .hir
+                .span(stmt)
+                .unwrap_or(crate::hir::Span::SYNTH)
+                .file;
             compiler.top_level_visibility.insert(file, v);
         }
     }
@@ -333,7 +337,13 @@ fn process_top_stmt_inner(
                 body,
                 compiler
                     .top_level_visibility
-                    .get(&compiler.hir.span(stmt).unwrap_or(crate::hir::Span::SYNTH).file)
+                    .get(
+                        &compiler
+                            .hir
+                            .span(stmt)
+                            .unwrap_or(crate::hir::Span::SYNTH)
+                            .file,
+                    )
                     .copied()
                     .unwrap_or(crate::hir::Visibility::Private),
             )?;
@@ -974,10 +984,9 @@ fn for_each_nested_stmt(
         // nested one -- `x = box.eval("class String; ...")`, or one inside a
         // block -- reaches registration only through this walk, and without
         // the box on it the reopen landed on main's class.
-        HirNode::BoxScope { box_id, body } => body
-            .iter()
-            .map(|&s| (s, reach.in_box(*box_id)))
-            .collect(),
+        HirNode::BoxScope { box_id, body } => {
+            body.iter().map(|&s| (s, reach.in_box(*box_id))).collect()
+        }
         other @ (HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::BigIntegerLit { .. }
@@ -1012,7 +1021,7 @@ fn for_each_nested_stmt(
         | HirNode::ClassMethodPrepend(_)
         | HirNode::DefHook { .. }
         | HirNode::MethodRedefine { .. }
-            | HirNode::MethodReveal(..)
+        | HirNode::MethodReveal(..)
         | HirNode::Refine { .. }
         | HirNode::Using(_)
         | HirNode::Break(_)

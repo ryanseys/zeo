@@ -192,7 +192,9 @@ fn export_platform_facts() {
     // 'java'` and friends the way the program itself would answer.
     println!("cargo:rustc-env=ZEO_RUBY_PLATFORM={arch}-{os}");
     let (host_os, dlext, soext) = match target_os().as_str() {
-        "macos" | "ios" | "tvos" | "watchos" => (format!("darwin{}", darwin_major()), "bundle", "dylib"),
+        "macos" | "ios" | "tvos" | "watchos" => {
+            (format!("darwin{}", darwin_major()), "bundle", "dylib")
+        }
         "linux" => ("linux-gnu".to_string(), "so", "so"),
         other => (other.to_string(), "so", "so"),
     };

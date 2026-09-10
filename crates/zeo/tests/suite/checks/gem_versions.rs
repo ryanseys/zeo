@@ -66,7 +66,10 @@ fn locked_versions() -> BTreeMap<String, Vec<String>> {
 fn committed_versions() -> BTreeMap<String, Option<String>> {
     let root = repo_root();
     let mut out = BTreeMap::new();
-    for tier in [zeo::gems::bundled::EXT_TIER, zeo::gems::bundled::BOOTSTRAP_TIER] {
+    for tier in [
+        zeo::gems::bundled::EXT_TIER,
+        zeo::gems::bundled::BOOTSTRAP_TIER,
+    ] {
         for lib in zeo::gems::bundled::libraries_in(&root.join(tier)) {
             let spec = lib.dir.join(format!("{}.gemspec", lib.name));
             let version = spec.is_file().then(|| {
@@ -208,7 +211,10 @@ fn every_exemption_still_names_a_library_with_a_gemspec() {
 fn no_library_tier_holds_a_leftover_directory() {
     let root = repo_root();
     let mut strays: Vec<String> = Vec::new();
-    for tier in [zeo::gems::bundled::EXT_TIER, zeo::gems::bundled::BOOTSTRAP_TIER] {
+    for tier in [
+        zeo::gems::bundled::EXT_TIER,
+        zeo::gems::bundled::BOOTSTRAP_TIER,
+    ] {
         let dir = root.join(tier);
         for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{tier} is readable: {e}")) {
             let path: PathBuf = entry.expect("readable entry").path();

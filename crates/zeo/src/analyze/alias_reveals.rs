@@ -89,7 +89,9 @@ pub fn resolve(compiler: &mut Compiler) {
             // and a later body re-installs through `redefs` as it already did.
             let g = group;
             group += 1;
-            compiler.alias_source_reveals.push((cid, name.clone(), singleton, g));
+            compiler
+                .alias_source_reveals
+                .push((cid, name.clone(), singleton, g));
 
             let (si, di, _) = defs[0];
             let (def_at, def_seq) = {

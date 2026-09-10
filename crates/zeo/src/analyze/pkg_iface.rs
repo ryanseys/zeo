@@ -143,9 +143,7 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                 // The ivar LAYOUT is ABI: each package's bodies compiled
                 // slot indices from its own list, so the lists must agree
                 // (or one side must carry none at all).
-                let merge_ivars = |mine: &Vec<String>,
-                                   theirs: &mut Vec<String>|
-                 -> bool {
+                let merge_ivars = |mine: &Vec<String>, theirs: &mut Vec<String>| -> bool {
                     if theirs.is_empty() {
                         *theirs = mine.clone();
                         true
@@ -278,8 +276,7 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
             };
             let taken_name = compiler.class(cid).name.clone();
             let ci = &mut compiler.classes[cid.0 as usize];
-            let same =
-                ci.parent == parent && ci.mixin_order == mixins;
+            let same = ci.parent == parent && ci.mixin_order == mixins;
             if !same && !bare(&parent, &mixins) {
                 if bare(&ci.parent, &ci.mixin_order) {
                     ci.parent = parent;
@@ -369,8 +366,7 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
                             "Float" => {
                                 compiler.redefined_float_ops.insert(im.name.clone());
                             }
-                            "Numeric" | "Comparable" | "Object" | "Kernel"
-                            | "BasicObject" => {
+                            "Numeric" | "Comparable" | "Object" | "Kernel" | "BasicObject" => {
                                 compiler.redefined_int_ops.insert(im.name.clone());
                                 compiler.redefined_float_ops.insert(im.name.clone());
                             }
@@ -412,4 +408,3 @@ pub(super) fn register_package_interfaces(compiler: &mut Compiler) -> Result<(),
     compiler.reindex_classes();
     Ok(())
 }
-

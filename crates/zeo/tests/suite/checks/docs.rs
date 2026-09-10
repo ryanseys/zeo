@@ -78,7 +78,10 @@ fn pages() -> Vec<PathBuf> {
     }
     for rel in PROSE_CONFIG {
         let path = root.join(rel);
-        assert!(path.is_file(), "PROSE_CONFIG names {rel}, which is not a file");
+        assert!(
+            path.is_file(),
+            "PROSE_CONFIG names {rel}, which is not a file"
+        );
         out.push(path);
     }
     out.sort();
@@ -252,7 +255,10 @@ fn exists_exactly(root: &Path, rel: &str) -> bool {
 /// it does or if it is not a path citation at all.
 fn stale_citation(root: &Path, page_dir: &str, token: &str) -> Option<&'static str> {
     // A placeholder, a glob, a Rust path or a phrase is prose, not a path.
-    if token.contains(['*', '<', '{', '(']) || token.contains("::") || token.contains(char::is_whitespace) {
+    if token.contains(['*', '<', '{', '('])
+        || token.contains("::")
+        || token.contains(char::is_whitespace)
+    {
         return None;
     }
     let path = token.split(':').next().unwrap_or("").trim_end_matches('/');
@@ -278,7 +284,9 @@ fn stale_citation(root: &Path, page_dir: &str, token: &str) -> Option<&'static s
         return None;
     }
     let found = exists_exactly(root, &format!("{page_dir}/{path}"))
-        || SHORTHAND_ROOTS.iter().any(|r| exists_exactly(root, &format!("{r}/{path}")));
+        || SHORTHAND_ROOTS
+            .iter()
+            .any(|r| exists_exactly(root, &format!("{r}/{path}")));
     (!found).then_some("no such file under the page's directory or any crate root")
 }
 
@@ -288,7 +296,11 @@ fn every_cited_path_exists() {
     let mut checked = 0usize;
     let mut bad = Vec::new();
     for page in pages() {
-        let rel = page.strip_prefix(&root).unwrap_or(&page).to_string_lossy().into_owned();
+        let rel = page
+            .strip_prefix(&root)
+            .unwrap_or(&page)
+            .to_string_lossy()
+            .into_owned();
         if EXEMPT.contains(&rel.as_str()) {
             continue;
         }
@@ -325,7 +337,10 @@ fn every_cited_path_exists() {
         }
     }
     // A floor, not a target: the docs cite a few hundred paths.
-    assert!(checked >= 100, "only {checked} citations scanned -- the scan is not reading them");
+    assert!(
+        checked >= 100,
+        "only {checked} citations scanned -- the scan is not reading them"
+    );
     assert!(
         bad.is_empty(),
         "the docs cite paths that do not exist:\n  {}",
@@ -371,7 +386,11 @@ fn every_xtask_verb_named_in_the_source_exists() {
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
         };
-        let rel = file.strip_prefix(&root).unwrap_or(&file).to_string_lossy().into_owned();
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .into_owned();
         for (n, line) in text.lines().enumerate() {
             let Some(rest) = line.split("cargo xtask ").nth(1) else {
                 continue;
@@ -432,7 +451,11 @@ fn a_contents_list_names_every_heading_on_its_page() {
         if !text.contains("\n## Contents\n") {
             continue;
         }
-        let rel = page.strip_prefix(&root).unwrap_or(&page).to_string_lossy().into_owned();
+        let rel = page
+            .strip_prefix(&root)
+            .unwrap_or(&page)
+            .to_string_lossy()
+            .into_owned();
         let listed: BTreeSet<String> = text
             .lines()
             .filter_map(|l| l.split("](#").nth(1))

@@ -245,13 +245,19 @@ pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult
     // `defined?(a_call)`: evaluate the receiver (its raise SWALLOWED to
     // nil -- CRuby's catch entry over the whole expression) and probe it.
     if let HirNode::Call {
-        receiver, name, args, ..
+        receiver,
+        name,
+        args,
+        ..
     } = &fx.an.compiler.hir[inner]
     {
         let (receiver, name) = (*receiver, name.clone());
         // CRuby answers "method" only when the call resolves AND every
         // ARGUMENT is itself defined, so `defined?(puts(Missing))` is nil.
-        let arg_ids: Vec<NodeId> = args.iter().map(super::super::hir::ArrayElem::node_id).collect();
+        let arg_ids: Vec<NodeId> = args
+            .iter()
+            .map(super::super::hir::ArrayElem::node_id)
+            .collect();
         let ss = fx.temp_slot();
         let dst = fx.slot_addr(ss, 0);
         let hit_ss = fx.temp_slot();

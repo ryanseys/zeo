@@ -25,8 +25,7 @@ use cranelift_module::{DataId, FuncId, Linkage, Module};
 
 use super::sidecar::{
     ALL_FEATURES, ALL_TABLES, BASIC_OBJECT_SUPERCLASS, BOOT_ROWS, CLASS_KINDS, CallerClass,
-    OBJECT_SUPERCLASS,
-    PARAM_KINDS, RegEntry, RegRow, SEED_TABLES, Sidecar,
+    OBJECT_SUPERCLASS, PARAM_KINDS, RegEntry, RegRow, SEED_TABLES, Sidecar,
 };
 use crate::clif::module::Emitter;
 use crate::clif::{capi_names, emit, names, statics};
@@ -113,8 +112,14 @@ pub fn compile(text: &str, sidecar: &Sidecar) -> CResult<Vec<u8>> {
     statics::define_proc_shapes(&mut em)?;
     statics::define_reopen_flags(&mut em)?;
     let mut defs = def_rows(sidecar, &ids, &class_ids)?;
-    defs.cm.extend(inherited_class_methods(sidecar, &class_ids, &ids)?);
-    defs.obj.extend(inherited_native_backed_methods(sidecar, &class_specs, &class_ids, &ids)?);
+    defs.cm
+        .extend(inherited_class_methods(sidecar, &class_ids, &ids)?);
+    defs.obj.extend(inherited_native_backed_methods(
+        sidecar,
+        &class_specs,
+        &class_ids,
+        &ids,
+    )?);
     let mut reg_rows = reg_rows(&sidecar.reg, &ids)?;
     reg_rows.extend(own_method_rows(sidecar, &class_ids));
     reg_rows.extend(super_target_rows(sidecar, &ids, &class_ids)?);
@@ -328,7 +333,6 @@ fn data_symbol(em: &Emitter, class_ids: DataId, symbol: &str) -> Option<DataId> 
     })
 }
 
-
 /// The classes the sidecar declares, with their ids -- assigned after the
 /// last id the EMPTY program reaches, which is the one number a front end
 /// cannot know and must not guess.
@@ -377,9 +381,13 @@ fn class_specs(sidecar: &Sidecar) -> CResult<(Vec<crate::clif::classes::ClassSpe
             vec![ids[&c.name]]
         } else {
             let mut chain = vec![ids[&c.name]];
-            chain.extend(ancestors_of(&c.superclass, sidecar, &ids, &c.name, &mut vec![
-                c.name.as_str(),
-            ])?);
+            chain.extend(ancestors_of(
+                &c.superclass,
+                sidecar,
+                &ids,
+                &c.name,
+                &mut vec![c.name.as_str()],
+            )?);
             chain
         };
         let kind = registrar_kind(kind, &ancestors);
@@ -422,7 +430,10 @@ fn reopened_builtin(
     }
     let required = builtin.is_some_and(|b| {
         b.feature.is_some_and(|f| {
-            sidecar.features.iter().any(|r| zeo_abi::canonical_ext_feature(r) == f)
+            sidecar
+                .features
+                .iter()
+                .any(|r| zeo_abi::canonical_ext_feature(r) == f)
         })
     });
     let carried = builtin.is_some_and(|b| crate::lower::features::build_carries_class(b.id));
@@ -543,7 +554,10 @@ fn ancestors_of<'a>(
     if !ids.contains_key(name)
         && let Some(id) = builtin_superclass(name)
     {
-        return Ok(zeo_abi::declared_ancestors(id).iter().map(|c| c.0).collect());
+        return Ok(zeo_abi::declared_ancestors(id)
+            .iter()
+            .map(|c| c.0)
+            .collect());
     }
     let Some(&id) = ids.get(name) else {
         return Err(CodegenError::internal(format!(
@@ -780,7 +794,11 @@ fn inherited_class_methods(
     for c in &sidecar.classes {
         supers.insert(c.name.as_str(), c.superclass.as_str());
     }
-    for def in sidecar.defs.iter().filter(|d| d.singleton && !d.class.is_empty()) {
+    for def in sidecar
+        .defs
+        .iter()
+        .filter(|d| d.singleton && !d.class.is_empty())
+    {
         own.entry(def.class.as_str()).or_default().push(def);
     }
     let mut rows = Vec::new();
@@ -850,7 +868,11 @@ fn inherited_native_backed_methods(
     for c in &sidecar.classes {
         supers.insert(c.name.as_str(), c.superclass.as_str());
     }
-    for def in sidecar.defs.iter().filter(|d| !d.singleton && !d.class.is_empty()) {
+    for def in sidecar
+        .defs
+        .iter()
+        .filter(|d| !d.singleton && !d.class.is_empty())
+    {
         own.entry(def.class.as_str()).or_default().push(def);
     }
     let mut rows = Vec::new();
@@ -999,7 +1021,10 @@ fn feature_rows(features: &[String]) -> CResult<Vec<statics::RegRowSpec>> {
             )));
         }
         for b in gated {
-            let ancestors = zeo_abi::declared_ancestors(b.id).iter().map(|c| c.0).collect();
+            let ancestors = zeo_abi::declared_ancestors(b.id)
+                .iter()
+                .map(|c| c.0)
+                .collect();
             rows.push(statics::RegRowSpec {
                 kind: zeo_abi::abi::REG_REGISTER_BUILTIN,
                 class: b.id.0,

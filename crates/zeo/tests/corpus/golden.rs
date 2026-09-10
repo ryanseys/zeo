@@ -29,13 +29,7 @@ fn stdin_of(case: &Case, rb: &Path) -> Result<Option<Vec<u8>>, String> {
 
 /// Compile and run `rb` on `leg`. `Ok` is what the program said; `Err` is a
 /// harness failure (a spawn error, or a tripped bound).
-fn run_once(
-    leg: Leg,
-    case: &Case,
-    rb: &Path,
-    suite: &Suite,
-    cwd: &Path,
-) -> Result<Answer, String> {
+fn run_once(leg: Leg, case: &Case, rb: &Path, suite: &Suite, cwd: &Path) -> Result<Answer, String> {
     if leg.is_aot() {
         // A real link needs the archive, which a test run does not build.
         crate::common::runtime_archive()?;
@@ -104,7 +98,11 @@ pub fn run(rb: &Path, suite: &Suite, leg: Leg) -> datatest_stable::Result<()> {
                      or find what stopped the collector seeing it.",
                     rb.display(),
                     if want.is_empty() { "<no cycle>" } else { want },
-                    if census.is_empty() { "<no cycle>" } else { &census },
+                    if census.is_empty() {
+                        "<no cycle>"
+                    } else {
+                        &census
+                    },
                 ));
             }
             Ok(a)

@@ -206,7 +206,11 @@ fn shadowed_by_a_prepend(compiler: &Compiler, cid: ClassId, name: &str, singleto
     mods.iter().any(|&m| {
         std::iter::once(m)
             .chain(compiler.classes[m.0 as usize].ancestors.iter().copied())
-            .any(|c| compiler.classes[c.0 as usize].own_method_at.contains_key(name))
+            .any(|c| {
+                compiler.classes[c.0 as usize]
+                    .own_method_at
+                    .contains_key(name)
+            })
     })
 }
 
@@ -367,7 +371,10 @@ mod tests {
         assert!(!s.covers(at(0, 200, 250)), "a statement entirely after it");
         assert!(!s.covers(at(0, 90, 105)), "an overlap is not containment");
         assert!(!s.covers(at(0, 105, 120)), "nor is the other overlap");
-        assert!(!s.covers(at(1, 90, 120)), "another file's offsets never match");
+        assert!(
+            !s.covers(at(1, 90, 120)),
+            "another file's offsets never match"
+        );
     }
 
     /// `covers` binary-searches, so a statement whose start sits between two
@@ -378,7 +385,10 @@ mod tests {
         assert!(s.covers(at(0, 45, 65)), "the third call, past two earlier");
         assert!(s.covers(at(0, 5, 85)), "a statement holding all four");
         assert!(!s.covers(at(0, 41, 49)), "the gap between two calls");
-        assert!(!s.covers(at(0, 15, 35)), "straddling two, containing neither");
+        assert!(
+            !s.covers(at(0, 15, 35)),
+            "straddling two, containing neither"
+        );
     }
 
     /// An empty set short-circuits the whole pass, so it has to report

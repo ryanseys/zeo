@@ -204,7 +204,10 @@ fn no_gap_shares_a_basename_with_a_case() {
         .filter(|(_, suite)| suite.depth == Depth::Two)
         .map(|(p, _)| {
             (
-                p.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                p.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
                 p,
             )
         })
@@ -256,7 +259,9 @@ fn no_case_is_named_by_a_number() {
             continue;
         }
         let rel = path.strip_prefix(repo_root()).unwrap_or(&path).display();
-        if stem.starts_with("issue_") || stem.starts_with("issue") && stem[5..].starts_with(|c: char| c.is_ascii_digit()) {
+        if stem.starts_with("issue_")
+            || stem.starts_with("issue") && stem[5..].starts_with(|c: char| c.is_ascii_digit())
+        {
             bad.push(format!("{rel} -- an issue id is not a name"));
             continue;
         }
@@ -270,7 +275,9 @@ fn no_case_is_named_by_a_number() {
             let prev = head.rsplit('_').next().unwrap_or("");
             let excused = prev.len() == 1 || prev.chars().all(|c| c.is_ascii_digit());
             if !excused {
-                bad.push(format!("{rel} -- a trailing number is an index, not a name"));
+                bad.push(format!(
+                    "{rel} -- a trailing number is an index, not a name"
+                ));
             }
         }
     }

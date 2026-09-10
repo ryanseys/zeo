@@ -2085,7 +2085,16 @@ fn extends_supply_macro(compiler: &Compiler, class_id: ClassId, name: &str) -> b
     let extends = compiler.classes[class_id.0 as usize].extends.clone();
     extends.iter().any(|&m| {
         std::iter::once(m)
-            .chain(compiler.classes[m.0 as usize].mixin_order.iter().map(|&(t, _)| t))
-            .any(|c| compiler.classes[c.0 as usize].own_method_at.contains_key(name))
+            .chain(
+                compiler.classes[m.0 as usize]
+                    .mixin_order
+                    .iter()
+                    .map(|&(t, _)| t),
+            )
+            .any(|c| {
+                compiler.classes[c.0 as usize]
+                    .own_method_at
+                    .contains_key(name)
+            })
     })
 }

@@ -74,8 +74,7 @@ impl RequireGraph {
             return false;
         };
         hops.iter().any(|&(at, target)| {
-            at < def_at.start
-                && (target == hook || self.loads[target].contains(&hook))
+            at < def_at.start && (target == hook || self.loads[target].contains(&hook))
         })
     }
 }
@@ -105,8 +104,12 @@ fn require_graph(
     // Per unit, the targets its whole body names -- the closure's edges,
     // where `first_hop` is the per-file, position-carrying view.
     let mut body_edges: Vec<Vec<usize>> = vec![Vec::new(); feature_units.len()];
-    let streams = std::iter::once((None, main_statements))
-        .chain(feature_units.iter().enumerate().map(|(k, u)| (Some(k), u.2.as_slice())));
+    let streams = std::iter::once((None, main_statements)).chain(
+        feature_units
+            .iter()
+            .enumerate()
+            .map(|(k, u)| (Some(k), u.2.as_slice())),
+    );
     for (unit, stmts) in streams {
         for &stmt in stmts {
             let Some(span) = compiler.hir.span(stmt) else {
@@ -115,7 +118,10 @@ fn require_graph(
             let Some(target) = require_target(compiler, stmt, span, &by_name, &by_path) else {
                 continue;
             };
-            g.first_hop.entry(span.file.0).or_default().push((span.start, target));
+            g.first_hop
+                .entry(span.file.0)
+                .or_default()
+                .push((span.start, target));
             if let Some(k) = unit {
                 body_edges[k].push(target);
                 g.unit_file[k].get_or_insert(span.file.0);
@@ -228,7 +234,9 @@ pub fn resolve(
         .iter()
         .enumerate()
         .filter_map(|(k, (_, absolute, _))| {
-            file_ids.get(format!("{absolute}.rb").as_str()).map(|&f| (f, k))
+            file_ids
+                .get(format!("{absolute}.rb").as_str())
+                .map(|&f| (f, k))
         })
         .collect();
     let graph = require_graph(compiler, main_statements, feature_units);

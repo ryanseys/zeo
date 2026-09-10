@@ -122,7 +122,8 @@ fn the_bootstrap_pair_never_comes_out_of_the_store() {
             .find(|l| l.name == name)
             .unwrap_or_else(|| panic!("{name} is not a shipped library at all"));
         assert!(
-            lib.dir.starts_with(repo(zeo::gems::bundled::BOOTSTRAP_TIER)),
+            lib.dir
+                .starts_with(repo(zeo::gems::bundled::BOOTSTRAP_TIER)),
             "{name} resolved to {}",
             lib.dir.display()
         );

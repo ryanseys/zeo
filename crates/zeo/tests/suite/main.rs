@@ -16,12 +16,12 @@
 
 // Shared with the `corpus` binary and with `cargo xtask bless`, so each uses
 // a part of each.
-#[path = "../common/mod.rs"]
-#[allow(dead_code)]
-mod common;
 #[path = "../corpus/case.rs"]
 #[allow(dead_code)]
 mod case;
+#[path = "../common/mod.rs"]
+#[allow(dead_code)]
+mod common;
 #[path = "../corpus/normalize.rs"]
 mod normalize;
 #[path = "../corpus/oracle.rs"]

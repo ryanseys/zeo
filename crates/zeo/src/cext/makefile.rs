@@ -405,7 +405,10 @@ $(TARGET_SO): $(OBJS) Makefile
     /// the four characters the shell still reads there.
     #[test]
     fn a_backslash_in_double_quotes_only_escapes_the_four() {
-        assert_eq!(shell_words(r#""a\nb" "c\"d" "e\\f""#), [r"a\nb", "c\"d", r"e\f"]);
+        assert_eq!(
+            shell_words(r#""a\nb" "c\"d" "e\\f""#),
+            [r"a\nb", "c\"d", r"e\f"]
+        );
     }
 
     #[test]

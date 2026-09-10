@@ -139,22 +139,24 @@ const UNDOCUMENTED_BY_DESIGN: &[&str] = &[];
 fn every_env_var_read_is_documented() {
     let root = repo_root();
 
-    let documented: BTreeSet<String> = collect(
-        &root,
-        &["docs"],
-        &["README.md", "CONTRIBUTING.md"],
-        &["md"],
-    )
-    .iter()
-    .flat_map(|(_, b)| names(b).into_iter().map(|(_, n)| n))
-    .collect();
+    let documented: BTreeSet<String> =
+        collect(&root, &["docs"], &["README.md", "CONTRIBUTING.md"], &["md"])
+            .iter()
+            .flat_map(|(_, b)| names(b).into_iter().map(|(_, n)| n))
+            .collect();
 
     // A reader outside a test: `env::var("X")` in `src/`, `ext/` or the
     // shim templates. Tests set what they read, and xtask documents its own
     // switches in its usage text.
     let readers: BTreeSet<String> = collect(
         &root,
-        &["crates/zeo/src", "crates/zeo-rt/src", "crates/zeo-rt/ext", "crates/zeo-capi/src", "crates/xtask/src"],
+        &[
+            "crates/zeo/src",
+            "crates/zeo-rt/src",
+            "crates/zeo-rt/ext",
+            "crates/zeo-capi/src",
+            "crates/xtask/src",
+        ],
         &[],
         &["rs", "rb", "in"],
     )
@@ -167,7 +169,11 @@ fn every_env_var_read_is_documented() {
     })
     .collect();
 
-    assert!(readers.len() >= 20, "only {} ZEO_* readers found -- the scan is not reading them", readers.len());
+    assert!(
+        readers.len() >= 20,
+        "only {} ZEO_* readers found -- the scan is not reading them",
+        readers.len()
+    );
     let missing: Vec<&String> = readers
         .iter()
         .filter(|v| !v.starts_with("ZEO_TEST_"))
@@ -207,15 +213,11 @@ const RUBY_NOT_ENV: &[&str] = &[
 fn every_ruby_env_var_the_runtime_reads_is_documented() {
     let root = repo_root();
 
-    let documented: BTreeSet<String> = collect(
-        &root,
-        &["docs"],
-        &["README.md", "CONTRIBUTING.md"],
-        &["md"],
-    )
-    .iter()
-    .flat_map(|(_, b)| names_with(b, b"RUBY_").into_iter().map(|(_, n)| n))
-    .collect();
+    let documented: BTreeSet<String> =
+        collect(&root, &["docs"], &["README.md", "CONTRIBUTING.md"], &["md"])
+            .iter()
+            .flat_map(|(_, b)| names_with(b, b"RUBY_").into_iter().map(|(_, n)| n))
+            .collect();
 
     let readers: BTreeSet<String> = collect(
         &root,
@@ -239,7 +241,10 @@ fn every_ruby_env_var_the_runtime_reads_is_documented() {
         readers.contains("RUBY_BOX"),
         "the scan did not find RUBY_BOX, which crates/zeo-rt/src/boxes.rs reads"
     );
-    let missing: Vec<&String> = readers.iter().filter(|v| !documented.contains(*v)).collect();
+    let missing: Vec<&String> = readers
+        .iter()
+        .filter(|v| !documented.contains(*v))
+        .collect();
     assert!(
         missing.is_empty(),
         "RUBY_* environment variables the runtime reads that no page documents: {missing:?}\n\

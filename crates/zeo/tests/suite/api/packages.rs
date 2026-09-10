@@ -1111,8 +1111,8 @@ fn the_package_cache_serves_hits_and_invalidates_on_edit() {
     zeo::packages::package::write_zeopkg(&cached, &marked, &object).expect("mark the entry");
 
     build(&dir.join("second.zeopkg"));
-    let (manifest, _) =
-        zeo::packages::package::read_zeopkg(&dir.join("second.zeopkg")).expect("read the second build");
+    let (manifest, _) = zeo::packages::package::read_zeopkg(&dir.join("second.zeopkg"))
+        .expect("read the second build");
     let listing: Vec<String> = std::fs::read_dir(&cache)
         .map(|es| {
             es.filter_map(Result::ok)
@@ -1141,8 +1141,8 @@ fn the_package_cache_serves_hits_and_invalidates_on_edit() {
 
     std::fs::write(&entry, "class Cachegem\n  def go = :two\nend\n").expect("edit the gem");
     build(&dir.join("third.zeopkg"));
-    let (manifest, _) =
-        zeo::packages::package::read_zeopkg(&dir.join("third.zeopkg")).expect("read the third build");
+    let (manifest, _) = zeo::packages::package::read_zeopkg(&dir.join("third.zeopkg"))
+        .expect("read the third build");
     assert!(
         !manifest.contains("\"iface_hash\": \"cafe"),
         "the source edit invalidated the entry"

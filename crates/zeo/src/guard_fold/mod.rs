@@ -729,9 +729,7 @@ fn const_name_fold(
         // not resolved yet.
         let ci = compiler.class(cid);
         let leaf = ci.name.rsplit("::").next().unwrap_or(&ci.name).to_string();
-        let owner = ci
-            .lexical_parent
-            .unwrap_or(crate::compiler::OBJECT_CLASS);
+        let owner = ci.lexical_parent.unwrap_or(crate::compiler::OBJECT_CLASS);
         if compiler.const_defined_before(owner, &leaf, at) == Some(false) {
             return Some(false);
         }

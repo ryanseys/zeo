@@ -300,7 +300,11 @@ pub fn methods(a: &Analyzed, top: usize) -> String {
             compiler.fq_name(scope.defining_class),
             scope.name,
         ));
-        let sample: Vec<String> = owners.iter().take(4).map(|&c| compiler.fq_name(c)).collect();
+        let sample: Vec<String> = owners
+            .iter()
+            .take(4)
+            .map(|&c| compiler.fq_name(c))
+            .collect();
         out.push_str(&format!(
             "         {}{}\n",
             sample.join(", "),

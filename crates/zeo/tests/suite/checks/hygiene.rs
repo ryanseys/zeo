@@ -105,7 +105,11 @@ fn every_gitattributes_pattern_matches_a_tracked_file() {
         // A whole-tree rule (`*`) or a suffix rule matches by construction.
         let matches = if let Some(suffix) = pattern.strip_prefix('*') {
             tracked.iter().any(|f| f.ends_with(suffix))
-        } else if let Some(prefix) = pattern.split('*').next().filter(|p| p.len() < pattern.len()) {
+        } else if let Some(prefix) = pattern
+            .split('*')
+            .next()
+            .filter(|p| p.len() < pattern.len())
+        {
             tracked.iter().any(|f| f.starts_with(prefix))
         } else {
             tracked.iter().any(|f| f == pattern)
@@ -144,10 +148,54 @@ fn every_published_crate_carries_both_licences() {
             let path = root.join("crates").join(crate_name).join(name);
             match std::fs::read(&path) {
                 Ok(got) if got == want => {}
-                Ok(_) => bad.push(format!("crates/{crate_name}/{name} differs from the root copy")),
+                Ok(_) => bad.push(format!(
+                    "crates/{crate_name}/{name} differs from the root copy"
+                )),
                 Err(_) => bad.push(format!("crates/{crate_name}/{name} is missing")),
             }
         }
     }
-    assert!(bad.is_empty(), "licence texts in published crates:\n{}", bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "licence texts in published crates:\n{}",
+        bad.join("\n")
+    );
+}
+
+/// The two files that name zeo's predecessor because they must: one is the
+/// MIT attribution for the benchmark suite copied from it, the other the
+/// third-party notice that records the same thing.
+const PREDECESSOR_BY_ATTRIBUTION: &[&str] = &["test/bench/UPSTREAM.md", "THIRD-PARTY-NOTICES.md"];
+
+/// Zeo grew out of a C-emitting compiler, and 843 files still described THAT
+/// compiler: its emitter's identifiers, its type-inference vocabulary, and
+/// limitations it had and zeo does not. A reader who greps for one of those
+/// names finds nothing, and a dozen of the claims were false here -- each
+/// contradicted by the recording in the same file.
+///
+/// Outside the two attribution files, the name is a comment that outlived
+/// what it described.
+#[test]
+fn nothing_but_the_attribution_names_the_predecessor() {
+    let root = repo_root();
+    // Spelled in halves so this file is not its own first hit.
+    let needle = [b"spin".as_slice(), b"el".as_slice()].concat();
+    let bad: Vec<String> = tracked_files()
+        .into_iter()
+        .filter(|p| !PREDECESSOR_BY_ATTRIBUTION.contains(&p.as_str()))
+        .filter(|p| {
+            let Ok(bytes) = std::fs::read(root.join(p)) else {
+                return false;
+            };
+            bytes
+                .windows(needle.len())
+                .any(|w| w.eq_ignore_ascii_case(&needle))
+        })
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "files naming zeo's predecessor -- say what the code does here, not \
+         what another compiler did:\n  {}",
+        bad.join("\n  ")
+    );
 }

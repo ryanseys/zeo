@@ -826,9 +826,7 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
             let tv =
                 fx.b.ins()
                     .load(types::I8, MemFlagsData::trusted(), ptr, TAG_OFFSET as i32);
-            Ok(Operand::Bool(
-                fx.b.ins().icmp_imm_u(IntCC::NotEqual, tv, 0),
-            ))
+            Ok(Operand::Bool(fx.b.ins().icmp_imm_u(IntCC::NotEqual, tv, 0)))
         }
         HirNode::LastMatchRef(which) => {
             use crate::hir::LastMatch;

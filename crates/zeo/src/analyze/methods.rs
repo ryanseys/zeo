@@ -583,8 +583,7 @@ fn resolve_in_ancestry(
     // that `include`s the module defining the base is the mixin shape.
     // The bound covers a cycle in the declared edges, which is a compile
     // error elsewhere.
-    let mut queue: std::collections::VecDeque<ClassId> =
-        cref.last().copied().into_iter().collect();
+    let mut queue: std::collections::VecDeque<ClassId> = cref.last().copied().into_iter().collect();
     let mut visited: Vec<ClassId> = Vec::new();
     while let Some(owner) = queue.pop_front() {
         if visited.contains(&owner) || visited.len() > 64 {
@@ -622,7 +621,8 @@ fn resolve_in_ancestry(
         // instead of raising ruby's NameError.
         if path != defining
             && compiler.shell_kinds.contains_key(&(box_id, key))
-            && let Some(found) = super::classes::resolve_or_create_container(compiler, &path, box_id)
+            && let Some(found) =
+                super::classes::resolve_or_create_container(compiler, &path, box_id)
             && compiler.fq_name(found) != defining
         {
             return Some(found);

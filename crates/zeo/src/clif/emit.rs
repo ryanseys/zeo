@@ -1208,7 +1208,11 @@ fn draft_sidecar(
         abi_version: zeo_abi::abi::ABI_VERSION,
         rodata: encode_hex(code_rodata),
         syms: em.syms_names().to_vec(),
-        callsites: em.callsites.iter().map(|&c| crate::backend::sidecar::CallerClass::Id(c)).collect(),
+        callsites: em
+            .callsites
+            .iter()
+            .map(|&c| crate::backend::sidecar::CallerClass::Id(c))
+            .collect(),
         toplevel: super::names::TOPLEVEL.to_string(),
         data_section: None,
         defs,
