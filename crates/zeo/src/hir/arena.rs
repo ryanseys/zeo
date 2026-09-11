@@ -84,6 +84,9 @@ impl NodeFlag {
     /// `self` are the enclosing scope's. A guard the source wrote inside the
     /// body carries no flag and stays put, where `self` is the class.
     pub const HOISTED_CLASS_GUARD: NodeFlag = NodeFlag(1 << 10);
+    /// An `AliasMethod` written as `alias_method :new, :old`: ruby runs it as
+    /// the C method `Module#alias_method`, which a raise's backtrace shows.
+    pub const ALIAS_METHOD_CALL: NodeFlag = NodeFlag(1 << 11);
 }
 
 /// A local the COMPILER introduced -- an evaluate-once receiver/index

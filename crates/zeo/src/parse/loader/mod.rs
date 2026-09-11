@@ -1313,6 +1313,9 @@ impl Loader {
                     old_name: crate::lower::defs::alias_target_name(&alias.old_name())?,
                     is_class_method: false,
                 });
+                // Its own line: a source that resolves nowhere raises here.
+                let span = crate::lower::span_of(hir, &n);
+                hir.set_span(id, span);
                 combined.push(id);
                 own.push(id);
                 continue;

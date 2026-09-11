@@ -1319,13 +1319,26 @@ pub(super) fn main_installs(
                         .builtin_is_reachable(zeo_abi::ClassId(*i as u32)))
         })
         .flat_map(|(i, c)| {
-            let claimed: Vec<String> = analyzed
+            let mut claimed: Vec<String> = analyzed
                 .compiler
                 .class_body_sites
                 .iter()
                 .filter(|site| site.class.0 as usize == i)
                 .flat_map(|site| super::collect::site_alias_checks(&analyzed.compiler, site))
                 .collect();
+            // A top-level `alias` checks where it stands.
+            if i == 0 {
+                claimed.extend(analyzed.compiler.top_level_aliases.iter().filter_map(|&node| {
+                    let crate::hir::HirNode::AliasMethod { new_name, .. } = &analyzed.compiler.hir[node]
+                    else {
+                        return None;
+                    };
+                    c.builtin_aliases
+                        .iter()
+                        .find(|(new, _, _)| new == new_name)
+                        .map(|(_, terminal, _)| terminal.clone())
+                }));
+            }
             let mut olds: Vec<String> = c
                 .builtin_aliases
                 .iter()

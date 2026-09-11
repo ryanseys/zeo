@@ -262,7 +262,7 @@ pub(super) fn alias_method(
                 })
                 .collect();
             if let Some(names) = names {
-                push_alias(hir, out, names[0].clone(), names[1].clone());
+                push_alias(hir, out, names[0].clone(), names[1].clone(), true);
                 return Ok(true);
             }
         }

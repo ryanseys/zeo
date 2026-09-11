@@ -800,6 +800,54 @@ fn lower_stmt_inner(fx: &mut Fx, stmt: NodeId) -> CResult<()> {
             let singleton = *is_class_method;
             super::eval::eval_definee_send(fx, "alias_method", &names, singleton)
         }
+        // In a class body, a builtin row's source that resolves nowhere is
+        // ruby's NameError, raised where the statement stands --
+        // `alias_method` from inside its own C frame. A user-source alias
+        // became a copy at compile time and runs nothing.
+        HirNode::AliasMethod {
+            new_name,
+            is_class_method: false,
+            ..
+        } => {
+            let an = fx.an;
+            // The class body holding it, or `Object` for one at a top level.
+            let class = an
+                .compiler
+                .class_body_sites
+                .iter()
+                .find(|s| s.stmts.contains(&stmt))
+                .map(|s| s.class)
+                .or_else(|| {
+                    an.compiler
+                        .top_level_aliases
+                        .contains(&stmt)
+                        .then_some(crate::compiler::OBJECT_CLASS)
+                });
+            let Some((class, old)) = class.and_then(|class| {
+                an.compiler
+                    .class(class)
+                    .builtin_aliases
+                    .iter()
+                    .find(|(new, _, _)| new == new_name)
+                    .map(|(_, terminal, _)| (class.0, terminal.clone()))
+            }) else {
+                return Ok(());
+            };
+            let pushed = if an.compiler.hir.has_flag(stmt, crate::hir::NodeFlag::ALIAS_METHOD_CALL) {
+                let (lptr, llen) = super::expr::rodata_name(fx, "Module#alias_method");
+                fx.call("zeo_rt_synthetic_c_frame_push", &[lptr, llen])
+            } else {
+                None
+            };
+            let cid = fx.cid_value(class);
+            let (nptr, nlen) = super::expr::rodata_name(fx, &old);
+            let st = fx.call_status("zeo_rt_validate_alias_source", &[cid, nptr, nlen]);
+            if let Some(pushed) = pushed {
+                fx.call("zeo_rt_synthetic_c_frame_pop", &[pushed]);
+            }
+            fx.fallible(st);
+            Ok(())
+        }
         HirNode::AliasMethod { .. } => Ok(()),
         // A `def` reached HERE is one analyze did not register statically
         // (written inside a method body or a block): a RUNTIME install,
@@ -1934,21 +1982,7 @@ fn class_body_site_run(
             },
         );
     }
-    // `alias`'s builtin source validates as this body finishes -- CRuby's
-    // timing, run at the CALL site so an alias-only (empty-statement) body
-    // still checks. Only THIS site's own aliases: a class-wide check here
-    // would validate a lazy unit's alias rows before that unit's installer
-    // runs.
-    let validate = |fx: &mut Fx| {
-        for old in &call.alias_checks {
-            let cid = fx.cid_value(call.class);
-            let (nptr, nlen) = super::expr::rodata_name(fx, old);
-            let st = fx.call_status("zeo_rt_validate_alias_source", &[cid, nptr, nlen]);
-            fx.fallible(st);
-        }
-    };
     let Some(func) = call.func else {
-        validate(fx);
         return Ok(super::operand::Operand::Nil);
     };
     // `self` = the class, materialized as a Class immediate.
@@ -1973,7 +2007,6 @@ fn class_body_site_run(
     let inst = fx.b.ins().call(fref, &[self_addr, out]);
     let status = fx.b.func.dfg.inst_results(inst)[0];
     fx.fallible(status);
-    validate(fx);
     fx.owned_created += 1;
     Ok(super::operand::Operand::Slot {
         ss: out_ss,

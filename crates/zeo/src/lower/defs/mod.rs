@@ -219,7 +219,15 @@ fn promote_to_module_function(hir: &mut Hir, id: NodeId, out: &mut Vec<NodeId>) 
     true
 }
 
-fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: String) {
+/// `via_call` is `alias_method`'s form, which ruby runs as a C method and so
+/// shows as a frame of its own.
+fn push_alias(
+    hir: &mut Hir,
+    out: &mut Vec<NodeId>,
+    new_name: String,
+    old_name: String,
+    via_call: bool,
+) {
     if let Some(&old_id) = out
         .iter()
         .rev()
@@ -259,11 +267,15 @@ fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: 
         hir.record_alias_origin(cloned, old_name);
         out.push(cloned);
     } else {
-        out.push(hir.push(HirNode::AliasMethod {
+        let id = hir.push(HirNode::AliasMethod {
             new_name,
             old_name,
             is_class_method: false,
-        }));
+        });
+        if via_call {
+            hir.set_flag(id, crate::hir::NodeFlag::ALIAS_METHOD_CALL);
+        }
+        out.push(id);
     }
 }
 
@@ -1113,7 +1125,7 @@ fn lower_class_body_statement(
         }
         let new_name = alias_target_name(&alias.new_name())?;
         let old_name = alias_target_name(&alias.old_name())?;
-        push_alias(hir, out, new_name, old_name);
+        push_alias(hir, out, new_name, old_name, false);
         return Ok(());
     }
 

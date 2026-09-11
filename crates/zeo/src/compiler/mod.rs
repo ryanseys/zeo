@@ -369,6 +369,9 @@ pub struct Compiler {
     /// answers "could this name change under us?", and over-answering `true`
     /// costs speed, not correctness.
     pub runtime_patches: FSet<String>,
+    /// `alias` statements written at a file's top level. Each runs where it
+    /// stands, so a builtin source that resolves nowhere raises there.
+    pub top_level_aliases: FSet<crate::hir::NodeId>,
     /// Method names a runtime-deferred mixin's bodies reach through `super`.
     /// The splice happens when the guard/send runs, so WHICH class's chain
     /// the walk resumes on is a runtime fact -- codegen widens these into
@@ -717,6 +720,7 @@ impl Compiler {
             global_write_sites: FMap::default(),
             const_set_sites: Vec::new(),
             runtime_patches: FSet::default(),
+            top_level_aliases: FSet::default(),
             unit_blanket_names: FSet::default(),
             pkg_class_map: FMap::default(),
             pkg_spine_redefs: Vec::new(),

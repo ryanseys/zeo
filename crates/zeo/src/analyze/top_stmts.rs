@@ -429,6 +429,8 @@ fn process_top_stmt_inner(
         compiler.classes[OBJECT_CLASS.0 as usize]
             .pending_aliases
             .push((entry.0, entry.1, entry.2, seq, compiler.unit_stream));
+        compiler.top_level_aliases.insert(stmt);
+        main_statements.push(stmt);
     } else if let HirNode::If {
         cond,
         then_body,

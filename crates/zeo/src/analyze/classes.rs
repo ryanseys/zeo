@@ -1134,6 +1134,11 @@ fn walk_class_body(
                 compiler.classes[class_id.0 as usize]
                     .pending_aliases
                     .push(entry);
+                // Where it stands in the body is where a builtin source that
+                // resolves nowhere raises (`clif::stmt`).
+                if !singleton {
+                    compiler.class_body_sites[site_idx].stmts.push(stmt);
+                }
             }
             // A `module_function :m` naming an INHERITED method -- resolved by
             // `mro::resolve_module_functions`. See `HirNode::ModuleFunction`.
