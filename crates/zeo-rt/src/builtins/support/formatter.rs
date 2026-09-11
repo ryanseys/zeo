@@ -197,36 +197,36 @@ ruby_module! {
     // back to it. A host defining its own `gen_random` (SecureRandom) shadows
     // this, so it is normally unused; it exists so `entropy`'s `gen_random`
     // send resolves for a `bytes`-only host too.
-    def "gen_random"(recv, arg) {
+    private def "gen_random" gated "random/formatter" (recv, arg) {
         send_value(recv, Symbol::intern("bytes"), std::slice::from_ref(arg), None)
     }
     // `random_bytes(n = 16)` -- n raw bytes (ASCII-8BIT).
-    def "random_bytes" params "n = nil"(recv, n?) {
+    def "random_bytes" params "n = nil" gated "random/formatter" (recv, n?) {
         let bytes = entropy(recv, count(n, 16)?)?;
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, ASCII_8BIT)))
     }
     // `hex(n = 16)` -- 2n lowercase hex chars.
-    def "hex" params "n = nil"(recv, n?) {
+    def "hex" params "n = nil" gated "random/formatter" (recv, n?) {
         let bytes = entropy(recv, count(n, 16)?)?;
         Ok(RubyValue::Str(string_new(hex_encode(&bytes))))
     }
     // `base64(n = 16)` -- RFC 4648 base64, padded.
-    def "base64" params "n = nil"(recv, n?) {
+    def "base64" params "n = nil" gated "random/formatter" (recv, n?) {
         let bytes = entropy(recv, count(n, 16)?)?;
         Ok(RubyValue::Str(string_new(base64_encode(&bytes, STD, true))))
     }
     // `urlsafe_base64(n = 16, padding = false)` -- URL/filename-safe alphabet;
     // padding stripped unless the second argument is truthy.
-    def "urlsafe_base64" params "n = nil, padding = nil"(recv, n?, padding?) {
+    def "urlsafe_base64" params "n = nil, padding = nil" gated "random/formatter" (recv, n?, padding?) {
         let bytes = entropy(recv, count(n, 16)?)?;
         let padding = matches!(padding, Some(v) if v.truthy());
         Ok(RubyValue::Str(string_new(base64_encode(&bytes, URL, padding))))
     }
     // `uuid` / `uuid_v4` -- a random RFC 9562 version-4 UUID.
-    def "uuid"(recv) {
+    def "uuid" gated "random/formatter" (recv) {
         uuid_v4(recv)
     }
-    def "uuid_v4"(recv) {
+    def "uuid_v4" gated "random/formatter" (recv) {
         uuid_v4(recv)
     }
     // `random_number(n = 0)` -- an integer in `[0, n)` for a positive Integer,
@@ -252,13 +252,13 @@ ruby_module! {
         }
     }
     // `alphanumeric(n = 16, chars: [A-Za-z0-9])`.
-    ruby def "alphanumeric"(recv, n?, chars:?) {
+    ruby def "alphanumeric" gated "random/formatter" (recv, n?, chars:?) {
         let chars = chars_list(chars);
         let n = count(n, 16)?;
         choose(recv, &chars, n)
     }
-    // `choose(source, n)` -- public in CRuby's formatter.
-    def "choose"(recv, arg1, arg2) {
+    // `choose(source, n)` -- private in CRuby's formatter.
+    private def "choose" gated "random/formatter" (recv, arg1, arg2) {
         let RubyValue::Array(a) = arg1 else {
             return Err(type_error!("no implicit conversion into Array"));
         };

@@ -1290,6 +1290,7 @@ pub(crate) mod gate {
     static NONBLOCK: AtomicU8 = AtomicU8::new(0);
     static OBJSPACE: AtomicU8 = AtomicU8::new(0);
     static BIGDECIMAL: AtomicU8 = AtomicU8::new(0);
+    static FORMATTER: AtomicU8 = AtomicU8::new(0);
 
     fn required(cell: &AtomicU8) -> bool {
         cell.load(Ordering::Acquire) == 1
@@ -1312,6 +1313,9 @@ pub(crate) mod gate {
             // ruby grows both from their own extension's require.
             "objspace" => OBJSPACE.store(1, Ordering::Release),
             "bigdecimal" => BIGDECIMAL.store(1, Ordering::Release),
+            // securerandom.rb opens with `require "random/formatter"`, so
+            // either name arms the mixin's rows.
+            "random/formatter" | "securerandom" => FORMATTER.store(1, Ordering::Release),
             _ => return,
         }
         NAME_CACHE.write().unwrap().take();
@@ -1331,6 +1335,7 @@ pub(crate) mod gate {
             "io/nonblock" => required(&NONBLOCK),
             "objspace" => required(&OBJSPACE),
             "bigdecimal" => required(&BIGDECIMAL),
+            "random/formatter" => required(&FORMATTER),
             "env:boxes" => crate::boxes::boxes_enabled(),
             _ => false,
         }
@@ -1417,11 +1422,13 @@ pub(crate) mod gate {
         static BOX: Views = views_of::<{ zeo_abi::RUBY_BOX_CLASS.0 }>();
         static OBJECTSPACE: Views = views_of::<{ zeo_abi::OBJECTSPACE_MODULE.0 }>();
         static KERNEL: Views = views_of::<{ zeo_abi::KERNEL_CLASS.0 }>();
+        static FORMATTER: Views = views_of::<{ zeo_abi::RANDOM_FORMATTER_MODULE.0 }>();
         match id {
             zeo_abi::IO_CLASS => &IO,
             zeo_abi::RUBY_BOX_CLASS => &BOX,
             zeo_abi::OBJECTSPACE_MODULE => &OBJECTSPACE,
             zeo_abi::KERNEL_CLASS => &KERNEL,
+            zeo_abi::RANDOM_FORMATTER_MODULE => &FORMATTER,
             other => unreachable!(
                 "class {} has gated rows but no fn-pointer view instantiation -- \
                  add one beside gate::views' existing pair",
@@ -1513,7 +1520,8 @@ pub(crate) mod gate {
                     "io/console",
                     "io/console/size",
                     "io/nonblock",
-                    "objspace"
+                    "objspace",
+                    "random/formatter"
                 ]
             );
         }
