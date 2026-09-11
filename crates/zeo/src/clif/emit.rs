@@ -327,8 +327,8 @@ fn emit_program(em: &mut Emitter, analyzed: &Analyzed) -> CResult<FuncId> {
             label_override: None,
             discard_value: false,
             dyn_ivars: false,
-            defining_class: Some(m.owner),
-            lexical_home: None,
+            defining_class: Some(m.defining_class),
+            lexical_home: m.lexical_home,
             origin_name: None,
             box_id: analyzed.compiler.class(m.owner).box_id,
         };

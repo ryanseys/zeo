@@ -134,6 +134,10 @@ pub(crate) struct RedefSpec {
     /// `def self.x` rather than `def x`. The body's `self` is the class, and
     /// the install writes the class-method side of the overlay.
     pub singleton: bool,
+    /// The cref the body was written in, as for a static row: a `def` in a
+    /// `class << self` body resolves its bare constants through the singleton.
+    pub defining_class: ClassId,
+    pub lexical_home: Option<ClassId>,
 }
 
 /// One module method: body + `ValueFn` trampoline, registered as a
@@ -1986,6 +1990,8 @@ fn collect_redef_scopes(
             has_blk,
             ruby2_keywords: scope.ruby2_keywords,
             singleton,
+            defining_class: scope.lexical_home.unwrap_or(scope.defining_class),
+            lexical_home: scope.lexical_home,
         });
     }
     Ok(())
