@@ -1,10 +1,6 @@
 # `getch` and `getpass` over a real pty -- the end-to-end shape `irb` and
-# `reline` depend on.
-#
-# Both HUNG. The mode setter used `TCSADRAIN`, which waits for the terminal's
-# pending output to be transmitted, so the switch into raw mode blocked
-# forever whenever nobody was draining the other end. io-console uses
-# `TCSANOW` with a retry on EINTR.
+# `reline` depend on. Nobody drains the far end, so a mode switch that
+# waits for output to drain would hang here.
 
 require "io/console"
 require "pty"
