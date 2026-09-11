@@ -16,22 +16,41 @@ module Psych
       def accept(target)
         case target
         when Psych::Nodes::Stream
-          target.children.each { |doc| accept(doc) }
+          target.children.each_with_index { |doc, i| write_document(doc, i.zero?) }
         when Psych::Nodes::Document
-          write_document(target)
+          # libyaml's emitter must open a stream before a document.
+          raise "expected STREAM-START"
         else
           # A bare node: wrap it the way a one-document stream would.
           doc = Psych::Nodes::Document.new([], [], true)
           doc.children << target
-          write_document(doc)
+          write_document(doc, true)
         end
         target
       end
 
       private
 
-      def write_document(doc)
+      # One document. Its `%YAML`/`%TAG` directives lead it; the `---` start
+      # marker is left off, as libyaml leaves it, only for an implicit
+      # document that is first in its stream, has no directives, and whose
+      # root carries no tag or anchor.
+      def write_document(doc, first)
+        @tag_directives = doc.tag_directives || []
+        version = doc.version || []
+        @io.write("%YAML #{version.join('.')}\n") unless version.empty?
+        @tag_directives.each { |handle, prefix| @io.write("%TAG #{handle} #{prefix}\n") }
         root = doc.root
+        directives = !version.empty? || !@tag_directives.empty?
+        if doc.implicit && first && !directives && node_prefix(root).empty?
+          write_implicit_root(root)
+        else
+          write_explicit_root(root)
+        end
+        @io.write("...\n") unless doc.implicit_end
+      end
+
+      def write_explicit_root(root)
         case root
         when Psych::Nodes::Scalar
           suffix = node_prefix(root)
@@ -49,7 +68,23 @@ module Psych
             write_block(root, 0)
           end
         end
-        @io.write("...\n") unless doc.implicit_end
+      end
+
+      # The root with no start marker: at column 0, a scalar or alias on its
+      # own line and a collection as it would sit under `---`.
+      def write_implicit_root(root)
+        case root
+        when Psych::Nodes::Scalar
+          @io.write(render_scalar(root).rstrip + "\n")
+        when Psych::Nodes::Alias
+          @io.write("*#{root.anchor}\n")
+        else
+          if empty_collection?(root)
+            @io.write(flow(root) + "\n")
+          else
+            write_block(root, 0)
+          end
+        end
       end
 
       # `!tag &anchor`, either half empty when absent.
@@ -74,6 +109,10 @@ module Psych
         end
         if (short = tag[/\Atag:ruby\.yaml\.org,2002:(.*)\z/m, 1])
           return "!ruby/#{short}"
+        end
+        # A `%TAG` directive of this document shortens the tags it prefixes.
+        (@tag_directives || []).each do |handle, prefix|
+          return "#{handle}#{tag.delete_prefix(prefix)}" if tag.start_with?(prefix)
         end
         "!<#{tag}>"
       end
