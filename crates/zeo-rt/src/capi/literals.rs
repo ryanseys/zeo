@@ -531,6 +531,33 @@ pub unsafe extern "C" fn zeo_rt_regexp_interp(
     }
 }
 
+/// The one object a `/o` interpolated literal builds, per site.
+static ONCE_SITES: std::sync::OnceLock<std::sync::Mutex<crate::FMap<u32, crate::regexp::RRegexp>>> =
+    std::sync::OnceLock::new();
+
+/// A `/o` literal's object when its site has built one: written OWNED to
+/// `out`, answering 1; else 0, and the literal builds it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_regexp_once_get(site: u32, out: *mut RubyValue) -> i8 {
+    let sites = ONCE_SITES.get_or_init(Default::default);
+    let Some(re) = sites.lock().unwrap().get(&site).cloned() else { return 0 };
+    let v = RubyValue::Regexp(re);
+    super::leakcheck::created(&v);
+    unsafe { out.write(v) };
+    1
+}
+
+/// Keeps the BORROWED regexp a `/o` literal built as its site's object. The
+/// first one kept stays, as ruby's does when two threads race.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_regexp_once_put(site: u32, re: *const RubyValue) {
+    let RubyValue::Regexp(re) = (unsafe { &*re }) else {
+        panic!("regexp_once_put on a non-regexp")
+    };
+    let sites = ONCE_SITES.get_or_init(Default::default);
+    sites.lock().unwrap().entry(site).or_insert_with(|| re.clone());
+}
+
 /// The `RegexpError` raise both wrappers share: construct + stamp the
 /// backtrace at the literal, no cause chaining (rustc's `emit_boxed_new`).
 fn regexp_error(msg: String) -> crate::Signal {

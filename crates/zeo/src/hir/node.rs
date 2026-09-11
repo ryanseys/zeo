@@ -223,13 +223,8 @@ pub enum StrPart {
 
 /// A `/pattern/flags` / `%r{pattern}flags` literal's option letters --
 /// `ruby-prism`'s `RegularExpressionNode`/`InterpolatedRegularExpressionNode`
-/// expose several more (`o`/`e`/`n`/`s`/`u`, all encoding/interpolation-once
-/// concerns), but zeo is UTF-8-only throughout (see
-/// `docs/limitations.md`'s existing posture on strings), so only the three
-/// letters that change actual MATCHING semantics are modeled; the rest are
-/// silently accepted as no-ops except a genuinely non-UTF-8-forcing encoding
-/// flag (`e`/`s`), which is a clean lowering rejection (see
-/// `parse/mod.rs`'s recognizer).
+/// also carry `o` and the encoding letters `n`/`e`/`s`/`u`; each is a field
+/// below.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RegexpFlags {
     /// `i` -- case-insensitive matching.
@@ -249,6 +244,9 @@ pub struct RegexpFlags {
     /// `#options`, `#encoding` and `#fixed_encoding?` each report it. See
     /// [`zeo_abi::RegexpEncoding`].
     pub encoding: zeo_abi::RegexpEncoding,
+    /// `o` -- an interpolated literal builds its regexp once per site, and
+    /// its interpolations run only that once.
+    pub once: bool,
 }
 
 /// A real enum of node kinds; growing it is additive (new variants).

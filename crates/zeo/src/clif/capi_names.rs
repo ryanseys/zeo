@@ -985,6 +985,16 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(I32),
     },
     CapiSig {
+        name: "zeo_rt_regexp_once_get",
+        params: &[U32, Ptr],
+        ret: Some(I8),
+    },
+    CapiSig {
+        name: "zeo_rt_regexp_once_put",
+        params: &[U32, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_release",
         params: &[Ptr],
         ret: None,

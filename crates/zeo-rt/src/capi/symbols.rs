@@ -228,6 +228,8 @@ capi_symbols!(
     dispatch::zeo_rt_reflect_dispatch_in,
     literals::zeo_rt_regexp_interp,
     literals::zeo_rt_regexp_lit,
+    literals::zeo_rt_regexp_once_get,
+    literals::zeo_rt_regexp_once_put,
     values::zeo_rt_release,
     signals::zeo_rt_report_uncaught,
     signals::zeo_rt_rescue_matches,

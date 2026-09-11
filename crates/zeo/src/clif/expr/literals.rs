@@ -54,7 +54,8 @@ pub(crate) fn rodata_name(
 /// fold into one source string served by a per-site cache
 /// (`zeo_rt_regexp_lit` -- one frozen object per site); an interpolated
 /// pattern builds a fresh string through the to_s dispatch, then
-/// `zeo_rt_regexp_interp` compiles it, frozen at birth. Both raise
+/// `zeo_rt_regexp_interp` compiles it, frozen at birth; under `/o` only the
+/// first evaluation does, and the site keeps that object. Both raise
 /// `RegexpError` on a bad pattern.
 pub(super) fn regexp_lit(
     fx: &mut Fx,
@@ -108,8 +109,49 @@ pub(super) fn regexp_lit(
             tag: TagInfo::Known(ValueTag::Regexp as u8),
         });
     }
-    // Interpolated: assemble the pattern exactly as string interpolation
-    // does (pooled at creation; an interp piece can raise mid-build).
+    if !flags.once {
+        let flag_args = flag_vals(fx);
+        return interpolated_regexp(fx, parts, flag_args);
+    }
+    // `/o`: the site's object once built; the interpolations run only then.
+    let site = fx.em.mint_regexp_site();
+    let site_v = fx.regexp_site_value(site);
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let hit = fx.call_status("zeo_rt_regexp_once_get", &[site_v, dst]);
+    let build = fx.b.create_block();
+    let join = fx.b.create_block();
+    fx.b.ins().brif(hit, join, &[], build, &[]);
+    fx.b.switch_to_block(build);
+    let flag_args = flag_vals(fx);
+    let built = interpolated_regexp(fx, parts, flag_args)?;
+    let p = ownership::borrow_ptr(fx, &built);
+    fx.call("zeo_rt_regexp_once_put", &[site_v, p]);
+    ownership::write_move_into(fx, &built, dst);
+    fx.b.ins().jump(join, &[]);
+    fx.b.switch_to_block(join);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Known(ValueTag::Regexp as u8),
+    })
+}
+
+/// An interpolated pattern assembled exactly as string interpolation does
+/// (pooled at creation; an interp piece can raise mid-build), then compiled
+/// by `zeo_rt_regexp_interp`.
+fn interpolated_regexp(
+    fx: &mut Fx,
+    parts: &[crate::hir::StrPart],
+    (ic, ext, ml, enc): (
+        cranelift_codegen::ir::Value,
+        cranelift_codegen::ir::Value,
+        cranelift_codegen::ir::Value,
+        cranelift_codegen::ir::Value,
+    ),
+) -> CResult<Operand> {
+    use crate::hir::StrPart;
     let ss_pat = fx.temp_slot();
     let pat = fx.slot_addr(ss_pat, 0);
     let null = fx.b.ins().iconst(fx.em.ptr, 0);
@@ -147,7 +189,6 @@ pub(super) fn regexp_lit(
             }
         }
     }
-    let (ic, ext, ml, enc) = flag_vals(fx);
     let ss = fx.temp_slot();
     let out = fx.slot_addr(ss, 0);
     let status = fx.call_status("zeo_rt_regexp_interp", &[pat, ic, ext, ml, enc, out]);

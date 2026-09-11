@@ -144,6 +144,7 @@ pub(crate) fn try_lower(
                 extended: re.is_extended(),
                 multiline: re.is_multi_line(),
                 encoding,
+                once: false,
             },
         ))));
     }
@@ -163,6 +164,7 @@ pub(crate) fn try_lower(
                 extended: re.is_extended(),
                 multiline: re.is_multi_line(),
                 encoding,
+                once: re.is_once(),
             },
         ))));
     }
@@ -186,6 +188,7 @@ pub(crate) fn try_lower(
                 extended: re.is_extended(),
                 multiline: re.is_multi_line(),
                 encoding,
+                once: false,
             },
         ));
         return Ok(Some(match_last_line(hir, lit)));
@@ -206,6 +209,9 @@ pub(crate) fn try_lower(
                 extended: re.is_extended(),
                 multiline: re.is_multi_line(),
                 encoding,
+                // Ruby builds a bare condition's pattern every time, `/o`
+                // or not.
+                once: false,
             },
         ));
         return Ok(Some(match_last_line(hir, lit)));

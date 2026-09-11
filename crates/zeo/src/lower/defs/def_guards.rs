@@ -268,6 +268,7 @@ fn guard_pattern(node: &Node<'_>) -> Option<crate::guard_fold::LiteralPattern> {
             multiline: re.is_multi_line(),
             // Ignored by `parse`; `Source` is the flagless spelling.
             encoding: zeo_abi::RegexpEncoding::Source,
+            once: false,
         },
     )
 }
