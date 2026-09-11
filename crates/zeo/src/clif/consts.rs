@@ -421,6 +421,14 @@ fn class_value_of(
     name: &str,
     cid: crate::compiler::ClassId,
 ) -> CResult<Operand> {
+    // A bare name written inside a class may be an `autoload` of that class
+    // (or an enclosing one) naming a GATED builtin: ruby's cref walk reaches
+    // the autoload before the top-level constant, and running it is what
+    // opens the gate. Each enclosing scope's own registration is asked,
+    // innermost first.
+    if !name.contains("::") {
+        scope_autoload_touches(fx, name);
+    }
     // A constant a literal `autoload` names: the READ is what runs the
     // target, and a compiled-in unit's classes are registered from startup,
     // so nothing misses and no hook can carry it. Gate the fold instead.
@@ -464,6 +472,20 @@ fn class_value_of(
         });
     }
     Ok(class_immediate(fx, cid))
+}
+
+/// The named `autoload` touches a bare `name` read owes the scopes it is
+/// written in: the lexical class, then each class it is nested in, up to but
+/// not including the top level (whose touch [`autoload_touch`] makes).
+pub(super) fn scope_autoload_touches(fx: &mut Fx, name: &str) {
+    let top = super::boxes::box_top(fx);
+    let mut at = super::boxes::lexical_class(fx);
+    while let Some(cid) = at
+        && cid != top
+    {
+        emit_named_autoload_touch(fx, cid, name);
+        at = fx.an.compiler.class_opt(cid).and_then(|c| c.cref_parent);
+    }
 }
 
 /// A Symbol value for `name`, interned by `zeo_unit_init` -- two inline

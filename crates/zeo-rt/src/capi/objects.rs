@@ -310,6 +310,18 @@ pub unsafe extern "C" fn zeo_rt_const_get_at(
     }
 }
 
+/// Whether `owner::name` still owes an `autoload` target -- `defined?`'s
+/// answer for such a name is "constant" before anything loads, and asking
+/// loads nothing.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_autoload_pending(owner: u32, name: *const u8, name_len: usize) -> i8 {
+    if !crate::builtins::rmodule::ANY_PENDING_AUTOLOAD.load(std::sync::atomic::Ordering::Relaxed) {
+        return 0;
+    }
+    let name = unsafe { super::str_slice(name, name_len) };
+    i8::from(crate::builtins::rmodule::has_pending_autoload(owner, name))
+}
+
 /// Run the `autoload` target `owner::name` still owes, before the read that
 /// asked for it resolves.
 ///

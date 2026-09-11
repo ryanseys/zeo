@@ -39,6 +39,7 @@ capi_symbols!(
     lifecycle::zeo_rt_at_exit_register,
     objects::zeo_rt_attr_read,
     objects::zeo_rt_attr_write,
+    objects::zeo_rt_autoload_pending,
     objects::zeo_rt_autoload_touch,
     objects::zeo_rt_autoload_touch_value,
     dispatch::zeo_rt_bare_super_outside_a_method,

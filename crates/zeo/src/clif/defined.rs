@@ -136,10 +136,66 @@ fn is_predefined_global(name: &str) -> bool {
     )
 }
 
-/// `defined?(expr)`. The runtime-probing forms call one capi each;
+/// `defined?(expr)`. A bare constant an enclosing class `autoload`s answers
+/// "constant" while that registration is pending, before anything loads --
+/// ruby's cref walk reaches the autoload first. Every other form goes to
+/// [`lower_defined_forms`].
+pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
+    let name = match &fx.an.compiler.hir[inner] {
+        HirNode::ClassRef(name)
+            if fx.eval_mode.is_none()
+                && !name.contains("::")
+                && fx.an.compiler.hir.loader.autoload_consts.contains(name) =>
+        {
+            name.clone()
+        }
+        _ => return lower_defined_forms(fx, site, inner),
+    };
+    let top = super::boxes::box_top(fx);
+    let mut scopes = Vec::new();
+    let mut at = super::boxes::lexical_class(fx);
+    while let Some(cid) = at
+        && cid != top
+    {
+        scopes.push(cid);
+        at = fx.an.compiler.class_opt(cid).and_then(|c| c.cref_parent);
+    }
+    if scopes.is_empty() {
+        return lower_defined_forms(fx, site, inner);
+    }
+    let (nptr, nlen) = super::expr::rodata_name(fx, &name);
+    let mut pending = fx.b.ins().iconst(types::I8, 0);
+    for cid in scopes {
+        let owner = fx.cid_value(cid.0);
+        let one = fx.call_status("zeo_rt_autoload_pending", &[owner, nptr, nlen]);
+        pending = fx.b.ins().bor(pending, one);
+    }
+    let ss = fx.temp_slot();
+    let dst = fx.slot_addr(ss, 0);
+    let yes = fx.b.create_block();
+    let no = fx.b.create_block();
+    let merge = fx.b.create_block();
+    fx.b.ins().brif(pending, yes, &[], no, &[]);
+    fx.b.switch_to_block(yes);
+    defined_str(fx, dst, "constant");
+    fx.b.ins().jump(merge, &[]);
+    fx.b.switch_to_block(no);
+    let rest = lower_defined_forms(fx, site, inner)?;
+    ownership::write_move_into(fx, &rest, dst);
+    fx.b.ins().jump(merge, &[]);
+    fx.b.switch_to_block(merge);
+    fx.owned_created += 1;
+    Ok(Operand::Slot {
+        ss,
+        owned: true,
+        tag: TagInfo::Unknown,
+    })
+}
+
+/// `defined?(expr)`'s forms. The runtime-probing forms call one capi each;
 /// everything else classifies statically. The collection-literal recursion and dynamic-scope const
 /// forms still refuse.
-pub(super) fn lower_defined(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
+fn lower_defined_forms(fx: &mut Fx, site: NodeId, inner: NodeId) -> CResult<Operand> {
     // `defined?(yield)`: runtime -- the block channel is or isn't there.
     if matches!(&fx.an.compiler.hir[inner], HirNode::Yield(_)) {
         // A snippet's own level has no channel; the one it means is the
