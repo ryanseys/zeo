@@ -101,6 +101,18 @@ pub unsafe extern "C" fn zeo_rt_synthetic_c_frame_push(label: *const u8, label_l
     crate::frames::synthetic_c_frame_push_raw(label) as i8
 }
 
+/// `__callee__` in a compiled method: the name a run-time alias called it
+/// through, else `fallback`, the name the emitter knows.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zeo_rt_frame_callee(fallback: u32, out: *mut RubyValue) {
+    let sym = crate::frames::current_frame_callee()
+        .unwrap_or_else(|| crate::Symbol::from_u32(fallback));
+    let v = RubyValue::Symbol(sym);
+    super::leakcheck::created(&v);
+    // SAFETY: `out` is the caller's uninitialized result slot, written once.
+    unsafe { out.write(v) };
+}
+
 /// The pop matching [`zeo_rt_synthetic_c_frame_push`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_synthetic_c_frame_pop(pushed: i8) {

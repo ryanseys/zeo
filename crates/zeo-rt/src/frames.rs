@@ -66,6 +66,9 @@ pub struct Frame {
     /// [`Frame::NO_MARK`] for a frame that brackets no pool scope (a
     /// synthetic C frame, a Rust-side `FrameGuard`).
     pub pool_mark: u32,
+    /// The name a run-time alias called this frame's method through, as a
+    /// symbol id plus one; 0 for none. `__callee__` reads it.
+    pub callee: u32,
 }
 
 // SAFETY: `method_ptr` is null or points into process-lifetime text
@@ -103,6 +106,7 @@ impl Frame {
             line,
             end_line,
             pool_mark,
+            callee: 0,
         }
     }
 
@@ -125,6 +129,7 @@ impl Frame {
                 line,
                 end_line,
                 pool_mark: Frame::NO_MARK,
+                callee: 0,
             },
         }
     }
@@ -560,6 +565,53 @@ pub fn set_pending_frame_label(label: Option<&'static str>) -> Option<&'static s
     PENDING_LABEL.with(|c| c.replace(label))
 }
 
+// The name a RUNTIME alias is calling a method through, for the one frame push
+// that follows it -- the same one-shot handover as `PENDING_LABEL`. The copied
+// body was compiled under the ORIGINAL name, so only the frame can say which
+// name the call used.
+thread_local! {
+    static PENDING_CALLEE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Hand `callee` ([`callee_id`]) to the next frame push on this thread, unless
+/// an outer alias already did: `alias c b` over `alias b a` is called through
+/// its OUTERMOST name. Answers whether it armed, so the caller can
+/// [`clear_callee`] after the call and a body that pushes no frame cannot leak
+/// it. Arming latches `GATE_FRAMES_INDIRECT`, as [`set_pending_frame_label`]
+/// does.
+pub fn arm_callee(callee: u32) -> bool {
+    PENDING_CALLEE.with(|c| {
+        if c.get() != 0 {
+            return false;
+        }
+        crate::runtime_meta::arm_frames_indirect();
+        c.set(callee);
+        true
+    })
+}
+
+/// Drops a callee [`arm_callee`] armed that no frame push took.
+pub fn clear_callee() {
+    PENDING_CALLEE.with(|c| c.set(0));
+}
+
+/// [`Frame::callee`]'s encoding of `sym`.
+pub fn callee_id(sym: crate::Symbol) -> u32 {
+    sym.to_u32() + 1
+}
+
+/// `__callee__`: the name the innermost method was called through, when a
+/// run-time alias handed one over. A block's frame names the method it was
+/// written in (`block in X#m`), so the walk finds that method's own frame.
+pub fn current_frame_callee() -> Option<crate::Symbol> {
+    with_frames(|f| {
+        let top = f.last()?.method();
+        let owner = top.rsplit(" in ").next().unwrap_or(top);
+        let frame = f.iter().rev().find(|fr| fr.method() == owner)?;
+        (frame.callee != 0).then(|| crate::Symbol::from_u32(frame.callee - 1))
+    })
+}
+
 /// A `&'static str` for a label built at run time, one leak per distinct
 /// string and cached. A frame holds `&'static str` because the overwhelming
 /// majority are `.rodata`; a runtime-minted class's name is the exception.
@@ -605,7 +657,9 @@ pub(crate) fn frame_push_raw(
             }
         }
     };
-    push_frame(Frame::with_label(file, method, line, end_line, pool_mark));
+    let mut frame = Frame::with_label(file, method, line, end_line, pool_mark);
+    frame.callee = PENDING_CALLEE.with(|c| c.replace(0));
+    push_frame(frame);
     #[cfg(feature = "ext-tracepoint")]
     if end_line != 0 && crate::ext::tracepoint::tracing() {
         crate::ext::tracepoint::fire_entry(file, method, line);
@@ -844,6 +898,8 @@ mod layout_tests {
         assert_eq!(std::mem::offset_of!(Frame, line), a::FRAME_LINE);
         assert_eq!(std::mem::offset_of!(Frame, end_line), a::FRAME_END_LINE);
         assert_eq!(std::mem::offset_of!(Frame, pool_mark), a::FRAME_POOL_MARK);
+        assert_eq!(std::mem::offset_of!(Frame, callee), a::FRAME_CALLEE);
+        assert_eq!(std::mem::size_of::<Frame>(), a::FRAME_SIZE);
 
         // The fat-pointer internals: write a frame the way an emitted
         // prologue does (raw stores at the ABI offsets), read it back

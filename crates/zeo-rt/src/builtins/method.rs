@@ -449,6 +449,12 @@ fn recv_method(recv: &RubyValue) -> &RMethod {
         .expect("class_id guarantees this downcast")
 }
 
+/// The name `m`'s definition was born under: an alias's source name, so an
+/// alias and its source are one method to `#==` and `#hash`.
+fn defining_name(m: &RMethod) -> Symbol {
+    crate::method_meta::alias_origin(m.home, m.kind, m.name).unwrap_or(m.name)
+}
+
 /// Shared body of `>>`/`<<`: both sides go through `#call`, so a Method, a
 /// Proc, or any object answering `call` composes uniformly.
 fn compose(recv: &RubyValue, other: &RubyValue, forward: bool) -> Result<RubyValue, Signal> {
@@ -692,9 +698,10 @@ ruby_class! {
     def "<<"(recv, other) {
         compose(recv, other, false)
     }
-    // `Method#==`/`#eql?` -- same defining method (name + owner) bound to the
-    // SAME receiver. CRuby compares receivers by identity, not by `==`, so two
-    // Methods over two equal-but-distinct Strings are unequal.
+    // `Method#==`/`#eql?` -- same defining method (its ORIGINAL name, so an
+    // alias equals its source, + owner) bound to the SAME receiver. CRuby
+    // compares receivers by identity, not by `==`, so two Methods over two
+    // equal-but-distinct Strings are unequal.
     def "==" | "eql?" (recv, other) {
         let m = recv_method(recv);
         let RubyValue::Object(o) = other else {
@@ -704,7 +711,7 @@ ruby_class! {
             return Ok(RubyValue::Bool(false));
         };
         Ok(RubyValue::Bool(
-            m.name == other.name
+            defining_name(m) == defining_name(other)
                 && m.owner() == other.owner()
                 && crate::builtins::basic_object::value_identity(&m.recv, &other.recv),
         ))
@@ -718,7 +725,7 @@ ruby_class! {
         use std::hash::{Hash, Hasher};
         let m = recv_method(recv);
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        m.name.hash(&mut h);
+        defining_name(m).hash(&mut h);
         m.owner().unwrap_or(m.home).hash(&mut h);
         match crate::runtime_meta::value_identity(&m.recv) {
             Some(addr) => addr.hash(&mut h),

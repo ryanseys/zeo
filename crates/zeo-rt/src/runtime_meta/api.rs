@@ -664,6 +664,42 @@ fn runtime_undef_singleton_method(
 /// `old` is resolved the way the OBJECT answers it -- its own singleton table
 /// first, then its class's chain -- because that is what ruby copies: an alias
 /// takes the definition the receiver would have run.
+/// A run-time alias's copy of `m`: the call hands `new` to the frame it
+/// pushes, since the body was compiled under the source's name and only the
+/// frame can say which name the call used (`__callee__`).
+fn callee_wrapped(m: MethodImpl, new: Symbol) -> MethodImpl {
+    let callee = crate::frames::callee_id(new);
+    MethodImpl::Dynamic(Arc::new(
+        move |recv: &RObj, args: &[RubyValue], block: Option<RubyValue>| {
+            let armed = crate::frames::arm_callee(callee);
+            let r = m.call(recv, args, block);
+            if armed {
+                crate::frames::clear_callee();
+            }
+            r
+        },
+    ))
+}
+
+/// [`callee_wrapped`] for a value-shaped body.
+fn callee_wrapped_proc(p: RProc, new: Symbol) -> RProc {
+    let callee = crate::frames::callee_id(new);
+    let (self_val, arity, lambda) = (p.self_val().clone(), p.arity(), p.is_lambda());
+    RProc::with_self_and_block(
+        move |recv, args, block| {
+            let armed = crate::frames::arm_callee(callee);
+            let r = p.call_with_self_and_block(recv, args, block);
+            if armed {
+                crate::frames::clear_callee();
+            }
+            r
+        },
+        self_val,
+        arity,
+        lambda,
+    )
+}
+
 fn runtime_alias_singleton_method(
     owner: &RubyValue,
     singleton: ClassId,
@@ -697,7 +733,7 @@ fn runtime_alias_singleton_method(
         .unwrap()
         .entry(key)
         .or_default()
-        .insert(new, m);
+        .insert(new, callee_wrapped(m, new));
     match vis {
         Some(v) => set_singleton_visibility(owner, new, v),
         None => clear_singleton_visibility(owner, new),
@@ -1125,7 +1161,7 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
             let key = crate::boxes::box_record_for_write(crate::boxes::current_box(), owner.0);
             let mut w = maps().classes.write().unwrap();
             let e = w.entry(key).or_insert_with(OverlayEntry::delta);
-            e.class_methods.insert(new, source);
+            e.class_methods.insert(new, callee_wrapped_proc(source, new));
             e.extended_class_methods.remove(&new);
             // The alias inherits its source's CURRENT visibility, exactly as
             // the instance arm below does -- CRuby copies the method entry,
@@ -1203,7 +1239,7 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
     {
         let mut w = maps().classes.write().unwrap();
         let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
-        e.methods.insert(new, m);
+        e.methods.insert(new, callee_wrapped(m, new));
         // The VALUE-shaped body travels with the copy. A method has two
         // installed shapes -- one taking an `&RObj`, one taking a plain
         // `RubyValue` -- and only the second can run with a CLASS as `self`.
@@ -1223,7 +1259,7 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
         // :require` is the same shape, which is what made `zeo gem install`
         // raise NoMethodError on its own alias.
         if let Some(vb) = value_body {
-            e.value_bodies.insert(new, vb);
+            e.value_bodies.insert(new, callee_wrapped_proc(vb, new));
         }
         match vis {
             Some(v) => e.methods_vis.insert(new, v),

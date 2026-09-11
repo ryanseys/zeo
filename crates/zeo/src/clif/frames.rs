@@ -107,6 +107,10 @@ fn push_stores(fx: &mut Fx, hot: ir::Value, args: &[ir::Value; 6]) {
     let count = fx.b.ins().udiv_imm_u(bytes, a::VALUE_SIZE as i64);
     let mark = fx.b.ins().ireduce(types::I32, count);
     fx.b.ins().store(fl, mark, top, a::FRAME_POOL_MARK as i32);
+    // An inline push takes no handed-over callee: arming one routes every
+    // push through the capi call instead.
+    let no_callee = fx.b.ins().iconst(types::I32, 0);
+    fx.b.ins().store(fl, no_callee, top, a::FRAME_CALLEE as i32);
     let bumped = fx.b.ins().iadd_imm_s(top, a::FRAME_SIZE as i64);
     fx.b.ins().store(fl, bumped, hot, a::FRAMEHOT_TOP as i32);
     fx.b.ins().jump(done, &[]);

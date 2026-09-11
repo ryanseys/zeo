@@ -1098,7 +1098,17 @@ ruby_module! {
     // The frame readers. A builtin row pushes no frame of its own, so the
     // CURRENT frame is the caller's -- the same reason `#caller` defaults to
     // `start = 1`.
-    module_function def "__method__" | "__callee__"(_recv) {
+    module_function def "__method__"(_recv) {
+        Ok(match crate::frames::current_frame_method() {
+            Some(name) => RubyValue::Symbol(Symbol::intern(name)),
+            None => RubyValue::Nil,
+        })
+    }
+    // The name a run-time alias called the method through, when one did.
+    module_function def "__callee__"(_recv) {
+        if let Some(sym) = crate::frames::current_frame_callee() {
+            return Ok(RubyValue::Symbol(sym));
+        }
         Ok(match crate::frames::current_frame_method() {
             Some(name) => RubyValue::Symbol(Symbol::intern(name)),
             None => RubyValue::Nil,

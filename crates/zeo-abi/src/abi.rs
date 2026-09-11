@@ -135,6 +135,9 @@ pub const FRAME_METHOD_LEN: usize = 24;
 pub const FRAME_LINE: usize = 32;
 pub const FRAME_END_LINE: usize = 36;
 pub const FRAME_POOL_MARK: usize = 40;
+/// The name a run-time alias called the frame's method through: a symbol id
+/// plus one, 0 for none. It sits in what was the struct's tail padding.
+pub const FRAME_CALLEE: usize = 44;
 /// `Frame.pool_mark`'s "no pool scope" sentinel.
 pub const FRAME_NO_MARK: u32 = u32::MAX;
 

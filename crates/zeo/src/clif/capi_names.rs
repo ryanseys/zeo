@@ -563,6 +563,11 @@ pub const CAPI: &[CapiSig] = &[
         ret: Some(Ptr),
     },
     CapiSig {
+        name: "zeo_rt_frame_callee",
+        params: &[U32, Ptr],
+        ret: None,
+    },
+    CapiSig {
         name: "zeo_rt_frame_pop",
         params: &[],
         ret: None,

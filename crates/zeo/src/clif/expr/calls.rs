@@ -290,16 +290,25 @@ pub(super) fn plain_call(
         return crate::clif::consts::symbol_value(fx, &origin);
     }
     // `__callee__`'s half. The frame label carries the name the body was
-    // BORN as, which is what a backtrace shows -- so the runtime row's frame
-    // read answers `__method__` and cannot answer this. The emitter knows
-    // the called name: an alias is emitted as its own body, whose
-    // `method_name` IS the alias.
+    // BORN as, which is what a backtrace shows. A compile-time alias is
+    // emitted as its own body, whose `method_name` IS the alias; a run-time
+    // alias copies this body and hands the name it was called through to
+    // the frame, so the frame answers first and the known name stands in.
     if receiver.is_none()
         && args.is_empty()
         && name == "__callee__"
         && let Some(called) = fx.method_name.clone()
     {
-        return crate::clif::consts::symbol_value(fx, &called);
+        let fallback = fx.sym_id(&called);
+        let ss = fx.temp_slot();
+        let out = fx.slot_addr(ss, 0);
+        fx.call("zeo_rt_frame_callee", &[fallback, out]);
+        fx.owned_created += 1;
+        return Ok(Operand::Slot {
+            ss,
+            owned: true,
+            tag: TagInfo::Known(ValueTag::Symbol as u8),
+        });
     }
     if let Some(op) = method_capture_intrinsic(fx, receiver, &name, &args, &[], None, None)? {
         return Ok(op);
