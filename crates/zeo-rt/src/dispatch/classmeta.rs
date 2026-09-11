@@ -170,6 +170,10 @@ pub fn nested_class_names(id: ClassId) -> Vec<String> {
             .filter(|&(_, &cid)| crate::boxes::class_box(crate::ClassId(cid)) == want)
             .map(|(name, _)| name)
             .filter(|name| !name.contains("::") && !name.contains('#') && !name.contains('.'))
+            // A constant starts with an upper-case letter, so a class whose
+            // name does not is no constant of anyone's -- CRuby's internal
+            // `fatal` is reachable only as a raised object's class.
+            .filter(|name| name.starts_with(char::is_uppercase))
             .map(String::clone)
             .collect();
     }
