@@ -1633,7 +1633,7 @@ pub(super) fn const_alias_target(compiler: &Compiler, leaf: &str, box_id: u32) -
 }
 
 /// The builtin `ClassId` of a literal value (`1.class` -> Integer, etc.).
-fn literal_class_id(node: &HirNode) -> Option<ClassId> {
+pub(super) fn literal_class_id(node: &HirNode) -> Option<ClassId> {
     Some(match node {
         HirNode::IntegerLit(_) | HirNode::BigIntegerLit { .. } => zeo_abi::INTEGER_CLASS,
         HirNode::FloatLit(_) => zeo_abi::FLOAT_CLASS,

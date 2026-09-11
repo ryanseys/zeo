@@ -1232,7 +1232,7 @@ pub fn value_extends(recv: &RubyValue, target: ClassId) -> bool {
 
 /// The real parent class of `cid` -- the first non-module entry after it in
 /// the linearization, which is what `Class#superclass` answers.
-fn superclass_of(cid: ClassId) -> Option<ClassId> {
+pub(crate) fn superclass_of(cid: ClassId) -> Option<ClassId> {
     crate::dispatch::ancestors_of_value(cid)
         .iter()
         .skip_while(|&&a| a != cid)

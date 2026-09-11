@@ -174,6 +174,14 @@ pub(super) fn register_class(
         // Deferred to a runtime constant read -- nothing registered.
         return Ok(());
     };
+    if target.existing.is_none()
+        && target.overlay_root.is_none()
+        && let Some(msg) = value_constant_clash(compiler, reg, &target)
+    {
+        ruby_raises(compiler, reg.def_node, "TypeError", &msg);
+        let first = msg.lines().next().unwrap_or_default().to_string();
+        return Err(first.into());
+    }
     check_builtin_superclass_restatement(
         compiler,
         reg.name,
@@ -186,6 +194,33 @@ pub(super) fn register_class(
         None => create_class(compiler, reg, target)?,
     };
     walk_class_body(compiler, class_id, reg)
+}
+
+/// `TOP = 1; class TOP; end`: a definition over a constant this file set
+/// EARLIER to a literal is ruby's TypeError, naming where the value was set.
+/// `None` when the name is free, set later, or set to something that may be
+/// a class.
+fn value_constant_clash(
+    compiler: &Compiler,
+    reg: &ClassRegistration<'_>,
+    target: &DefinitionTarget,
+) -> Option<String> {
+    let key = match target.lexical_parent {
+        Some(parent) => format!("{}::{}", compiler.fq_name(parent), target.leaf),
+        None => target.leaf.clone(),
+    };
+    let value = *compiler.const_aliases.get(&(reg.box_id, key))?;
+    super::top_stmts::literal_class_id(&compiler.hir[value])?;
+    let (set_file, set_line) = crate::analyze::source::source_location(compiler, value)?;
+    let (def_file, def_line) = crate::analyze::source::source_location(compiler, reg.def_node?)?;
+    if set_file != def_file || set_line > def_line {
+        return None;
+    }
+    let kind = if reg.is_module { "module" } else { "class" };
+    let leaf = &target.leaf;
+    Some(format!(
+        "{leaf} is not a {kind}\n{set_file}:{set_line}: previous definition of {leaf} was here"
+    ))
 }
 
 /// What a definition site names, resolved before any registration state is

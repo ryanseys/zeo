@@ -442,11 +442,18 @@ pub fn class_open(
         }
     };
     let kind = if is_module { "module" } else { "class" };
+    // Ruby's second line names where the constant was set, or leaves both
+    // fields empty for one no source line set.
+    let not_a = || {
+        let at = crate::constants::const_location(owner_id, name, true)
+            .map_or_else(|| ":".to_string(), |(file, line)| format!("{file}:{line}"));
+        crate::builtins::type_error!("{name} is not a {kind}\n{at}: previous definition of {name} was here")
+    };
     let existing = match crate::constants::const_get(owner_id, name) {
         Some(RubyValue::Class(cid)) => Some(cid),
         // The constant is taken by something that is not a class at all --
         // ruby's own `TypeError`, raised before anything is minted.
-        Some(_) => return Err(crate::builtins::type_error!("{name} is not a {kind}")),
+        Some(_) => return Err(not_a()),
         None if owner_id == zeo_abi::OBJECT_CLASS.0 => crate::dispatch::class_id_by_name(name),
         // A box's top level is its SURROGATE, and past the surrogate a box
         // sees only master -- the world as it stood before the program ran.
@@ -470,6 +477,16 @@ pub fn class_open(
         None => None,
     };
     if let Some(cid) = existing {
+        // A reopen must match the kind, and a restated superclass the
+        // class's own.
+        if crate::dispatch::class_is_module(cid) == Some(!is_module) {
+            return Err(not_a());
+        }
+        if let (false, Some(RubyValue::Class(want))) = (is_module, superclass)
+            && crate::runtime_meta::superclass_of(cid) != Some(*want)
+        {
+            return Err(crate::builtins::type_error!("superclass mismatch for class {name}"));
+        }
         return Ok(RubyValue::Class(cid));
     }
     // A box's surrogate IS its top level, so a class minted there is named

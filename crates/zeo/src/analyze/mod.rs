@@ -1090,6 +1090,10 @@ mod tests {
 
         assert!(analyze_raise("class Foo\nend\nmodule Foo\nend\n").contains("Foo is not a module"));
         assert!(analyze_raise("module Bar\nend\nclass Bar\nend\n").contains("Bar is not a class"));
+        // A constant set to a plain value earlier, named with where it was set.
+        let raised = analyze_raise("TOP = 1\nclass TOP\nend\n");
+        assert!(raised.contains("TOP is not a class\n"), "{raised}");
+        assert!(raised.contains(":1: previous definition of TOP was here"), "{raised}");
     }
 
     /// A reopen may RESTATE the original superclass (real Ruby allows it).
