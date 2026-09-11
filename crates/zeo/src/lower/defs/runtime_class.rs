@@ -202,9 +202,36 @@ pub(crate) fn synthesize_struct_class(
         ));
     };
     hir.set_span(class_def, written_at);
-    hir.struct_members.insert(class_def, members.to_vec());
+    // A member is not an instance variable: `@a` in a method of the struct
+    // is its own ivar, and reads nil until assigned. The accessors reach the
+    // member through a slot named with a NUL first, which no `@name` can
+    // spell; `clif::classes` strips it back off for the member list.
+    let slots: Vec<String> = members.iter().map(|m| format!("\0{m}")).collect();
+    hir.struct_members.insert(class_def, slots);
     name_struct_writer_parameters(hir, class_def);
+    hide_member_slots(hir, class_def, members);
     Ok(class_def)
+}
+
+/// Renames the accessors' `@member` reads and writes to the member slots
+/// [`synthesize_struct_class`] names.
+fn hide_member_slots(hir: &mut Hir, class_def: NodeId, members: &[String]) {
+    let HirNode::ClassDef { body, .. } = hir[class_def].clone() else {
+        return;
+    };
+    for stmt in body {
+        let HirNode::DefMethod { body, .. } = hir[stmt].clone() else {
+            continue;
+        };
+        for node in body {
+            match &mut hir[node] {
+                HirNode::IvarRead(name) | HirNode::IvarWrite(name, _) if members.contains(name) => {
+                    *name = format!("\0{name}");
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 /// Ruby names a Struct WRITER's parameter `_`, where an `attr_accessor`

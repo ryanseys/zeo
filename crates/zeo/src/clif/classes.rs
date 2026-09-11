@@ -1155,7 +1155,13 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             ancestors: class.ancestors.iter().map(|c| c.0).collect(),
             ivars: class.ivars.clone(),
             hidden: u16::try_from(class.hidden_ivars.len()).expect("hidden ivars fit u16"),
-            members: class.hidden_ivars.clone(),
+            // A struct's member slots carry a NUL first
+            // (`lower::defs::runtime_class::synthesize_struct_class`).
+            members: class
+                .hidden_ivars
+                .iter()
+                .map(|slot| slot.trim_start_matches('\0').to_string())
+                .collect(),
             kind,
         });
         // What this class's own body wrote -- `instance_methods(false)` /
