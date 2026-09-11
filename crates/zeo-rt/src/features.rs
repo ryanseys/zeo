@@ -414,6 +414,19 @@ pub fn load_from_disk(feature: &str, box_id: u32, reload: bool) -> Option<Result
             if is_native_library(&found) {
                 return None;
             }
+            // A file this program compiled in as a unit is that unit, however
+            // the require spelled it: an `autoload` naming it on the load path
+            // and a `require_relative` naming it by path load ONE file. A
+            // second compiled copy would define a second class the compiled
+            // code never reads.
+            if !reload {
+                let canonical = std::fs::canonicalize(&found).ok();
+                for spelling in std::iter::once(found.as_path()).chain(canonical.as_deref()) {
+                    if let Some(result) = load_feature(&spelling.to_string_lossy()) {
+                        return Some(result);
+                    }
+                }
+            }
             (found.to_string_lossy().into_owned(), None)
         }
     };
