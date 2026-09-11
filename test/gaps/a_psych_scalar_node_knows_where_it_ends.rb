@@ -1,6 +1,6 @@
 # A parsed Psych node reports where it starts AND where it ends, in lines
-# and columns. zeo's parser records the start of each node and leaves the end
-# unset, so the `end_line` and `end_column` answers differ.
+# and columns. zeo's parser records no marks at all, so every node answers
+# 0:0 for both; the first start matches only by chance.
 require "psych"
 
 doc = Psych.parse("a: hello\nb: 2\n")

@@ -747,11 +747,9 @@ compiles into its own interpreter -- and each answers a real
 answers `nil`, exactly as ruby answers `nil` for its own C rows.
 
 Only `#source_location` and the `file:line` tail of `Method#inspect` differ
-by design. `#owner`, visibility and behaviour agree row for row, and
-`#parameters`/`#arity` agree for every row except the ones
-`test/gaps/builtin_rows_report_rubys_signature.rb` still records: the rows
-ruby names because it writes them in Ruby, whose parameter names the DSL
-spells one at a time.
+by design. `#owner`, visibility, behaviour, `#parameters` and `#arity` agree
+row for row, including the rows ruby names because it writes them in Ruby
+(`test/compiler/builtins/builtin_rows_report_rubys_signature.rb`).
 
 Compiling CRuby's own `nilclass.rb` and `pathname_builtin.rb` would make
 these rows answer byte-identically, at a measured cost of 22.7x the run

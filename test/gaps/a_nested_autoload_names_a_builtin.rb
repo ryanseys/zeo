@@ -1,10 +1,9 @@
 # frozen_string_literal: true
 
-# Two things an `autoload` naming a GATED builtin feature gets wrong.
-#
-# A top-level one does not mark the feature LOADED, so a later `require`
-# of it answers true where ruby answers false. One written in a class
-# body never opens the gate at all, so the constant is missing.
+# An `autoload` naming a GATED builtin feature, written in a class body.
+# The bare `Digest` read resolves statically to `::Digest` and touches only
+# the top level's autoloads, never `Store`'s, so the gate never opens and the
+# constant is missing. The top-level half already matches.
 
 autoload :JSON, "json"
 p require("json")

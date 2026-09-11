@@ -41,7 +41,7 @@
 #     anonymously) and the struct fold renames its slot after lowering --
 #     keeping the mark that elides the frame.
 #
-# The sweeps are `test/gaps/builtin_rows_report_rubys_signature.rb` and
+# The sweeps are `test/compiler/builtins/builtin_rows_report_rubys_signature.rb` and
 # `test/core/struct/an_accessor_reports_rubys_parameter_name.rb`, plus the per-row Rust
 # tables in `builtins/pathname.rs`, `builtins/kernel.rs`,
 # `builtins/exception.rs` and `builtins/rstruct.rs`.

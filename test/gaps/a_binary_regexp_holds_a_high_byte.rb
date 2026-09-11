@@ -1,6 +1,7 @@
-# A binary-encoded pattern keeps its bytes and its encoding: `\M-a` and a
+# A binary pattern keeps its bytes, and ASCII-8BIT with them. `\M-a` and a
 # raw high byte both match a binary string, both report ASCII-8BIT, and the
-# source stays the four bytes as written. `//n` is US-ASCII, not binary,
+# source stays the four bytes as written. (No `encoding:` on line 1: that
+# spelling is a magic comment, and ruby refuses the file.) `//n` is US-ASCII, not binary,
 # because the flag narrows rather than reinterprets.
 def t(l); r=(begin; yield.inspect; rescue Exception=>e; "#{e.class}: #{e.message}"; end); puts format("%-24s %s", l, r); end
 t("M-a in binary")     { Regexp.new("\\M-a".b) =~ "\xE1".b }

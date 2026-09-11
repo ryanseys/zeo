@@ -3,10 +3,12 @@
 # `load C extension .../ext/prism/prism.bundle`, and `Prism.parse` still
 # raises `uninitialized constant Prism::LibRubyParser::PrismString`.
 #
-# `prism` is the one gem in the C-API sweep with two backends, and its
-# loader picks between them with `RUBY_ENGINE == "ruby"`, which zeo answers
-# `"ruby"`. Recorded as a note; `crates/zeo/tests/fixtures/capi_sweep/
-# XFAIL.json` carries the same finding for the sweep.
+# zeo takes the C-extension branch of `prism.rb` correctly, but `ENV` decides
+# that branch, so the compile also takes in `prism/ffi.rb`, and with it the
+# store's ffi, rake, debug, irb and rdoc: the compile alone runs past 30
+# seconds. The `Prism.parse` call site binds to ffi.rb's static def rather
+# than the one `Init_prism` defines at run time. `crates/zeo/tests/fixtures/
+# capi_sweep/XFAIL.json` carries the same finding for the sweep.
 #@ zeo-env: ZEO_DISABLE_BUILTIN=prism
 #@ zeo: --gem-path vendor/gems --bundle-gemfile Gemfile
 require "prism"

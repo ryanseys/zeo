@@ -10,9 +10,9 @@
 # progress dots.
 #
 # A suite whose examples all pass never reaches that path, which is what
-# `../an_rspec_suite_runs.rb` holds. This file is the other half: the day zeo
-# can answer `require "ripper"`, or rspec stops needing it, this starts
-# matching and the suite says so.
+# `milestones/an_rspec_suite_runs.rb` holds. This file is the other half. It
+# sits here, where zeo gets no rspec on its load path, until zeo answers
+# `require "ripper"`; it then moves to `milestones/`, which supplies one.
 
 require "stringio"
 real_stdout = $stdout
@@ -46,7 +46,7 @@ Pending: (Failures listed here are expected and do not affect your suite's statu
 
      RuntimeError:
        still broken
-     # ./milestones/pending/rspec_reports_a_failure.rb:35:in 'block (2 levels) in <main>'
+     # ./gaps/rspec_reports_a_failure.rb:35:in 'block (2 levels) in <main>'
 
 Failures:
 
@@ -57,13 +57,13 @@ Failures:
             got: 1
 
        (compared using ==)
-     # ./milestones/pending/rspec_reports_a_failure.rb:30:in 'block (2 levels) in <main>'
+     # ./gaps/rspec_reports_a_failure.rb:30:in 'block (2 levels) in <main>'
 
 Finished in <time>
 2 examples, 1 failure, 1 pending
 
 Failed examples:
 
-rspec ./milestones/pending/rspec_reports_a_failure.rb:29 # arithmetic reports a failure
+rspec ./gaps/rspec_reports_a_failure.rb:29 # arithmetic reports a failure
 
 #@ exit 1

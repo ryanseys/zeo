@@ -4,7 +4,7 @@
 # them in Rust, which answers `nil`, exactly as ruby answers `nil` for its own
 # C rows. Only `#source_location` and the `file:line` tail of `Method#inspect`
 # differ; `#parameters`, `#arity`, `#owner`, visibility and behaviour agree row
-# for row (`test/gaps/builtin_rows_report_rubys_signature.rb`).
+# for row (`compiler/builtins/builtin_rows_report_rubys_signature.rb`).
 #
 # The vendored-Ruby alternative is measured and rejected: 22.7x slower, 3.5x
 # bigger, plus a 14.48 MB embedded compiler for one `eval` -- it buys only

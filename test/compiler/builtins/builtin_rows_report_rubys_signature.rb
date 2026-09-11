@@ -6,10 +6,11 @@
 # function declares a real signature -- and each carries a `ruby def` or a
 # `params "..."` spelling in the DSL to say so.
 #
-# Two rows are asymmetric on purpose:
-#   * `Kernel#require` names its parameter and `Kernel.require` does not,
-#     because CRuby defines the two separately.
-#   * a Struct WRITER's parameter is named `_`, a reader has none.
+# A Struct WRITER's parameter is named `_`, a reader has none.
+#
+# `require` is not asked about: the oracle runs under `bundler/setup`, whose
+# `bundled_gems.rb` redefines both `Kernel#require` and `Kernel.require` with
+# a parameter named `name`, so the recorded answer would be bundler's.
 
 require "pathname" # a no-op in zeo and in ruby 4.0: the class is already there
 require "tmpdir"   # what adds `Pathname.mktmpdir`
@@ -39,12 +40,11 @@ end
 show("Pathname private set") { Pathname.private_instance_methods(false).sort }
 show("Pathname protected set") { Pathname.protected_instance_methods(false).sort }
 
-# ---- Kernel: the seven rows ruby names.
-%i[Float Integer Pathname clone pp require warn].each do |m|
+# ---- Kernel: the rows ruby names.
+%i[Float Integer Pathname clone pp warn].each do |m|
   um = Kernel.instance_method(m)
   puts "Kernel##{m}: #{um.parameters.inspect} / #{um.arity}"
 end
-show("Kernel.require") { [Kernel.method(:require).parameters, Kernel.method(:require).arity] }
 
 # ---- Three builtins whose C function declares a real signature.
 show("Dir#initialize") { Dir.instance_method(:initialize).parameters }
@@ -113,9 +113,7 @@ Kernel#Integer: [[:req, :arg], [:opt, :base], [:key, :exception]] / -2
 Kernel#Pathname: [[:req, :path]] / 1
 Kernel#clone: [[:key, :freeze]] / -1
 Kernel#pp: [[:rest, :objs]] / -1
-Kernel#require: [[:req, :name]] / 1
 Kernel#warn: [[:rest, :msgs], [:key, :uplevel], [:key, :category]] / -1
-Kernel.require: [[[:req, :name]], 1]
 Dir#initialize: [[:req, :name], [:key, :encoding]]
 Hash#initialize: [[:opt, :ifnone], [:key, :capacity], [:block, :block]]
 Time#initialize: [[:opt, :year], [:opt, :mon], [:opt, :mday], [:opt, :hour], [:opt, :min], [:opt, :sec], [:opt, :zone], [:key, :in], [:key, :precision]]

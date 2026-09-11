@@ -1,6 +1,6 @@
-# Ruby raises before anything is minted. (It also warns
-# `previous definition of TOP was here`, which zeo does not track --
-# hence the stdout-only check rather than a golden.)
+# Ruby raises before anything is minted, and the TypeError's message has a
+# second line naming where TOP was defined. zeo's message stops after the
+# first line.
 
 TOP = 1
 src = "class TOP; end"
