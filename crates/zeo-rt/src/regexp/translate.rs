@@ -33,6 +33,110 @@ fn build_onig(
     onig::Regex::with_options(source, opts, onig::Syntax::ruby()).map_err(|e| e.to_string())
 }
 
+/// The pattern with every zero-width atom -- a lookaround group, `^`, `$`,
+/// `\b \B \A \z \Z \G` -- wrapped in an atomic group.
+///
+/// Oniguruma refuses a zero-width atom as a repeat target; ruby's Onigmo is
+/// built with `USE_NO_INVALID_QUANTIFIER` and repeats it. `(?>X)` is a target
+/// Oniguruma accepts, and it is exact: a lookaround is atomic in Onigmo and an
+/// anchor never backtracks. Nothing inside a lookbehind is wrapped, because an
+/// atomic group is not a valid lookbehind member.
+fn wrap_zero_width(source: &str, extended: bool) -> String {
+    let b = source.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len() + 32);
+    // One entry per open group: (its `)` also closes a wrap, it is a lookbehind).
+    let mut groups: Vec<(bool, bool)> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        let in_lookbehind = groups.iter().any(|&(_, lookbehind)| lookbehind);
+        let c = b[i];
+        match c {
+            b'\\' if i + 1 < b.len() => {
+                let e = b[i + 1];
+                if matches!(e, b'b' | b'B' | b'A' | b'z' | b'Z' | b'G') && !in_lookbehind {
+                    out.extend_from_slice(&[b'(', b'?', b'>', b'\\', e, b')']);
+                } else {
+                    out.extend_from_slice(&b[i..i + 2]);
+                }
+                i += 2;
+            }
+            b'^' | b'$' if !in_lookbehind => {
+                out.extend_from_slice(&[b'(', b'?', b'>', c, b')']);
+                i += 1;
+            }
+            b'[' => {
+                let end = class_end(b, i);
+                out.extend_from_slice(&b[i..end]);
+                i = end;
+            }
+            b'#' if extended => {
+                let end = b[i..].iter().position(|&x| x == b'\n').map_or(b.len(), |p| i + p);
+                out.extend_from_slice(&b[i..end]);
+                i = end;
+            }
+            b'(' if b[i..].starts_with(b"(?#") => {
+                let end = b[i..].iter().position(|&x| x == b')').map_or(b.len(), |p| i + p + 1);
+                out.extend_from_slice(&b[i..end]);
+                i = end;
+            }
+            b'(' => {
+                let rest = &b[i..];
+                let lookbehind = rest.starts_with(b"(?<=") || rest.starts_with(b"(?<!");
+                let lookahead = rest.starts_with(b"(?=") || rest.starts_with(b"(?!");
+                let wrap = (lookbehind || lookahead) && !in_lookbehind;
+                if wrap {
+                    out.extend_from_slice(b"(?>");
+                }
+                groups.push((wrap, lookbehind));
+                out.push(b'(');
+                i += 1;
+            }
+            b')' => {
+                out.push(b')');
+                if let Some((true, _)) = groups.pop() {
+                    out.push(b')');
+                }
+                i += 1;
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    // Every byte came from `source` or is ASCII, so this is UTF-8 whenever the
+    // input was.
+    String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+}
+
+/// The index just past the bracket class opening at `start` (the end of the
+/// input when it never closes). A `]` first, after an optional `^`, is literal.
+fn class_end(b: &[u8], start: usize) -> usize {
+    let mut j = start + 1;
+    if b.get(j) == Some(&b'^') {
+        j += 1;
+    }
+    if b.get(j) == Some(&b']') {
+        j += 1;
+    }
+    let mut depth = 1usize;
+    while j < b.len() {
+        match b[j] {
+            b'\\' => j += 1,
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return j + 1;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    b.len()
+}
+
 /// `read_escaped_byte`: one `\M-X` / `\C-X` / `\cX` run, as the BYTE it
 /// stands for. `pos` is left just past what was consumed.
 ///
@@ -501,8 +605,14 @@ pub fn regexp_new_enc(
     // into the pattern text.
     let ranged = super::charrange::apply(escaped.as_ref(), extended)
         .map_err(|e| cruby_regex_error(written, e, ignore_case, extended, multiline))?;
-    let engine = build_onig(ranged.as_ref(), ignore_case, extended, multiline)
-        .map_err(|e| cruby_regex_error(written, &e, ignore_case, extended, multiline))?;
+    let engine = match build_onig(ranged.as_ref(), ignore_case, extended, multiline) {
+        Err(e) if e.contains("target of repeat operator is invalid") => {
+            let wrapped = wrap_zero_width(ranged.as_ref(), extended);
+            build_onig(&wrapped, ignore_case, extended, multiline).map_err(|_| e)
+        }
+        built => built,
+    }
+    .map_err(|e| cruby_regex_error(written, &e, ignore_case, extended, multiline))?;
     Ok(Arc::new(RegexpData {
         engine: Engine::new(engine),
         source: written.to_string(),
@@ -591,6 +701,15 @@ pub(crate) fn named_group_positions(pattern: &str) -> Vec<(String, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_zero_width_atom_is_wrapped_atomic_outside_a_lookbehind() {
+        assert_eq!(wrap_zero_width(r"(?:(?!a))*b?", false), r"(?:(?>(?!a)))*b?");
+        assert_eq!(wrap_zero_width(r"^\b[$^\b]\$", false), r"(?>^)(?>\b)[$^\b]\$");
+        assert_eq!(wrap_zero_width(r"(?<=a\b)c", false), r"(?>(?<=a\b))c");
+        assert_eq!(wrap_zero_width(r"(?<n>x)(?#^)", false), r"(?<n>x)(?#^)");
+        assert_eq!(wrap_zero_width("# ^\n$", true), "# ^\n(?>$)");
+    }
 
     #[test]
     fn invalid_pattern_is_a_plain_string_error_not_a_panic() {

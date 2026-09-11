@@ -193,11 +193,13 @@ does not match `ſ`, in ruby or in zeo). `Regexp.timeout` and a pattern's
 own `timeout:` are enforced: onig counts retries rather than seconds, so
 the budget is handed out in doubling slices with the clock read between
 them, and `Regexp::TimeoutError` is raised once the deadline has passed.
+Oniguruma refuses a zero-width atom (a lookaround, `^`, `\b`) as a repeat
+target where Onigmo repeats it; a pattern it refuses for that reason is
+compiled again with each such atom inside an atomic group, which is exact.
 The rows that stay different:
 
 | Shape | ruby | zeo |
 |---|---|---|
-| `(?:(?!a))*b?`, `a(?:(?<=a))*b?` | compiles | `RegexpError: target of repeat operator is invalid` -- Oniguruma refuses a repeated zero-width group; Onigmo accepts it |
 | a bare `\p` | a literal `p` | `invalid character property name` -- Oniguruma reads `\p` as the property prefix |
 | a group named `)` | refused by `re.c` | accepted by the engine (`test/gaps/a_paren_inside_a_group_name_is_accepted_and_referenced.rb`) |
 | a pattern that backtracks past onig's retry limit with NO timeout set | runs to the end | answers no match, as if the pattern failed -- the retry limit is onig's, and Onigmo has none; under a timeout both raise `Regexp::TimeoutError` |
