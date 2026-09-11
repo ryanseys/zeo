@@ -104,8 +104,11 @@ impl Compiler {
         for seg in segments {
             // Descend within the resolved parent's OWN box (the parent may
             // itself have resolved through the bootstrap fallback into box
-            // 0 even when `box_id` differs).
-            cur = self.class_in_scope(Some(cur), seg, self.class(cur).box_id)?;
+            // 0 even when `box_id` differs). A gated builtin nested under an
+            // ungated one (`IO::Console`) is absent until its feature loads.
+            cur = self
+                .class_in_scope(Some(cur), seg, self.class(cur).box_id)
+                .filter(|&c| self.feature_active(c))?;
         }
         // A per-box builtin-reopen OVERLAY is a patch container,
         // never a distinct class: as a resolved NAME it collapses to the

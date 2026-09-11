@@ -6,7 +6,7 @@
 # tree keeps that path so the two read side by side.
 Gem::Specification.new do |s|
   s.name = "io-console"
-  s.version = "0.8.2"
+  s.version = "0.9.2"
   s.summary = "Console interface, the raw/cooked terminal modes and the cursor escapes."
   s.require_paths = ["lib"]
 end

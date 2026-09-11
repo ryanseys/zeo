@@ -38,7 +38,6 @@ pub const NATIVE_FEATURES: &[&str] = &[
     "tmpdir",
     "set",
     "time",
-    "io/console",
     // A file of its own in io-console, and ruby does NOT define
     // `IO.console_size` without it -- so it carries its own gate key rather
     // than riding on `io/console`'s.

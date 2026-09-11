@@ -1,6 +1,5 @@
 ---
 source: crates/zeo/tests/suite/checks/clif.rs
-assertion_line: 269
 expression: "clif_of(\"x = ARGV.length + 1.5\\ny = ARGV.length + 2.5\\np x + y\\np x * y\\np x % y\\np x <=> y\\n\",)"
 ---
 ;; zeo_toplevel
@@ -923,11 +922,11 @@ block113:
     v423 = iadd.i64 v1, v422  ; v422 = 36
     v424 = iconst.i64 9
     v425 = call fn15(v423, v424)  ; v424 = 9
-    v426 = iconst.i32 211
+    v426 = iconst.i32 212
     v427 = iconst.i64 45
     v428 = iadd.i64 v1, v427  ; v427 = 45
     v429 = iconst.i64 12
-    v430 = call fn16(v426, v428, v429)  ; v426 = 211, v429 = 12
+    v430 = call fn16(v426, v428, v429)  ; v426 = 212, v429 = 12
     call fn17(v425)
     jump block1
 

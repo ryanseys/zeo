@@ -1575,6 +1575,37 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
         };
         compiler.classes[cls.0 as usize].builtin_overlay = Some(target);
     }
+    // A nested builtin's second name resolves to its target and shares the
+    // target's require gate.
+    for &(alias, target) in zeo_abi::NESTED_ALIASES {
+        let target = ClassId(target.0);
+        register_class(
+            compiler,
+            &ClassRegistration {
+                name: alias,
+                superclass: &None,
+                is_module: compiler.class(target).is_module,
+                body: &[],
+                cref: &[],
+                box_id: 0,
+                def_node: None,
+                conditional: Conditional::No,
+            },
+        )?;
+        let Some((owner, leaf)) = alias.rsplit_once("::") else {
+            return Err(format!("{alias} names no namespace").into());
+        };
+        let Some(owner) = compiler.resolve_class(owner, &[], 0) else {
+            return Err(format!("{alias}'s namespace went missing").into());
+        };
+        let Some(cls) = compiler.class_in_scope(Some(owner), leaf, 0) else {
+            return Err(format!("{alias} went missing right after registration").into());
+        };
+        let gate = compiler.class(target).feature_gate;
+        let ci = &mut compiler.classes[cls.0 as usize];
+        ci.builtin_overlay = Some(target);
+        ci.feature_gate = gate;
+    }
     for c in &mut compiler.classes[before..] {
         c.is_bootstrap = true;
     }

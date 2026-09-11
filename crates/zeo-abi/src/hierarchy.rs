@@ -44,6 +44,13 @@ pub const TOP_LEVEL_ALIASES: &[(&str, ClassId)] = &[
     ("ConditionVariable", CONDITION_VARIABLE_CLASS),
 ];
 
+/// Second names for nested builtins, each bound in its own namespace:
+/// io-console 0.9 renamed `IO::ConsoleMode` to `IO::Console::Mode` and kept
+/// the old constant pointing at the same class. `(alias_path, target_id)`;
+/// the alias exists exactly when its target does, so it shares the target's
+/// require gate.
+pub const NESTED_ALIASES: &[(&str, ClassId)] = &[("IO::ConsoleMode", CONSOLE_MODE_CLASS)];
+
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):
 /// superclass `BasicObject`, includes `Kernel` -- oracle-verified
 /// `Object.ancestors == [Object, Kernel, BasicObject]`.

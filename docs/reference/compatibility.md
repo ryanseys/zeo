@@ -170,7 +170,7 @@ stderr that Ruby never produces.
 | `nkf` | Zeo `NKF` over its own encoding engine | the conversion option subset only; `guess` is a reimplemented heuristic — see below |
 | `bigdecimal` | Zeo `BigDecimal` core + the gem's real Ruby half | not the C extension; the native slice is reimplemented — see below |
 | `objspace` | always-on `ObjectSpace` rows | see below |
-| `io/console` | always-on `IO` rows over `termios(3)` | see below |
+| `io/console` | require-gated `IO` rows over `termios(3)` | see below |
 
 ### `Regexp`
 
@@ -319,12 +319,14 @@ reproducible member sets `GzipWriter#mtime=`.
 
 ### `io/console`
 
-Its methods are unconditional rows on the `IO` table, so they answer before the
-`require` as `io/wait`'s do. The terminal modes (`raw`/`raw!`/`cooked`/
-`cooked!`/`noecho`/`echo=`/`echo?`/`getch`/`getpass`/`console_mode`), the
-flushes, `winsize`/`winsize=`, `ttyname`, and the cursor/erase escapes are real
-`termios(3)`/`ioctl` calls and match CRuby, `Errno::ENOTTY` messages included.
-Two divergences:
+Zeo follows io-console 0.9.2, the version the lockfile pins. Its methods are
+rows on the `IO` table that answer only after the `require`, and the same
+`require` defines `IO::Console` (with `VERSION`), `IO::Console::Mode`, and the
+old name `IO::ConsoleMode` for that class. The terminal modes (`raw`/`raw!`/
+`cooked`/`cooked!`/`noecho`/`echo=`/`echo?`/`getch`/`getpass`/`console_mode`),
+`input_pending?`, the flushes, `winsize`/`winsize=`, `ttyname`, and the
+cursor/erase escapes are real `termios(3)`/`ioctl`/`poll(2)` calls and match
+CRuby, `Errno::ENOTTY` messages included. Two divergences:
 
 - `pressed?` and `check_winsize_changed` raise `NotImplementedError`. That is
   CRuby's own behaviour on Unix, message included — they are Windows-only

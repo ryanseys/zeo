@@ -19,10 +19,11 @@ gem name becomes an underscore in the module and the cargo feature
 (`io-console` -> `io_console`, `ext-io-console`).
 
 `io-console` is also the one library whose METHOD ROWS are not in its own
-directory. It adds 34 methods to `IO` itself, and one class owns one
+directory. It adds 35 methods to `IO` itself, and one class owns one
 `ruby_class!` table, so the declarations sit in `builtins/io/mod.rs` marked
-`gated "io/console"` and forward here. Only `IO::ConsoleMode`, a class of its
-own, carries its table in this tree.
+`gated "io/console"` and forward here. Only `IO::Console` and
+`IO::Console::Mode`, a module and a class of their own, carry their tables in
+this tree.
 
 `ext/<name>/src/` is the NATIVE half — what CRuby writes in C, written in
 Rust here. No directory carries C: a library that wraps one (Oniguruma,

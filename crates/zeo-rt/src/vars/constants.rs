@@ -341,6 +341,18 @@ pub fn reveal_feature_classes(feature: &str) {
             reveal_class(b.id.0);
         }
     }
+    // A second name for a revealed class appears with it.
+    for &(alias, target) in zeo_abi::NESTED_ALIASES {
+        if zeo_abi::feature_of_gated_class(target) != Some(feature) {
+            continue;
+        }
+        let Some((parent, leaf)) = alias.rsplit_once("::") else {
+            continue;
+        };
+        if let Some(parent) = crate::dispatch::class_id_by_name(parent) {
+            const_set(parent.0, leaf, RubyValue::Class(target));
+        }
+    }
 }
 
 /// Whether `id` is registered but concealed.

@@ -1914,6 +1914,11 @@ ruby_class! {
     }
 
     #[cfg(feature = "ext-io-console")]
+    def "input_pending?" gated "io/console" (recv) {
+        crate::ext::io_console::input_pending_p(recv, __args, __block)
+    }
+
+    #[cfg(feature = "ext-io-console")]
     def "iflush" gated "io/console" (recv) {
         crate::ext::io_console::iflush(recv, __args, __block)
     }

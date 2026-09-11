@@ -155,6 +155,8 @@ pub const DIGEST_BASE_CLASS: ClassId = ClassId(178);
 /// sees a site.
 pub const ZEO_MODULE: ClassId = ClassId(179);
 pub const ZEO_EVAL_MODULE: ClassId = ClassId(180);
+/// `IO::Console` -- io-console's namespace: `VERSION` and `Mode`.
+pub const IO_CONSOLE_MODULE: ClassId = ClassId(181);
 /// `json`: the `JSON` module (parser/generator). Behind `ext-json`.
 pub const JSON_MODULE: ClassId = ClassId(55);
 /// `date`: `Date`/`DateTime`. Behind `ext-date`.
@@ -439,10 +441,11 @@ pub const BACKTRACE_LOCATION_CLASS: ClassId = ClassId(96);
 /// `fcntl`: the `Fcntl` module's `fcntl(2)`/`open(2)` flag constants. No
 /// methods -- CRuby's extension is a constant table, and `IO#fcntl` is IO's.
 pub const FCNTL_MODULE: ClassId = ClassId(97);
-/// `IO::ConsoleMode` -- a saved terminal mode, what `IO#console_mode` hands
+/// `IO::Console::Mode` -- a saved terminal mode, what `IO#console_mode` hands
 /// back and `IO#console_mode=` restores. Not constructible from Ruby (CRuby's
 /// has no `initialize` either); its `raw`/`raw!`/`echo=` rows edit the saved
-/// mode before it is put back.
+/// mode before it is put back. `IO::ConsoleMode` is its old spelling
+/// ([`NESTED_ALIASES`]).
 pub const CONSOLE_MODE_CLASS: ClassId = ClassId(98);
 
 /// `zlib`'s stream classes, mirroring CRuby's:

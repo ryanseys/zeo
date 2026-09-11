@@ -23,14 +23,15 @@
 //! (`"... - <STDIN>"`), the scoped ones don't, because CRuby reaches them
 //! through a helper that has no name to report.
 //!
-//! Measured against io-console 0.8.2's own `console.c`, row by row.
+//! Measured against io-console's own `console.c`, row by row: 0.8.2 for the
+//! modes and escapes, 0.9.2 for the names and `input_pending?`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::builtins::{io, local_jump_error, not_impl_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal, Symbol};
-use zeo_macros::ruby_class;
+use zeo_macros::{ruby_class, ruby_module};
 
 /// io-console's `sys_fail`: the errno the failed call actually set, never a
 /// fixed one. A tty ioctl against `/dev/null` sets `ENODEV`, against a closed
@@ -495,6 +496,35 @@ fn flush_queue(
         return Err(not_a_terminal(recv, method));
     }
     Ok(recv.clone())
+}
+
+/// `input_pending?` -- whether a read would find data now: bytes this IO
+/// already buffers, or a descriptor that polls readable with no wait (EOF
+/// counts, as `rb_io_wait` counts it).
+pub fn input_pending_p(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    if io::has_buffered_bytes(recv) {
+        return Ok(RubyValue::Bool(true));
+    }
+    let fd = io::raw_fd(recv)?;
+    let mut p = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one pollfd on the stack, a zero timeout.
+    let n = unsafe { libc::poll(&mut p, 1, 0) };
+    if n < 0 {
+        return Err(sys_fail(
+            last_errno(),
+            Some(&io::stream_label(recv)),
+            "IO#input_pending?",
+        ));
+    }
+    Ok(RubyValue::Bool(n > 0))
 }
 
 pub fn iflush(
@@ -1037,7 +1067,20 @@ pub fn io_class_console_size(
     crate::dispatch::send_value(&con, Symbol::intern("winsize"), &[], None)
 }
 
-// -- IO::ConsoleMode ---------------------------------------------------
+// -- IO::Console --------------------------------------------------------
+
+// A module of its own: each table macro defines `install_constants`.
+mod console_module {
+    use super::*;
+
+    ruby_module! {
+        Console = zeo_abi::IO_CONSOLE_MODULE;
+
+        const VERSION = RubyValue::Str(crate::string_new("0.9.2".to_string()));
+    }
+}
+
+// -- IO::Console::Mode --------------------------------------------------
 
 /// A saved terminal mode. Not constructible from Ruby -- CRuby's has no
 /// `initialize` either, so the only way to hold one is `IO#console_mode`.
@@ -1098,7 +1141,10 @@ fn mode_of(v: &RubyValue) -> Result<&ConsoleMode, Signal> {
 }
 
 ruby_class! {
-    ConsoleMode = zeo_abi::CONSOLE_MODE_CLASS < zeo_abi::OBJECT_CLASS;
+    Mode = zeo_abi::CONSOLE_MODE_CLASS < zeo_abi::OBJECT_CLASS;
+
+    // io-console keeps the version on the class as well, deprecated.
+    const VERSION = RubyValue::Str(crate::string_new("0.9.2".to_string()));
 
     // The three editors CRuby gives a saved mode, so a caller can restore a
     // MODIFIED version of what it captured.
@@ -1108,13 +1154,13 @@ ruby_class! {
     // the mode it captured. Writing both as the in-place form destroyed the
     // saved mode the caller meant to restore.
     def "raw" (recv, *args, &_block) {
-        let opts = raw_opts(args, "IO::ConsoleMode#raw")?;
+        let opts = raw_opts(args, "IO::Console::Mode#raw")?;
         let mut t = *mode_of(recv)?.mode.lock();
         raw_mode(&mut t, opts);
         Ok(RubyValue::Object(std::sync::Arc::new(ConsoleMode::new(t))))
     }
     def "raw!" (recv, *args, &_block) {
-        let opts = raw_opts(args, "IO::ConsoleMode#raw!")?;
+        let opts = raw_opts(args, "IO::Console::Mode#raw!")?;
         raw_mode(&mut mode_of(recv)?.mode.lock(), opts);
         Ok(recv.clone())
     }

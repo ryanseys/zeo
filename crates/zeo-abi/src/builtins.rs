@@ -958,16 +958,13 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: Some("fcntl"),
     },
-    // Ungated: `io/console`'s methods are unconditional rows on the IO table
-    // (see `docs/how-to/add-an-extension.md`), so the mode object they hand back has to
-    // resolve without a require too.
     BuiltinClass {
         id: CONSOLE_MODE_CLASS,
-        name: "IO::ConsoleMode",
+        name: "IO::Console::Mode",
         is_module: false,
         superclass: Some(OBJECT_CLASS),
         includes: &[],
-        feature: None,
+        feature: Some("io/console"),
     },
     BuiltinClass {
         id: ZLIB_ZSTREAM_CLASS,
@@ -1638,5 +1635,13 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: None,
         includes: &[],
         feature: None,
+    },
+    BuiltinClass {
+        id: IO_CONSOLE_MODULE,
+        name: "IO::Console",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("io/console"),
     },
 ];

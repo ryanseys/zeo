@@ -1,6 +1,5 @@
 ---
 source: crates/zeo/tests/suite/checks/clif.rs
-assertion_line: 78
 expression: "clif_of(\"class K\\n  attr_reader :v, :u\\n  def initialize\\n    @v = 1\\n    @u = 2\\n  end\\n  def read = v\\n  def read_plain = u\\nend\\nk = K.new\\nK.class_eval { define_method(:v) { 99 } }\\nputs k.read\\nputs k.read_plain\\n\",)"
 ---
 ;; K#initialize
@@ -1649,10 +1648,10 @@ block21:
     v91 = iconst.i64 0
     v92 = iconst.i64 0
     v93 = symbol_value.i64 gv4
-    v94 = iconst.i32 405
+    v94 = iconst.i32 407
     v95 = iconst.i64 0
     v96 = stack_addr.i64 ss5
-    v97 = call fn11(v93, v94, v91, v95, v92, v96)  ; v94 = 405, v91 = 0, v95 = 0, v92 = 0
+    v97 = call fn11(v93, v94, v91, v95, v92, v96)  ; v94 = 407, v91 = 0, v95 = 0, v92 = 0
     brif v97, block1, block23
 
 block23:
@@ -1721,8 +1720,8 @@ block30:
     store notrap aligned v126, v125+16  ; v126 = 0
     v127 = iconst.i8 5
     store notrap aligned v127, v125  ; v127 = 5
-    v128 = iconst.i32 405
-    store notrap aligned v128, v125+8  ; v128 = 405
+    v128 = iconst.i32 407
+    store notrap aligned v128, v125+8  ; v128 = 407
     v129 = stack_addr.i64 ss5
     v130 = iconst.i64 0
     v131 = func_addr.i64 fn13
@@ -1825,14 +1824,14 @@ block43:
 block44:
     v185 = symbol_value.i64 gv7
     v186 = load.i64 notrap aligned v185+48
-    v187 = iconst.i64 0x0020_0000
-    v188 = band v186, v187  ; v187 = 0x0020_0000
+    v187 = iconst.i64 0x0080_0000
+    v188 = band v186, v187  ; v187 = 0x0080_0000
     brif v188, block47, block45
 
 block45:
     v189 = call fn18(v175)
-    v190 = iconst.i32 405
-    v191 = icmp eq v189, v190  ; v190 = 405
+    v190 = iconst.i32 407
+    v191 = icmp eq v189, v190  ; v190 = 407
     brif v191, block46, block47
 
 block46:
@@ -1949,14 +1948,14 @@ block60:
 block61:
     v248 = symbol_value.i64 gv7
     v249 = load.i64 notrap aligned v248+48
-    v250 = iconst.i64 0x0020_0000
-    v251 = band v249, v250  ; v250 = 0x0020_0000
+    v250 = iconst.i64 0x0080_0000
+    v251 = band v249, v250  ; v250 = 0x0080_0000
     brif v251, block64, block62
 
 block62:
     v252 = call fn18(v238)
-    v253 = iconst.i32 405
-    v254 = icmp eq v252, v253  ; v253 = 405
+    v253 = iconst.i32 407
+    v254 = icmp eq v252, v253  ; v253 = 407
     brif v254, block63, block64
 
 block63:
