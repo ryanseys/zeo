@@ -318,6 +318,8 @@ pub unsafe extern "C" fn zeo_rt_autoload_pending(owner: u32, name: *const u8, na
     if !crate::builtins::rmodule::ANY_PENDING_AUTOLOAD.load(std::sync::atomic::Ordering::Relaxed) {
         return 0;
     }
+    // SAFETY: compiled code passes a constant name it emitted, `name_len`
+    // bytes of UTF-8 that outlive the call.
     let name = unsafe { super::str_slice(name, name_len) };
     i8::from(crate::builtins::rmodule::has_pending_autoload(owner, name))
 }
