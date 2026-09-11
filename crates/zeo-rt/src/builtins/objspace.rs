@@ -255,13 +255,13 @@ ruby_module! {
 
     // -- ext/objspace's introspection half ------------------------------
 
-    module_function def "memsize_of"(_recv, arg) {
+    module_function def "memsize_of" gated "objspace" (_recv, arg) {
         Ok(RubyValue::Int(memsize_of(arg)))
     }
     // The same walk as `each_object`, folded through the per-value size
     // `memsize_of` already computes. It needs the allocation registry for the
     // same reason and refuses for the same reason without it.
-    module_function def "memsize_of_all"(_recv, *_args, &_block) {
+    module_function def "memsize_of_all" gated "objspace" (_recv, *_args, &_block) {
         if !crate::gc::recording() {
             return Err(not_impl_error!(
                 "ObjectSpace.memsize_of_all needs the allocation registry, which \
@@ -271,18 +271,18 @@ ruby_module! {
         let total: i64 = crate::gc::live_values().iter().map(memsize_of).sum();
         Ok(RubyValue::Int(total))
     }
-    module_function def "reachable_objects_from"(_recv, arg) {
+    module_function def "reachable_objects_from" gated "objspace" (_recv, arg) {
         Ok(reachable_objects_from(arg))
     }
     // The root set is CRuby's own VM state (machine stack, global table,
     // frame chain); zeo's roots are Rust locals a program can't enumerate.
-    module_function def "reachable_objects_from_root"(_recv) {
+    module_function def "reachable_objects_from_root" gated "objspace" (_recv) {
         Err(not_impl_error!("ObjectSpace.reachable_objects_from_root is not available (zeo has no GC root table)"))
     }
     // Every zeo symbol is interned once and never freed, so CRuby's
     // mortal/dynamic/static split has no counterpart -- `immortal_symbol`
     // (its total) is the one key that can be answered truthfully.
-    module_function def "count_symbols"(_recv, *_args, &_block) {
+    module_function def "count_symbols" gated "objspace" (_recv, *_args, &_block) {
         let total = RubyValue::Int(Symbol::count() as i64);
         Ok(RubyValue::Hash(crate::collections::hash_new(vec![
             (RubyValue::Symbol(Symbol::intern("immortal_symbol")), total),
@@ -291,54 +291,54 @@ ruby_module! {
     // Truly empty rather than unanswerable: an AST node, a T_DATA wrapper and
     // an imemo are CRuby heap shapes with no zeo equivalent, so zero of each
     // is live by construction.
-    module_function def "count_nodes"(_recv, *_args, &_block) {
+    module_function def "count_nodes" gated "objspace" (_recv, *_args, &_block) {
         Ok(empty_census())
     }
-    module_function def "count_tdata_objects"(_recv, *_args, &_block) {
+    module_function def "count_tdata_objects" gated "objspace" (_recv, *_args, &_block) {
         Ok(empty_census())
     }
-    module_function def "count_imemo_objects"(_recv, *_args, &_block) {
+    module_function def "count_imemo_objects" gated "objspace" (_recv, *_args, &_block) {
         Ok(empty_census())
     }
     // `count_objects` by bytes -- empty for the same reason it is.
-    module_function def "count_objects_size"(_recv, *_args, &_block) {
+    module_function def "count_objects_size" gated "objspace" (_recv, *_args, &_block) {
         Ok(empty_census())
     }
     // Allocation tracing needs a hook on every allocation site. zeo allocates
     // through Rust's own `Arc::new`, with no such seam, so the tracer says so
     // instead of quietly recording nothing.
-    module_function def "trace_object_allocations"(_recv, &_block) {
+    module_function def "trace_object_allocations" gated "objspace" (_recv, &_block) {
         Err(not_impl_error!("ObjectSpace.trace_object_allocations is not available (zeo has no allocation hook)"))
     }
-    module_function def "trace_object_allocations_start"(_recv) {
+    module_function def "trace_object_allocations_start" gated "objspace" (_recv) {
         Err(not_impl_error!("ObjectSpace.trace_object_allocations_start is not available (zeo has no allocation hook)"))
     }
-    module_function def "trace_object_allocations_stop"(_recv) {
+    module_function def "trace_object_allocations_stop" gated "objspace" (_recv) {
         Err(not_impl_error!("ObjectSpace.trace_object_allocations_stop is not available (zeo has no allocation hook)"))
     }
-    module_function def "trace_object_allocations_clear"(_recv) {
+    module_function def "trace_object_allocations_clear" gated "objspace" (_recv) {
         Err(not_impl_error!("ObjectSpace.trace_object_allocations_clear is not available (zeo has no allocation hook)"))
     }
-    module_function def "trace_object_allocations_debug_start"(_recv) {
+    module_function def "trace_object_allocations_debug_start" gated "objspace" (_recv) {
         Err(not_impl_error!("ObjectSpace.trace_object_allocations_debug_start is not available (zeo has no allocation hook)"))
     }
     // The allocation GETTERS answer nil, which is exactly what CRuby answers
     // for an object allocated outside a trace -- and since tracing can never
     // be on here, that is the whole truth rather than a stub. A program that
     // tries to turn tracing on hits the errors above first.
-    module_function def "allocation_sourcefile"(_recv, _arg) {
+    module_function def "allocation_sourcefile" gated "objspace" (_recv, _arg) {
         Ok(RubyValue::Nil)
     }
-    module_function def "allocation_sourceline"(_recv, _arg) {
+    module_function def "allocation_sourceline" gated "objspace" (_recv, _arg) {
         Ok(RubyValue::Nil)
     }
-    module_function def "allocation_class_path"(_recv, _arg) {
+    module_function def "allocation_class_path" gated "objspace" (_recv, _arg) {
         Ok(RubyValue::Nil)
     }
-    module_function def "allocation_method_id"(_recv, _arg) {
+    module_function def "allocation_method_id" gated "objspace" (_recv, _arg) {
         Ok(RubyValue::Nil)
     }
-    module_function def "allocation_generation"(_recv, _arg) {
+    module_function def "allocation_generation" gated "objspace" (_recv, _arg) {
         Ok(RubyValue::Nil)
     }
     // `dump`'s whole output is a serialization of CRuby's object header --
@@ -346,23 +346,23 @@ ruby_module! {
     // None of that exists here, and a JSON line carrying only the handful of
     // fields zeo could fill would break every tool that reads dumps in a far
     // more confusing way than an error does.
-    module_function def "dump"(_recv, _obj, **_opts) {
+    module_function def "dump" gated "objspace" (_recv, _obj, **_opts) {
         Err(not_impl_error!("ObjectSpace.dump is not available (zeo objects carry no VM header to serialize)"))
     }
-    module_function def "dump_all"(_recv, **_opts) {
+    module_function def "dump_all" gated "objspace" (_recv, **_opts) {
         Err(not_impl_error!("ObjectSpace.dump_all is not available (zeo has no heap enumeration)"))
     }
-    module_function def "dump_shapes"(_recv, **_opts) {
+    module_function def "dump_shapes" gated "objspace" (_recv, **_opts) {
         Err(not_impl_error!("ObjectSpace.dump_shapes is not available (zeo has no shape tree)"))
     }
     // A singleton class, an iclass, a shape -- `internal_class_of` reports
     // whichever of those CRuby really dispatches through. zeo dispatches
     // through a `ClassId` and an overlay, so there is no internal answer to
     // give that `Object#class` doesn't already give honestly.
-    module_function def "internal_class_of"(_recv, _arg) {
+    module_function def "internal_class_of" gated "objspace" (_recv, _arg) {
         Err(not_impl_error!("ObjectSpace.internal_class_of is not available (zeo has no internal classes)"))
     }
-    module_function def "internal_super_of"(_recv, _arg) {
+    module_function def "internal_super_of" gated "objspace" (_recv, _arg) {
         Err(not_impl_error!("ObjectSpace.internal_super_of is not available (zeo has no internal classes)"))
     }
 }

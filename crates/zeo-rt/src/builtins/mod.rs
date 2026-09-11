@@ -1288,6 +1288,8 @@ pub(crate) mod gate {
     static CONSOLE: AtomicU8 = AtomicU8::new(0);
     static CONSOLE_SIZE: AtomicU8 = AtomicU8::new(0);
     static NONBLOCK: AtomicU8 = AtomicU8::new(0);
+    static OBJSPACE: AtomicU8 = AtomicU8::new(0);
+    static BIGDECIMAL: AtomicU8 = AtomicU8::new(0);
 
     fn required(cell: &AtomicU8) -> bool {
         cell.load(Ordering::Acquire) == 1
@@ -1306,6 +1308,10 @@ pub(crate) mod gate {
                 CONSOLE.store(1, Ordering::Release);
             }
             "io/nonblock" => NONBLOCK.store(1, Ordering::Release),
+            // `ObjectSpace`'s introspection half and `Kernel#BigDecimal`:
+            // ruby grows both from their own extension's require.
+            "objspace" => OBJSPACE.store(1, Ordering::Release),
+            "bigdecimal" => BIGDECIMAL.store(1, Ordering::Release),
             _ => return,
         }
         NAME_CACHE.write().unwrap().take();
@@ -1323,6 +1329,8 @@ pub(crate) mod gate {
             "io/console" => required(&CONSOLE),
             "io/console/size" => required(&CONSOLE_SIZE),
             "io/nonblock" => required(&NONBLOCK),
+            "objspace" => required(&OBJSPACE),
+            "bigdecimal" => required(&BIGDECIMAL),
             "env:boxes" => crate::boxes::boxes_enabled(),
             _ => false,
         }
@@ -1407,9 +1415,13 @@ pub(crate) mod gate {
     pub(crate) fn views(id: ClassId) -> &'static Views {
         static IO: Views = views_of::<{ zeo_abi::IO_CLASS.0 }>();
         static BOX: Views = views_of::<{ zeo_abi::RUBY_BOX_CLASS.0 }>();
+        static OBJECTSPACE: Views = views_of::<{ zeo_abi::OBJECTSPACE_MODULE.0 }>();
+        static KERNEL: Views = views_of::<{ zeo_abi::KERNEL_CLASS.0 }>();
         match id {
             zeo_abi::IO_CLASS => &IO,
             zeo_abi::RUBY_BOX_CLASS => &BOX,
+            zeo_abi::OBJECTSPACE_MODULE => &OBJECTSPACE,
+            zeo_abi::KERNEL_CLASS => &KERNEL,
             other => unreachable!(
                 "class {} has gated rows but no fn-pointer view instantiation -- \
                  add one beside gate::views' existing pair",
@@ -1495,7 +1507,14 @@ pub(crate) mod gate {
             keys.dedup();
             assert_eq!(
                 keys,
-                ["env:boxes", "io/console", "io/console/size", "io/nonblock"]
+                [
+                    "bigdecimal",
+                    "env:boxes",
+                    "io/console",
+                    "io/console/size",
+                    "io/nonblock",
+                    "objspace"
+                ]
             );
         }
     }

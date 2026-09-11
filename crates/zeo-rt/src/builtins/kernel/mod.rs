@@ -532,7 +532,7 @@ ruby_module! {
     // removed). Present whenever the extension is compiled in; like `Time`'s
     // extra methods, it answers even without `require "bigdecimal"`.
     #[cfg(feature = "ext-bigdecimal")]
-    private def "BigDecimal" cfunc (_recv, _initial, _digits?) {
+    private def "BigDecimal" cfunc gated "bigdecimal" (_recv, _initial, _digits?) {
         crate::ext::bigdecimal::kernel_big_decimal(__args)
     }
     // `Kernel#Pathname(str)` -- PRIVATE, and there with no require, because
