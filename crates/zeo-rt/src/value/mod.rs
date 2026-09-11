@@ -327,6 +327,14 @@ pub(crate) fn value_object_repr(v: &RubyValue) -> String {
     format!("#<{name}:0x{addr:016x}>")
 }
 
+/// Whether `cid` descends from BasicObject without Kernel, so it has no
+/// `inspect` or `to_s` of its own. A class with no recorded ancestry answers
+/// false and keeps the default rendering.
+fn basic_object_only(cid: crate::ClassId) -> bool {
+    crate::dispatch::is_a(cid, zeo_abi::BASIC_OBJECT_CLASS)
+        && !crate::dispatch::is_a(cid, zeo_abi::KERNEL_CLASS)
+}
+
 pub(crate) fn default_object_repr(
     o: &crate::RObj,
     with_ivars: bool,
@@ -577,6 +585,15 @@ impl RubyValue {
                     // renders as its payload (`Array#to_s` etc.).
                     None => match o.builtin_payload() {
                         Some(p) => p.display_with(seen)?,
+                        // No Kernel#to_s on a BasicObject descendant: send
+                        // the name, as `rb_obj_as_string` does.
+                        None if basic_object_only(o.class_id()) => crate::dispatch::send_value(
+                            &RubyValue::Object(o.clone()),
+                            crate::symbol::wk::to_s(),
+                            &[],
+                            None,
+                        )?
+                        .display_with(seen)?,
                         None => default_object_repr(o, false, seen)?,
                     },
                 }
@@ -765,6 +782,18 @@ impl RubyValue {
                         None if crate::builtins::rstruct::meta_of(o.class_id()).is_some() => {
                             let v = RubyValue::Object(o.clone());
                             crate::builtins::rstruct::build_inspect(&v)?.display_with(seen)?
+                        }
+                        // A BasicObject descendant has no Kernel#inspect, so
+                        // ruby's `rb_inspect` sends the name: its
+                        // `method_missing` answers, or NoMethodError.
+                        None if basic_object_only(o.class_id()) => {
+                            crate::dispatch::send_value(
+                                &RubyValue::Object(o.clone()),
+                                crate::symbol::wk::inspect(),
+                                &[],
+                                None,
+                            )?
+                            .display_with(seen)?
                         }
                         None => default_object_repr(o, true, seen)?,
                     },
