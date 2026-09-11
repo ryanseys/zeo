@@ -140,6 +140,9 @@ fn respond_to_fold(
         // table is empty while analyze's own guard folds still run, so it
         // cannot be read directly here.
         if let Some(sid) = compiled_method_in_chain(compiler, cls, &m) {
+            if waits_for_its_unit(compiler, sid) {
+                return None;
+            }
             return Some(compiler.scope(sid).visibility == Visibility::Public);
         }
         // NATIVE rows are not in `method_in_chain` -- that table holds
@@ -155,13 +158,22 @@ fn respond_to_fold(
         // `Process.respond_to?(:_fork)`, which connection_pool's ForkTracker
         // gates on). The projection is why this needs no hardcoded
         // allowlist.
-        if compiler.class_method_in_chain(cls, &m).is_some()
-            || crate::builtin_surface::provides_class_method(cls, &m)
-        {
+        if let Some((_, sid)) = compiler.class_method_in_chain(cls, &m) {
+            return (!waits_for_its_unit(compiler, sid)).then_some(true);
+        }
+        if crate::builtin_surface::provides_class_method(cls, &m) {
             return Some(true);
         }
     }
     None
+}
+
+/// Whether method `sid` exists only once something runs: a def in a unit
+/// file nothing has required yet, or one under a guard zeo cannot decide.
+/// A probe of it answers at run time.
+fn waits_for_its_unit(compiler: &Compiler, sid: ScopeId) -> bool {
+    let sc = compiler.scope(sid);
+    sc.unit.is_some() || sc.runtime_conditional
 }
 
 /// A compiled instance method visible on `class`'s chain, safe at WALK time.
