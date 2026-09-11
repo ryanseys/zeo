@@ -875,9 +875,6 @@ ruby_class! {
         let c = recv_complex(recv);
         complex_new(comp_negate(&c.real)?, comp_negate(&c.imag)?)
     }
-    def "+@" (recv) {
-        Ok(recv.clone())
-    }
     def "==" (recv, other) {
         Ok(RubyValue::Bool(recv.rb_eq(other)))
     }
@@ -970,7 +967,7 @@ ruby_class! {
     def "to_f" (recv) {
         real_projection(recv, "to_f")
     }
-    def "to_i" | "to_int" (recv) {
+    def "to_i" (recv) {
         real_projection(recv, "to_i")
     }
     def "to_r" (recv) {

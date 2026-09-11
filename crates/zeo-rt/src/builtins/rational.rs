@@ -551,14 +551,10 @@ ruby_class! {
     def "-" (recv, other) { num_op_row!(other, recv, num_sub, "-") }
     def "*" (recv, other) { num_op_row!(other, recv, num_mul, "*") }
     def "/" (recv, other) { num_op_row!(other, recv, num_div, "/") }
-    def "%" | "modulo" (recv, other) { num_op_row!(other, recv, num_mod, "%") }
     def "**" (recv, other) { num_op_row!(other, recv, num_pow, "**") }
     def "-@" (recv) {
         let r = recv_rational(recv);
         rational_new(-r.num.clone(), r.den.clone())
-    }
-    def "+@" (recv) {
-        Ok(recv.clone())
     }
     def "<=>" (recv, other) {
         Ok(match crate::builtins::numeric::num_cmp(recv, other) {
@@ -592,7 +588,7 @@ ruby_class! {
         Ok(RubyValue::Float(rat_to_f64(recv_rational(recv))))
     }
     // Truncation toward zero (BigInt's `/` truncates).
-    def "to_i" | "to_int" (recv) {
+    def "to_i" (recv) {
         let r = recv_rational(recv);
         Ok(crate::builtins::integer::int_value(&r.num / &r.den))
     }
@@ -633,15 +629,6 @@ ruby_class! {
         let mode = half_kwarg(opts)?;
         round_with_precision(recv_rational(recv), precision_arg(ndigits)?, mode)
     }
-    // A Rational is always a finite value.
-    def "finite?" (recv) {
-        let _ = recv;
-        Ok(RubyValue::Bool(true))
-    }
-    def "infinite?" (recv) {
-        let _ = recv;
-        Ok(RubyValue::Nil)
-    }
     // `coerce(other)`: a Float partner pulls both operands to Float; any
     // other numeric promotes to Rational (`(3/2).coerce(2) == [(2/1), (3/2)]`).
     def "coerce" (recv, arg) {
@@ -661,23 +648,6 @@ ruby_class! {
             }
         };
         Ok(RubyValue::Array(crate::array_new(pair)))
-    }
-    // `div` -- floored integer division (`Rational(7,2).div(2) == 1`).
-    def "div" (recv, arg) {
-        let q = crate::builtins::numeric::num_div(recv, arg)
-            .ok_or_else(|| type_error!("{} can't be coerced into Rational",
-                    crate::builtins::coerce_operand_name(arg)))??;
-        match q {
-            RubyValue::Rational(r) => {
-                Ok(crate::builtins::integer::int_value(r.num.div_floor(&r.den)))
-            }
-            RubyValue::Float(f) => crate::builtins::float::float_to_integer(f.floor()),
-            other => Ok(other),
-        }
-    }
-    // `n.i` -- the pure-imaginary Complex `0 + n*i`.
-    def "i" (recv) {
-        crate::builtins::complex::complex_new(RubyValue::Int(0), recv.clone())
     }
 
     // ---- rows ruby OWNS on this class while the body lives on an ancestor.
