@@ -98,6 +98,54 @@ fn singleton_frame(
     Ok(())
 }
 
+/// A literal `box.eval("...")` body inside ruby's two frames: the C method
+/// `Ruby::Box#eval` at the call's line, then the snippet's own `<compiled>`
+/// scope in file `eval`, where a block reads `block in <compiled>`. Both pop
+/// on the error path before the enclosing landing runs, as
+/// [`singleton_frame`]'s does.
+pub(super) fn literal_box_eval(
+    fx: &mut Fx,
+    call: NodeId,
+    body: &[NodeId],
+    dst: cranelift_codegen::ir::Value,
+) -> CResult<()> {
+    stamp_line(fx, call);
+    let (cptr, clen) = super::expr::rodata_name(fx, "Ruby::Box#eval");
+    let pushed = fx.call_status("zeo_rt_synthetic_c_frame_push", &[cptr, clen]);
+    let line = body.first().and_then(|&s| fx.location(s)).map_or(1, |(_, l)| l);
+    let end_line = body.last().map_or(line, |&s| {
+        crate::analyze::source::source_end_line(&fx.an.compiler, s)
+    });
+    let label = "<compiled>";
+    let (fptr, flen) = super::expr::rodata_name(fx, zeo_abi::BOX_EVAL_FILE);
+    let (lptr, llen) = super::expr::rodata_name(fx, label);
+    let line_v = fx.b.ins().iconst(types::I32, i64::from(line));
+    let end_v = fx.b.ins().iconst(types::I32, i64::from(end_line));
+    super::frames::emit_frame_push(fx, &[fptr, flen, lptr, llen, line_v, end_v]);
+    let outer_land = fx.land;
+    let pop_land = fx.b.create_block();
+    fx.land = pop_land;
+    let saved_label = std::mem::replace(&mut fx.frame_label, label.to_string());
+    let saved_line = fx.prev_line.take();
+    let saved_file = fx.prev_file.take();
+    let r = lower_value_body_into(fx, body, dst);
+    fx.frame_label = saved_label;
+    fx.land = outer_land;
+    fx.prev_line = saved_line;
+    fx.prev_file = saved_file;
+    r?;
+    super::frames::emit_frame_pop(fx);
+    fx.call("zeo_rt_synthetic_c_frame_pop", &[pushed]);
+    let after = fx.b.create_block();
+    fx.b.ins().jump(after, &[]);
+    fx.b.switch_to_block(pop_land);
+    super::frames::emit_frame_pop(fx);
+    fx.call("zeo_rt_synthetic_c_frame_pop", &[pushed]);
+    fx.b.ins().jump(outer_land, &[]);
+    fx.b.switch_to_block(after);
+    Ok(())
+}
+
 /// [`lower_stmts`]' loop without the singleton grouping -- so a group can
 /// reuse it without re-detecting itself. With a `dst` the group's last
 /// statement is its VALUE.

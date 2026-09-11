@@ -87,6 +87,9 @@ impl NodeFlag {
     /// An `AliasMethod` written as `alias_method :new, :old`: ruby runs it as
     /// the C method `Module#alias_method`, which a raise's backtrace shows.
     pub const ALIAS_METHOD_CALL: NodeFlag = NodeFlag(1 << 11);
+    /// A `BoxScope` spliced from a LITERAL `box.eval("...")`: it runs inside
+    /// ruby's two frames, `Ruby::Box#eval` and the snippet's `<compiled>`.
+    pub const LITERAL_BOX_EVAL: NodeFlag = NodeFlag(1 << 12);
 }
 
 /// A local the COMPILER introduced -- an evaluate-once receiver/index

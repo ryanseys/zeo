@@ -923,7 +923,11 @@ fn lower_expr_inner(fx: &mut Fx, id: NodeId) -> CResult<Operand> {
             let ss = fx.temp_slot();
             let dst = fx.slot_addr(ss, 0);
             let was = std::mem::replace(&mut fx.box_id, box_id);
-            let r = super::stmt::lower_value_body_into(fx, &body, dst);
+            let r = if fx.an.compiler.hir.has_flag(id, crate::hir::NodeFlag::LITERAL_BOX_EVAL) {
+                super::stmt::literal_box_eval(fx, id, &body, dst)
+            } else {
+                super::stmt::lower_value_body_into(fx, &body, dst)
+            };
             fx.box_id = was;
             r?;
             fx.owned_created += 1;

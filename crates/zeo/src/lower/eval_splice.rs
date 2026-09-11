@@ -70,7 +70,9 @@ pub fn lower_box_eval(
         if !allow_defs {
             reject_top_level_defs(hir, &body)?;
         }
-        return Ok(hir.push(HirNode::BoxScope { box_id, body }));
+        let scope = hir.push(HirNode::BoxScope { box_id, body });
+        hir.set_flag(scope, crate::hir::NodeFlag::LITERAL_BOX_EVAL);
+        return Ok(scope);
     }
     // Non-literal source: the box's OWN `eval` row, on the handle. A
     // receiverless `eval` here would reach `Kernel#eval`, which names itself
