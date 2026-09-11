@@ -181,10 +181,13 @@ ruby_class! {
     // nil, all of them (pattern-matching's hash form).
     def "deconstruct_keys" (recv, arg) {
         let md = recv_md(recv);
-        let named: Vec<(String, RubyValue)> = md
-            .names
-            .iter()
-            .map(|(name, idx)| (name.clone(), crate::regexp::matchdata_group(&md, *idx as i64)))
+        let named: Vec<(String, RubyValue)> = crate::regexp::distinct_names(&md.names)
+            .into_iter()
+            .map(|name| {
+                let value = crate::regexp::group_of_name(&md.names, &md.groups, name)
+                    .map_or(RubyValue::Nil, |idx| crate::regexp::matchdata_group(&md, idx as i64));
+                (name.to_string(), value)
+            })
             .collect();
         let sym = |s: &str| RubyValue::Symbol(crate::Symbol::intern(s));
         let pairs: Vec<(RubyValue, RubyValue)> = match arg {

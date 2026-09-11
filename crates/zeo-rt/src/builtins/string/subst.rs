@@ -263,7 +263,7 @@ pub(super) fn index_set_impl(
 /// The byte span of a named capture group, or `None` when the name is absent
 /// or the group didn't participate in the match.
 pub(super) fn group_span_by_name(m: &crate::RMatchData, name: &str) -> Option<(usize, usize)> {
-    let idx = m.names.iter().find(|(nm, _)| nm == name)?.1;
+    let idx = crate::regexp::group_of_name(&m.names, &m.groups, name)?;
     m.groups.get(idx).copied().flatten()
 }
 

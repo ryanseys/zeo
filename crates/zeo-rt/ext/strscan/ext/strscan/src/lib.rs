@@ -180,11 +180,8 @@ fn group_text(st: &State, i: usize) -> RubyValue {
 /// answers `nil`); a String/Symbol names a group and MUST exist.
 fn group_index(st: &State, key: &RubyValue) -> Result<Option<usize>, Signal> {
     let named = |name: &str| match st.last.as_ref() {
-        Some(m) => m
-            .names
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|&(_, i)| Some(i))
+        Some(m) => crate::regexp::group_of_name(&m.names, &m.groups, name)
+            .map(Some)
             .ok_or_else(|| index_error!("undefined group name reference: {name}")),
         // No match on record: CRuby reports the name as undefined too.
         None => Err(index_error!("undefined group name reference: {name}")),
@@ -516,9 +513,13 @@ ruby_class! {
     def "named_captures" (recv) {
         let st = live_sc(recv)?.state.lock();
         let pairs = st.last.as_ref().map_or_else(Vec::new, |m| {
-            m.names
-                .iter()
-                .map(|(name, i)| (str_val(name), group_text(&st, *i)))
+            crate::regexp::distinct_names(&m.names)
+                .into_iter()
+                .map(|name| {
+                    let value = crate::regexp::group_of_name(&m.names, &m.groups, name)
+                        .map_or(RubyValue::Nil, |i| group_text(&st, i));
+                    (str_val(name), value)
+                })
                 .collect()
         });
         Ok(RubyValue::Hash(crate::hash_new(pairs)))

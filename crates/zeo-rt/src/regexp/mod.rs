@@ -383,21 +383,47 @@ impl Engine {
         self.re.captures_len() + 1
     }
 
-    /// Every named group as `(name, index)`, in group order. Onig reports each
-    /// name with the group indices that carry it; a duplicated name resolves
-    /// to its LAST group (Ruby's rule for a named backreference /
-    /// `MatchData[name]`).
+    /// Every named group as `(name, index)`, one pair per GROUP, in group
+    /// order: a name written twice appears twice. [`group_of_name`] picks
+    /// which of them a lookup by name answers.
     pub fn capture_names(&self) -> Vec<(String, usize)> {
         let mut out = Vec::new();
         self.re.foreach_name(|name, groups| {
-            if let Some(&last) = groups.iter().max() {
-                out.push((name.to_string(), last as usize));
-            }
+            out.extend(groups.iter().map(|&g| (name.to_string(), g as usize)));
             true
         });
         out.sort_by_key(|(_, i)| *i);
         out
     }
+}
+
+/// The group a lookup by `name` answers: the LAST group of that name that
+/// took part in the match, or the last group of that name when none did
+/// (Onigmo's `onig_name_to_backref_number` with a region).
+pub(crate) fn group_of_name(
+    names: &[(String, usize)],
+    groups: &[Option<(usize, usize)>],
+    name: &str,
+) -> Option<usize> {
+    let (mut last, mut last_matched) = (None, None);
+    for (_, idx) in names.iter().filter(|(n, _)| n == name) {
+        last = Some(*idx);
+        if groups.get(*idx).copied().flatten().is_some() {
+            last_matched = Some(*idx);
+        }
+    }
+    last_matched.or(last)
+}
+
+/// Each distinct group name once, in the order the pattern first writes it.
+pub(crate) fn distinct_names(names: &[(String, usize)]) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    for (n, _) in names {
+        if !out.contains(&n.as_str()) {
+            out.push(n);
+        }
+    }
+    out
 }
 
 /// A successful `Regexp#match`/`String#match` result. `groups[0]` is always
@@ -534,19 +560,16 @@ fn offset_pair(a: RubyValue, b: RubyValue) -> RubyValue {
 }
 
 fn name_group_index(md: &RMatchData, name: &str) -> Result<i64, crate::Signal> {
-    md.names
-        .iter()
-        .find(|(n, _)| n.as_str() == name)
-        .map(|(_, i)| *i as i64)
+    group_of_name(&md.names, &md.groups, name)
+        .map(|i| i as i64)
         .ok_or_else(|| index_error!("undefined group name reference: {name}"))
 }
 
-/// `MatchData#names` -- the named capture groups, in group order.
+/// `MatchData#names` -- each group name once, in the order first written.
 pub fn matchdata_names(md: &RMatchData) -> RubyValue {
-    let out = md
-        .names
-        .iter()
-        .map(|(n, _)| RubyValue::Str(crate::string_new(n.clone())))
+    let out = distinct_names(&md.names)
+        .into_iter()
+        .map(|n| RubyValue::Str(crate::string_new(n.to_string())))
         .collect();
     RubyValue::Array(crate::array_new(out))
 }
@@ -1173,9 +1196,9 @@ fn expand_replacement(
                     }
                     name.push(nc);
                 }
-                match names.iter().find(|(n, _)| *n == name) {
-                    Some((_, idx)) => {
-                        if let Some(g) = caps.str(*idx, haystack) {
+                match group_of_name(names, &caps.spans, &name) {
+                    Some(idx) => {
+                        if let Some(g) = caps.str(idx, haystack) {
                             out.push_str(g);
                         }
                     }
@@ -1334,8 +1357,8 @@ pub fn matchdata_group(m: &RMatchData, index: i64) -> RubyValue {
 /// catchable exception is a documented future refinement, same "loud, not
 /// silently wrong" posture as this runtime's other `_unchecked` accessors).
 pub fn matchdata_group_by_name(m: &RMatchData, name: &str) -> Result<RubyValue, Signal> {
-    match m.names.iter().find(|(n, _)| n == name) {
-        Some((_, idx)) => Ok(matchdata_group(m, *idx as i64)),
+    match group_of_name(&m.names, &m.groups, name) {
+        Some(idx) => Ok(matchdata_group(m, idx as i64)),
         None => Err(index_error!("undefined group name reference: {name}")),
     }
 }
@@ -1397,14 +1420,12 @@ pub fn matchdata_captures(m: &RMatchData) -> RubyValue {
 
 /// `MatchData#named_captures` -- a `Hash` of `name => captured string`.
 pub fn matchdata_named_captures(m: &RMatchData) -> RubyValue {
-    let pairs = m
-        .names
-        .iter()
-        .map(|(name, idx)| {
-            (
-                RubyValue::Str(string_new(name.clone())),
-                matchdata_group(m, *idx as i64),
-            )
+    let pairs = distinct_names(&m.names)
+        .into_iter()
+        .map(|name| {
+            let value = group_of_name(&m.names, &m.groups, name)
+                .map_or(RubyValue::Nil, |idx| matchdata_group(m, idx as i64));
+            (RubyValue::Str(string_new(name.to_string())), value)
         })
         .collect();
     RubyValue::Hash(hash_new(pairs))
