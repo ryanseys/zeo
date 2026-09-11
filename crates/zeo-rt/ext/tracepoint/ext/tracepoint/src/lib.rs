@@ -17,8 +17,7 @@
 //! the method's `end` line (a `Drop` cannot tell the exit paths apart);
 //! `def` lines fire no `:line` (definitions are compile-time); top-level
 //! lines of a required file report the entry file's path (spliced code
-//! runs under the `<main>` frame); `callee_id` equals `method_id` for an
-//! aliased call. A handler that raises aborts the program with the
+//! runs under the `<main>` frame). A handler that raises aborts the program with the
 //! uncaught-exception report -- which is what CRuby's propagation
 //! observably does (probed: even a `rescue` around the traced call does
 //! not see the handler's exception).
@@ -161,6 +160,10 @@ struct Snapshot {
     /// `block in Class#m`, `<main>`); `method_id`/`defined_class` parse it
     /// lazily so the fire path never allocates.
     label: &'static str,
+    /// The name a run-time alias called the traced method through, read off
+    /// its frame when the event fires ([`crate::frames::current_frame_callee`]);
+    /// `None` when the call used the method's own name.
+    callee: Option<crate::Symbol>,
     raised: Option<RubyValue>,
     /// The receiver the event ran under (`TracePoint#self`, and the degraded
     /// `#binding`'s receiver) -- resolved by `dispatch` from the armed-only
@@ -237,6 +240,7 @@ pub fn fire_line(line: u32) {
         path: fr.file,
         lineno: line,
         label: fr.method(),
+        callee: crate::frames::current_frame_callee(),
         raised: None,
         slf: RubyValue::Nil,
     });
@@ -251,6 +255,8 @@ pub fn fire_entry(file: &'static str, label: &'static str, line: u32) {
         path: file,
         lineno: line,
         label,
+        // The frame this event announces is the one just pushed.
+        callee: crate::frames::current_frame_callee(),
         raised: None,
         slf: RubyValue::Nil,
     });
@@ -270,6 +276,7 @@ pub fn fire_exit(fr: &crate::frames::Frame) {
         path: fr.file,
         lineno: fr.end_line,
         label: fr.method(),
+        callee: (fr.callee != 0).then(|| crate::Symbol::from_u32(fr.callee - 1)),
         raised: None,
         slf: RubyValue::Nil,
     });
@@ -327,6 +334,7 @@ fn fire_internal(bit: u8, label: &'static str, lineno: u32, slf: &RubyValue) {
         path: INTERNAL_PATH,
         lineno,
         label,
+        callee: None,
         raised: None,
         slf: slf.clone(),
     });
@@ -344,6 +352,7 @@ pub fn fire_raise(exc: &RubyValue) {
         path: fr.file,
         lineno: fr.line,
         label: fr.method(),
+        callee: crate::frames::current_frame_callee(),
         raised: Some(exc.clone()),
         slf: RubyValue::Nil,
     });
@@ -651,11 +660,19 @@ ruby_class! {
         let _ = tp_of(recv);
         Ok(RubyValue::Str(string_new(snapshot()?.path.to_string())))
     }
-    // `callee_id` is `method_id` here: zeo's frame labels carry the
-    // defining name, and an aliased call is not distinguished.
-    def "method_id" | "callee_id" (recv) {
+    def "method_id" (recv) {
         let _ = tp_of(recv);
         Ok(method_symbol(snapshot()?.label))
+    }
+    // The name the call used: a run-time alias's, when one handed it to the
+    // traced method's frame, else the defining name the label carries.
+    def "callee_id" (recv) {
+        let _ = tp_of(recv);
+        let snap = snapshot()?;
+        Ok(match snap.callee {
+            Some(sym) => RubyValue::Symbol(sym),
+            None => method_symbol(snap.label),
+        })
     }
     def "defined_class" (recv) {
         let _ = tp_of(recv);
@@ -803,6 +820,7 @@ mod tests {
                 path: "f.rb",
                 lineno: 3,
                 label: "<main>",
+                callee: None,
                 raised: None,
                 slf: RubyValue::Nil,
             });

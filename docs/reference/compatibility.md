@@ -496,8 +496,6 @@ this event"`, `"unknown event: x"`) are oracle-matched live
 - **Top-level lines of a required file report the entry file's path**:
   spliced top-level code runs under the `<main>` frame. Code inside
   methods and class bodies reports its own file.
-- **`callee_id` equals `method_id`** for an aliased call (labels carry
-  the defining name).
 - **A handler that raises aborts the program** with the uncaught
   report after `at_exit`/finalizers -- there is no `Result` channel
   from inside a line stamp or a frame pop. Observably close to CRuby,
