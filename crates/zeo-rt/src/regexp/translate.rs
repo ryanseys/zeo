@@ -7,6 +7,7 @@
 //! translated into another engine's dialect.
 
 use super::*;
+use std::borrow::Cow;
 
 /// Builds the Oniguruma engine over the Ruby `source` -- onig speaks Ruby's
 /// regex dialect natively through `Syntax::ruby()` (inline flag groups, line
@@ -107,6 +108,113 @@ fn wrap_zero_width(source: &str, extended: bool) -> String {
     // Every byte came from `source` or is ASCII, so this is UTF-8 whenever the
     // input was.
     String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+}
+
+/// Group names Onigmo reads and Oniguruma refuses.
+///
+/// Onigmo, as ruby builds it, takes ANY first character in a group name and
+/// ends the name at its closing `>`/`'`; a `)` after the first character ends
+/// it too, which is an error naming the rest of the pattern. Oniguruma wants a
+/// word character first, so a name that opens with `(` or `)` is renamed here
+/// -- its definition and every reference -- and the engine maps it back
+/// ([`Engine::with_renames`]). Answers `(engine name, name as written)` pairs.
+fn rename_groups(source: &str) -> Result<(Cow<'_, str>, Vec<(String, String)>), String> {
+    if !["(?<", "(?'", "\\k", "\\g", "(?("].iter().any(|p| source.contains(p)) {
+        return Ok((Cow::Borrowed(source), Vec::new()));
+    }
+    let b = source.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut renames: Vec<(String, String)> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        let rest = &b[i..];
+        // The opener's length and the name's closing delimiter, when a group
+        // name starts after it.
+        let opener = if rest[0] == b'\\' {
+            match (rest.get(1), rest.get(2)) {
+                (Some(b'k' | b'g'), Some(b'<')) => Some((3, b'>')),
+                (Some(b'k' | b'g'), Some(b'\'')) => Some((3, b'\'')),
+                _ => {
+                    let end = (i + 2).min(b.len());
+                    out.extend_from_slice(&b[i..end]);
+                    i = end;
+                    continue;
+                }
+            }
+        } else if rest[0] == b'[' {
+            let end = class_end(b, i);
+            out.extend_from_slice(&b[i..end]);
+            i = end;
+            continue;
+        } else if rest.starts_with(b"(?<") && !matches!(rest.get(3), Some(b'=' | b'!')) {
+            Some((3, b'>'))
+        } else if rest.starts_with(b"(?'") {
+            Some((3, b'\''))
+        } else if rest.starts_with(b"(?(<") {
+            Some((4, b'>'))
+        } else if rest.starts_with(b"(?('") {
+            Some((4, b'\''))
+        } else {
+            None
+        };
+        let Some((prefix, close)) = opener else {
+            out.push(b[i]);
+            i += 1;
+            continue;
+        };
+        let start = i + prefix;
+        let mut j = start;
+        if j < b.len() && b[j] != close {
+            j += utf8_width(b[j]);
+        }
+        while j < b.len() && b[j] != close && b[j] != b')' {
+            j += 1;
+        }
+        if b.get(j) == Some(&b')') {
+            return Err(format!("invalid group name <{}>", &source[start..]));
+        }
+        let name = &source[start..j.min(b.len())];
+        // A reference may carry a nesting level, `\k<n+1>`.
+        let bare = name
+            .rfind(['+', '-'])
+            .filter(|&at| at > 0 && name[at + 1..].bytes().all(|d| d.is_ascii_digit()) && at + 1 < name.len())
+            .map_or(name, |at| &name[..at]);
+        out.extend_from_slice(&b[i..start]);
+        if bare.starts_with(['(', ')']) {
+            let engine_name = match renames.iter().find(|(_, w)| w == bare) {
+                Some((e, _)) => e.clone(),
+                None => {
+                    let mut e = format!("zeo_group_{}", renames.len());
+                    while source.contains(&e) {
+                        e.push('_');
+                    }
+                    renames.push((e.clone(), bare.to_string()));
+                    e
+                }
+            };
+            out.extend_from_slice(engine_name.as_bytes());
+            out.extend_from_slice(&name.as_bytes()[bare.len()..]);
+        } else {
+            out.extend_from_slice(name.as_bytes());
+        }
+        i = j.min(b.len());
+    }
+    if renames.is_empty() {
+        return Ok((Cow::Borrowed(source), renames));
+    }
+    // Every byte came from `source` or is ASCII.
+    let text = String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+    Ok((Cow::Owned(text), renames))
+}
+
+/// The length of the UTF-8 sequence a lead byte opens.
+fn utf8_width(lead: u8) -> usize {
+    match lead {
+        0x00..=0x7F => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        _ => 4,
+    }
 }
 
 /// The index just past the bracket class opening at `start` (the end of the
@@ -603,7 +711,10 @@ pub fn regexp_new_enc(
     // Onigmo's character-range modes (`\w` ASCII, `\b` Unicode, `(?a)`,
     // `(?u)`) are Oniguruma's neither; the walk in `charrange` writes them
     // into the pattern text.
-    let ranged = super::charrange::apply(escaped.as_ref(), extended)
+    // Before the range walk, which would read a `)` inside a name as a group.
+    let (renamed, renames) = rename_groups(escaped.as_ref())
+        .map_err(|e| cruby_regex_error(written, &e, ignore_case, extended, multiline))?;
+    let ranged = super::charrange::apply(renamed.as_ref(), extended)
         .map_err(|e| cruby_regex_error(written, e, ignore_case, extended, multiline))?;
     let engine = match build_onig(ranged.as_ref(), ignore_case, extended, multiline) {
         Err(e) if e.contains("target of repeat operator is invalid") => {
@@ -614,7 +725,7 @@ pub fn regexp_new_enc(
     }
     .map_err(|e| cruby_regex_error(written, &e, ignore_case, extended, multiline))?;
     Ok(Arc::new(RegexpData {
-        engine: Engine::new(engine),
+        engine: Engine::new(engine).with_renames(renames),
         source: written.to_string(),
         uninitialized: false,
         ignore_case,
@@ -709,6 +820,15 @@ mod tests {
         assert_eq!(wrap_zero_width(r"(?<=a\b)c", false), r"(?>(?<=a\b))c");
         assert_eq!(wrap_zero_width(r"(?<n>x)(?#^)", false), r"(?<n>x)(?#^)");
         assert_eq!(wrap_zero_width("# ^\n$", true), "# ^\n(?>$)");
+    }
+
+    #[test]
+    fn a_name_opening_with_a_paren_is_renamed_everywhere() {
+        let (text, renames) = rename_groups(r"(?<)>x)\k<)+0>\g')'(?(<)>)y|z)(?<a>b)\k<a>").unwrap();
+        assert_eq!(text, r"(?<zeo_group_0>x)\k<zeo_group_0+0>\g'zeo_group_0'(?(<zeo_group_0>)y|z)(?<a>b)\k<a>");
+        assert_eq!(renames, vec![("zeo_group_0".to_string(), ")".to_string())]);
+        assert_eq!(rename_groups(r"(?<a)>x)yz").unwrap_err(), "invalid group name <a)>x)yz>");
+        assert!(matches!(rename_groups(r"[(?<)>](?<n>.)"), Ok((Cow::Borrowed(_), _))));
     }
 
     #[test]

@@ -162,6 +162,9 @@ pub struct Engine {
     /// `Regexp.new(src, timeout:)`'s per-pattern limit, in seconds; `None`
     /// defers to [`global_timeout`].
     timeout: Option<f64>,
+    /// `(engine name, name as written)` for each group name the translate
+    /// layer renamed because Oniguruma refuses it (`translate::rename_groups`).
+    renames: Option<Arc<[(String, String)]>>,
 }
 
 /// `Regexp.timeout`, the process-wide default match limit in seconds.
@@ -310,7 +313,15 @@ impl Engine {
         Engine {
             re: Arc::new(re),
             timeout: None,
+            renames: None,
         }
+    }
+
+    pub(crate) fn with_renames(mut self, renames: Vec<(String, String)>) -> Engine {
+        if !renames.is_empty() {
+            self.renames = Some(renames.into());
+        }
+        self
     }
 
     pub fn with_timeout(mut self, timeout: Option<f64>) -> Engine {
@@ -389,7 +400,12 @@ impl Engine {
     pub fn capture_names(&self) -> Vec<(String, usize)> {
         let mut out = Vec::new();
         self.re.foreach_name(|name, groups| {
-            out.extend(groups.iter().map(|&g| (name.to_string(), g as usize)));
+            let written = self
+                .renames
+                .as_deref()
+                .and_then(|r| r.iter().find(|(engine, _)| engine == name))
+                .map_or(name, |(_, written)| written.as_str());
+            out.extend(groups.iter().map(|&g| (written.to_string(), g as usize)));
             true
         });
         out.sort_by_key(|(_, i)| *i);
