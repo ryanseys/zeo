@@ -55,7 +55,7 @@ fn wrap_zero_width(source: &str, extended: bool) -> String {
         match c {
             b'\\' if i + 1 < b.len() => {
                 let e = b[i + 1];
-                if matches!(e, b'b' | b'B' | b'A' | b'z' | b'Z' | b'G') && !in_lookbehind {
+                if matches!(e, b'b' | b'B' | b'A' | b'z' | b'Z' | b'G' | b'K') && !in_lookbehind {
                     out.extend_from_slice(&[b'(', b'?', b'>', b'\\', e, b')']);
                 } else {
                     out.extend_from_slice(&b[i..i + 2]);
@@ -708,6 +708,17 @@ pub fn regexp_new_enc(
         encoding,
         frozen: std::sync::atomic::AtomicBool::new(false),
     }))
+}
+
+/// Prints the warnings Onigmo prints while it parses `source`, at the
+/// caller's line. Ruby prints them for a pattern built at run time
+/// (`Regexp.new`, an interpolated literal) and none for a static literal.
+pub(crate) fn warn_pattern(source: &str, extended: bool) {
+    let Ok(expanded) = preprocess_unicode(source) else { return };
+    let Ok(escaped) = preprocess_control_escapes(&expanded, false) else { return };
+    for warning in super::lint::warnings(&escaped, extended) {
+        crate::builtins::warning::rb_warn(&warning);
+    }
 }
 
 /// Every named capture group's `(name, 1-based index)`, in source order,

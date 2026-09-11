@@ -17,6 +17,7 @@
 //! shared-identity value semantics every other `RubyValue` payload uses.
 
 mod charrange;
+mod lint;
 mod translate;
 
 use crate::builtins::index_error;
@@ -26,6 +27,7 @@ use std::sync::Arc;
 
 pub(crate) use translate::named_group_positions;
 pub use translate::{RegexpSite, regexp_new, regexp_new_enc};
+pub(crate) use translate::warn_pattern;
 
 pub struct RegexpData {
     pub engine: Engine,

@@ -27,5 +27,5 @@ false
 [nil, nil, "c"]
 true
 #@ stderr
-gaps/oniguruma_backed_semantics_match_the_oracle.rb:16: warning: regular expression has redundant nested repeat operator '*': /a***/
-gaps/oniguruma_backed_semantics_match_the_oracle.rb:16: warning: regular expression has redundant nested repeat operator '*': /a***/
+core/regexp/oniguruma_backed_semantics_match_the_oracle.rb:16: warning: regular expression has redundant nested repeat operator '*': /a***/
+core/regexp/oniguruma_backed_semantics_match_the_oracle.rb:16: warning: regular expression has redundant nested repeat operator '*': /a***/

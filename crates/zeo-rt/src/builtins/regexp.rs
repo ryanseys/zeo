@@ -118,9 +118,10 @@ ruby_class! {
             true => zeo_abi::RegexpEncoding::None,
             false => zeo_abi::RegexpEncoding::Source,
         };
-        crate::regexp::regexp_new_enc(&source, ignore_case, extended, multiline, enc)
-            .map(|re| RubyValue::Regexp(re.with_timeout(timeout)))
-            .map_err(|e| regexp_error!("{e}"))
+        let re = crate::regexp::regexp_new_enc(&source, ignore_case, extended, multiline, enc)
+            .map_err(|e| regexp_error!("{e}"))?;
+        crate::regexp::warn_pattern(&source, extended);
+        Ok(RubyValue::Regexp(re.with_timeout(timeout)))
     }
 
     // `Regexp.union(pat, ...)` / `Regexp.union([pat, ...])`: an alternation of

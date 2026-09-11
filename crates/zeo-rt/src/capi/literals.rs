@@ -517,6 +517,7 @@ pub unsafe extern "C" fn zeo_rt_regexp_interp(
         regexp_encoding(enc),
     ) {
         Ok(re) => {
+            crate::regexp::warn_pattern(&source, extended != 0);
             re.set_frozen();
             let v = RubyValue::Regexp(re);
             super::leakcheck::created(&v);
