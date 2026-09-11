@@ -105,7 +105,7 @@ impl<'a> Revive<'a> {
             }
             Node::Sequence { children, tag, .. } => self.sequence(node, children, tag.as_deref()),
             Node::Mapping { children, tag, .. } => self.mapping(node, children, tag.as_deref()),
-            Node::Alias { anchor } => {
+            Node::Alias { anchor, .. } => {
                 if !self.opts.aliases {
                     return Err(raise_error(
                         "Psych::AliasesNotEnabled",
@@ -901,6 +901,7 @@ mod tests {
             quoted: false,
             tag: None,
             anchor: None,
+            mark: Default::default(),
         };
         assert!(is_merge_key(&plain));
 
@@ -910,6 +911,7 @@ mod tests {
             quoted: true,
             tag: None,
             anchor: None,
+            mark: Default::default(),
         };
         assert!(!is_merge_key(&quoted), "a quoted << is an ordinary key");
 
@@ -919,6 +921,7 @@ mod tests {
             quoted: false,
             tag: Some("tag:yaml.org,2002:str".to_string()),
             anchor: None,
+            mark: Default::default(),
         };
         assert!(!is_merge_key(&tagged), "an explicitly tagged << is a key");
     }

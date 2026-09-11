@@ -206,16 +206,17 @@ fn syntax_error(text: &str, file: Option<&str>, err: &yaml_rust2::ScanError) -> 
 /// Parse `text` into the node tree every entry point reads.
 ///
 /// The anchor NAMES come from a second pass over the scanner -- see
-/// [`nodes::anchor_names`] for why the events cannot supply them -- and the
+/// [`nodes::prescan`] for why the events cannot supply them -- and the
 /// directives from the same place, because the parser applies `%YAML` and
-/// `%TAG` without reporting them.
+/// `%TAG` without reporting them. The answer also says where the stream
+/// ended.
 fn parse_tree(
     text: &str,
     file: Option<&str>,
     aliases: bool,
-) -> Result<Vec<nodes::Document>, Signal> {
-    let names = nodes::anchor_names(text);
-    let mut builder = nodes::TreeBuilder::new(text, Some(&names));
+) -> Result<(Vec<nodes::Document>, (usize, usize)), Signal> {
+    let pre = nodes::prescan(text);
+    let mut builder = nodes::TreeBuilder::new(text, Some(&pre));
     yaml_rust2::parser::Parser::new_from_str(text)
         .load(&mut builder, true)
         .map_err(|e| {
@@ -243,16 +244,22 @@ fn parse_tree(
                 (false, _) => syntax_error(text, file, &e),
             }
         })?;
-    let mut docs = builder.finish();
+    let (mut docs, stream_end) = builder.finish();
     // The directives belong to the first document; a stream that gives each
     // document its own is rare enough that reading them per document would
     // cost a scan each for an answer nothing has asked for.
     if let Some(first) = docs.first_mut() {
         let (version, tags) = nodes::directives(text);
+        // The directives lead the document, so it starts at the first one.
+        if (version.is_some() || !tags.is_empty())
+            && let Some(line) = text.lines().position(|l| l.starts_with('%'))
+        {
+            first.mark.start = (line, 0);
+        }
         first.version = version;
         first.tag_directives = tags;
     }
-    Ok(docs)
+    Ok((docs, stream_end))
 }
 
 /// Every document in `text`, as Ruby values.
@@ -261,7 +268,7 @@ fn load_documents(
     file: Option<&str>,
     opts: &loader::LoadOpts,
 ) -> Result<Vec<RubyValue>, Signal> {
-    let docs = parse_tree(text, file, opts.aliases)?;
+    let (docs, _) = parse_tree(text, file, opts.aliases)?;
     loader::Revive::new(opts).documents(&docs)
 }
 
@@ -412,7 +419,7 @@ ruby_module! {
     // own answer: a document with no root would be a node a caller cannot use.
     def self."parse" (_recv, yaml, **opts) {
         let text = load_text(yaml)?;
-        let docs = parse_tree(&text, file_opt(opts.as_ref().copied()).as_deref(), true)?;
+        let (docs, _) = parse_tree(&text, file_opt(opts.as_ref().copied()).as_deref(), true)?;
         // An empty stream answers FALSE, not nil -- which is `parse`'s own
         // fallback and differs from `load`'s. Measured, not derived.
         let fallback =
@@ -429,14 +436,15 @@ ruby_module! {
     def self."parse_stream" (_recv, yaml, **opts, &block) {
         let _ = &opts;
         let text = load_text(yaml)?;
-        let docs = parse_tree(&text, file_opt(opts.as_ref().copied()).as_deref(), true)?;
+        let (docs, stream_end) =
+            parse_tree(&text, file_opt(opts.as_ref().copied()).as_deref(), true)?;
         if let Some(RubyValue::Proc(p)) = &block {
             for doc in tree_api::to_ruby_documents(&docs)? {
                 p.call(&[doc])?;
             }
             return Ok(RubyValue::Nil);
         }
-        tree_api::to_ruby_stream(&docs)
+        tree_api::to_ruby_stream(&docs, stream_end)
     }
 
     // `Psych::Nodes::Node#to_ruby`'s engine, called from the Ruby half rather
@@ -458,6 +466,7 @@ ruby_module! {
             implicit_end: true,
             version: None,
             tag_directives: Vec::new(),
+            mark: nodes::Marks::default(),
         };
         // A STREAM answers one value per document, as an Array. Every other
         // node answers the single value it describes.

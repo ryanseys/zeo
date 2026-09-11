@@ -25,11 +25,27 @@
 //! starting at 1 and never resetting across documents. So a pre-pass over
 //! the SCANNER's token stream -- the same tokens the parser is about to read,
 //! in the same order -- collects the names in that order, and the k-th one is
-//! id k. See [`anchor_names`].
+//! id k. See [`prescan`].
+//!
+//! # Marks
+//!
+//! Every node carries psych's `start_line`/`start_column`/`end_line`/
+//! `end_column`. An event gives only where its token starts; the ends, and
+//! the starts of nodes whose anchor or tag comes first, are read off the
+//! source by libyaml's rules.
 
+use std::collections::HashMap;
 
 use yaml_rust2::parser::{Event, MarkedEventReceiver, Tag};
-use yaml_rust2::scanner::{Marker, TScalarStyle, TokenType};
+use yaml_rust2::scanner::{Marker, TScalarStyle, Token, TokenType};
+
+/// Where a node starts and ends, as psych reports it: 0-based line and
+/// column, the column counted in characters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Marks {
+    pub(super) start: (usize, usize),
+    pub(super) end: (usize, usize),
+}
 
 /// Psych's `Psych::Nodes::Scalar::ANY` and its neighbours, and the same
 /// numbering for a container's `BLOCK`/`FLOW`.
@@ -60,12 +76,14 @@ pub(super) enum Node {
         quoted: bool,
         tag: Option<String>,
         anchor: Option<String>,
+        mark: Marks,
     },
     Sequence {
         children: Vec<Node>,
         style: i64,
         tag: Option<String>,
         anchor: Option<String>,
+        mark: Marks,
     },
     /// `children` alternates key, value, key, value -- which is psych's own
     /// shape and the reason a mapping node can hold an odd count when the
@@ -75,9 +93,11 @@ pub(super) enum Node {
         style: i64,
         tag: Option<String>,
         anchor: Option<String>,
+        mark: Marks,
     },
     Alias {
         anchor: String,
+        mark: Marks,
     },
 }
 
@@ -87,7 +107,16 @@ impl Node {
             Node::Scalar { anchor, .. }
             | Node::Sequence { anchor, .. }
             | Node::Mapping { anchor, .. } => anchor.as_deref(),
-            Node::Alias { anchor } => Some(anchor),
+            Node::Alias { anchor, .. } => Some(anchor),
+        }
+    }
+
+    pub(super) fn marks(&self) -> Marks {
+        match self {
+            Node::Scalar { mark, .. }
+            | Node::Sequence { mark, .. }
+            | Node::Mapping { mark, .. }
+            | Node::Alias { mark, .. } => *mark,
         }
     }
 }
@@ -104,26 +133,220 @@ pub(super) struct Document {
     pub(super) version: Option<(i64, i64)>,
     /// `%TAG !foo! bar` pairs, in the order they were written.
     pub(super) tag_directives: Vec<(String, String)>,
+    pub(super) mark: Marks,
 }
 
-/// The name of every anchor in `src`, in the order the parser will number
-/// them: the answer's index `i` is the parser's anchor id `i + 1`.
+const KIND_SCALAR: u8 = 0;
+const KIND_SEQUENCE: u8 = 1;
+const KIND_MAPPING: u8 = 2;
+
+/// What a second scanner pass over the text recovers that the events do not
+/// carry.
 ///
-/// The scanner is run a second time over the same text to get them. That is
-/// one extra pass, and it happens ONLY for `Psych.parse` -- a `Psych.load`
-/// never asks, because it resolves an alias by id and never needs the name.
+/// `names` holds every anchor's name in the order the parser numbers them:
+/// index `i` is the parser's anchor id `i + 1`. `props` maps the content
+/// token that follows an anchor or tag -- by character index and node kind --
+/// to where that first property starts, because psych's node starts there
+/// and the event marks the content. An empty scalar with a property has no
+/// content token, so `empty_props` keys it by the next token instead.
 ///
 /// A scan that fails answers what it collected before failing. It cannot
 /// matter: the parse that follows reads the same tokens and fails too, so no
-/// tree is ever built from a short list.
-pub(super) fn anchor_names(src: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for token in yaml_rust2::scanner::Scanner::new(src.chars()) {
-        if let TokenType::Anchor(name) = token.1 {
-            out.push(name);
+/// tree is ever built from a short scan.
+#[derive(Default)]
+pub(super) struct Prescan {
+    names: Vec<String>,
+    props: HashMap<(usize, u8), (usize, usize)>,
+    empty_props: HashMap<usize, (usize, usize)>,
+}
+
+pub(super) fn prescan(src: &str) -> Prescan {
+    let mut out = Prescan::default();
+    let mut pending: Option<(usize, usize)> = None;
+    for Token(mark, token) in yaml_rust2::scanner::Scanner::new(src.chars()) {
+        let kind = match token {
+            TokenType::Anchor(name) => {
+                out.names.push(name);
+                pending.get_or_insert(pos_of(mark));
+                continue;
+            }
+            TokenType::Tag(..) => {
+                pending.get_or_insert(pos_of(mark));
+                continue;
+            }
+            TokenType::Scalar(..) => Some(KIND_SCALAR),
+            TokenType::BlockSequenceStart
+            | TokenType::FlowSequenceStart
+            | TokenType::BlockEntry => Some(KIND_SEQUENCE),
+            TokenType::BlockMappingStart | TokenType::FlowMappingStart => Some(KIND_MAPPING),
+            _ => None,
+        };
+        if let Some(start) = pending.take() {
+            match kind {
+                Some(k) => out.props.insert((mark.index(), k), start),
+                None => out.empty_props.insert(mark.index(), start),
+            };
         }
     }
     out
+}
+
+/// A marker as psych counts it: yaml-rust2's lines start at 1.
+fn pos_of(mark: Marker) -> (usize, usize) {
+    (mark.line().saturating_sub(1), mark.col())
+}
+
+/// The line and column of byte `to`, counted from byte `from_byte`, which is
+/// known to sit at `from`. Walking from a nearby known point keeps each
+/// answer local rather than a count from the top of the text.
+fn pos_rel(src: &str, from_byte: usize, from: (usize, usize), to: usize) -> (usize, usize) {
+    let to = to.min(src.len());
+    if to >= from_byte {
+        let (mut line, mut col) = from;
+        for c in src[from_byte..to].chars() {
+            if c == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
+    } else {
+        let breaks = src[to..from_byte].matches('\n').count();
+        let line_start = src[..to].rfind('\n').map_or(0, |i| i + 1);
+        (from.0.saturating_sub(breaks), src[line_start..to].chars().count())
+    }
+}
+
+/// The byte where a scalar's text ends, read from the byte its token starts
+/// at: after a quoted scalar's closing quote, after a plain scalar's last
+/// character, and after a block scalar's lines.
+fn scalar_end(src: &str, at: usize, sty: TScalarStyle, value: &str) -> usize {
+    let at = at.min(src.len());
+    let text = &src[at..];
+    match sty {
+        TScalarStyle::SingleQuoted => {
+            let mut it = text.char_indices().skip(1).peekable();
+            while let Some((i, c)) = it.next() {
+                if c == '\'' {
+                    // `''` is an escaped quote, not the end.
+                    if it.peek().is_some_and(|&(_, n)| n == '\'') {
+                        it.next();
+                        continue;
+                    }
+                    return at + i + 1;
+                }
+            }
+            src.len()
+        }
+        TScalarStyle::DoubleQuoted => {
+            let mut it = text.char_indices().skip(1);
+            while let Some((i, c)) = it.next() {
+                match c {
+                    '\\' => {
+                        it.next();
+                    }
+                    '"' => return at + i + 1,
+                    _ => {}
+                }
+            }
+            src.len()
+        }
+        TScalarStyle::Literal | TScalarStyle::Folded => block_scalar_end(src, at),
+        TScalarStyle::Plain => {
+            // A plain scalar has no escapes: its value is its text with each
+            // run of breaks and indentation folded, so matching the value
+            // against the text finds the last character.
+            let mut end = at;
+            let mut chars = text.char_indices().peekable();
+            for v in value.chars() {
+                if v == ' ' || v == '\n' {
+                    while chars
+                        .peek()
+                        .is_some_and(|&(_, c)| matches!(c, ' ' | '\t' | '\n' | '\r'))
+                    {
+                        chars.next();
+                    }
+                    continue;
+                }
+                match chars.next() {
+                    Some((i, c)) if c == v => end = at + i + c.len_utf8(),
+                    _ => break,
+                }
+            }
+            end
+        }
+    }
+}
+
+/// Where a `|` or `>` block ends: at the start of the first line after the
+/// header whose text is indented less than the block's first text line.
+/// Blank lines before it belong to the block, as libyaml reads them.
+fn block_scalar_end(src: &str, at: usize) -> usize {
+    let Some(nl) = src[at..].find('\n') else {
+        return src.len();
+    };
+    let mut pos = at + nl + 1;
+    let mut indent = None;
+    while pos < src.len() {
+        let line_end = src[pos..].find('\n').map_or(src.len(), |i| pos + i);
+        let line = &src[pos..line_end];
+        if !line.trim().is_empty() {
+            let lead = line.len() - line.trim_start_matches(' ').len();
+            match indent {
+                None if lead == 0 => break,
+                None => indent = Some(lead),
+                Some(n) if lead < n => break,
+                Some(_) => {}
+            }
+        }
+        pos = (line_end + 1).min(src.len());
+    }
+    pos
+}
+
+/// The byte of the `-` in front of `at`, past blanks, or `at` when there is
+/// none.
+fn dash_before(src: &str, at: usize) -> usize {
+    let head = src[..at.min(src.len())].trim_end_matches([' ', '\t']);
+    match head.ends_with('-') {
+        true => head.len() - 1,
+        false => at,
+    }
+}
+
+/// The byte of the `|` or `>` that opens the block scalar whose text starts
+/// at `at`: the last indicator on the last line of text before it.
+fn block_indicator_before(src: &str, at: usize) -> usize {
+    let end = after_content_before(src, at);
+    let line_start = src[..end].rfind('\n').map_or(0, |i| i + 1);
+    src[line_start..end]
+        .rfind(['|', '>'])
+        .map_or(at, |i| line_start + i)
+}
+
+/// The byte just past the last text before `at`, skipping blanks, breaks and
+/// comments. libyaml puts an empty scalar there: right after the `:` or `-`
+/// (or the property) that introduced it.
+fn after_content_before(src: &str, at: usize) -> usize {
+    let mut end = at.min(src.len());
+    loop {
+        let line_start = src[..end].rfind('\n').map_or(0, |i| i + 1);
+        let seg = &src[line_start..end];
+        let seg = match seg
+            .char_indices()
+            .find(|&(i, c)| c == '#' && (i == 0 || seg[..i].ends_with([' ', '\t'])))
+        {
+            Some((i, _)) => &seg[..i],
+            None => seg,
+        };
+        let kept = seg.trim_end();
+        if !kept.is_empty() || line_start == 0 {
+            return line_start + kept.len();
+        }
+        end = line_start - 1;
+    }
 }
 
 /// Builds a [`Document`] list out of the event stream.
@@ -133,12 +356,15 @@ pub(super) struct TreeBuilder<'a> {
     stack: Vec<Node>,
     /// The root of the document being read, once it is complete.
     root: Option<Node>,
-    /// Anchor names by parser id, when the caller asked for them.
-    names: Option<&'a [String]>,
+    /// Anchor names and property starts, when the caller asked for them.
+    pre: Option<&'a Prescan>,
     src: &'a str,
     /// The BYTE offset where the open document started, for reading `---`
     /// back off the text.
     doc_start: usize,
+    /// Where the open document starts, and where the stream ended.
+    doc_mark: (usize, usize),
+    stream_end: (usize, usize),
     /// A marker's index counts CHARACTERS, and slicing `src` needs bytes.
     /// The two agree only for ASCII, and disagreeing is a panic rather than a
     /// wrong answer: `&src[1..]` inside a two-byte character does not
@@ -154,31 +380,39 @@ pub(super) struct TreeBuilder<'a> {
 }
 
 impl<'a> TreeBuilder<'a> {
-    /// `names` empty means "do not resolve anchor names", which is what a
-    /// plain `Psych.load` passes -- it never reads one.
-    pub(super) fn new(src: &'a str, names: Option<&'a [String]>) -> TreeBuilder<'a> {
+    /// `pre` empty means "do not resolve anchor names or property starts".
+    pub(super) fn new(src: &'a str, pre: Option<&'a Prescan>) -> TreeBuilder<'a> {
         TreeBuilder {
             docs: Vec::new(),
             stack: Vec::new(),
             root: None,
-            names,
+            pre,
             src,
             doc_start: 0,
+            doc_mark: (0, 0),
+            stream_end: (0, 0),
             cursor: (0, 0),
             version: None,
             tag_directives: Vec::new(),
         }
     }
 
-    pub(super) fn finish(self) -> Vec<Document> {
-        self.docs
+    /// The documents, and where the stream ended.
+    pub(super) fn finish(self) -> (Vec<Document>, (usize, usize)) {
+        (self.docs, self.stream_end)
     }
 
     fn name_of(&self, id: usize) -> Option<String> {
         if id == 0 {
             return None;
         }
-        self.names?.get(id - 1).cloned()
+        self.pre?.names.get(id - 1).cloned()
+    }
+
+    /// Where the anchor or tag in front of a node's content starts, if one
+    /// does.
+    fn prop_start(&self, index: usize, kind: u8) -> Option<(usize, usize)> {
+        self.pre?.props.get(&(index, kind)).copied()
     }
 
     /// A finished node: into the open container, or -- with none open -- it
@@ -239,11 +473,13 @@ impl<'a> TreeBuilder<'a> {
 
 impl MarkedEventReceiver for TreeBuilder<'_> {
     fn on_event(&mut self, ev: Event, mark: Marker) {
+        let pos = pos_of(mark);
         match ev {
             Event::DocumentStart => {
                 self.root = None;
                 self.stack.clear();
                 self.doc_start = self.byte_of(mark.index());
+                self.doc_mark = pos;
             }
             Event::DocumentEnd => {
                 let implicit = !self.explicit_at(self.doc_start);
@@ -252,52 +488,161 @@ impl MarkedEventReceiver for TreeBuilder<'_> {
                 // here sits at the end of the document.
                 let end = self.byte_of(mark.index()).min(self.src.len());
                 let implicit_end = !self.src[end..].trim_start().starts_with("...");
+                // An explicit end runs past its three dots.
+                let end_mark = if implicit_end { pos } else { (pos.0, pos.1 + 3) };
+                // An implicit document starts where its root does.
+                let start = match &self.root {
+                    Some(root) => self.doc_mark.min(root.marks().start),
+                    None => self.doc_mark,
+                };
                 self.docs.push(Document {
                     root: self.root.take(),
                     implicit,
                     implicit_end,
                     version: self.version.take(),
                     tag_directives: std::mem::take(&mut self.tag_directives),
+                    mark: Marks {
+                        start,
+                        end: end_mark,
+                    },
                 });
             }
             Event::Scalar(value, style, anchor, tag) => {
+                let at = self.byte_of(mark.index());
+                let mark = if value.is_empty() && style == TScalarStyle::Plain {
+                    // An empty scalar has no text of its own. In a flow
+                    // collection it sits at the token after it; in a block one
+                    // where the `:` or `-` in front of it ends, or it spans its
+                    // property. In a block sequence yaml-rust2 marks the next
+                    // entry past its own `-`, so the walk back starts there.
+                    let (flow, block_seq) = match self.stack.last() {
+                        Some(Node::Sequence { style: s, .. }) => (*s == style::FLOW, *s != style::FLOW),
+                        Some(Node::Mapping { style: s, .. }) => (*s == style::FLOW, false),
+                        _ => (false, false),
+                    };
+                    let from = if block_seq { dash_before(self.src, at) } else { at };
+                    // yaml-rust2 marks an empty flow VALUE at its own `:`,
+                    // and libyaml at the token after it.
+                    let flow_value = flow
+                        && self.src[at..].starts_with(':')
+                        && matches!(self.stack.last(), Some(Node::Mapping { children, .. }) if children.len() % 2 == 1);
+                    let end = match (flow, flow_value) {
+                        (true, true) => {
+                            let rest = &self.src[at + 1..];
+                            let blanks = rest.len() - rest.trim_start_matches([' ', '\t', '\n', '\r']).len();
+                            pos_rel(self.src, at, pos, at + 1 + blanks)
+                        }
+                        (true, false) => pos,
+                        (false, _) => pos_rel(self.src, at, pos, after_content_before(self.src, from)),
+                    };
+                    let start = match anchor != 0 || tag.is_some() {
+                        true => self
+                            .pre
+                            .and_then(|p| p.empty_props.get(&mark.index()).copied())
+                            .unwrap_or(end),
+                        false => end,
+                    };
+                    Marks { start, end }
+                } else {
+                    // yaml-rust2 marks a block scalar's first line of text;
+                    // the node starts at its `|` or `>`.
+                    let head = match style {
+                        TScalarStyle::Literal | TScalarStyle::Folded => {
+                            block_indicator_before(self.src, at)
+                        }
+                        _ => at,
+                    };
+                    let end = scalar_end(self.src, head, style, &value);
+                    Marks {
+                        start: self
+                            .prop_start(mark.index(), KIND_SCALAR)
+                            .unwrap_or_else(|| pos_rel(self.src, at, pos, head)),
+                        end: pos_rel(self.src, at, pos, end),
+                    }
+                };
                 let node = Node::Scalar {
                     value,
                     style: scalar_style(style),
                     quoted: style != TScalarStyle::Plain,
                     tag: tag.map(tag_text),
                     anchor: self.name_of(anchor),
+                    mark,
                 };
                 self.place(node);
             }
             Event::SequenceStart(anchor, tag) => {
                 let at = self.byte_of(mark.index());
+                let sty = container_style(self.src, at);
+                // An indentless sequence is marked past its first `- `; it
+                // starts at the dash.
+                let pos = match sty == style::BLOCK && !self.src[at..].starts_with('-') {
+                    true => pos_rel(self.src, at, pos, dash_before(self.src, at)),
+                    false => pos,
+                };
+                let start = self.prop_start(mark.index(), KIND_SEQUENCE).unwrap_or(pos);
                 let node = Node::Sequence {
                     children: Vec::new(),
-                    style: container_style(self.src, at),
+                    style: sty,
                     tag: tag.map(tag_text),
                     anchor: self.name_of(anchor),
+                    mark: Marks { start, end: pos },
                 };
                 self.stack.push(node);
             }
             Event::MappingStart(anchor, tag) => {
                 let at = self.byte_of(mark.index());
+                let start = self.prop_start(mark.index(), KIND_MAPPING).unwrap_or(pos);
                 let node = Node::Mapping {
                     children: Vec::new(),
                     style: container_style(self.src, at),
                     tag: tag.map(tag_text),
                     anchor: self.name_of(anchor),
+                    mark: Marks { start, end: pos },
                 };
                 self.stack.push(node);
             }
-            Event::SequenceEnd | Event::MappingEnd => self.pop_container(),
+            Event::SequenceEnd | Event::MappingEnd => {
+                if let Some(
+                    Node::Sequence {
+                        style: sty,
+                        mark,
+                        children,
+                        ..
+                    }
+                    | Node::Mapping {
+                        style: sty,
+                        mark,
+                        children,
+                        ..
+                    },
+                ) = self.stack.last_mut()
+                {
+                    // A flow container ends past its closing bracket; a block
+                    // one where the next token begins.
+                    mark.end = match *sty == style::FLOW {
+                        true => (pos.0, pos.1 + 1),
+                        false => pos,
+                    };
+                    // yaml-rust2 marks a block mapping at its first `:`; the
+                    // node starts no later than its first key.
+                    if let Some(first) = children.first() {
+                        mark.start = mark.start.min(first.marks().start);
+                    }
+                }
+                self.pop_container();
+            }
             Event::Alias(id) => {
                 // A name is only missing when the caller did not ask for
                 // names, and then nothing reads it.
                 let anchor = self.name_of(id).unwrap_or_default();
-                self.place(Node::Alias { anchor });
+                let end = (pos.0, pos.1 + 1 + anchor.chars().count());
+                self.place(Node::Alias {
+                    anchor,
+                    mark: Marks { start: pos, end },
+                });
             }
-            Event::Nothing | Event::StreamStart | Event::StreamEnd => {}
+            Event::StreamEnd => self.stream_end = pos,
+            Event::Nothing | Event::StreamStart => {}
         }
     }
 }

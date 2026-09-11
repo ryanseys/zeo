@@ -14,7 +14,7 @@
 //! rather than keeping a hidden Rust handle beside them is what makes a
 //! hand-built tree work exactly like a parsed one.
 
-use super::nodes::{Document, Node, style};
+use super::nodes::{Document, Marks, Node, style};
 use crate::dispatch::{raise_error, send_value};
 use crate::{RubyValue, Signal, Symbol, string_new};
 
@@ -47,6 +47,15 @@ fn get_ivar(obj: &RubyValue, name: &str) -> Result<RubyValue, Signal> {
     send_value(obj, Symbol::intern("instance_variable_get"), &[s(name)], None)
 }
 
+/// A node's `start_line`/`start_column`/`end_line`/`end_column`.
+fn set_marks(obj: &RubyValue, m: Marks) -> Result<(), Signal> {
+    let int = |n: usize| RubyValue::Int(n as i64);
+    set_ivar(obj, "@start_line", int(m.start.0))?;
+    set_ivar(obj, "@start_column", int(m.start.1))?;
+    set_ivar(obj, "@end_line", int(m.end.0))?;
+    set_ivar(obj, "@end_column", int(m.end.1))
+}
+
 fn push_child(parent: &RubyValue, child: RubyValue) -> Result<(), Signal> {
     let children = get_ivar(parent, "@children")?;
     if let RubyValue::Array(a) = children {
@@ -63,10 +72,11 @@ pub(super) fn to_ruby_documents(docs: &[Document]) -> Result<Vec<RubyValue>, Sig
 }
 
 /// The whole stream as a `Psych::Nodes::Stream`, which is what
-/// `Psych.parse_stream` answers.
-pub(super) fn to_ruby_stream(docs: &[Document]) -> Result<RubyValue, Signal> {
+/// `Psych.parse_stream` answers. It runs from the top of the text to `end`.
+pub(super) fn to_ruby_stream(docs: &[Document], end: (usize, usize)) -> Result<RubyValue, Signal> {
     let cls = nodes_class("Stream")?;
     let stream = send_value(&cls, Symbol::intern("new"), &[], None)?;
+    set_marks(&stream, Marks { start: (0, 0), end })?;
     for doc in docs {
         push_child(&stream, document_object(doc)?)?;
     }
@@ -100,6 +110,7 @@ fn document_object(doc: &Document) -> Result<RubyValue, Signal> {
         None,
     )?;
     set_ivar(&obj, "@implicit_end", RubyValue::Bool(doc.implicit_end))?;
+    set_marks(&obj, doc.mark)?;
     if let Some(root) = &doc.root {
         push_child(&obj, to_ruby_node(root)?)?;
     }
@@ -114,6 +125,7 @@ fn to_ruby_node(node: &Node) -> Result<RubyValue, Signal> {
             quoted,
             tag,
             anchor,
+            mark,
         } => {
             let cls = nodes_class("Scalar")?;
             // `plain` and `quoted` are the two booleans a gem reads instead
@@ -121,7 +133,7 @@ fn to_ruby_node(node: &Node) -> Result<RubyValue, Signal> {
             // for a node nothing parsed.
             let plain = !*quoted;
             let quoted = *quoted;
-            send_value(
+            let obj = send_value(
                 &cls,
                 Symbol::intern("new"),
                 &[
@@ -133,23 +145,43 @@ fn to_ruby_node(node: &Node) -> Result<RubyValue, Signal> {
                     RubyValue::Int(*sty),
                 ],
                 None,
-            )
+            )?;
+            set_marks(&obj, *mark)?;
+            Ok(obj)
         }
         Node::Sequence {
             children,
             style: sty,
             tag,
             anchor,
-        } => container_object("Sequence", children, *sty, tag.as_deref(), anchor.as_deref()),
+            mark,
+        } => container_object(
+            "Sequence",
+            children,
+            *sty,
+            tag.as_deref(),
+            anchor.as_deref(),
+            *mark,
+        ),
         Node::Mapping {
             children,
             style: sty,
             tag,
             anchor,
-        } => container_object("Mapping", children, *sty, tag.as_deref(), anchor.as_deref()),
-        Node::Alias { anchor } => {
+            mark,
+        } => container_object(
+            "Mapping",
+            children,
+            *sty,
+            tag.as_deref(),
+            anchor.as_deref(),
+            *mark,
+        ),
+        Node::Alias { anchor, mark } => {
             let cls = nodes_class("Alias")?;
-            send_value(&cls, Symbol::intern("new"), &[s(anchor)], None)
+            let obj = send_value(&cls, Symbol::intern("new"), &[s(anchor)], None)?;
+            set_marks(&obj, *mark)?;
+            Ok(obj)
         }
     }
 }
@@ -160,6 +192,7 @@ fn container_object(
     sty: i64,
     tag: Option<&str>,
     anchor: Option<&str>,
+    mark: Marks,
 ) -> Result<RubyValue, Signal> {
     let cls = nodes_class(class)?;
     let obj = send_value(
@@ -174,6 +207,7 @@ fn container_object(
         ],
         None,
     )?;
+    set_marks(&obj, mark)?;
     for child in children {
         push_child(&obj, to_ruby_node(child)?)?;
     }
@@ -230,21 +264,25 @@ pub(super) fn from_ruby_nodes(v: &RubyValue) -> Result<Option<Node>, Signal> {
             quoted: matches!(get_ivar(v, "@quoted")?, RubyValue::Bool(true)),
             tag: opt_text(&get_ivar(v, "@tag")?),
             anchor: opt_text(&get_ivar(v, "@anchor")?),
+            mark: Marks::default(),
         })),
         "Sequence" => Ok(Some(Node::Sequence {
             children: children_of(v)?,
             style: int_of(&get_ivar(v, "@style")?, style::BLOCK),
             tag: opt_text(&get_ivar(v, "@tag")?),
             anchor: opt_text(&get_ivar(v, "@anchor")?),
+            mark: Marks::default(),
         })),
         "Mapping" => Ok(Some(Node::Mapping {
             children: children_of(v)?,
             style: int_of(&get_ivar(v, "@style")?, style::BLOCK),
             tag: opt_text(&get_ivar(v, "@tag")?),
             anchor: opt_text(&get_ivar(v, "@anchor")?),
+            mark: Marks::default(),
         })),
         "Alias" => Ok(Some(Node::Alias {
             anchor: text_of(&get_ivar(v, "@anchor")?),
+            mark: Marks::default(),
         })),
         other => Err(raise_error(
             "TypeError",
