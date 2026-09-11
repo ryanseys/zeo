@@ -112,12 +112,12 @@ pub fn last_match_group(n: usize) -> RubyValue {
 /// `` $` `` -- the text BEFORE the match (`""` when the match started at 0,
 /// `nil` when there was no match at all).
 pub fn last_match_pre() -> RubyValue {
-    last_match_slice(|m, start, _| m.haystack[..start].to_string())
+    with_slot(|slot| slot.as_ref().map_or(RubyValue::Nil, crate::regexp::matchdata_pre_match))
 }
 
 /// `$'` -- the text AFTER the match.
 pub fn last_match_post() -> RubyValue {
-    last_match_slice(|m, _, end| m.haystack[end..].to_string())
+    with_slot(|slot| slot.as_ref().map_or(RubyValue::Nil, crate::regexp::matchdata_post_match))
 }
 
 /// `$+` -- the text of the highest-numbered group that actually PARTICIPATED
@@ -136,18 +136,6 @@ pub fn last_match_last_group() -> RubyValue {
         Some(m) => match m.groups.iter().rposition(|g| g.is_some()) {
             Some(i) if i > 0 => crate::regexp::matchdata_group(m, i as i64),
             _ => RubyValue::Nil,
-        },
-        None => RubyValue::Nil,
-    })
-}
-
-/// Shared by `` $` ``/`$'`: both are a slice of the haystack cut at group
-/// 0's span, and both are nil when nothing matched.
-fn last_match_slice(f: impl Fn(&RMatchData, usize, usize) -> String) -> RubyValue {
-    with_slot(|slot| match slot {
-        Some(m) => match m.groups.first().copied().flatten() {
-            Some((start, end)) => RubyValue::Str(crate::string_new(f(m, start, end))),
-            None => RubyValue::Nil,
         },
         None => RubyValue::Nil,
     })

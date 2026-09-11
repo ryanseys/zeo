@@ -54,14 +54,23 @@ ruby_class! {
     def self."escape" | "quote"(_recv, arg) {
         // `reg_operand` takes a SYMBOL as its own name, beside the `to_str`
         // protocol -- `Regexp.escape(:"a.b")` is `"a\\.b"`.
-        let text = match arg {
-            RubyValue::Symbol(sym) => sym.name(),
-            other => crate::builtins::convert::to_rstr(other)?
-                .lock()
-                .to_utf8_lossy()
-                .into_owned(),
+        let (text, binary) = match arg {
+            RubyValue::Symbol(sym) => (sym.name(), false),
+            other => {
+                let s = crate::builtins::convert::to_rstr(other)?;
+                let g = s.lock();
+                let binary = g.encoding() == crate::encoding::ASCII_8BIT && !g.ascii_only();
+                (g.to_utf8_lossy().into_owned(), binary)
+            }
         };
         let escaped = escape_regexp_source(&text);
+        // A binary String's high bytes stay bytes.
+        if binary {
+            return Ok(crate::builtins::string::str_value_in_enc(
+                crate::encoding::ASCII_8BIT,
+                &escaped,
+            ));
+        }
         Ok(RubyValue::Str(crate::string_new(escaped)))
     }
 
@@ -77,7 +86,13 @@ ruby_class! {
         // A Regexp source: clone it verbatim (flags and all), ignoring any
         // extra options -- CRuby warns but reuses the original.
         if let Some(re) = crate::regexp::as_regexp(arg1) {
-            return crate::regexp_new(&re.source, re.ignore_case, re.extended, re.multiline)
+            return crate::regexp::regexp_new_enc(
+                &re.source,
+                re.ignore_case,
+                re.extended,
+                re.multiline,
+                re.encoding,
+            )
                 .map(|re| RubyValue::Regexp(re.with_timeout(timeout)))
                 .map_err(|e| regexp_error!("{e}"));
         }
@@ -85,8 +100,15 @@ ruby_class! {
         // The SOURCE STRING's encoding decides how wide a character is, which
         // is what `\M-a` (one byte past 0x7f) turns on: whole in binary,
         // half a character in UTF-8.
-        let binary = s.lock().encoding() == crate::encoding::ASCII_8BIT;
+        let (binary, ascii) = {
+            let g = s.lock();
+            (g.encoding() == crate::encoding::ASCII_8BIT, g.ascii_only())
+        };
         let source = s.lock().to_utf8_lossy().into_owned();
+        let bits = match arg2 {
+            Some(RubyValue::Int(f)) => *f,
+            _ => 0,
+        };
         let (ignore_case, extended, multiline) = match arg2 {
             None | Some(RubyValue::Nil) | Some(RubyValue::Bool(false)) => (false, false, false),
             Some(RubyValue::Bool(true)) => (true, false, false),
@@ -114,13 +136,26 @@ ruby_class! {
             }
             Some(other) => (other.truthy(), false, false),
         };
-        let enc = match binary {
-            true => zeo_abi::RegexpEncoding::None,
-            false => zeo_abi::RegexpEncoding::Source,
+        // `NOENCODING` is `/n`; a binary String reads bytes without the flag;
+        // `FIXEDENCODING` pins any other String to UTF-8.
+        let enc = if bits & NOENCODING != 0 {
+            if !binary && !ascii {
+                return Err(regexp_error!(
+                    "/.../n has a non escaped non ASCII character in non ASCII-8BIT script: /{source}/"
+                ));
+            }
+            zeo_abi::RegexpEncoding::None
+        } else if binary {
+            zeo_abi::RegexpEncoding::Binary
+        } else if bits & FIXEDENCODING != 0 {
+            zeo_abi::RegexpEncoding::Utf8
+        } else {
+            zeo_abi::RegexpEncoding::Source
         };
         let re = crate::regexp::regexp_new_enc(&source, ignore_case, extended, multiline, enc)
             .map_err(|e| regexp_error!("{e}"))?;
-        crate::regexp::warn_pattern(&source, extended);
+        let reads_bytes = matches!(enc, zeo_abi::RegexpEncoding::None | zeo_abi::RegexpEncoding::Binary);
+        crate::regexp::warn_pattern(&source, extended, reads_bytes);
         Ok(RubyValue::Regexp(re.with_timeout(timeout)))
     }
 
@@ -132,22 +167,56 @@ ruby_class! {
             [RubyValue::Array(a)] => a.lock().to_vec(),
             _ => args.to_vec(),
         };
+        // The encoding each non-ASCII member pins; two that differ refuse.
+        let mut pinned: Option<crate::encoding::EncodingId> = None;
+        let mut pin = |enc: crate::encoding::EncodingId| -> Result<(), crate::Signal> {
+            match pinned {
+                Some(first) if first != enc => {
+                    let name = |id: crate::encoding::EncodingId| match id {
+                        crate::encoding::ASCII_8BIT => "ASCII-8BIT".to_string(),
+                        other => other.name().to_string(),
+                    };
+                    Err(crate::builtins::arg_error!(
+                        "incompatible encodings: {} and {}",
+                        name(first),
+                        name(enc)
+                    ))
+                }
+                _ => {
+                    pinned = Some(enc);
+                    Ok(())
+                }
+            }
+        };
         let source = if items.is_empty() {
             "(?!)".to_string()
         } else {
             let mut parts = Vec::with_capacity(items.len());
             for item in &items {
                 match crate::regexp::as_regexp(item) {
-                    Some(re) => parts.push(regexp_to_s_string(&re)),
+                    Some(re) => {
+                        if re.is_fixed_encoding() {
+                            pin(re.encoding_id())?;
+                        }
+                        parts.push(regexp_to_s_string(&re))
+                    }
                     None => {
                         let s = crate::builtins::convert::to_rstr(item)?;
-                        parts.push(escape_regexp_source(&s.lock().to_utf8_lossy()))
+                        let g = s.lock();
+                        if !g.ascii_only() {
+                            pin(g.encoding())?;
+                        }
+                        parts.push(escape_regexp_source(&g.to_utf8_lossy()))
                     }
                 }
             }
             parts.join("|")
         };
-        crate::regexp_new(&source, false, false, false)
+        let enc = match pinned {
+            Some(crate::encoding::ASCII_8BIT) => zeo_abi::RegexpEncoding::Binary,
+            _ => zeo_abi::RegexpEncoding::Source,
+        };
+        crate::regexp::regexp_new_enc(&source, false, false, false, enc)
             .map(RubyValue::Regexp)
             .map_err(|e| regexp_error!("{e}"))
     }
@@ -191,15 +260,7 @@ ruby_class! {
                 crate::encoding::ASCII_8BIT,
             ));
         }
-        let id = match re.encoding {
-            zeo_abi::RegexpEncoding::EucJp => crate::encoding::EUC_JP,
-            zeo_abi::RegexpEncoding::Windows31j => crate::encoding::WINDOWS_31J,
-            zeo_abi::RegexpEncoding::Utf8 => crate::encoding::UTF_8,
-            zeo_abi::RegexpEncoding::None | zeo_abi::RegexpEncoding::Source => {
-                crate::builtins::encoding::computed_encoding_of(&re.source)
-            }
-        };
-        Ok(crate::builtins::encoding::encoding_value(id))
+        Ok(crate::builtins::encoding::encoding_value(re.encoding_id()))
     }
     // Every reachable zeo Regexp is compiled: a frozen one (every literal)
     // answers FrozenError, anything else CRuby's "already initialized
@@ -217,7 +278,7 @@ ruby_class! {
     // `$~`; `#match` and `#=~` do build one (and set `$~`) via the runtime
     // helpers String's own rows share.
     def "match?" cfunc (recv, arg1, arg2?) {
-        let Some((h, _enc)) = subject_arg(live_re(recv)?, arg1)? else { return Ok(RubyValue::Bool(false)) };
+        let Some((h, enc)) = subject_arg(live_re(recv)?, arg1)? else { return Ok(RubyValue::Bool(false)) };
         // An optional start position (char offset, end-relative when negative)
         // anchors the search; a position past the end is simply no match.
         let Some(at) = crate::builtins::string::match_haystack(&h, arg2)? else {
@@ -227,6 +288,7 @@ ruby_class! {
             re_of(recv),
             &h,
             at,
+            enc,
         )?))
     }
     def "match" cfunc (recv, arg1, arg2?, &block) {
@@ -255,17 +317,12 @@ ruby_class! {
         Ok(RubyValue::Bool(live_re(recv)?.ignore_case))
     }
     // A regexp is fixed-encoding when it is tied to a specific encoding rather
-    // than the ASCII-agnostic default. Two ways to get there: a flag PINNED one
-    // (`/e`, `/s`, `/u` -- but not `/n`, which declares the opposite), or the
-    // source itself carries a non-ASCII character, so `computed_encoding_of`
-    // resolves past US-ASCII (`/café/` -> UTF-8 -> true; `/abc/` -> false).
+    // than the ASCII-agnostic default: a flag PINNED one (`/e`, `/s`, `/u` --
+    // but not `/n`, which declares the opposite), a binary pattern holding a
+    // high byte, or a source whose characters resolve past US-ASCII
+    // (`/café/` -> UTF-8 -> true; `/abc/` -> false).
     def "fixed_encoding?" (recv) {
-        let re = live_re(recv)?;
-        if re.encoding.is_fixed() {
-            return Ok(RubyValue::Bool(true));
-        }
-        let enc = crate::builtins::encoding::computed_encoding_of(&re.source);
-        Ok(RubyValue::Bool(enc != crate::encoding::US_ASCII))
+        Ok(RubyValue::Bool(live_re(recv)?.is_fixed_encoding()))
     }
     // `names` lists the named capture groups in order; `named_captures` maps
     // each name to its 1-based capture position(s).
@@ -317,9 +374,11 @@ ruby_class! {
         let bits = (re.ignore_case as i64) * IGNORECASE
             + (re.extended as i64) * EXTENDED
             + (re.multiline as i64) * MULTILINE
-            // `FIXEDENCODING` (16) for `/e`/`/s`/`/u`, `NOENCODING` (32) for
-            // `/n` -- the bits ruby2ruby reads back out of `/x/e.options`.
-            + re.encoding.option_bits();
+            // `FIXEDENCODING` for a fixed pattern (`/e`/`/s`/`/u`, `/café/`, a
+            // binary one with a high byte), `NOENCODING` for `/n` -- the bits
+            // ruby2ruby reads back out of `/x/e.options`.
+            + if re.is_fixed_encoding() { FIXEDENCODING } else { 0 }
+            + if re.encoding == zeo_abi::RegexpEncoding::None { NOENCODING } else { 0 };
         Ok(RubyValue::Int(bits))
     }
 
@@ -334,11 +393,20 @@ ruby_class! {
         live_re(recv)?;
         inherited_row!(kernel, "hash", recv, __args, None)
     }
-    def "inspect"(recv) { Ok(RubyValue::Str(crate::string_new(recv.structural_inspect()?))) }
+    // A binary pattern answers in an ASCII-8BIT String.
+    def "inspect"(recv) {
+        if let Some(re) = crate::regexp::as_regexp(recv).filter(|re| re.fixed_binary) {
+            return Ok(crate::regexp::regexp_inspect(&re));
+        }
+        Ok(RubyValue::Str(crate::string_new(recv.structural_inspect()?)))
+    }
     // NOT an alias of `#inspect`: `Complex`, `Rational` and `Regexp` all
     // spell the two differently, so each goes to its own Kernel row.
     def "to_s"(recv) {
-        live_re(recv)?;
+        let re = live_re(recv)?;
+        if re.fixed_binary {
+            return Ok(crate::regexp::regexp_to_s(re));
+        }
         Ok(RubyValue::Str(crate::string_new(recv.structural_to_s()?)))
     }
 }
@@ -461,6 +529,8 @@ fn regexp_allocate() -> RubyValue {
         extended: false,
         multiline: false,
         encoding: zeo_abi::RegexpEncoding::None,
+        fixed_binary: false,
+        prepared_enc: std::sync::atomic::AtomicU8::new(u8::MAX),
         frozen: std::sync::atomic::AtomicBool::new(false),
     }))
 }
@@ -472,7 +542,7 @@ fn regexp_allocate() -> RubyValue {
 /// the match hands back has to come back in it, so the two travel together.
 type Subject = (String, crate::encoding::EncodingId);
 
-fn subject_arg(re: &crate::RRegexp, v: &RubyValue) -> Result<Option<Subject>, crate::Signal> {
+fn subject_arg(_re: &crate::RRegexp, v: &RubyValue) -> Result<Option<Subject>, crate::Signal> {
     match v {
         RubyValue::Nil => Ok(None),
         // A Symbol matches as its name, which is not an implicit String
@@ -494,10 +564,10 @@ fn subject_arg(re: &crate::RRegexp, v: &RubyValue) -> Result<Option<Subject>, cr
                     "invalid byte sequence in {enc}"
                 ));
             }
-            let (enc, ascii_only) = (buf.encoding(), buf.ascii_only());
+            // The match itself checks the encodings (`regexp::enter`).
+            let enc = buf.encoding();
             let text = buf.to_utf8_lossy().into_owned();
             drop(buf);
-            crate::builtins::encoding::guard_regexp_haystack(re, enc, ascii_only)?;
             Ok(Some((text, enc)))
         }
     }
@@ -507,6 +577,8 @@ fn subject_arg(re: &crate::RRegexp, v: &RubyValue) -> Result<Option<Subject>, cr
 const IGNORECASE: i64 = 1;
 const EXTENDED: i64 = 2;
 const MULTILINE: i64 = 4;
+const FIXEDENCODING: i64 = 16;
+const NOENCODING: i64 = 32;
 
 /// Seeds the `Regexp::*` option bits -- called once from generated `main()`,
 /// alongside the other builtin-constant seeders. `FIXEDENCODING` and

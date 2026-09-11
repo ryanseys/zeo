@@ -1,5 +1,6 @@
 ---
 source: crates/zeo/tests/suite/checks/clif.rs
+assertion_line: 479
 expression: rendered
 ---
 zeo_rt_alias_in_default_definee ([Ptr, Ptr, Ptr, Ptr, Ptr]) -> Some(I32)
@@ -191,6 +192,8 @@ zeo_rt_refined_send_in ([U32, Ptr, U32, Ptr, Usize, Ptr, Ptr, Ptr, Usize, U8, Pt
 zeo_rt_reflect_dispatch_in ([U32, Ptr, U8, Ptr, Usize, Ptr, Ptr, Usize, Ptr]) -> Some(I32)
 zeo_rt_regexp_interp ([Ptr, U8, U8, U8, U8, Ptr]) -> Some(I32)
 zeo_rt_regexp_lit ([U32, Ptr, Usize, U8, U8, U8, U8, Ptr]) -> Some(I32)
+zeo_rt_regexp_once_get ([U32, Ptr]) -> Some(I8)
+zeo_rt_regexp_once_put ([U32, Ptr]) -> None
 zeo_rt_release ([Ptr]) -> None
 zeo_rt_rescue_matches ([Ptr, Ptr, Usize]) -> Some(U8)
 zeo_rt_rescue_matches_any ([Ptr, Ptr, Ptr]) -> Some(I32)

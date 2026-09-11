@@ -770,12 +770,17 @@ ruby_class! {
             let Some(start) = byte_offset_arg(arg2, hay.len())? else {
                 return Ok(RubyValue::Nil);
             };
-            let text = rstr.lock().to_utf8_lossy().into_owned();
-            if start > text.len() || !text.is_char_boundary(start) {
+            let (text, enc) = {
+                let g = rstr.lock();
+                (g.to_utf8_lossy().into_owned(), g.encoding())
+            };
+            let Some(from) = crate::regexp::subject_text_offset(&text, start, enc) else {
                 return Ok(RubyValue::Nil);
-            }
-            return Ok(match crate::regexp::regexp_find(re, &text[start..])? {
-                Some((b, _)) => RubyValue::Int((start + b) as i64),
+            };
+            return Ok(match crate::regexp::regexp_find(re, &text[from..], enc)? {
+                Some((b, _)) => {
+                    RubyValue::Int(crate::regexp::subject_byte_offset(&text, from + b, enc) as i64)
+                }
                 None => RubyValue::Nil,
             });
         }
@@ -802,9 +807,13 @@ ruby_class! {
         };
         // `byterindex(regexp[, pos])` -- the BYTE offset of the last match.
         if let RubyValue::Regexp(re) = arg1 {
-            let text = rstr.lock().to_utf8_lossy().into_owned();
-            return Ok(match crate::regexp::regexp_byterindex(re, &text, before)? {
-                Some(i) => RubyValue::Int(i as i64),
+            let (text, enc) = {
+                let g = rstr.lock();
+                (g.to_utf8_lossy().into_owned(), g.encoding())
+            };
+            let before = crate::regexp::subject_text_offset(&text, before, enc).unwrap_or(before);
+            return Ok(match crate::regexp::regexp_byterindex(re, &text, before, enc)? {
+                Some(i) => RubyValue::Int(crate::regexp::subject_byte_offset(&text, i, enc) as i64),
                 None => RubyValue::Nil,
             });
         }
@@ -1389,7 +1398,10 @@ ruby_class! {
                 };
                 str_array(parts)
             }
-            Some(RubyValue::Regexp(re)) => crate::regexp_split(re, &text, limit)?,
+            Some(RubyValue::Regexp(re)) => {
+                let enc = rstr.lock().encoding();
+                crate::regexp_split(re, &text, limit, enc)?
+            }
             Some(_) => unreachable!("split separator normalized to Str/Regexp above"),
         };
         // Every field is a slice of the receiver's own text, so it carries the
@@ -1972,7 +1984,8 @@ ruby_class! {
                 // A Regexp prefix matches only when it matches anchored at the
                 // start; CRuby sets `$~` to the match (nil on no start-match).
                 RubyValue::Regexp(re) => {
-                    if crate::regexp::regexp_anchored_len(re, &text)?.is_some() {
+                    let enc = rstr.lock().encoding();
+                    if crate::regexp::regexp_anchored_len(re, &text, enc)?.is_some() {
                         crate::regexp_match(re, &text, rstr.lock().encoding())?;
                         return Ok(RubyValue::Bool(true));
                     }
@@ -2343,12 +2356,11 @@ ruby_class! {
         match other {
             RubyValue::Regexp(re) => {
                 guard_valid(recv)?;
-                let (enc, ascii_only) = {
+                let (text, enc) = {
                     let b = rstr.lock();
-                    (b.encoding(), b.ascii_only())
+                    (b.to_utf8_lossy().into_owned(), b.encoding())
                 };
-                crate::builtins::encoding::guard_regexp_haystack(re, enc, ascii_only)?;
-                crate::regexp_search_index(re, &rstr.lock().to_utf8_lossy(), enc)
+                crate::regexp_search_index(re, &text, enc)
             }
             // Only a STRING operand is the TypeError. Ruby's `rb_str_match`
             // hands anything else back to the operand's own `=~`, so
@@ -2399,7 +2411,7 @@ ruby_class! {
         // `match?` sets no `$~`, so it asks the engine directly at the
         // offset rather than building a MatchData to throw away.
         Ok(RubyValue::Bool(match match_haystack(&text, arg2)? {
-            Some(at) => crate::regexp::regexp_is_match_at(&re, &text, at)?,
+            Some(at) => crate::regexp::regexp_is_match_at(&re, &text, at, rstr.lock().encoding())?,
             None => false,
         }))
     }

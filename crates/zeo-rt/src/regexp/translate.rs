@@ -16,12 +16,12 @@ use std::borrow::Cow;
 /// backreferences, named-group capture suppression). Ruby's `/m` (dot
 /// matches newline) maps to onig's `MULTILINE`; `^`/`$` are line anchors by
 /// default under `Syntax::ruby()`.
-fn build_onig(
-    source: &str,
-    ignore_case: bool,
-    extended: bool,
-    multiline: bool,
-) -> Result<onig::Regex, String> {
+fn build_onig(source: &str, opts: onig::RegexOptions) -> Result<onig::Regex, String> {
+    onig::Regex::with_options(source, opts, onig::Syntax::ruby()).map_err(|e| e.to_string())
+}
+
+/// Oniguruma's options for ruby's `i`, `x` and `m`.
+fn onig_options(ignore_case: bool, extended: bool, multiline: bool) -> onig::RegexOptions {
     let mut opts = onig::RegexOptions::REGEX_OPTION_NONE;
     if ignore_case {
         opts |= onig::RegexOptions::REGEX_OPTION_IGNORECASE;
@@ -32,7 +32,7 @@ fn build_onig(
     if multiline {
         opts |= onig::RegexOptions::REGEX_OPTION_MULTILINE;
     }
-    onig::Regex::with_options(source, opts, onig::Syntax::ruby()).map_err(|e| e.to_string())
+    opts
 }
 
 /// The pattern with every zero-width atom -- a lookaround group, `^`, `$`,
@@ -355,14 +355,28 @@ fn splice_escaped_char(
             return Err("invalid multibyte escape");
         }
     }
-    // A high byte (or a whole multi-byte character) goes in AS BYTES; an
-    // ASCII one is rewritten `\xNN`, so the engine reads a literal rather
-    // than a metacharacter.
+    // A whole multi-byte character goes in AS BYTES, and a binary pattern's
+    // high byte as the Latin-1 character the engine reads a binary subject's
+    // byte as. An ASCII one is rewritten `\xNN`, so the engine reads a literal
+    // rather than a metacharacter.
     match bytes.len() > 1 || bytes[0] & 0x80 != 0 {
+        true if binary => push_byte_char(out, bytes[0]),
         true => out.extend_from_slice(&bytes),
         false => out.extend_from_slice(format!("\\x{:02X}", bytes[0]).as_bytes()),
     }
     Ok(())
+}
+
+/// Whether the escape at `b[i]` names a byte past 0x7f.
+fn escapes_high_byte(b: &[u8], i: usize) -> bool {
+    let mut at = i;
+    matches!(read_escaped_byte(b, &mut at), Ok(byte) if byte >= 0x80)
+}
+
+/// Byte `b` as the Latin-1 character a binary subject's byte reaches the
+/// engine as.
+fn push_byte_char(out: &mut Vec<u8>, b: u8) {
+    out.extend_from_slice(char::from(b).encode_utf8(&mut [0; 4]).as_bytes());
 }
 
 /// CRuby's `unescape_nonascii`, for the three escapes ruby decodes ITSELF.
@@ -388,6 +402,13 @@ fn preprocess_control_escapes(
         }
         match b[i + 1] {
             b'M' | b'C' | b'c' => {
+                touched = true;
+                splice_escaped_char(b, &mut i, binary, &mut out)?;
+            }
+            // A `\xHH` or octal escape past 0x7f is a byte ruby decodes
+            // itself, as it does `\M-`. A lower one, or a backreference,
+            // stays for the engine.
+            b'x' | b'0'..=b'7' if escapes_high_byte(b, i) => {
                 touched = true;
                 splice_escaped_char(b, &mut i, binary, &mut out)?;
             }
@@ -679,9 +700,19 @@ pub fn regexp_new_enc(
     // `\M-`/`\C-`/`\c` are ruby's, not the engine's -- decoded here, with the
     // pattern's own encoding deciding whether the byte they name is a whole
     // character. A `/n` regexp holds any single byte; a UTF-8 one does not.
-    let binary = matches!(encoding, zeo_abi::RegexpEncoding::None);
+    let binary = matches!(
+        encoding,
+        zeo_abi::RegexpEncoding::None | zeo_abi::RegexpEncoding::Binary
+    );
     let escaped = preprocess_control_escapes(preprocessed.as_ref(), binary)
         .map_err(|e| cruby_regex_error(written, e, ignore_case, extended, multiline))?;
+    // A binary pattern holding a high byte (a Latin-1 character by now) is
+    // pinned to ASCII-8BIT, and its engine reads every subject as bytes.
+    let fixed_binary = binary && escaped.chars().any(|c| matches!(c as u32, 0x80..=0xff));
+    let mut opts = onig_options(ignore_case, extended, multiline);
+    if fixed_binary {
+        opts = super::ascii_only(opts);
+    }
     // Onigmo's character-range modes (`\w` ASCII, `\b` Unicode, `(?a)`,
     // `(?u)`) are Oniguruma's neither; the walk in `charrange` writes them
     // into the pattern text.
@@ -690,22 +721,28 @@ pub fn regexp_new_enc(
         .map_err(|e| cruby_regex_error(written, &e, ignore_case, extended, multiline))?;
     let ranged = super::charrange::apply(renamed.as_ref(), extended, ignore_case)
         .map_err(|e| cruby_regex_error(written, e, ignore_case, extended, multiline))?;
-    let engine = match build_onig(ranged.as_ref(), ignore_case, extended, multiline) {
+    let (built, text) = match build_onig(ranged.as_ref(), opts) {
         Err(e) if e.contains("target of repeat operator is invalid") => {
             let wrapped = wrap_zero_width(ranged.as_ref(), extended);
-            build_onig(&wrapped, ignore_case, extended, multiline).map_err(|_| e)
+            (build_onig(&wrapped, opts).map_err(|_| e), wrapped)
         }
-        built => built,
+        built => (built, ranged.into_owned()),
+    };
+    let built = built.map_err(|e| cruby_regex_error(written, &e, ignore_case, extended, multiline))?;
+    let mut engine = Engine::new(built).with_renames(renames);
+    if !fixed_binary {
+        engine = engine.with_text(text, opts);
     }
-    .map_err(|e| cruby_regex_error(written, &e, ignore_case, extended, multiline))?;
     Ok(Arc::new(RegexpData {
-        engine: Engine::new(engine).with_renames(renames),
+        engine,
         source: written.to_string(),
         uninitialized: false,
         ignore_case,
         extended,
         multiline,
         encoding,
+        fixed_binary,
+        prepared_enc: std::sync::atomic::AtomicU8::new(u8::MAX),
         frozen: std::sync::atomic::AtomicBool::new(false),
     }))
 }
@@ -713,10 +750,10 @@ pub fn regexp_new_enc(
 /// Prints the warnings Onigmo prints while it parses `source`, at the
 /// caller's line. Ruby prints them for a pattern built at run time
 /// (`Regexp.new`, an interpolated literal) and none for a static literal.
-pub(crate) fn warn_pattern(source: &str, extended: bool) {
+pub(crate) fn warn_pattern(source: &str, extended: bool, binary: bool) {
     let Ok(expanded) = preprocess_unicode(source) else { return };
-    let Ok(escaped) = preprocess_control_escapes(&expanded, false) else { return };
-    for warning in super::lint::warnings(&escaped, extended) {
+    let Ok(escaped) = preprocess_control_escapes(&expanded, binary) else { return };
+    for warning in super::lint::warnings(&escaped, extended, binary) {
         crate::builtins::warning::rb_warn(&warning);
     }
 }
@@ -839,7 +876,7 @@ mod tests {
             let re = regexp_new(pattern, false, false, false)
                 .unwrap_or_else(|e| panic!("{pattern}: {e}"));
             assert!(
-                regexp_is_match(&re, subject).unwrap(),
+                regexp_is_match(&re, subject, crate::encoding::UTF_8).unwrap(),
                 "{pattern} on {subject:?}"
             );
         }

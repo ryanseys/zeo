@@ -517,7 +517,7 @@ pub unsafe extern "C" fn zeo_rt_regexp_interp(
         regexp_encoding(enc),
     ) {
         Ok(re) => {
-            crate::regexp::warn_pattern(&source, extended != 0);
+            crate::regexp::warn_pattern(&source, extended != 0, enc == 1);
             re.set_frozen();
             let v = RubyValue::Regexp(re);
             super::leakcheck::created(&v);
@@ -543,6 +543,8 @@ pub unsafe extern "C" fn zeo_rt_regexp_once_get(site: u32, out: *mut RubyValue) 
     let Some(re) = sites.lock().unwrap().get(&site).cloned() else { return 0 };
     let v = RubyValue::Regexp(re);
     super::leakcheck::created(&v);
+    // SAFETY: `out` is the literal's own result slot, which the emitter
+    // allocates and passes uninitialized for exactly this write.
     unsafe { out.write(v) };
     1
 }
@@ -551,6 +553,8 @@ pub unsafe extern "C" fn zeo_rt_regexp_once_get(site: u32, out: *mut RubyValue) 
 /// first one kept stays, as ruby's does when two threads race.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zeo_rt_regexp_once_put(site: u32, re: *const RubyValue) {
+    // SAFETY: `re` points at the regexp the emitter just built, which it
+    // owns and keeps alive across this call.
     let RubyValue::Regexp(re) = (unsafe { &*re }) else {
         panic!("regexp_once_put on a non-regexp")
     };

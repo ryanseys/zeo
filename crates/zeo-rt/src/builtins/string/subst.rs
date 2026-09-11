@@ -494,9 +494,9 @@ pub(super) fn sub_gsub(
             other => {
                 let replacement = convert::to_rstr(other)?.lock().to_utf8_lossy().into_owned();
                 if global {
-                    crate::regexp_gsub(re, &text, &replacement)
+                    crate::regexp_gsub(re, &text, &replacement, enc)
                 } else {
-                    crate::regexp_sub(re, &text, &replacement)
+                    crate::regexp_sub(re, &text, &replacement, enc)
                 }
             }
         },

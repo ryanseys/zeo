@@ -69,6 +69,7 @@ pub(super) fn regexp_lit(
         zeo_abi::RegexpEncoding::EucJp => 2,
         zeo_abi::RegexpEncoding::Windows31j => 3,
         zeo_abi::RegexpEncoding::Utf8 => 4,
+        zeo_abi::RegexpEncoding::Binary => unreachable!("only Regexp.new reads bytes without /n"),
     };
     let flag_vals = |fx: &mut Fx| {
         let ic = fx.b.ins().iconst(types::I8, i64::from(flags.ignore_case));

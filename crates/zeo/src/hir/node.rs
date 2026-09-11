@@ -356,14 +356,9 @@ pub enum HirNode {
     /// once an interpolated part is substituted in) raises a real, catchable
     /// `RegexpError` at codegen's construction site -- NOT rejected any
     /// earlier at `zeo` compile time, unlike real Ruby's own parse-time
-    /// `SyntaxError` for a static pattern: a documented, narrower-timing
-    /// approximation (see `clif/expr.rs`'s `regexp_lit`),
-    /// not silent wrongness. Backed by the `regex` crate, not Ruby's own
-    /// Onigmo engine -- no backreferences (`\1` inside the PATTERN itself,
-    /// as opposed to a `gsub`/`sub` REPLACEMENT string, where they *are*
-    /// supported -- see `zeo_rt::regexp`'s docs) and no lookaround
-    /// (`(?=...)`/`(?!...)`/`(?<=...)`/`(?<!...)`), a real, documented
-    /// semantic gap versus real Ruby, not an oversight.
+    /// `SyntaxError` for a static pattern (see `clif/expr/literals.rs`'s
+    /// `regexp_lit`). The runtime compiles it on Oniguruma in Ruby's syntax
+    /// (`zeo_rt::regexp`).
     RegexpLit(Vec<StrPart>, RegexpFlags),
     LocalRead(String),
     LocalWrite(String, NodeId),

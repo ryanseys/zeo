@@ -71,16 +71,19 @@ pub fn computed_encoding_of(text: &str) -> EncodingId {
     }
 }
 
-/// The encoding a Regexp is PINNED to, or `None` when it is agnostic. A `/n`
-/// regexp is pinned to ASCII-8BIT; `/e`, `/s` and `/u` name theirs outright;
-/// and a source carrying a non-ASCII character pins itself to UTF-8. An
-/// all-ASCII source pins nothing, which is why `/caf/` matches any haystack.
+/// The encoding a Regexp is PINNED to, or `None` when it is agnostic. `/e`,
+/// `/s` and `/u` name theirs outright; a `/n` or binary pattern holding a high
+/// byte is pinned to ASCII-8BIT; and a source carrying a non-ASCII character
+/// pins itself to UTF-8. An all-ASCII source pins nothing, which is why
+/// `/caf/` matches any haystack.
 pub fn regexp_pinned_encoding(re: &crate::RRegexp) -> Option<EncodingId> {
     match re.encoding {
         zeo_abi::RegexpEncoding::EucJp => Some(encoding::EUC_JP),
         zeo_abi::RegexpEncoding::Windows31j => Some(encoding::WINDOWS_31J),
         zeo_abi::RegexpEncoding::Utf8 => Some(encoding::UTF_8),
-        zeo_abi::RegexpEncoding::None => Some(encoding::ASCII_8BIT),
+        zeo_abi::RegexpEncoding::None | zeo_abi::RegexpEncoding::Binary => {
+            re.fixed_binary.then_some(encoding::ASCII_8BIT)
+        }
         zeo_abi::RegexpEncoding::Source => (!re.source.is_ascii()).then_some(encoding::UTF_8),
     }
 }
@@ -88,13 +91,32 @@ pub fn regexp_pinned_encoding(re: &crate::RRegexp) -> Option<EncodingId> {
 /// CRuby's `rb_reg_prepare_enc` compatibility half. A pinned regexp refuses a
 /// haystack in a different encoding, because the two disagree on where one
 /// character ends. A haystack that is pure ASCII is compatible with anything
-/// and always passes.
+/// and always passes. An unpinned `/n` pattern matches any other non-ASCII
+/// haystack, with ruby's warning.
 pub fn guard_regexp_haystack(
     re: &crate::RRegexp,
     hay_enc: EncodingId,
     hay_ascii_only: bool,
 ) -> Result<(), crate::Signal> {
     let Some(pinned) = regexp_pinned_encoding(re) else {
+        if re.encoding != zeo_abi::RegexpEncoding::None {
+            return Ok(());
+        }
+        use std::sync::atomic::Ordering::Relaxed;
+        let prepared = match re.prepared_enc.load(Relaxed) {
+            u8::MAX => re.encoding_id(),
+            id => EncodingId(id),
+        };
+        if prepared == hay_enc || (hay_ascii_only && prepared == encoding::US_ASCII) {
+            return Ok(());
+        }
+        if !hay_ascii_only && hay_enc != encoding::ASCII_8BIT {
+            crate::builtins::warning::rb_warn(&format!(
+                "historical binary regexp match /.../n against {} string",
+                hay_enc.name()
+            ));
+        }
+        re.prepared_enc.store(hay_enc.0, Relaxed);
         return Ok(());
     };
     if pinned == hay_enc || hay_ascii_only {

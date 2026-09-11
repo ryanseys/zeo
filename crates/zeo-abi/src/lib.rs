@@ -124,6 +124,10 @@ pub const SEEDED_OBJECT_CONSTANTS: &[&str] = &[
 /// | `/e` | `16` | `EUC-JP` | `true` |
 /// | `/s` | `16` | `Windows-31J` | `true` |
 /// | `/u` | `16` | `UTF-8` | `true` |
+/// | `Binary` | `0` | `US-ASCII` (ASCII-only source) | `false` |
+///
+/// A `/n` or `Binary` pattern holding a byte past 0x7f is pinned to
+/// ASCII-8BIT instead, which adds `16` and makes it fixed.
 ///
 /// ruby2ruby and ruby_parser both open by reading exactly those bits back out
 /// of four throwaway literals (`ENC_EUC = /x/e.options`).
@@ -131,8 +135,11 @@ pub const SEEDED_OBJECT_CONSTANTS: &[&str] = &[
 pub enum RegexpEncoding {
     #[default]
     Source,
-    /// `/n` -- ruby's ARG_ENCODING_NONE.
+    /// `/n` -- ruby's ARG_ENCODING_NONE. Its pattern reads bytes.
     None,
+    /// `Regexp.new` of an ASCII-8BIT String: the pattern reads bytes, as
+    /// `/n` does, with no `n` flag of its own.
+    Binary,
     /// `/e` -- EUC-JP.
     EucJp,
     /// `/s` -- Windows-31J.
@@ -147,7 +154,7 @@ impl RegexpEncoding {
     /// encoding, `NOENCODING` (32) for `/n`.
     pub fn option_bits(self) -> i64 {
         match self {
-            RegexpEncoding::Source => 0,
+            RegexpEncoding::Source | RegexpEncoding::Binary => 0,
             RegexpEncoding::None => 32,
             RegexpEncoding::EucJp | RegexpEncoding::Windows31j | RegexpEncoding::Utf8 => 16,
         }
@@ -156,6 +163,7 @@ impl RegexpEncoding {
     /// Whether `#fixed_encoding?` is true on the flag alone. `/n` is not: it
     /// declares the pattern encoding-agnostic rather than pinning one.
     pub fn is_fixed(self) -> bool {
+        // `Binary` is not either: only a high byte in the pattern pins it.
         matches!(
             self,
             RegexpEncoding::EucJp | RegexpEncoding::Windows31j | RegexpEncoding::Utf8

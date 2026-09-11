@@ -40,8 +40,9 @@ enum Item {
 
 /// Every warning ruby prints for `source` (the pattern after the `\u`
 /// expansion), in parse order, each with the pattern appended the way
-/// Onigmo's `onig_syntax_warn` appends it.
-pub(super) fn warnings(source: &str, extended: bool) -> Vec<String> {
+/// Onigmo's `onig_syntax_warn` appends it. A `binary` pattern's high bytes
+/// are Latin-1 characters here.
+pub(super) fn warnings(source: &str, extended: bool, binary: bool) -> Vec<String> {
     let mut lint = Lint { b: source.as_bytes(), i: 0, comments: Vec::new(), notes: Vec::new() };
     while lint.i < lint.b.len() {
         lint.seq(extended);
@@ -58,7 +59,7 @@ pub(super) fn warnings(source: &str, extended: bool) -> Vec<String> {
         at = to;
     }
     shown.extend_from_slice(&lint.b[at..]);
-    let text = display(&String::from_utf8_lossy(&shown));
+    let text = display(&String::from_utf8_lossy(&shown), binary);
     // `onig_syntax_warn` formats into 256 bytes and drops the pattern
     // unless four bytes per pattern byte would fit.
     lint.notes
@@ -67,9 +68,10 @@ pub(super) fn warnings(source: &str, extended: bool) -> Vec<String> {
         .collect()
 }
 
-/// The pattern as Onigmo prints it: a control character as `\xhh`, a bare
-/// `/` escaped, an escape pair kept whole.
-fn display(pattern: &str) -> String {
+/// The pattern as Onigmo prints it: a control character (and a binary
+/// pattern's high byte) as `\xhh`, a bare `/` escaped, an escape pair kept
+/// whole.
+fn display(pattern: &str, binary: bool) -> String {
     let mut out = String::with_capacity(pattern.len());
     let mut chars = pattern.chars();
     while let Some(c) = chars.next() {
@@ -79,7 +81,9 @@ fn display(pattern: &str) -> String {
                 out.extend(chars.next());
             }
             '/' => out.push_str("\\/"),
-            c if (c as u32) < 0x20 || c == '\x7f' => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c if (c as u32) < 0x20 || c == '\x7f' || (binary && matches!(c as u32, 0x80..=0xff)) => {
+                out.push_str(&format!("\\x{:02x}", c as u32))
+            }
             c => out.push(c),
         }
     }
@@ -445,7 +449,7 @@ mod tests {
     use super::warnings;
 
     fn one(source: &str) -> Vec<String> {
-        warnings(source, false)
+        warnings(source, false, false)
     }
 
     #[test]
@@ -487,7 +491,7 @@ mod tests {
     #[test]
     fn the_pattern_is_shown_as_onigmo_prints_it() {
         assert_eq!(
-            warnings("a* # c\n *", true),
+            warnings("a* # c\n *", true, false),
             vec!["regular expression has redundant nested repeat operator '*': /a*  */".to_string()]
         );
         assert!(one("a/\t**")[0].ends_with(": /a\\/\\x09**/"));

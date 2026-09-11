@@ -179,8 +179,9 @@ Ruby syntax. CRuby runs Onigmo, a fork, and the two agree on nearly
 everything; what zeo adds on its own side is ruby's `re.c` preprocessing,
 which runs before the engine sees a pattern (`crates/zeo-rt/src/regexp/
 translate.rs`): the `\u{61 62}` codepoint LIST, the `\M-`/`\C-`/`\c`
-byte escapes with ruby's own "too short" / "invalid multibyte escape" checks
-against the pattern's encoding, and `a{2,1}` refused as Onigmo refuses it.
+byte escapes and any `\xHH` or octal escape past 0x7f, with ruby's own
+"too short" / "invalid multibyte escape" checks against the pattern's
+encoding, and `a{2,1}` refused as Onigmo refuses it.
 
 Onigmo also has three character-range modes Oniguruma lacks, and zeo
 writes them into the pattern text (`regexp/charrange.rs`): by default `\w`,
@@ -205,13 +206,17 @@ so such a class becomes a group that folds each part as Onigmo does.
 Oniguruma prints no parse warnings, so the runtime scans a pattern built at
 run time for the two Onigmo prints (a bare `\p`, a repeat of a repeat) and
 warns as ruby does. A static literal warns nothing in either.
+A binary subject reaches the engine as Latin-1 text, so it is matched by a
+twin of the pattern compiled with Oniguruma's ASCII-only options: its high
+bytes are never letters, word characters or case pairs. A `/n` or
+binary-String pattern holding a high byte uses that twin for every subject.
 The rows that stay different:
 
 | Shape | ruby | zeo |
 |---|---|---|
 | a pattern that backtracks past onig's retry limit with NO timeout set | runs to the end | answers no match, as if the pattern failed -- the retry limit is onig's, and Onigmo has none; under a timeout both raise `Regexp::TimeoutError` |
 | `Regexp.linear_time?` | Onigmo's own analysis | a source scan: false iff the pattern has a backreference, which is Onigmo's rule too |
-| a subject in an encoding onig lacks (UTF8-MAC, CESU-8, CP949, GBK, Big5-HKSCS, Windows-1250, KOI8-U, Emacs-Mule) | matched in that encoding | matched over a lossy UTF-8 view of the subject (`test/gaps/a_binary_regexp_holds_a_high_byte.rb` is the tracked case) |
+| a subject in an encoding onig lacks (UTF8-MAC, CESU-8, CP949, GBK, Big5-HKSCS, Windows-1250, KOI8-U, Emacs-Mule) | matched in that encoding | matched over a lossy UTF-8 view of the subject |
 
 Every pattern runs on the one engine, so there is no second dialect to
 translate into.
