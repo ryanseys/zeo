@@ -784,7 +784,7 @@ fn walk_class_body(
     // Whether the `attr_*` statement being walked gave way to a macro call --
     // its remaining accessors go with it.
     let mut attr_put_back = false;
-    for &stmt in &body {
+    for (pos, &stmt) in body.iter().enumerate() {
         // A `define_method(:x) { module M; end }` body is a block, so the
         // `module` keyword in it is legal and lands in THIS body's cref.
         // Registered up front, exactly as the `_` arm below registers one
@@ -846,9 +846,18 @@ fn walk_class_body(
                 // the reopen's body must install at run time, where the
                 // install also patches the class and deoptimizes the
                 // package's own guarded sites.
+                // A def after this body's own `undef` of the name installs at
+                // its position too: the retirement runs there, and the new
+                // row has to come after it.
+                let after_undef = !*is_class_method
+                    && compiler.class_body_sites[site_idx].defs.iter().any(|d| {
+                        d.event == crate::compiler::DefEvent::Undefined && d.name == *name
+                    });
                 if conditional == Conditional::Yes
                     || compiler.class(class_id).imported_pkg.is_some()
+                    || after_undef
                 {
+                    let conditional = if after_undef { Conditional::Yes } else { conditional };
                     register_body_def_method(compiler, class_id, stmt, conditional)?;
                     compiler.class_body_sites[site_idx].stmts.push(stmt);
                     continue;
@@ -1033,8 +1042,17 @@ fn walk_class_body(
                 // start -- a debug tracer nobody required took
                 // `Module#method_added` away from every program. Same rule
                 // the visibility arms below use: in a unit the retirement
-                // stays positional and runs if and when the unit loads.
-                let in_unit = compiler.unit_walk;
+                // stays positional and runs if and when the unit loads. So
+                // does one a later `def` in this body brings back: retired
+                // from program start, it would hide the new row too.
+                let redefined_later = body[pos + 1..].iter().any(|&later| {
+                    matches!(&compiler.hir[later], HirNode::DefMethod {
+                        name,
+                        is_class_method: false,
+                        ..
+                    } if names.contains(name))
+                });
+                let in_unit = compiler.unit_walk || redefined_later;
                 if in_unit {
                     for n in &names {
                         compiler.runtime_patches.insert(n.clone());
