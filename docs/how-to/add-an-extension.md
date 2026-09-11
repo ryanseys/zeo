@@ -85,7 +85,7 @@ oracle-matched `examples/` fixture.
 | nkf | `nkf`, `kconv` | `ext-nkf` | **subset** | `NKF.nkf`/`.guess` rebuilt over Zeo's own encoding engine (which grew ISO-2022-JP and the dummy UTF-16/32 rows for it) — the conversion option subset (`-j/-e/-s/-w*`, `-J/-E/-S/-W*`, `--ic/--oc`, `-m[0]` MIME-word decode, `-x/-X` kana folding, `-Z0-2`, `-L[uwm]`), with `Kconv` the gem's vendored Ruby half. NOT nkf's whole grammar; `guess` is a reimplemented heuristic — see `docs/reference/compatibility.md` |
 | bigdecimal | `bigdecimal`, `bigdecimal/*` | `ext-bigdecimal` | **done** | `BigDecimal` over a BigUint coefficient — bigdecimal 4.x's C slice (exact add/sub/mult, division to the documented precision rule, the rounding engine, mode/limit state, conversions, `Kernel#BigDecimal`); `**`/`power`/`sqrt`/`BigMath`/`to_d` are the gem's own Ruby, vendored in `crates/zeo-rt/ext/bigdecimal` and compiled like user code |
 | coverage | `coverage` | `ext-coverage` | **subset** | line coverage over the AOT line instrumentation: requiring `coverage` makes the COMPILER emit per-statement hit counters plus a per-file coverable-line table, and `Coverage` replays CRuby's whole lifecycle (`start`/`setup`/`resume`/`suspend`/`result`/`peek_result`/`state`, oracle-matched errors included). A file is reported iff its top level began while measurement was set up — the entry script never is, exactly CRuby's rule. Lines only: `supported?(:branches)`/`(:methods)` answer false — see `docs/reference/compatibility.md` |
-| prism | `prism` | `ext-prism` | **done** | `Prism.parse`/`lex`/`parse_lex`/`parse_comments`/`dump`/`parse_success?` and their `_file` forms, over the SAME prism C library Zeo's own front end parses with. The native surface is only the `pm_serialize_*` entry points, exactly as upstream's FFI backend has it — the node classes, the visitors and the deserializer are the gem's own Ruby, vendored under `crates/zeo-rt/ext/prism/`. `Prism::Translation` (the `parser`/`ripper` adapters) is not vendored; see `crates/zeo-rt/ext/UPSTREAM.md` |
+| prism | `prism` | `ext-prism` | **done** | `Prism.parse`/`lex`/`parse_lex`/`parse_comments`/`dump`/`parse_success?` and their `_file` forms, over the SAME prism C library Zeo's own front end parses with. The native surface is only the `pm_serialize_*` entry points, exactly as upstream's FFI backend has it — the node classes, the visitors and the deserializer are the gem's own Ruby, vendored under `crates/zeo-rt/ext/prism/`. Of `Prism::Translation`, only the Ripper adapter is vendored, and `require "ripper"` loads it; see `crates/zeo-rt/ext/UPSTREAM.md` |
 | TracePoint | *(core — no require)* | `ext-tracepoint` | **subset** | execution tracing over the instrumentation the runtime already carries for backtraces: `set_line` fires `:line`, `FrameGuard` push/pop fire `:call`/`:return`/`:class`/`:end` (classified by the frame label), and the raise channel fires `:raise`. `event`/`path`/`lineno`/`method_id`/`callee_id`/`defined_class`/`raised_exception`, the enable/disable lifecycle (block forms included), `TracePoint.trace`, reverse-enable-order dispatch, in-handler reentrancy suppression, and CRuby's inspect/error shapes — all oracle-matched. When nothing is enabled the hooks cost one relaxed atomic load per statement/call. `:b_call`/`:c_call`-family events, `#self`/`#binding`/`#return_value`, and the other bounds are in `docs/reference/compatibility.md` |
 
 `require "io/wait"` (`IO#wait_readable`/`#wait_writable` over real `poll(2)`)
@@ -105,10 +105,9 @@ a module here or is out of scope below.
 
 ## Out of scope (VM internals / tooling)
 
-`rubyvm`, `continuation`, `ripper`, `win32`, `-test-`. `require`ing one raises
+`rubyvm`, `continuation`, `win32`, `-test-`. `require`ing one raises
 the normal `cannot load such file` — except where Zeo has a decision to state,
 in which case the message carries it (`zeo_abi::declined_feature_reason`).
-`ripper` is the case today: it points at `require "prism"`, the same parser
-Zeo's own front end runs, which answers with a syntax tree rather than
-parse.y's reduction stream. See "Declined" in
-[`docs/reference/compatibility.md`](../reference/compatibility.md).
+`continuation` is the case today. See "Declined" in
+[`docs/reference/compatibility.md`](../reference/compatibility.md). `ripper`
+loads prism's Ripper translation, vendored in the prism extension.

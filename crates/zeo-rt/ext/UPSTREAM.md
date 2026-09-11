@@ -100,10 +100,12 @@ C extension on CRuby, FFI everywhere else); both reduce to a handful of
 Ruby. Zeo takes a third branch of the same shape: `lib/prism/zeo.rb` is
 zeo-authored, adapted from upstream's `ffi.rb` with its option packing kept
 verbatim, and calls the built-in `Prism::Zeo` module over the SAME prism zeo's
-own front end parses with. Two removals, marked in `lib/prism.rb`:
-`lib/prism/translation/` (the `parser`- and `ripper`-gem adapters, which
-subclass third-party gems zeo does not ship) and `lib/prism/ffi.rb` (its
-backend, replaced).
+own front end parses with. `lib/prism/ffi.rb`, its backend, is replaced.
+Of `lib/prism/translation/`, only the Ripper adapter (`ripper.rb` and
+`ripper/`) is vendored verbatim: zeo-authored `lib/ripper.rb` loads it for
+`require "ripper"`. `lib/prism/translation.rb` autoloads Ripper alone; the
+`parser` and `ruby_parser` adapters subclass third-party gems zeo does not
+ship.
 
 **`psych/lib/psych/`** carries six files vendored verbatim from the psych
 5.4.0 gem — `class_loader.rb`, `scalar_scanner.rb`, `tree_builder.rb`,

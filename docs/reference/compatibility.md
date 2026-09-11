@@ -879,8 +879,8 @@ Examples that trigger the named error today: `sqlite3`, `nokogiri`, `pg`,
 
 ## Declined (a CRuby internal, not a missing binding)
 
-Two stdlib extensions expose CRuby's own machinery rather than a library, so
-there is nothing for Zeo to bind — reproducing them means rebuilding the
+One stdlib extension exposes CRuby's own machinery rather than a library, so
+there is nothing for Zeo to bind — reproducing it means rebuilding the
 machinery. `require` raises `LoadError`, which is a divergence from ruby, but a
 settled one rather than a queued job.
 
@@ -897,15 +897,17 @@ an unfinished feature.
   the extension loads, and Zeo ships `Fiber`. Documented as a declined
   divergence in `test/lang/exceptions/callcc_is_declined.rb` (a passing step-around test,
   per the gaps README rule that declined divergences don't live in `gaps/`).
-- **`ripper`** exposes the reduction event stream of CRuby's `parse.y`. Zeo's
-  front end embeds prism, a different parser with a different event model, so
-  a binding has nothing to bind to; matching ripper means re-implementing
-  CRuby's grammar actions. **`require "prism"` is the answer instead** — the
-  real gem's Ruby half over the same prism Zeo itself parses with, which gives
-  a syntax tree rather than a reduction stream. The decline is asserted by
-  `ripper_is_declined_and_the_load_error_says_so`
-  (`crates/zeo/tests/suite/api/gems_require.rs`) rather than by a golden: a golden is
-  diffed against the oracle, and ruby loads ripper, so the two can never agree.
+
+`ripper` is not declined. CRuby's ripper is a C extension over the event
+stream of `parse.y`, and Zeo parses with prism, so `require "ripper"` loads
+prism's own translation of that interface (`Prism::Translation::Ripper`) and
+binds it to `Ripper`. This is the one feature where Zeo answers a C
+extension's require with Ruby that is not that extension: prism ships the
+translation for exactly this purpose. `Ripper.sexp`, `Ripper.lex`,
+`Ripper.tokenize` and the SexpBuilder family answer as ruby's do for the
+shapes `test/stdlib/ripper/` records; the translation's own gaps are prism's.
+Because the translation runs on prism, `require "ripper"` also defines
+`Prism`, which ruby's does not.
 
 ## Refinements
 

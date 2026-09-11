@@ -133,54 +133,16 @@ fn a_plain_missing_require_defers_to_a_runtime_load_error() {
 }
 
 #[test]
-fn ripper_is_declined_and_the_load_error_says_so() {
-    // A DECLINE, not a gap: ripper exposes the reduction event stream of
-    // CRuby's `parse.y`, and zeo's front end embeds prism -- a different parser
-    // with a different event model -- so there is nothing for a binding to bind
-    // to. Matching ripper means re-implementing CRuby's grammar actions.
-    //
-    // Asserted here rather than as a golden because a golden is diffed against
-    // the ruby oracle, and ruby loads ripper happily: the two can never agree,
-    // so there is no passing golden to write. This is the shape the gaps README
-    // means by "a divergence zeo has decided not to reproduce belongs in a
-    // passing test that documents it".
-    //
-    // The message must NAME the decision. A bare `cannot load such file --
-    // ripper` reads like a typo or an unfinished feature, and sends the caller
-    // looking for a version of zeo that has it.
-    let result = run_ruby("require \"ripper\"\np defined?(Ripper)\n");
-    assert!(
-        !result.status.success(),
-        "expected `require \"ripper\"` to raise; stdout: {}",
-        result.stdout
+fn ripper_is_prisms_translation() {
+    // `require "ripper"` loads prism's Ripper translation under the Ripper
+    // name. The golden `stdlib/ripper/` compares its answers with ruby's;
+    // this pins that the constant IS prism's class, which no golden can say
+    // because ruby's Ripper is its own C class.
+    let result = run_ruby(
+        "require \"ripper\"\np Ripper.equal?(Prism::Translation::Ripper)\n",
     );
-    assert!(
-        result.stderr.contains("cannot load such file -- ripper")
-            && result.stderr.contains("declined")
-            && result.stderr.contains("prism")
-            && result.stderr.contains("LoadError"),
-        "the decline must explain itself: {}",
-        result.stderr
-    );
-
-    // It is a plain LoadError, so the optional-dependency idiom still works --
-    // a caller that can do without ripper is not broken by the decline.
-    let rescued = run_ruby(
-        r#"
-        begin
-          require "ripper"
-          puts "loaded"
-        rescue LoadError
-          puts "no ripper"
-        end
-        "#,
-    );
-    assert!(rescued.status.success(), "stderr: {}", rescued.stderr);
-    assert_eq!(rescued.stdout, "no ripper\n");
-
-    // The alternative the message points at is real and covered by the gem
-    // probe (`require "prism"` compiles as a probed gem). Not re-asserted
-    // here: it pulls the gem, which costs this test minutes.
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\n");
 }
 
 #[test]

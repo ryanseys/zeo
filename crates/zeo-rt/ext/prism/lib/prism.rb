@@ -33,8 +33,7 @@ module Prism
   autoload :Relocation, "prism/relocation"
   autoload :Serialize, "prism/serialize"
   autoload :StringQuery, "prism/string_query"
-  # zeo: `Prism::Translation` (the `parser`- and `ripper`-gem adapters) is not
-  # vendored -- it subclasses those third-party gems, which zeo does not ship.
+  autoload :Translation, "prism/translation"
   autoload :Visitor, "prism/visitor"
 
   # Some of these constants are not meant to be exposed, so marking them as

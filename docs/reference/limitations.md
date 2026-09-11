@@ -64,9 +64,9 @@ Differences the architecture chooses; they will not close.
 
 - **Ahead-of-time compilation is the execution model.** There is no
   `RubyVM::InstructionSequence` bytecode to serialize
-  (`test/divergences/rubyvm_iseq_serialization.rb`), `ripper` is
-  declined (zeo's front end embeds prism), and `continuation` is
-  declined.
+  (`test/divergences/rubyvm_iseq_serialization.rb`), `ripper` is prism's
+  Ripper translation rather than parse.y's event stream, and
+  `continuation` is declined.
 - **Threads run in parallel without a global VM lock.** The GVL exists
   only for C extensions: one arms it the moment a second Ruby thread
   exists, and nothing else does -- `the_zeo_native_stdlib_never_arms_the_gvl`

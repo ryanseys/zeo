@@ -17,6 +17,7 @@ module Prism
   class << self
     # Mirror the Prism.dump API by using the serialization API.
     def dump(source, **options)
+      check_string(source)
       dumped = serialize_parse(source, dump_options(options))
       dumped.freeze if options.fetch(:freeze, false)
       dumped
@@ -30,6 +31,7 @@ module Prism
 
     # Mirror the Prism.lex API by using the serialization API.
     def lex(code, **options)
+      check_string(code)
       Serialize.load_lex(code, serialize_lex(code, dump_options(options)), options.fetch(:freeze, false))
     end
 
@@ -41,6 +43,7 @@ module Prism
 
     # Mirror the Prism.parse API by using the serialization API.
     def parse(code, **options)
+      check_string(code)
       Serialize.load_parse(code, serialize_parse(code, dump_options(options)), options.fetch(:freeze, false))
     end
 
@@ -66,6 +69,7 @@ module Prism
 
     # Mirror the Prism.parse_comments API by using the serialization API.
     def parse_comments(code, **options)
+      check_string(code)
       Serialize.load_parse_comments(code, serialize_parse_comments(code, dump_options(options)), options.fetch(:freeze, false))
     end
 
@@ -77,6 +81,7 @@ module Prism
 
     # Mirror the Prism.parse_lex API by using the serialization API.
     def parse_lex(code, **options)
+      check_string(code)
       Serialize.load_parse_lex(code, serialize_parse_lex(code, dump_options(options)), options.fetch(:freeze, false))
     end
 
@@ -88,6 +93,7 @@ module Prism
 
     # Mirror the Prism.parse_success? API by using the serialization API.
     def parse_success?(code, **options)
+      check_string(code)
       native_parse_success?(code, dump_options(options))
     end
 
@@ -109,6 +115,7 @@ module Prism
 
     # Mirror the Prism.profile API by using the serialization API.
     def profile(source, **options)
+      check_string(source)
       serialize_parse(source, dump_options(options))
       nil
     end
@@ -120,6 +127,12 @@ module Prism
     end
 
     private
+
+    # The C extension takes only a String source (`input_load_string`), with
+    # no `to_str` conversion.
+    def check_string(code)
+      raise TypeError, "wrong argument type #{code.class} (expected String)" unless code.is_a?(String)
+    end
 
     # Return the value that should be dumped for the command_line option.
     def dump_options_command_line(options)

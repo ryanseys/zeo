@@ -136,12 +136,6 @@ pub fn ext_feature_names() -> impl Iterator<Item = &'static str> {
 /// `docs/reference/compatibility.md`.
 pub fn declined_feature_reason(name: &str) -> Option<&'static str> {
     match name {
-        "ripper" => Some(
-            "declined. ripper exposes the reduction event stream of CRuby's parse.y, \
-             and zeo's front end embeds prism -- a different parser with a different \
-             event model, so there is nothing to bind. Use `require \"prism\"` for a \
-             Ruby-level syntax tree. See docs/reference/compatibility.md.",
-        ),
         "continuation" => Some(
             "declined. callcc captures and restores the machine stack, and a \
              native-compiled program has no stack-copying runtime; an escape-only \
