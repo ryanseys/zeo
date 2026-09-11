@@ -255,8 +255,11 @@ pub(crate) struct CollectedClasses {
 ///
 /// Two rules keep the set honest:
 ///
-/// * a class the unit itself DEFINES contributes nothing -- its constant is
-///   already concealed, so nothing can name it to reach a method;
+/// * a method written by the unit that DEFINES its class contributes
+///   nothing -- the class constant is already concealed, so nothing can name
+///   it to reach the method. A method another unit writes on that class
+///   (prism's ffi.rb reopening the `Prism` that prism.rb defines) still
+///   waits for its own unit;
 /// * a name this class also writes OUTSIDE a unit is left alone. There is
 ///   one row per name, carrying the last-`def`-wins winner, and concealing
 ///   it would take the earlier body away too. `analyze::redefs` already owns
@@ -268,9 +271,6 @@ pub(crate) struct CollectedClasses {
 fn conceal_unit_methods(compiler: &crate::compiler::Compiler) -> Vec<(u32, String, bool, u32)> {
     let mut out = Vec::new();
     for (idx, class) in compiler.classes.iter().enumerate() {
-        if class.unit.is_some() {
-            continue;
-        }
         // The row's owner: a per-box overlay registers on the root builtin's
         // entry, which is where the conceal has to land too.
         let owner = class.builtin_overlay.map_or(idx as u32, |root| root.0);
@@ -294,7 +294,7 @@ fn conceal_unit_methods(compiler: &crate::compiler::Compiler) -> Vec<(u32, Strin
             .chain(class.own_methods.iter().map(|&sid| (sid, false)));
         for (sid, class_side) in entries {
             let scope = compiler.scope(sid);
-            let Some(unit) = scope.unit else {
+            let Some(unit) = scope.unit.filter(|&u| class.unit != Some(u)) else {
                 continue;
             };
             if written_here.contains(&(scope.name.as_str(), class_side)) {
@@ -1006,7 +1006,7 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                         kw_direct: layout.kw_direct.clone(),
                         has_blk,
                         reopen_flagged: false,
-                        concealed: false,
+                        concealed: scope.unit.is_some(),
                     },
                 );
             }
@@ -1573,7 +1573,9 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
                         kw_direct: layout.kw_direct.clone(),
                         has_blk,
                         reopen_flagged: false,
-                        concealed: false,
+                        // A body a unit wrote exists only once that file runs,
+                        // so its call sites keep dispatch.
+                        concealed: scope.unit.is_some(),
                     },
                 );
             }
