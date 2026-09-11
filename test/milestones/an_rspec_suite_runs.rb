@@ -3,9 +3,7 @@
 # the counts and the exit status.
 #
 # No FAILING or PENDING example here: rspec renders those by extracting the
-# source snippet, which needs `ripper`, and zeo declines ripper (prism has a
-# different event model -- see docs/COMPATIBILITY.md). That half is
-# `pending/rspec_reports_a_failure.rb`.
+# source snippet through `ripper`. That half is `rspec_reports_a_failure.rb`.
 #
 # Both engines read the SAME rspec, from `vendor/bundle` -- the Gemfile.lock
 # set that `make deps` resolves. The oracle reaches it through
