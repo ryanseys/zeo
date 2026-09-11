@@ -14,8 +14,8 @@
 //! - a ctype-derived ASCII member never folds outside ASCII in Onigmo
 //!   (`/\w/i` does not match `ſ`), so the rewritten class is wrapped in
 //!   `(?-i:...)` outside a bracket. Inside one Oniguruma folds the whole
-//!   class, which reaches `ſ` and `K` through `s` and `k`; that is the one
-//!   residue, ledgered in docs/reference/compatibility.md.
+//!   class, so a bracket class holding such a member is split under `/i`
+//!   ([`split_folding_class`]).
 //!
 //! `Regexp#source` and every error message keep the text as written; only
 //! what the engine compiles changes.
@@ -34,6 +34,7 @@ enum Mode {
 struct Frame {
     mode: Mode,
     extended: bool,
+    ignore_case: bool,
 }
 
 const WORD: &str = "a-zA-Z0-9_";
@@ -66,6 +67,7 @@ fn posix_ascii_body(name: &str) -> Option<&'static str> {
 pub(super) fn apply(
     source: &str,
     extended: bool,
+    ignore_case: bool,
 ) -> Result<std::borrow::Cow<'_, str>, &'static str> {
     if !source.contains('\\') && !source.contains("(?") && !source.contains("[:") {
         return Ok(std::borrow::Cow::Borrowed(source));
@@ -75,6 +77,7 @@ pub(super) fn apply(
     let mut stack = vec![Frame {
         mode: Mode::Default,
         extended,
+        ignore_case,
     }];
     let mut touched = false;
     let mut i = 0;
@@ -197,6 +200,12 @@ pub(super) fn apply(
                     i += 2;
                 }
             }
+            b'[' if top.ignore_case && split_folding_class(b, i, top.mode)?.is_some() => {
+                let (text, end) = split_folding_class(b, i, top.mode)?.expect("checked by the guard");
+                touched = true;
+                out.extend_from_slice(text.as_bytes());
+                i = end;
+            }
             b'[' => {
                 class_depth = 1;
                 out.push(c);
@@ -270,6 +279,10 @@ pub(super) fn apply(
                             frame.extended = !negating;
                             kept.push(l);
                         }
+                        b'i' => {
+                            frame.ignore_case = !negating;
+                            kept.push(l);
+                        }
                         _ => kept.push(l),
                     }
                 }
@@ -341,6 +354,228 @@ fn check_range_position(b: &[u8], start: usize, end: usize) -> Result<(), &'stat
     Ok(())
 }
 
+/// One `&&` operand of a bracket class under `/i`, split by how Onigmo folds
+/// each member.
+#[derive(Default)]
+struct Operand {
+    /// ASCII-range members, each as a nested class: they fold within ASCII.
+    ascii: Vec<String>,
+    /// Every other member, as written: it folds the ordinary way.
+    rest: Vec<u8>,
+}
+
+/// Onigmo's `/i` rule for a bracket class holding an ASCII-range member --
+/// `\w \d \s` and their negations outside `(?u)`, a POSIX bracket under
+/// `(?a)`. Such a member folds only within ASCII, while the rest of the
+/// class folds the ordinary way, past ASCII included (`regparse.c`'s
+/// `asc_cc`). Oniguruma folds a whole class one way, so the class becomes a
+/// group that folds each part as Onigmo does. Answers the group and the index
+/// past the class, or `None` to leave the class to the ordinary walk: nothing
+/// in it is ASCII-range, or its shape is one this does not split (a negated
+/// nested class holding one, an operand mixing both kinds).
+fn split_folding_class(b: &[u8], start: usize, mode: Mode) -> Result<Option<(String, usize)>, &'static str> {
+    let end = class_end(b, start);
+    if b.get(end - 1) != Some(&b']') || end - 1 <= start {
+        return Ok(None);
+    }
+    let mut i = start + 1;
+    let negated = b.get(i) == Some(&b'^');
+    if negated {
+        i += 1;
+    }
+    let mut operands = vec![Operand::default()];
+    if b.get(i) == Some(&b']') {
+        operands[0].rest.push(b']');
+        i += 1;
+    }
+    if !collect_members(b, i, end - 1, mode, &mut operands)? {
+        return Ok(None);
+    }
+    if operands.iter().all(|o| o.ascii.is_empty()) {
+        return Ok(None);
+    }
+    let caret = if negated { "^" } else { "" };
+    let text = if let [only] = operands.as_slice() {
+        let w = only.ascii.concat();
+        let e = class_text(&only.rest);
+        match (negated, e.is_empty()) {
+            (false, true) => format!("(?-i:[{w}])"),
+            (false, false) => format!("(?:[{e}]|(?-i:[{w}]))"),
+            (true, true) => format!("(?-i:[^{w}])"),
+            (true, false) => format!("(?:(?!(?-i:[{w}]))[^{e}])"),
+        }
+    } else {
+        if operands.iter().any(|o| {
+            (!o.ascii.is_empty() && !o.rest.is_empty()) || (o.ascii.is_empty() && o.rest.is_empty())
+        }) {
+            return Ok(None);
+        }
+        let ascii: Vec<String> = operands
+            .iter()
+            .filter(|o| !o.ascii.is_empty())
+            .map(|o| format!("[{}]", o.ascii.concat()))
+            .collect();
+        let rest: Vec<String> = operands
+            .iter()
+            .filter(|o| !o.rest.is_empty())
+            .map(|o| class_text(&o.rest))
+            .collect();
+        if rest.is_empty() {
+            format!("(?-i:[{caret}{}])", ascii.join("&&"))
+        } else {
+            // The intersection folds within each side of ASCII only: an
+            // ASCII-range operand leaves nothing for a cross-ASCII fold.
+            let looks: String = ascii.iter().map(|w| format!("(?=(?-i:{w}))")).collect();
+            let e = rest.join("&&");
+            let same_side = format!(
+                "(?:(?-i:(?=[\\x00-\\x7f]))(?i:[{e}&&[\\x00-\\x7f]])|(?-i:(?=[^\\x00-\\x7f]))(?i:[{e}&&[^\\x00-\\x7f]]))"
+            );
+            if negated {
+                format!("(?:(?!{looks}{same_side})(?m:.))")
+            } else {
+                format!("(?:{looks}{same_side})")
+            }
+        }
+    };
+    Ok(Some((text, end)))
+}
+
+/// A class body as written, with a leading `^` escaped so it stays literal
+/// wherever the body is placed.
+fn class_text(rest: &[u8]) -> String {
+    let text = String::from_utf8_lossy(rest).into_owned();
+    if text.starts_with('^') { format!("\\{text}") } else { text }
+}
+
+/// Sorts the members of `b[from..to]` into `operands`, a new operand at each
+/// `&&`. A nested class is flattened into its operand when it is plain and
+/// copied whole when negated and free of ASCII-range members. Answers false
+/// for a shape [`split_folding_class`] does not split.
+fn collect_members(
+    b: &[u8],
+    from: usize,
+    to: usize,
+    mode: Mode,
+    operands: &mut Vec<Operand>,
+) -> Result<bool, &'static str> {
+    let mut i = from;
+    while i < to {
+        let op = operands.last_mut().expect("never empty");
+        match b[i] {
+            b'&' if b.get(i + 1) == Some(&b'&') => {
+                operands.push(Operand::default());
+                i += 2;
+            }
+            b'\\' if i + 1 < to => {
+                let e = b[i + 1];
+                if let Some(body) = escape_class_body(e, mode) {
+                    check_range_position(b, i, i + 2)?;
+                    op.ascii.push(nested(body, e.is_ascii_uppercase()));
+                    i += 2;
+                } else {
+                    let mut j = i + 2;
+                    if matches!(e, b'p' | b'P' | b'x' | b'u') && b.get(j) == Some(&b'{') {
+                        j = b[j..to].iter().position(|&x| x == b'}').map_or(to, |p| j + p + 1);
+                    }
+                    op.rest.extend_from_slice(&b[i..j]);
+                    i = j;
+                }
+            }
+            b'[' if b.get(i + 1) == Some(&b':') && find_posix_end(b, i).is_some() => {
+                let pend = find_posix_end(b, i).expect("checked by the guard");
+                let inverted = b[i + 2] == b'^';
+                let name = std::str::from_utf8(&b[if inverted { i + 3 } else { i + 2 }..pend]).unwrap_or("");
+                match posix_ascii_body(name).filter(|_| mode == Mode::Ascii) {
+                    Some(body) => {
+                        check_range_position(b, i, pend + 2)?;
+                        // Folding within ASCII pairs the two letter cases.
+                        let body = match name {
+                            "upper" | "lower" if !inverted => "a-zA-Z",
+                            _ => body,
+                        };
+                        op.ascii.push(nested(body, inverted));
+                    }
+                    None => op.rest.extend_from_slice(&b[i..pend + 2]),
+                }
+                i = pend + 2;
+            }
+            b'[' => {
+                let nend = class_end(b, i);
+                if b.get(nend - 1) != Some(&b']') || nend > to + 1 {
+                    return Ok(false);
+                }
+                let mut inner = vec![Operand::default()];
+                let mut k = i + 1;
+                let inner_negated = b.get(k) == Some(&b'^');
+                if inner_negated {
+                    k += 1;
+                }
+                if b.get(k) == Some(&b']') {
+                    inner[0].rest.push(b']');
+                    k += 1;
+                }
+                if !collect_members(b, k, nend - 1, mode, &mut inner)? || inner.len() > 1 {
+                    return Ok(false);
+                }
+                let inner = inner.pop().expect("one operand");
+                let op = operands.last_mut().expect("never empty");
+                if inner_negated {
+                    if !inner.ascii.is_empty() {
+                        return Ok(false);
+                    }
+                    op.rest.extend_from_slice(&b[i..nend]);
+                } else {
+                    op.ascii.extend(inner.ascii);
+                    if !inner.rest.is_empty() {
+                        op.rest.push(b'[');
+                        op.rest.extend_from_slice(&inner.rest);
+                        op.rest.push(b']');
+                    }
+                }
+                i = nend;
+            }
+            c => {
+                op.rest.push(c);
+                i += 1;
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// `[body]` or `[^body]`, as text.
+fn nested(body: &str, negated: bool) -> String {
+    format!("[{}{body}]", if negated { "^" } else { "" })
+}
+
+/// The index just past the bracket class opening at `start` (the end of the
+/// input when it never closes). A `]` first, after an optional `^`, is literal.
+pub(super) fn class_end(b: &[u8], start: usize) -> usize {
+    let mut j = start + 1;
+    if b.get(j) == Some(&b'^') {
+        j += 1;
+    }
+    if b.get(j) == Some(&b']') {
+        j += 1;
+    }
+    let mut depth = 1usize;
+    while j < b.len() {
+        match b[j] {
+            b'\\' => j += 1,
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return j + 1;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    b.len()
+}
+
 /// `[body]` or `[^body]` as a member of an enclosing class.
 fn push_nested(out: &mut Vec<u8>, body: &str, negated: bool) {
     out.extend_from_slice(if negated { b"[^" } else { b"[" });
@@ -382,7 +617,35 @@ mod tests {
     use super::*;
 
     fn rw(s: &str) -> String {
-        apply(s, false).unwrap().into_owned()
+        apply(s, false, false).unwrap().into_owned()
+    }
+
+    fn rwi(s: &str) -> String {
+        apply(s, false, true).unwrap().into_owned()
+    }
+
+    fn apply_plain(s: &str, extended: bool) -> Result<std::borrow::Cow<'_, str>, &'static str> {
+        apply(s, extended, false)
+    }
+
+    #[test]
+    fn under_i_an_ascii_range_class_member_folds_within_ascii() {
+        assert_eq!(rwi(r"[\w]"), "(?-i:[[a-zA-Z0-9_]])");
+        assert_eq!(rwi(r"[a-z\w]"), "(?:[a-z]|(?-i:[[a-zA-Z0-9_]]))");
+        assert_eq!(rwi(r"[^\W]"), "(?-i:[^[^a-zA-Z0-9_]])");
+        assert_eq!(rwi(r"[^é\w]"), "(?:(?!(?-i:[[a-zA-Z0-9_]]))[^é])");
+        assert_eq!(rwi(r"(?a)[[:upper:]]"), "(?-i:[[a-zA-Z]])");
+        assert_eq!(rwi(r"[[\w]k]"), "(?:[k]|(?-i:[[a-zA-Z0-9_]]))");
+        assert_eq!(
+            rwi(r"[\W&&[^ſ]]"),
+            "(?:(?=(?-i:[[^a-zA-Z0-9_]]))(?:(?-i:(?=[\\x00-\\x7f]))(?i:[[^ſ]&&[\\x00-\\x7f]])\
+             |(?-i:(?=[^\\x00-\\x7f]))(?i:[[^ſ]&&[^\\x00-\\x7f]])))"
+        );
+        // Nothing ASCII-range, a Unicode mode, or no `/i`: left as it was.
+        assert_eq!(rwi(r"[a-z]"), "[a-z]");
+        assert_eq!(rwi(r"(?u)[\w]"), "[\\w]");
+        assert_eq!(rw(r"[\w]"), "[[a-zA-Z0-9_]]");
+        assert_eq!(rwi(r"(?-i:[\w])"), "(?-i:[[a-zA-Z0-9_]])");
     }
 
     #[test]
@@ -421,7 +684,7 @@ mod tests {
     fn comments_classes_and_escapes_do_not_confuse_the_walk() {
         assert_eq!(rw("(?#[)\\w"), "(?#[)(?-i:[a-zA-Z0-9_])");
         assert_eq!(
-            apply("# [ \\w\n\\w", true).unwrap().as_ref(),
+            apply_plain("# [ \\w\n\\w", true).unwrap().as_ref(),
             "# [ \\w\n(?-i:[a-zA-Z0-9_])"
         );
         assert_eq!(rw(r"[]\w]"), "[][a-zA-Z0-9_]]");
@@ -433,11 +696,11 @@ mod tests {
         );
         assert_eq!(rw(r"[\p{L}]"), "[\\p{L}]");
         assert!(matches!(
-            apply("abc", false),
+            apply_plain("abc", false),
             Ok(std::borrow::Cow::Borrowed(_))
         ));
         assert!(matches!(
-            apply(r"(?:a)\n", false),
+            apply_plain(r"(?:a)\n", false),
             Ok(std::borrow::Cow::Borrowed(_))
         ));
     }
@@ -445,22 +708,22 @@ mod tests {
     #[test]
     fn a_set_member_can_neither_open_nor_close_a_range() {
         assert_eq!(
-            apply(r"[\d-z]", false),
+            apply_plain(r"[\d-z]", false),
             Err("unmatched range specifier in char-class")
         );
         assert_eq!(
-            apply(r"[a-\w]", false),
+            apply_plain(r"[a-\w]", false),
             Err("char-class value at end of range")
         );
         assert_eq!(
-            apply(r"(?a)[a-[:alpha:]]", false),
+            apply_plain(r"(?a)[a-[:alpha:]]", false),
             Err("char-class value at end of range")
         );
-        assert!(apply(r"[\w-]", false).is_ok());
-        assert!(apply(r"[-\w]", false).is_ok());
-        assert!(apply(r"[^\w-]", false).is_ok());
-        assert!(apply(r"[\w-&&a]", false).is_ok());
-        assert!(apply(r"[\-\w]", false).is_ok());
-        assert!(apply(r"[\\-\w]", false).is_err());
+        assert!(apply_plain(r"[\w-]", false).is_ok());
+        assert!(apply_plain(r"[-\w]", false).is_ok());
+        assert!(apply_plain(r"[^\w-]", false).is_ok());
+        assert!(apply_plain(r"[\w-&&a]", false).is_ok());
+        assert!(apply_plain(r"[\-\w]", false).is_ok());
+        assert!(apply_plain(r"[\\-\w]", false).is_err());
     }
 }

@@ -6,6 +6,7 @@
 //! Oniguruma reads the pattern as written, in Ruby's own syntax; nothing is
 //! translated into another engine's dialect.
 
+use super::charrange::class_end;
 use super::*;
 use std::borrow::Cow;
 
@@ -217,33 +218,6 @@ fn utf8_width(lead: u8) -> usize {
     }
 }
 
-/// The index just past the bracket class opening at `start` (the end of the
-/// input when it never closes). A `]` first, after an optional `^`, is literal.
-fn class_end(b: &[u8], start: usize) -> usize {
-    let mut j = start + 1;
-    if b.get(j) == Some(&b'^') {
-        j += 1;
-    }
-    if b.get(j) == Some(&b']') {
-        j += 1;
-    }
-    let mut depth = 1usize;
-    while j < b.len() {
-        match b[j] {
-            b'\\' => j += 1,
-            b'[' => depth += 1,
-            b']' => {
-                depth -= 1;
-                if depth == 0 {
-                    return j + 1;
-                }
-            }
-            _ => {}
-        }
-        j += 1;
-    }
-    b.len()
-}
 
 /// `read_escaped_byte`: one `\M-X` / `\C-X` / `\cX` run, as the BYTE it
 /// stands for. `pos` is left just past what was consumed.
@@ -714,7 +688,7 @@ pub fn regexp_new_enc(
     // Before the range walk, which would read a `)` inside a name as a group.
     let (renamed, renames) = rename_groups(escaped.as_ref())
         .map_err(|e| cruby_regex_error(written, &e, ignore_case, extended, multiline))?;
-    let ranged = super::charrange::apply(renamed.as_ref(), extended)
+    let ranged = super::charrange::apply(renamed.as_ref(), extended, ignore_case)
         .map_err(|e| cruby_regex_error(written, e, ignore_case, extended, multiline))?;
     let engine = match build_onig(ranged.as_ref(), ignore_case, extended, multiline) {
         Err(e) if e.contains("target of repeat operator is invalid") => {

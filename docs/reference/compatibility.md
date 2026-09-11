@@ -199,13 +199,15 @@ compiled again with each such atom inside an atomic group, which is exact.
 A group name may open with any character in Onigmo and only with a word
 character in Oniguruma, so a name opening with `(` or `)` is renamed for the
 engine and mapped back for every name lookup.
+Under `/i` an ASCII-range class member (`\w`, `\W`, a `(?a)` POSIX bracket)
+folds only within ASCII in Onigmo, and Oniguruma folds a whole class one way,
+so such a class becomes a group that folds each part as Onigmo does.
 The rows that stay different:
 
 | Shape | ruby | zeo |
 |---|---|---|
 | a bare `\p` | a literal `p` | `invalid character property name` -- Oniguruma reads `\p` as the property prefix |
 | a pattern that backtracks past onig's retry limit with NO timeout set | runs to the end | answers no match, as if the pattern failed -- the retry limit is onig's, and Onigmo has none; under a timeout both raise `Regexp::TimeoutError` |
-| an ASCII `\w`/`\d`/`\s` INSIDE a bracket class under `/i` | never folds past ASCII (`/[\w]/i` does not match `ſ`) | folds the whole class, so `ſ` and `K` arrive through `s` and `k` (`test/gaps/an_ascii_escape_inside_a_bracket_class_folds_past_ascii.rb`) |
 | `Regexp.linear_time?` | Onigmo's own analysis | a source scan: false iff the pattern has a backreference, which is Onigmo's rule too |
 | a subject in an encoding onig lacks (UTF8-MAC, CESU-8, CP949, GBK, Big5-HKSCS, Windows-1250, KOI8-U, Emacs-Mule) | matched in that encoding | matched over a lossy UTF-8 view of the subject (`test/gaps/a_binary_regexp_holds_a_high_byte.rb` is the tracked case) |
 
