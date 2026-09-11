@@ -185,6 +185,7 @@ pub(crate) fn run() -> Result<(), MainError> {
         embed_sources: args.embed_sources.clone(),
         strict_static_require: args.strict_static_require,
         required_libraries: args.required_libraries.clone(),
+        loaded_features: Vec::new(),
         package_build,
         use_packages,
         // The LINKING roads flip this on below (`link_opts`); a package

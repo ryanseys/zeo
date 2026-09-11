@@ -172,6 +172,10 @@ pub struct CompileOptions {
     /// every line number the program reports, and ruby's own `-r` runs in a
     /// file of its own.
     pub required_libraries: Vec<String>,
+    /// Files the running program has already loaded -- its
+    /// `$LOADED_FEATURES` when a run-time compile starts. A `require` of one
+    /// answers `false` and splices nothing, so the file does not run twice.
+    pub loaded_features: Vec<std::path::PathBuf>,
     /// Compile ONE gem entry file as a separately linked
     /// package -- an object whose bodies are exported plus a row manifest --
     /// instead of a runnable program. See [`package`].

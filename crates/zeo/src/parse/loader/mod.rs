@@ -489,7 +489,13 @@ pub(super) fn lower_main_file(
         // miss its Ruby half, which is how `StringScanner::Error` would go
         // missing and turn a raise into a panic.
         packages: discover_packages(&opts.package_dirs, bundled_libraries())?,
-        required: HashSet::new(),
+        // A run-time compile starts with what the program already loaded.
+        required: opts
+            .loaded_features
+            .iter()
+            .filter_map(|p| p.canonicalize().ok())
+            .map(|c| (0, c))
+            .collect(),
         splicing: Vec::new(),
         unit_canonicals: Vec::new(),
         unit_edges: Vec::new(),

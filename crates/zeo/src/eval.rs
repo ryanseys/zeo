@@ -220,6 +220,7 @@ struct BuildInputs {
     cref_name: Option<String>,
     has_binding: bool,
     has_home: bool,
+    loaded_features: Vec<String>,
 }
 
 /// The compile inputs as the caller sees them. `home_override` is
@@ -246,6 +247,13 @@ fn inputs_for(req: &EvalRequest<'_>, home_override: Option<bool>) -> BuildInputs
         // source compiled from a method and from the top level are two
         // different compiles.
         has_home: home_override.unwrap_or_else(zeo_rt::eval::has_home),
+        // A `require` of a file the program already loaded must splice
+        // nothing. Only a source that can require pays for the snapshot.
+        loaded_features: if req.src.contains("require") || req.src.contains("autoload") {
+            zeo_rt::eval::loaded_features(req.box_id)
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -253,7 +261,8 @@ fn inputs_for(req: &EvalRequest<'_>, home_override: Option<bool>) -> BuildInputs
 /// it because the entry loads its locals BY INDEX: the same source under a
 /// Binding with different names is a different function. `file`/`line`/
 /// `label` are baked into the artifact (`__FILE__`, backtrace rows, the
-/// frame label), so they key it too.
+/// frame label), so they key it too. The loaded features decide which
+/// `require`s splice, so they key it as well.
 type Key = (
     String,
     u32,
@@ -264,6 +273,7 @@ type Key = (
     String,
     u32,
     &'static str,
+    Vec<String>,
 );
 
 fn key_of(i: &BuildInputs) -> Key {
@@ -277,6 +287,7 @@ fn key_of(i: &BuildInputs) -> Key {
         i.file.clone(),
         i.line,
         i.label,
+        i.loaded_features.clone(),
     )
 }
 
@@ -354,6 +365,11 @@ fn build(inputs: &BuildInputs) -> Result<Compiled, Refusal> {
         mode: crate::CompileMode::Eval {
             cref: cref.is_some(),
         },
+        loaded_features: inputs
+            .loaded_features
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect(),
         ..crate::CompileOptions::default()
     };
     let mut analyzed =

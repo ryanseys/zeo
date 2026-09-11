@@ -498,6 +498,20 @@ pub fn loaded_feature_recorded(box_id: u32, entry: &str) -> bool {
     })
 }
 
+/// Every string in this box's `$LOADED_FEATURES`, in order.
+pub fn loaded_features_in(box_id: u32) -> Vec<String> {
+    let RubyValue::Array(a) = global_get(box_id, "$LOADED_FEATURES") else {
+        return Vec::new();
+    };
+    a.lock()
+        .iter()
+        .filter_map(|v| match v {
+            RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// [`append_loaded_feature`] for a BOX -- each box has its own list, so a
 /// file it loads counts as loaded there and nowhere else.
 pub fn append_loaded_feature_in(box_id: u32, name: &str) {

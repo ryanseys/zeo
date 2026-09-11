@@ -176,6 +176,13 @@ pub fn has_home() -> bool {
     EVAL_HOMES.with(|h| !h.borrow().is_empty())
 }
 
+/// Box `box_id`'s `$LOADED_FEATURES`, for a compile that must not splice
+/// a file the program already ran.
+#[must_use]
+pub fn loaded_features(box_id: u32) -> Vec<String> {
+    crate::globals::loaded_features_in(box_id)
+}
+
 /// `yield` written at a snippet's own level.
 pub fn home_yield(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     match home_block() {
