@@ -63,9 +63,10 @@ still answers `true` in a program with no Marshal table, exactly as CRuby
 does.
 
 `RubyVM::AbstractSyntaxTree` and `RubyVM::InstructionSequence` PARSE at run
-time, and no program can reach either without naming `RubyVM`. A program
-that never does carries neither, and the prism library they root goes with
-them. The predicate is `Compiler::needs_prism_runtime`; its eval half reads
+time. A program reaches them by naming `RubyVM`, or by walking the constant
+tree to them (`Object.constants` with a computed `const_get`, `Marshal`,
+`ObjectSpace`). A program that does neither carries neither, and the prism
+library they root goes with them. The predicate is `Compiler::needs_prism_runtime`; its eval half reads
 the NARROWED `runtime_eval` flag, not the flat `Hir` scan, so a program that
 dead-strips the compiler drops these with it.
 

@@ -447,6 +447,10 @@ pub struct Compiler {
     /// Require-GATED builtins are NOT in here -- their feature gate answers
     /// the same question more precisely.
     pub reachable_builtins: Option<FSet<ClassId>>,
+    /// Whether the program can reach a class by a name it never writes
+    /// (`analyze::class_reach::enumerates_constants`). Set by `analyze`;
+    /// `true` until then.
+    pub enumerates_constants: bool,
     /// Whether the program calls `freeze` anywhere. A REOPEN of a frozen class
     /// is a `FrozenError` and its body never runs, so the definitions the
     /// compile-time tables carry for it have to be retractable -- which costs
@@ -727,6 +731,7 @@ impl Compiler {
             runtime_patches_any_name: false,
             runtime_eval: true,
             reachable_builtins: None,
+            enumerates_constants: true,
             program_freezes: false,
             class_index: std::cell::RefCell::new(FMap::default()),
             indexed_upto: std::cell::Cell::new(0),
@@ -808,15 +813,13 @@ impl Compiler {
         compiler
     }
 
-    /// The `RubyVM` surfaces whose bodies PARSE at run time, and which no
-    /// program can reach without naming `RubyVM`.
+    /// The `RubyVM` surfaces whose bodies PARSE at run time.
     ///
     /// They are the four prism-backed tables plus the iseq one, and together
     /// they root the prism library itself -- the largest saving any single
-    /// group of tables carries. `RubyVM` itself STAYS: ruby
-    /// defines it in every program, and these five are namespaced under it,
-    /// so only `RubyVM.constants` can see them go and that already names
-    /// `RubyVM`.
+    /// group of tables carries. `RubyVM` itself STAYS: ruby defines it in
+    /// every program. A program reaches these five by naming `RubyVM`, or by
+    /// a constant walk that never names it -- `needs_prism_runtime` asks both.
     pub(crate) fn prism_surface_is_reachable(&self, id: ClassId) -> bool {
         const PRISM_BACKED: &[ClassId] = &[
             zeo_abi::RUBYVM_AST_MODULE,
@@ -833,7 +836,8 @@ impl Compiler {
     /// Three things reach it, and they are separate questions: a run-time
     /// `eval` compiles Ruby text; `require "prism"` calls the same C
     /// library's serialize entry points; and a `RubyVM` parsing surface
-    /// parses in its own body.
+    /// parses in its own body, whether the program names it or walks the
+    /// constant tree to it.
     ///
     /// The eval half asks the NARROWED answer ([`Compiler::runtime_eval`]),
     /// never the flat `Hir` scan. A program whose `load` is its own method
@@ -841,7 +845,10 @@ impl Compiler {
     /// prism-backed tables in a binary that had already dead-stripped the
     /// compiler.
     pub fn needs_prism_runtime(&self) -> bool {
-        self.hir.activates_prism() || self.runtime_eval || self.hir.mentions_rubyvm_parser()
+        self.hir.activates_prism()
+            || self.runtime_eval
+            || self.hir.mentions_rubyvm_parser()
+            || self.enumerates_constants
     }
 
     /// Whether an emitted program can reach a BUILTIN class at all -- what

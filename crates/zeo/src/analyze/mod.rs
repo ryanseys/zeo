@@ -440,6 +440,7 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
         || compiler.hir.pkg_merge.iter().any(|m| m.facts.runtime_eval);
     // After `runtime_eval`: a program that compiles Ruby at run time can name
     // any class at all, and this reads that answer.
+    compiler.enumerates_constants = class_reach::enumerates_constants(&compiler.hir);
     compiler.reachable_builtins = class_reach::resolve(compiler);
 
     Ok(AnalyzedParts {

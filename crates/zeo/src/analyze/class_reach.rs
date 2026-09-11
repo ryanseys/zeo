@@ -374,6 +374,26 @@ pub(crate) fn resolve(compiler: &Compiler) -> Option<FSet<ClassId>> {
 /// `Module#constants` enumerates every name there is, and a `const_get` or a
 /// `send` whose argument is COMPUTED names something no scan can read.
 fn hands_out_every_class(hir: &Hir) -> bool {
+    enumerates_constants(hir)
+        || hir.nodes().iter().any(|node| match node {
+            // A COMPUTED send names a method no scan can read, and the row it
+            // lands on can answer with anything. A literal one is ordinary.
+            HirNode::Call { name, args, .. } => {
+                matches!(name.as_str(), "send" | "__send__" | "public_send")
+                    && args
+                        .first()
+                        .map(ArrayElem::node_id)
+                        .is_none_or(|a| hir.sent_name(a).is_none())
+            }
+            _ => false,
+        })
+}
+
+/// Whether the program can reach a CLASS by a name it never writes: a
+/// computed constant lookup, a constant listing, `Marshal` (a dump names
+/// classes) or `ObjectSpace` (which enumerates them). A class reached that
+/// way is live even when no mention of its namespace exists.
+pub(crate) fn enumerates_constants(hir: &Hir) -> bool {
     hir.nodes().iter().any(|node| match node {
         HirNode::ClassRef(n) | HirNode::New { class_name: n, .. } => {
             n == "Marshal" || n == "ObjectSpace"
@@ -392,12 +412,6 @@ fn hands_out_every_class(hir: &Hir) -> bool {
                 args.first().map(ArrayElem::node_id).map(|a| &hir[a]),
                 Some(HirNode::SymbolLit(_) | HirNode::StringLit(_))
             ),
-            // A COMPUTED send names a method no scan can read, and the row it
-            // lands on can answer with anything. A literal one is ordinary.
-            "send" | "__send__" | "public_send" => args
-                .first()
-                .map(ArrayElem::node_id)
-                .is_none_or(|a| hir.sent_name(a).is_none()),
             _ => false,
         },
         _ => false,
