@@ -130,7 +130,7 @@ ruby_class! {
     }
     // `try_enter` never blocks: `true` iff this execution now holds it,
     // which a re-entry always does.
-    def "try_enter" | "mon_try_enter" (recv) {
+    def "try_enter" | "mon_try_enter" | "try_mon_enter" (recv) {
         let m = monitor_of(recv);
         if !mutex_owned(&m.mutex) && !mutex_try_lock(&m.mutex) {
             return Ok(RubyValue::Bool(false));

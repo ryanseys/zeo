@@ -55,17 +55,17 @@ module MonitorMixin
     end
   end
 
-  def mon_initialize
-    @mon_data = Monitor.new
-    self
-  end
-
   def mon_enter
     __mon_data.enter
   end
 
   def mon_exit
     __mon_data.exit
+  end
+
+  # `try_mon_enter` is the older spelling ruby keeps as an alias.
+  def try_mon_enter
+    mon_try_enter
   end
 
   def mon_try_enter
@@ -90,6 +90,11 @@ module MonitorMixin
   end
 
   private
+
+  def mon_initialize
+    @mon_data = Monitor.new
+    self
+  end
 
   def mon_check_owner
     __mon_data.mon_check_owner
