@@ -499,8 +499,20 @@ fn method_seeded_classes(hir: &Hir, set: &mut FSet<ClassId>) {
     let mut called: FSet<&str> = FSet::default();
     for node in hir.nodes() {
         match node {
-            HirNode::Call { name, args, .. } => {
+            HirNode::Call {
+                name,
+                args,
+                block_arg,
+                ..
+            } => {
                 called.insert(name.as_str());
+                // `xs.map(&:encoding)` calls `encoding`, so the symbol names a
+                // row exactly as a written call does -- without this the only
+                // mention of `Encoding` in a program went unseen and its table
+                // was dropped.
+                if let Some(sym) = block_arg.and_then(|b| hir.sent_name(b)) {
+                    called.insert(sym);
+                }
                 // A LITERAL `send(:Pathname, ...)` is that call written the
                 // other way, and the row it lands on returns the same class.
                 if matches!(name.as_str(), "send" | "__send__" | "public_send")
