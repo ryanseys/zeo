@@ -184,7 +184,7 @@ ruby_class! {
         r
     }
 
-    def self."new" cfunc (_recv) {
+    def self."new" cfunc inherits (_recv) {
         Ok(RubyValue::Object(Arc::new(RMonitor::new())))
     }
 }

@@ -372,7 +372,7 @@ mod node_class {
         def "node_id"(recv) {
             Ok(RubyValue::Int(recv_node(recv).node_id))
         }
-        def "inspect" | "to_s" (recv) {
+        def "to_s" inherits | "inspect" (recv) {
             let n = recv_node(recv);
             Ok(RubyValue::Str(crate::string_new(format!(
                 "#<RubyVM::AbstractSyntaxTree::Node:{}@{}:{}-{}:{}>",
@@ -421,7 +421,7 @@ mod location_class {
         Location = zeo_abi::RUBYVM_AST_LOCATION_CLASS < zeo_abi::OBJECT_CLASS;
 
         // Locations only ever come out of a Node (CRuby has no allocator).
-        def self."new"(_recv, *_args) {
+        def self."new" inherits (_recv, *_args) {
             Err(crate::builtins::type_error!(
                 "allocator undefined for RubyVM::AbstractSyntaxTree::Location"
             ))
