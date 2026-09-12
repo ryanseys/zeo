@@ -312,6 +312,32 @@ pub(crate) fn resolve_method_name(name_arg: &RubyValue) -> Result<Symbol, Signal
     }
 }
 
+/// The class a reflection `NameError` names: CRuby's `CLASS_OF(recv)`, which
+/// is the receiver's METACLASS wherever one exists -- `String.method(:nope)`
+/// reports `#<Class:String>`, and an object carrying a `def obj.m` reports
+/// `#<Class:#<Object:0x...>>`. A module is the exception: its metaclass is
+/// made only when something writes to it, so a plain `Comparable` reports
+/// `Module` while `Math`, which holds class methods, reports `#<Class:Math>`.
+fn class_of_name(recv: &RubyValue) -> String {
+    let plain =
+        || crate::dispatch::class_name(recv.class_id()).unwrap_or_else(|| "Object".to_string());
+    let materialized = match recv {
+        RubyValue::Class(cid) => {
+            !crate::dispatch::class_is_module(*cid).unwrap_or(false)
+                || crate::runtime_meta::has_singleton_class(recv)
+                || !crate::dispatch::class_method_names_in(*cid, false).is_empty()
+        }
+        _ => crate::runtime_meta::has_singleton_class(recv),
+    };
+    if !materialized {
+        return plain();
+    }
+    match crate::runtime_meta::runtime_singleton_class(recv) {
+        Ok(RubyValue::Class(sid)) => crate::dispatch::class_name(sid).unwrap_or_else(plain),
+        _ => plain(),
+    }
+}
+
 /// Constructs the `Method` value for `recv.method(name_arg)` -- shared by
 /// the Kernel table row and any codegen fast path. An unknown method is a
 /// `NameError` at CONSTRUCTION time, as in CRuby: `method(:nope)` raises
@@ -334,11 +360,11 @@ pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, S
         && !crate::dispatch::has_notimplement_row(recv, name)
     {
         // CRuby's phrasing names the receiver's CLASS, not the receiver
-        // ("undefined method 'nope' for class 'String'").
+        // ("undefined method 'nope' for class '#<Class:String>'").
         return Err(name_error!(
             "undefined method '{}' for class '{}'",
             name.name(),
-            crate::dispatch::class_name(recv.class_id()).unwrap_or_else(|| "Object".to_string())
+            class_of_name(recv)
         ));
     }
     Ok(method_at_home(recv, name))
@@ -412,7 +438,7 @@ pub fn singleton_method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<Ru
 pub fn public_method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
     let name = resolve_method_name(name_arg)?;
     let cid = recv.class_id();
-    let class = crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string());
+    let class = class_of_name(recv);
     if crate::dispatch::responds_to(cid, name, false) {
         return Ok(method_at_home(recv, name));
     }
