@@ -111,6 +111,10 @@ fn wrap_zero_width(source: &str, extended: bool) -> String {
     String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
+/// A rewritten pattern and the group names it renamed: the engine text, then
+/// `(engine name, name as written)` pairs.
+type Renamed<'a> = (Cow<'a, str>, Vec<(String, String)>);
+
 /// Group names Onigmo reads and Oniguruma refuses.
 ///
 /// Onigmo, as ruby builds it, takes ANY first character in a group name and
@@ -119,7 +123,7 @@ fn wrap_zero_width(source: &str, extended: bool) -> String {
 /// word character first, so a name that opens with `(` or `)` is renamed here
 /// -- its definition and every reference -- and the engine maps it back
 /// ([`Engine::with_renames`]). Answers `(engine name, name as written)` pairs.
-fn rename_groups(source: &str) -> Result<(Cow<'_, str>, Vec<(String, String)>), String> {
+fn rename_groups(source: &str) -> Result<Renamed<'_>, String> {
     if !["(?<", "(?'", "\\k", "\\g", "(?("].iter().any(|p| source.contains(p)) {
         return Ok((Cow::Borrowed(source), Vec::new()));
     }
