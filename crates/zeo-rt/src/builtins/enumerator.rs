@@ -1159,7 +1159,7 @@ ruby_class! {
     // SUBCLASS path: `value_subclass::construct_root_payload` builds a payload
     // by calling the root's own `new` out of this table, which is what lets
     // `class NdjsonToMessageEnumerator < Enumerator` seat one through `super()`.
-    def self."new" allocs (_recv, size?, &block) {
+    def self."new" allocs inherits (_recv, size?, &block) {
         let args: Vec<RubyValue> = size.into_iter().cloned().collect();
         enumerator_new(&args, block)
     }
@@ -1413,7 +1413,7 @@ ruby_class! {
 
         // Not the bare-`yield` message: CRuby raises this one from the
         // constructor itself, without the `(yield)` suffix.
-        def self."new"(_recv, *_args, &block) {
+        def self."new" inherits (_recv, *_args, &block) {
             let Some(RubyValue::Proc(p)) = block else {
                 return Err(crate::builtins::local_jump_error!("no block given"));
             };
@@ -1472,7 +1472,7 @@ ruby_class! {
         // `Enumerator::Chain.new(a, b)`. Enumerator's own `self.new` takes a
         // size and a block, so inheriting it made the two-enumerable form an
         // arity error -- this class's constructor is its own.
-        def self."new" allocs cfunc (_recv, *args, &_block) {
+        def self."new" allocs cfunc inherits (_recv, *args, &_block) {
             Ok(chain_of(args.to_vec()))
         }
         // Re-init: the receiver becomes a chain over the given enumerables.
@@ -1499,7 +1499,7 @@ ruby_class! {
         def "size"(recv) { inherited_row!(enumerator, "size", recv, __args, None) }
         // `Enumerator::Product.new(a, b)` -- its own constructor, for the same
         // reason `Chain` needs one.
-        def self."new" allocs cfunc (_recv, *args, &_block) {
+        def self."new" allocs cfunc inherits (_recv, *args, &_block) {
             Ok(RubyValue::Enumerator(Arc::new(EnumeratorData::new(
                 EnumSource::Product { sources: args.to_vec() },
                 None,

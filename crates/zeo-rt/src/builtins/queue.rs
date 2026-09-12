@@ -101,7 +101,7 @@ ruby_class! {
     // `live_queue` is that refusal.
     allocate queue_allocate;
 
-    def self."new" cfunc (_recv, *args) {
+    def self."new" cfunc inherits (_recv, *args) {
         // The optional Enumerable seeds the queue, and its type check lives
         // in `initialize`. Taking no arguments here reported an arity error
         // for `Queue.new(1)` where ruby reports the conversion.

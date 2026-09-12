@@ -341,7 +341,7 @@ ruby_class! {
     // `MySet[1]` answer a `MySet`. Building a plain `Set` and handing it back
     // lost the subclass at CONSTRUCTION -- which is where it was lost, not at
     // the binary operations that then carried the wrong class forward.
-    def self."new" allocs (recv, arg?, &block) {
+    def self."new" allocs inherits (recv, arg?, &block) {
         let out = tagged_empty(recv);
         let args: Vec<RubyValue> = arg.into_iter().cloned().collect();
         crate::dispatch::send_value(&out, crate::Symbol::intern("initialize"), &args, block)?;

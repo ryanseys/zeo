@@ -34,7 +34,7 @@ ruby_class! {
     allocate sized_queue_allocate;
 
     // `SizedQueue.new(n)` -- the bounded constructor.
-    def self."new" cfunc (_recv, arg) {
+    def self."new" cfunc inherits (_recv, arg) {
         Ok(sized_queue_new(positive_size(arg_int!(arg))?))
     }
 

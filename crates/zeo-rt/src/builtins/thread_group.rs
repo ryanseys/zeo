@@ -82,7 +82,7 @@ ruby_class! {
     const Default = default_group();
 
     // `Class#new`'s C shape: variadic, since it forwards to `initialize`.
-    def self."new" cfunc (_recv, *_args, &_block) {
+    def self."new" cfunc inherits (_recv, *_args, &_block) {
         Ok(RubyValue::Object(Arc::new(RThreadGroup::default())))
     }
 

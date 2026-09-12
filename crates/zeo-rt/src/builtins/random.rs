@@ -287,7 +287,7 @@ fn new_random(seed_arg: Option<&RubyValue>) -> Result<RubyValue, Signal> {
 ruby_class! {
     Random = zeo_abi::RANDOM_CLASS < zeo_abi::RANDOM_BASE_CLASS;
 
-    def self."new"(_recv, arg?) {
+    def self."new" inherits (_recv, arg?) {
         new_random(arg)
     }
     def self."rand"(_recv, arg?) {

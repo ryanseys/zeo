@@ -89,7 +89,7 @@ ruby_class! {
     // blank, which is why ruby lets `allocate` answer a usable one.
     allocate new_cv;
 
-    def self."new" cfunc (_recv) {
+    def self."new" cfunc inherits (_recv) {
         Ok(new_cv())
     }
 

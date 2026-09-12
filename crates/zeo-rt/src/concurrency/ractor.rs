@@ -1545,7 +1545,7 @@ zeo_macros::ruby_class! {
     }
 
     class Port = zeo_abi::RACTOR_PORT_CLASS < zeo_abi::OBJECT_CLASS {
-        def self."new" cfunc (_recv) {
+        def self."new" cfunc inherits (_recv) {
             Ok(port_value(create_port(&current_ractor())))
         }
         def "receive"(recv) {

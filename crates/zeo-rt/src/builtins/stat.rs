@@ -236,7 +236,7 @@ ruby_class! {
     // it forwards to is what carries the arity-1 check. The oracle row is
     // `Class#new`'s, so a declared 1 here is a mismatch even though the method
     // really does take exactly one argument.
-    def self."new"(_recv, *_args) {
+    def self."new" inherits (_recv, *_args) {
         let [path] = __args else {
             return Err(crate::dispatch::wrong_arity(__args.len(), "1"));
         };

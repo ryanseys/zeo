@@ -603,7 +603,7 @@ ruby_class! {
         let _ = dir_h_close(&dir, &[], None);
         out
     }
-    def self."new" cfunc (recv, arg1, _arg2?, &block) {
+    def self."new" cfunc inherits (recv, arg1, _arg2?, &block) {
         open_handle(recv, std::slice::from_ref(arg1), block)
     }
     // `Dir.for_fd(fd)` -- a handle over an already-open directory descriptor.

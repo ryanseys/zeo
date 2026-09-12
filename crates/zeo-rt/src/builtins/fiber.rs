@@ -111,7 +111,7 @@ ruby_class! {
     // `send`, and is what a `class F < Fiber` reaches through `super`. The
     // block IS the fiber's body, so a blockless call is the same
     // ArgumentError CRuby raises out of `Proc.new`.
-    def self."new" cfunc (_recv, &block) {
+    def self."new" cfunc inherits (_recv, &block) {
         match block {
             Some(b) => Ok(fiber::fiber_new(b.clone())),
             None => Err(crate::builtins::arg_error!("tried to create Proc object without a block")),
