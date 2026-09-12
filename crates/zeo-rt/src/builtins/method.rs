@@ -619,7 +619,23 @@ ruby_class! {
         if m.kind == MethodKind::Singleton
             && crate::builtins::builtin_row_inherits(m.home, m.name.name_str(), true)
         {
-            return Ok(RubyValue::Class(zeo_abi::CLASS_CLASS));
+            let n = m.name.name_str();
+            // The nearest ancestor that really declares it: `File.read` is
+            // IO's, so ruby names `#<Class:IO>`. A name no ancestor declares
+            // is reached through `Class#new`, which is where `Time.new` and
+            // the other constructors land.
+            let declared = crate::dispatch::ancestors_of_value(m.home)
+                .iter()
+                .copied()
+                .skip(1)
+                .find(|&anc| {
+                    crate::builtins::class_method_table(anc).is_some_and(|f| f(n).is_some())
+                        && !crate::builtins::builtin_row_inherits(anc, n, true)
+                });
+            return match declared {
+                Some(anc) => crate::runtime_meta::runtime_singleton_class(&RubyValue::Class(anc)),
+                None => Ok(RubyValue::Class(zeo_abi::CLASS_CLASS)),
+            };
         }
         // `chain()`, not `home`: after `#super_method` re-seats, `home` IS the
         // owner, and asking whether the OWNER extended the module answers no

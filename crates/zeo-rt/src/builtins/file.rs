@@ -1241,7 +1241,10 @@ ruby_class! {
     // (default `Encoding.default_external`, UTF-8) WITHOUT validation --
     // CRuby's own rule. `encoding:`/`external_encoding:`/`internal_encoding:`
     // options override it; an internal encoding transcodes the bytes.
-    def self."read" cfunc (_recv, path, length?, offset?, opt?) {
+    // The whole-file family answers here -- the body reads a path, which is
+    // File's business -- while ruby declares all six on IO and lets File
+    // inherit them, so each row says the owner is elsewhere.
+    def self."read" cfunc inherits (_recv, path, length?, offset?, opt?) {
         let path = path_arg(path, "read")?;
         let mut bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_read_errno(&e, &path))?;
@@ -1258,7 +1261,7 @@ ruby_class! {
         Ok(RubyValue::Str(build_read_string(bytes, ext, int)?))
     }
     // `binread` always answers ASCII-8BIT bytes, no transcoding.
-    def self."binread" cfunc (_recv, path, length?, offset?) {
+    def self."binread" cfunc inherits (_recv, path, length?, offset?) {
         let path = path_arg(path, "binread")?;
         let mut bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_read_errno(&e, &path))?;
@@ -1277,14 +1280,14 @@ ruby_class! {
         }
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT)))
     }
-    def self."binwrite" cfunc (_recv, arg1, arg2, _arg3?) {
+    def self."binwrite" cfunc inherits (_recv, arg1, arg2, _arg3?) {
         let path = path_arg(arg1, "binwrite")?;
         let data = write_bytes(arg2);
         crate::gvl::without_gvl(|| std::fs::write(&path, &data))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         Ok(RubyValue::Int(data.len() as i64))
     }
-    def self."readlines" cfunc (_recv, path, sep?, opt?) {
+    def self."readlines" cfunc inherits (_recv, path, sep?, opt?) {
         let path = path_arg(path, "readlines")?;
         let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
             .map_err(|e| raise_read_errno(&e, &path))?;
@@ -1299,7 +1302,7 @@ ruby_class! {
     }
     // `File.foreach(path)` -- yield each line; without a block, an Enumerator.
     // `chomp: true` strips terminators, mirroring `readlines`.
-    def self."foreach" cfunc (recv, path, sep?, opt?, &block) {
+    def self."foreach" cfunc inherits (recv, path, sep?, opt?, &block) {
         let path = path_arg(path, "foreach")?;
         let p = block_or_enum!(recv, __args, block);
         let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
@@ -1365,7 +1368,7 @@ ruby_class! {
         };
         Ok(RubyValue::Bool(fnmatch(&pat, &name, flags)))
     }
-    def self."write" cfunc (_recv, arg1, arg2, arg3?) {
+    def self."write" cfunc inherits (_recv, arg1, arg2, arg3?) {
         let path = path_arg(arg1, "write")?;
         // Bytes are written VERBATIM (a String emits its own bytes, so a
         // BINARY string round-trips unchanged).
