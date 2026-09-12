@@ -1311,6 +1311,7 @@ pub(crate) mod gate {
     static BIGDECIMAL: AtomicU8 = AtomicU8::new(0);
     static FORMATTER: AtomicU8 = AtomicU8::new(0);
     static PATHNAME: AtomicU8 = AtomicU8::new(0);
+    static TMPDIR: AtomicU8 = AtomicU8::new(0);
 
     fn required(cell: &AtomicU8) -> bool {
         cell.load(Ordering::Acquire) == 1
@@ -1339,6 +1340,8 @@ pub(crate) mod gate {
             // ruby 4.0 has the Pathname CLASS before line 1 (pathname.so),
             // and its find/rmtree pair only from the ruby half.
             "pathname" => PATHNAME.store(1, Ordering::Release),
+            // `Dir.mktmpdir` is tmpdir.rb's, so it arrives with that require.
+            "tmpdir" => TMPDIR.store(1, Ordering::Release),
             _ => return,
         }
         NAME_CACHE.write().unwrap().take();
@@ -1360,6 +1363,7 @@ pub(crate) mod gate {
             "bigdecimal" => required(&BIGDECIMAL),
             "random/formatter" => required(&FORMATTER),
             "pathname" => required(&PATHNAME),
+            "tmpdir" => required(&TMPDIR),
             "env:boxes" => crate::boxes::boxes_enabled(),
             _ => false,
         }
@@ -1448,7 +1452,9 @@ pub(crate) mod gate {
         static KERNEL: Views = views_of::<{ zeo_abi::KERNEL_CLASS.0 }>();
         static FORMATTER: Views = views_of::<{ zeo_abi::RANDOM_FORMATTER_MODULE.0 }>();
         static PATHNAME: Views = views_of::<{ zeo_abi::PATHNAME_CLASS.0 }>();
+        static DIR: Views = views_of::<{ zeo_abi::DIR_CLASS.0 }>();
         match id {
+            zeo_abi::DIR_CLASS => &DIR,
             zeo_abi::IO_CLASS => &IO,
             zeo_abi::RUBY_BOX_CLASS => &BOX,
             zeo_abi::OBJECTSPACE_MODULE => &OBJECTSPACE,
@@ -1550,7 +1556,8 @@ pub(crate) mod gate {
                     "io/nonblock",
                     "objspace",
                     "pathname",
-                    "random/formatter"
+                    "random/formatter",
+                    "tmpdir"
                 ]
             );
         }

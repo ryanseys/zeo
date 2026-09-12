@@ -33,6 +33,11 @@ pub struct ClassSurface {
     pub includes: &'static [ClassId],
     pub instance_methods: &'static [&'static str],
     pub class_methods: &'static [&'static str],
+    /// The rows carrying a `gated "feature"` marker. Ruby grows them at the
+    /// require that arms them, so a probe of one answers differently above
+    /// and below that line and only the run time can say which.
+    pub gated_instance_methods: &'static [&'static str],
+    pub gated_class_methods: &'static [&'static str],
     pub constants: &'static [&'static str],
 }
 
@@ -50,6 +55,18 @@ pub fn surface_for(id: ClassId) -> Option<&'static ClassSurface> {
 /// hand-written `target_provides_class_method` allowlist.
 pub fn provides_class_method(id: ClassId, name: &str) -> bool {
     surface_for(id).is_some_and(|s| s.class_methods.contains(&name))
+}
+
+/// Whether `id`'s CLASS method `name` waits for the require that arms it.
+/// A fold asks this first and stands down: `Dir.respond_to?(:mktmpdir)` is
+/// false above `require "tmpdir"` and true below it.
+pub fn class_method_is_gated(id: ClassId, name: &str) -> bool {
+    surface_for(id).is_some_and(|s| s.gated_class_methods.contains(&name))
+}
+
+/// [`class_method_is_gated`]'s instance-side twin.
+pub fn instance_method_is_gated(id: ClassId, name: &str) -> bool {
+    surface_for(id).is_some_and(|s| s.gated_instance_methods.contains(&name))
 }
 
 #[cfg(test)]

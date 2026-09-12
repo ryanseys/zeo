@@ -152,7 +152,8 @@ fn generate_class_surface(rt_src: &Path, rt_ext: &Path) -> String {
             code,
             "    ClassSurface {{ id: zeo_abi::{}, table_symbol: {:?}, header_name: {:?}, \
              is_module: {}, superclass: {}, includes: &[{}], instance_methods: &[{}], \
-             class_methods: &[{}], constants: &[{}] }},",
+             class_methods: &[{}], gated_instance_methods: &[{}], \
+             gated_class_methods: &[{}], constants: &[{}] }},",
             s.id_const,
             format!("zeo_ctable_{}", s.id_const),
             s.header_name,
@@ -161,6 +162,8 @@ fn generate_class_surface(rt_src: &Path, rt_ext: &Path) -> String {
             includes,
             str_list(&s.instance_methods),
             str_list(&s.class_methods),
+            str_list(&s.gated_instance_methods),
+            str_list(&s.gated_class_methods),
             str_list(&s.constants),
         )
         .expect("writing to a String never fails");
@@ -272,6 +275,11 @@ struct Surface {
     includes: Vec<String>,
     instance_methods: Vec<String>,
     class_methods: Vec<String>,
+    /// The `gated "feature"` rows: ruby grows them only from the require
+    /// that arms them, so their presence is a question about a POSITION in
+    /// the program and no fold may answer it.
+    gated_instance_methods: Vec<String>,
+    gated_class_methods: Vec<String>,
     constants: Vec<String>,
 }
 
@@ -515,6 +523,8 @@ fn const_name(path: &syn::Path) -> String {
 fn surface_from_spec(spec: &ClassSpec, out: &mut Vec<Surface>) {
     let mut instance_methods = Vec::new();
     let mut class_methods = Vec::new();
+    let mut gated_instance_methods = Vec::new();
+    let mut gated_class_methods = Vec::new();
     for method in &spec.methods {
         // A row this target does not compile is not surface -- see `cfg_holds`.
         if !cfg_holds(&method.attrs) {
@@ -527,9 +537,15 @@ fn surface_from_spec(spec: &ClassSpec, out: &mut Vec<Surface>) {
             // `Math`. Bucketing on `is_class_method` alone lost all 39 of them.
             if method.is_class_method || method.is_module_function {
                 class_methods.push(name.ruby.clone());
+                if method.gate.is_some() {
+                    gated_class_methods.push(name.ruby.clone());
+                }
             }
             if !method.is_class_method {
                 instance_methods.push(name.ruby.clone());
+                if method.gate.is_some() {
+                    gated_instance_methods.push(name.ruby.clone());
+                }
             }
         }
     }
@@ -553,6 +569,8 @@ fn surface_from_spec(spec: &ClassSpec, out: &mut Vec<Surface>) {
         includes: spec.includes.iter().map(const_name).collect(),
         instance_methods,
         class_methods,
+        gated_instance_methods,
+        gated_class_methods,
         constants: spec
             .consts
             .iter()

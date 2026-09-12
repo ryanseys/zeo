@@ -4,6 +4,7 @@
 # invoke like: ruby -r mkmf extconf.rb
 
 require 'rbconfig'
+require 'tmpdir'
 require 'fileutils'
 require 'shellwords'
 

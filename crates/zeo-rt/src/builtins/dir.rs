@@ -737,7 +737,7 @@ ruby_class! {
     // directory (recursively) afterward -- even if the block raises --
     // answering the block's value; without a block, answer the path for the
     // caller to clean up.
-    def self."mktmpdir"(_recv, arg1?, arg2?, &block) {
+    def self."mktmpdir" gated "tmpdir" (_recv, arg1?, arg2?, &block) {
         let (prefix, suffix) = match arg1 {
             None | Some(RubyValue::Nil) => ("d".to_string(), String::new()),
             Some(RubyValue::Str(s)) => (s.lock().to_utf8_lossy().into_owned(), String::new()),

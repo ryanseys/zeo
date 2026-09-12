@@ -13,6 +13,7 @@
 
 require "stringio"
 require "tempfile"
+require "tmpdir"
 require "zlib"
 
 BODY = (0...1000).map { |i| (97 + i % 26).chr }.join

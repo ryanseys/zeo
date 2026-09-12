@@ -109,7 +109,12 @@ impl Loader {
                 return Ok(Vec::new());
             }
         }
-        self.splice_file(hir, &canonical, file_idx, package, current_box)
+        // A feature zeo also carries NATIVELY (`tmpdir`, whose `Dir.mktmpdir`
+        // is a gated row) arms its gate HERE, at the require's own position,
+        // while the file on disk goes on supplying everything else.
+        let gate = (name == "require" && crate::lower::features::is_builtin_feature(feature))
+            .then(|| crate::lower::features::canonical_ext_feature(feature).to_string());
+        self.splice_file(hir, &canonical, file_idx, package, current_box, gate)
     }
 
     /// Splices `PRELOADED_FEATURES` ahead of the main file. A later explicit
@@ -170,6 +175,7 @@ impl Loader {
             None,
             None,
             box_id,
+            None,
         )?))
     }
 
@@ -312,7 +318,7 @@ impl Loader {
             // constant fold ask the run time for these names.
             let before: std::collections::BTreeSet<String> =
                 hir.const_write_names().cloned().collect();
-            match self.splice_file(hir, &canonical, None, package.clone(), 0) {
+            match self.splice_file(hir, &canonical, None, package.clone(), 0, None) {
                 Ok(body) => {
                     let fresh = fresh_unit_consts(hir, &before);
                     hir.loader.unrun_unit_consts.extend(fresh.iter().cloned());
@@ -383,7 +389,7 @@ impl Loader {
                     // answering nil where the read beside it answered a value.
                     let before: std::collections::BTreeSet<String> =
                         hir.const_write_names().cloned().collect();
-                    match self.splice_file(hir, &canonical, None, package.clone(), 0) {
+                    match self.splice_file(hir, &canonical, None, package.clone(), 0, None) {
                         Ok(body) => {
                             let fresh = fresh_unit_consts(hir, &before);
                             hir.loader.unrun_unit_consts.extend(fresh);
@@ -437,6 +443,7 @@ impl Loader {
         required_from: Option<usize>,
         package: Option<String>,
         box_id: u32,
+        gate: Option<String>,
     ) -> PResult<Vec<NodeId>> {
         if self.splicing.iter().any(|p| p == canonical) {
             return Err(format!(
@@ -445,7 +452,7 @@ impl Loader {
             ).into());
         }
         let source: std::sync::Arc<str> = read_source(canonical)?.into();
-        self.splice_source(hir, canonical, source, required_from, package, box_id)
+        self.splice_source(hir, canonical, source, required_from, package, box_id, gate)
     }
 
     /// The lowering half of [`Self::splice_file`], over already-read `source`.
@@ -465,6 +472,7 @@ impl Loader {
         required_from: Option<usize>,
         package: Option<String>,
         box_id: u32,
+        gate: Option<String>,
     ) -> PResult<Vec<NodeId>> {
         let idx = hir.loader.loaded_files.len();
         hir.loader.loaded_files.push(LoadedFile {
@@ -571,7 +579,7 @@ impl Loader {
             0,
             hir.push(HirNode::FeatureLoaded {
                 entry: spelled.display().to_string(),
-                feature: None,
+                feature: gate,
             }),
         );
         Ok(statements)

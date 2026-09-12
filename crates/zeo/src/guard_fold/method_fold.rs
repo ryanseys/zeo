@@ -95,6 +95,9 @@ fn builtin_provides_instance_method(
         }
         seen.push(c);
         match crate::builtin_surface::surface_for(c) {
+            // A gated row arrives with its require, so whether it is there is
+            // a question about a position in the program: the run time answers.
+            Some(s) if s.gated_instance_methods.contains(&name) => return None,
             Some(s) if s.instance_methods.contains(&name) => return Some(true),
             Some(_) => {}
             // A BOOTSTRAP class -- the exception hierarchy -- is written in
@@ -160,6 +163,9 @@ fn respond_to_fold(
         // allowlist.
         if let Some((_, sid)) = compiler.class_method_in_chain(cls, &m) {
             return (!waits_for_its_unit(compiler, sid)).then_some(true);
+        }
+        if crate::builtin_surface::class_method_is_gated(cls, &m) {
+            return None;
         }
         if crate::builtin_surface::provides_class_method(cls, &m) {
             return Some(true);
@@ -243,6 +249,9 @@ fn method_defined_fold(
                 && sc_args.is_empty()
                 && let Some(cls) = const_receiver_class(compiler, cref, box_id, *inner)
             {
+                if crate::builtin_surface::class_method_is_gated(cls, &m) {
+                    return None;
+                }
                 if compiler.class_method_in_chain(cls, &m).is_some()
                     || crate::builtin_surface::provides_class_method(cls, &m)
                 {

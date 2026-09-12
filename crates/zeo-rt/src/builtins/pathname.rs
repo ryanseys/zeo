@@ -713,7 +713,9 @@ ruby_class! {
         args.extend_from_slice(rest);
         yield_or_return(wrap_array(dir_call("glob", &args, None)?), block)
     }
-    def self."mktmpdir" params "" (_recv, *args, &block) {
+    // pathname.rb's own, not tmpdir.rb's: the ruby half is what adds it, and
+    // its body requires tmpdir itself.
+    def self."mktmpdir" params "" gated "pathname" (_recv, *args, &block) {
         Ok(wrap(dir_call("mktmpdir", args, block)?))
     }
 

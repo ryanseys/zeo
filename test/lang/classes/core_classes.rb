@@ -6,6 +6,8 @@
 # only facts about them. That is what lets the output be diffed against real
 # ruby at all.
 
+require "tmpdir"
+
 # --- File: the pure-path family (string work, never touches the disk) -------
 puts File.basename("/home/user/notes.md")
 puts File.basename("/home/user/notes.md", ".md")

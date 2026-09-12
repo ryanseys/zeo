@@ -12,8 +12,8 @@
 # `bundled_gems.rb` redefines both `Kernel#require` and `Kernel.require` with
 # a parameter named `name`, so the recorded answer would be bundler's.
 
-require "pathname" # a no-op in zeo and in ruby 4.0: the class is already there
-require "tmpdir"   # what adds `Pathname.mktmpdir`
+require "pathname" # the ruby half, which adds `Pathname.mktmpdir`
+require "tmpdir"   # what adds `Dir.mktmpdir`
 
 def show(label)
   puts "#{label}: #{yield.inspect}"
