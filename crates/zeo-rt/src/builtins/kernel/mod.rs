@@ -139,11 +139,18 @@ pub(crate) fn object_id_of(recv: &RubyValue) -> RubyValue {
         // whatever temporary slot the caller built, and every class in a loop
         // reads back the same address -- `Array.object_id == Hash.object_id`.
         RubyValue::Class(cid) => 0x2000_0000_0000 + i64::from(cid.0),
-        // The remaining kinds get a per-call address-ish value -- a documented
-        // approximation (identity comparison via object_id on them is rare).
-        // It holds only while the values sit in distinct slots; anything with
-        // a stable identity of its own should get an arm above instead.
-        _ => recv as *const _ as i64,
+        // Every other heap kind answers its own payload address, the same one
+        // `value_identity` spells for a singleton -- so the two can never
+        // disagree about which object this is. Without it a Regexp, Proc,
+        // MatchData or Enumerator fell to the slot address below, and two live
+        // ones built in a loop read back the same id.
+        other => match crate::runtime_meta::value_identity(other) {
+            Some(addr) => addr as i64,
+            // A value with no identity of its own gets a per-call
+            // address-ish value: it holds only while the values sit in
+            // distinct slots.
+            None => recv as *const _ as i64,
+        },
     })
 }
 
