@@ -502,13 +502,15 @@ fn send_value_in_reason_inner(
         {
             return with_c_frame(label, || f.call(recv, args, block));
         }
-        // The receiver's OWN row, for a boxed caller. The flat map above is
-        // what probes it for box 0, and the ancestor walk below starts at
-        // `skip(1)` precisely because of that -- so without this a box's own
-        // `def self.x` is probed by nobody and raises NoMethodError.
+        // The receiver's OWN row, for a boxed caller -- and for any class the
+        // flat map declines. The flat map above is what probes it for box 0,
+        // and the ancestor walk below starts at `skip(1)` precisely because of
+        // that, so without this a box's own `def self.x` is probed by nobody
+        // and raises NoMethodError. A GATED class grows rows part-way through
+        // the program and is never flattened, which put every `class Dir; def
+        // self.x` in the same position.
         if !class_removed_here
             && !fused_new
-            && box_id != 0
             && let Some(f) = REGISTRY
                 .get()
                 .and_then(|r| r.lookup_class_method(*cid, box_id, name))
