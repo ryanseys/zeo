@@ -94,8 +94,14 @@ impl RubyObject for RUnboundMethod {
 pub fn unbound_method_new(cid: ClassId, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
     let name = resolve_method_name(name_arg)?;
     if !crate::dispatch::responds_to(cid, name, true) {
+        // ruby names the KIND it was asked about: `Kernel.instance_method(:x)`
+        // reports a module, `String.instance_method(:x)` a class.
+        let kind = match crate::dispatch::class_is_module(cid) {
+            Some(true) => "module",
+            _ => "class",
+        };
         return Err(name_error!(
-            "undefined method '{}' for class '{}'",
+            "undefined method '{}' for {kind} '{}'",
             name.name(),
             crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string())
         ));
