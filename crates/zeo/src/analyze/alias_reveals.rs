@@ -94,7 +94,7 @@ pub fn resolve(compiler: &mut Compiler) {
             let g = group;
             group += 1;
             compiler
-                .alias_source_reveals
+                .positional_reveals
                 .push((cid, name.clone(), singleton, g));
 
             let (si, di, _) = defs[0];

@@ -303,9 +303,10 @@ fn conceal_unit_methods(compiler: &crate::compiler::Compiler) -> Vec<(u32, Strin
             out.push((owner, scope.name.clone(), class_side, unit));
         }
     }
-    // ...and the rows a RUNTIME alias makes positional. Same table, a reveal
-    // group of its own, lifted at the `def`'s line rather than a unit's head.
-    for (cid, name, class_side, group) in &compiler.alias_source_reveals {
+    // ...and the rows a RUNTIME alias or a BUILTIN reopen makes positional.
+    // Same table, a reveal group of its own, lifted at the `def`'s line
+    // rather than a unit's head.
+    for (cid, name, class_side, group) in &compiler.positional_reveals {
         out.push((cid.0, name.clone(), *class_side, *group));
     }
     out

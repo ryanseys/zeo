@@ -94,10 +94,10 @@ pub(crate) fn finish_package(
         ));
     }
 
-    // Reveal groups: the package's units plus its alias-reveal groups
+    // Reveal groups: the package's units plus its positional-reveal groups
     // share one id space starting at 0.
     let mut n_units = analyzed.feature_units.len() as u32;
-    for (_, _, _, group) in &compiler.alias_source_reveals {
+    for (_, _, _, group) in &compiler.positional_reveals {
         n_units = n_units.max(group + 1);
     }
 

@@ -81,7 +81,7 @@ fn instance_class(
 /// When they all do, the absence is real -- `"".respond_to?(:parameterize)` is
 /// how test-prof asks whether ActiveSupport has been loaded, and the honest
 /// answer is no.
-fn builtin_provides_instance_method(
+pub(crate) fn builtin_provides_instance_method(
     compiler: &Compiler,
     class: ClassId,
     name: &str,

@@ -44,6 +44,7 @@ pub(crate) use platform::{
 use crate::compiler::{ClassId, Compiler};
 use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use method_fold::{call_fold, probe_name};
+pub(crate) use method_fold::builtin_provides_instance_method;
 use platform::{ffi_platform_leaf, ffi_platform_leaf_integer};
 
 /// How far a fold may chase one guard through the definitions behind it -- a

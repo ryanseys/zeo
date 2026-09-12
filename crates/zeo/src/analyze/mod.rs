@@ -27,6 +27,7 @@ pub(crate) use scans::*;
 use static_guards::*;
 use top_stmts::*;
 pub(crate) mod alias_reveals;
+pub(crate) mod builtin_reveals;
 pub(crate) mod dyn_defs;
 pub(crate) mod mro;
 mod pkg_iface;
@@ -418,6 +419,10 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // the `at` of every later `def`, and the reveal has to land where the
     // redefinition splice left the position.
     alias_reveals::resolve(compiler);
+
+    // ...and every method a BUILTIN reopen ADDS, which ruby has no row for
+    // until the reopen runs. Shares the reveal-group numbers above.
+    builtin_reveals::resolve(compiler);
 
     // ...and every `def` in a class body that installs methods at run time,
     // which is the third way a definition's position becomes observable.

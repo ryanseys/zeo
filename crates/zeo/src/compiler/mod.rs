@@ -414,12 +414,14 @@ pub struct Compiler {
     /// redefinition re-installs at its own document position
     /// (`HirNode::MethodRedefine`). Filled by `analyze::redefs`.
     pub positional_redefs: Vec<(ClassId, String, ScopeId, bool)>,
-    /// `(class, name, class_side, reveal group)` for a `def` a RUNTIME alias
-    /// names as its SOURCE. Its row is CONCEALED until the `def`'s own line,
-    /// so an alias taken above it copies what the name meant THEN -- CRuby's
-    /// `rb_alias`. Groups are numbered past the units', which share the run
-    /// time's reveal table. Filled by `analyze::alias_reveals`.
-    pub alias_source_reveals: Vec<(ClassId, String, bool, u32)>,
+    /// `(class, name, class_side, reveal group)` for a `def` whose row is
+    /// CONCEALED until the `def`'s own line. Two passes fill it: one a RUNTIME
+    /// alias names as its SOURCE, so an alias taken above it copies what the
+    /// name meant THEN (CRuby's `rb_alias`), and one a BUILTIN reopen ADDS,
+    /// which ruby has no row for until the reopen runs. Groups are numbered
+    /// past the units', which share the run time's reveal table. Filled by
+    /// `analyze::alias_reveals` and `analyze::builtin_reveals`.
+    pub positional_reveals: Vec<(ClassId, String, bool, u32)>,
     /// One of those sites names its method with something other than a literal
     /// (`Node.send(:define_method, computed)`, a bare `private`), so NO name is
     /// safe to fold. Kept apart from the set above because it is the expensive
@@ -731,7 +733,7 @@ impl Compiler {
             unit_stream: None,
             scope_stream: FMap::default(),
             positional_redefs: Vec::new(),
-            alias_source_reveals: Vec::new(),
+            positional_reveals: Vec::new(),
             runtime_patches_any_name: false,
             runtime_eval: true,
             reachable_builtins: None,
