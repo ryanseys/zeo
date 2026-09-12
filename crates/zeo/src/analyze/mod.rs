@@ -418,11 +418,11 @@ fn analyze_impl(compiler: &mut Compiler, root: NodeId) -> Result<AnalyzedParts, 
     // reason. After `redefs`: both splice into a site's statements and bump
     // the `at` of every later `def`, and the reveal has to land where the
     // redefinition splice left the position.
-    alias_reveals::resolve(compiler);
+    alias_reveals::resolve(compiler, feature_units.len() as u32);
 
     // ...and every method a BUILTIN reopen ADDS, which ruby has no row for
     // until the reopen runs. Shares the reveal-group numbers above.
-    builtin_reveals::resolve(compiler);
+    builtin_reveals::resolve(compiler, feature_units.len() as u32);
 
     // ...and every `def` in a class body that installs methods at run time,
     // which is the third way a definition's position becomes observable.

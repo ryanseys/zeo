@@ -30,10 +30,12 @@
 use crate::compiler::{ClassId, Compiler, DefEvent};
 use crate::hir::HirNode;
 
-pub fn resolve(compiler: &mut Compiler) {
+/// `units` is this program's feature-unit count -- see [`super::alias_reveals`]
+/// for why it is passed in rather than read off the loader.
+pub fn resolve(compiler: &mut Compiler, units: u32) {
     // Past the units' groups AND past every group `alias_reveals` minted:
     // both index one table at run time (`dispatch::concealed`'s `REVEALED`).
-    let mut group = compiler.hir.loader.feature_units.len() as u32;
+    let mut group = units;
     for &(_, _, _, g) in &compiler.positional_reveals {
         group = group.max(g + 1);
     }
@@ -43,10 +45,7 @@ pub fn resolve(compiler: &mut Compiler) {
     // compiles.
     let mut names: Vec<(ClassId, String, bool)> = Vec::new();
     for site in &compiler.class_body_sites {
-        let ci = compiler.class(site.class);
-        // A per-box OVERLAY registers on the root builtin's entry, where a
-        // conceal would hide the root's own row from every other box too.
-        if !ci.is_builtin || ci.builtin_overlay.is_some() {
+        if !eligible(compiler, site.class) {
             continue;
         }
         names.extend(
@@ -60,7 +59,17 @@ pub fn resolve(compiler: &mut Compiler) {
     names.dedup();
 
     for (cid, name, singleton) in names {
-        if !name_is_new_to_the_builtin(compiler, cid, &name, singleton) {
+        if an_ancestor_defines(compiler, cid, &name, singleton) {
+            continue;
+        }
+        // A USER class's compiled row is the only row the name has, and a
+        // concealed row falls through to the ancestors -- which is the answer
+        // ruby gives for an inherited name. A BUILTIN carries native rows
+        // beside the compiled one, so a reopen that REPLACES one has to leave
+        // the name answering.
+        if compiler.class(cid).is_builtin
+            && !name_is_new_to_the_builtin(compiler, cid, &name, singleton)
+        {
             continue;
         }
         let Some((si, def_at, def_seq)) = first_position(compiler, cid, &name, singleton) else {
@@ -81,6 +90,61 @@ pub fn resolve(compiler: &mut Compiler) {
         }
         tracing::debug!(class = cid.0, %name, singleton, "builtin row waits for its line");
     }
+}
+
+/// Whether `cid`'s definitions are this pass's to hold back.
+///
+/// The toplevel and the value-shaped subclasses reach their methods as
+/// inherent fns rather than through a row a conceal can take away -- the same
+/// filter `dyn_defs` opens with. A per-box OVERLAY registers on the root
+/// builtin's entry, where a conceal would hide the root's own row from every
+/// other box too.
+fn eligible(compiler: &Compiler, cid: ClassId) -> bool {
+    let ci = compiler.class(cid);
+    if cid.0 == 0 || ci.builtin_overlay.is_some() {
+        return false;
+    }
+    ci.is_builtin
+        || (!ci.is_bootstrap
+            && !compiler.is_exception_backed(cid)
+            && !compiler.is_value_subclass(cid)
+            && !compiler.is_immediate_subclass(cid))
+}
+
+/// Whether an ANCESTOR of `cid` writes `name` itself.
+///
+/// A concealed row falls through to the ancestors, so holding one back gains
+/// nothing when an ancestor answers the name -- ruby says the method is there
+/// above the line too. It also costs: the boot install of a module's first
+/// body names the hosts carrying a copy of that row with `method_owner`, and
+/// a concealed row reads as the MODULE's copy. The host's position is then
+/// emptied for good, and the reveal has nothing left to lift -- `class D;
+/// include M; def m_helper` answered `M`'s body for the whole run.
+fn an_ancestor_defines(compiler: &Compiler, cid: ClassId, name: &str, singleton: bool) -> bool {
+    let ci = compiler.class(cid);
+    if !singleton {
+        // The chain carries `cid` itself first, prepends ahead of it.
+        return ci
+            .ancestors
+            .iter()
+            .any(|&a| a != cid && compiler.classes[a.0 as usize].own_method_at.contains_key(name));
+    }
+    // A class method comes from a parent's own `def self.x`, or from a module
+    // seated on the singleton chain.
+    let mut parent = ci.parent;
+    while let Some(c) = parent {
+        if compiler.classes[c.0 as usize]
+            .own_class_method_at
+            .contains_key(name)
+        {
+            return true;
+        }
+        parent = compiler.class(c).parent;
+    }
+    ci.extends
+        .iter()
+        .chain(ci.class_method_prepends.iter())
+        .any(|&m| compiler.classes[m.0 as usize].own_method_at.contains_key(name))
 }
 
 /// Whether ruby's own `cid` answers `name` already. Only a definitive absence
@@ -167,5 +231,31 @@ fn first_position(
         return None;
     }
     let (seq, si, at) = sited[0];
+    if !compiler.class(cid).is_builtin && !anything_runs_above(compiler, cid, si, at) {
+        return None;
+    }
     Some((si, at, seq))
+}
+
+/// Whether the program can reach a position above this `def` to ask.
+///
+/// A USER class's constant does not exist above its FIRST body, so a probe
+/// there is a NameError in both engines and the row costs nothing to leave
+/// eager. That is most classes, and it keeps a body of nothing but `def`s out
+/// of codegen: without this a class like `class Node; attr_accessor :v; def
+/// walk; end` grew a whole `<class:Node>` function to carry one reveal.
+///
+/// A BUILTIN never asks: its constant is there from boot, so every position
+/// above the reopen is one a probe can stand at.
+fn anything_runs_above(compiler: &Compiler, cid: ClassId, si: usize, at: usize) -> bool {
+    // A statement of this body's own sits above the `def` ...
+    if at > 0 {
+        return true;
+    }
+    // ... or an EARLIER body already ran, which is what names the constant.
+    compiler
+        .class_body_sites
+        .iter()
+        .position(|s| s.class == cid)
+        != Some(si)
 }

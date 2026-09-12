@@ -34,14 +34,18 @@
 use crate::compiler::{ClassId, Compiler, DefEvent};
 use crate::hir::{ArrayElem, HirNode};
 
-pub fn resolve(compiler: &mut Compiler) {
+/// `units` is how many feature units this program has: reveal groups are
+/// numbered past them, because both index one table at run time
+/// (`dispatch::concealed`'s `REVEALED`). It is passed in because the loader's
+/// own list is EMPTY by the time this runs -- `analyze` takes it -- and
+/// numbering from zero handed the first group a unit's id, revealing that
+/// unit's concealed rows at an unrelated class body.
+pub fn resolve(compiler: &mut Compiler, units: u32) {
     let sources = runtime_alias_sources(compiler);
     if sources.is_empty() {
         return;
     }
-    // Reveal groups are numbered past the units', because both index one
-    // table at run time (`dispatch::concealed`'s `REVEALED`).
-    let mut group = compiler.hir.loader.feature_units.len() as u32;
+    let mut group = units;
 
     let mut sites_by_class: crate::compiler::FMap<ClassId, Vec<usize>> = Default::default();
     for (si, site) in compiler.class_body_sites.iter().enumerate() {
