@@ -391,6 +391,14 @@ pub fn conditional_class_ref(
             0,
             "read {fq_name} -> STILL CONCEALED after the autoload; raising"
         );
+        // ...and the scope's own `const_missing` gets the miss before it is
+        // reported, as ruby's does: `Digest::SHA256` is
+        // `Digest.const_missing(:SHA256)`, whose body requires the
+        // algorithm's own file and answers the class that require reveals.
+        // A scope with no hook of its own raises the miss here instead.
+        if crate::dispatch::user_const_missing(owner) {
+            return crate::dispatch::const_miss(owner, leaf);
+        }
         Err(crate::Signal::Raise(crate::dispatch::stamp_backtrace(
             crate::dispatch::make_name_error(
                 format!("uninitialized constant {fq_name}"),

@@ -556,7 +556,10 @@ pub const BUILTINS: &[BuiltinClass] = &[
         is_module: false,
         superclass: Some(DIGEST_BASE_CLASS),
         includes: &[],
-        feature: Some("digest"),
+        // `require "digest"` defines `Digest` ALONE: each algorithm arrives
+        // with its own file, which `Digest.const_missing` requires at the
+        // first reference to the class.
+        feature: Some("digest/md5"),
     },
     BuiltinClass {
         id: DIGEST_SHA1_CLASS,
@@ -564,7 +567,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         is_module: false,
         superclass: Some(DIGEST_BASE_CLASS),
         includes: &[],
-        feature: Some("digest"),
+        feature: Some("digest/sha1"),
     },
     BuiltinClass {
         id: DIGEST_SHA256_CLASS,
@@ -572,7 +575,8 @@ pub const BUILTINS: &[BuiltinClass] = &[
         is_module: false,
         superclass: Some(DIGEST_BASE_CLASS),
         includes: &[],
-        feature: Some("digest"),
+        // The three SHA-2 widths share one file, as ruby's do.
+        feature: Some("digest/sha2"),
     },
     BuiltinClass {
         id: DIGEST_SHA512_CLASS,
@@ -580,7 +584,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         is_module: false,
         superclass: Some(DIGEST_BASE_CLASS),
         includes: &[],
-        feature: Some("digest"),
+        feature: Some("digest/sha2"),
     },
     BuiltinClass {
         id: JSON_MODULE,
@@ -1039,7 +1043,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         is_module: false,
         superclass: Some(DIGEST_BASE_CLASS),
         includes: &[],
-        feature: Some("digest"),
+        feature: Some("digest/sha2"),
     },
     BuiltinClass {
         id: DIGEST_SHA2_CLASS,
@@ -1047,7 +1051,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
         is_module: false,
         superclass: Some(DIGEST_CLASS_CLASS),
         includes: &[],
-        feature: Some("digest"),
+        feature: Some("digest/sha2"),
     },
     BuiltinClass {
         id: NKF_MODULE,

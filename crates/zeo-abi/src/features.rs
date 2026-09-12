@@ -94,7 +94,10 @@ pub fn canonical_ext_feature(feature: &str) -> &str {
         // `digest/*` arm made `require "digest/nope"` answer false, which
         // starved `Digest.const_missing` of the LoadError it re-raises --
         // and swallowed `digest/version`, a real file in the gem's lib tree.
-        "digest" | "digest/md5" | "digest/sha1" | "digest/sha2" | "digest/bubblebabble" => "digest",
+        // Each ALGORITHM keeps its own name: ruby's `require "digest"` defines
+        // `Digest` alone, and `Digest::SHA256` arrives with `digest/sha2`.
+        // `bubblebabble` only adds methods to what is already there.
+        "digest" | "digest/bubblebabble" => "digest",
         other => other,
     }
 }
