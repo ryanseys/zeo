@@ -76,9 +76,6 @@ ruby_module! {
     def "warn" cfunc (_recv, arg1, arg2?) {
         warn_impl(arg1, arg2)
     }
-    def self."warn" cfunc (_recv, arg1, arg2?) {
-        warn_impl(arg1, arg2)
-    }
 }
 
 /// The shared body of `Warning#warn` and `Warning.warn`: write `msg` to stderr

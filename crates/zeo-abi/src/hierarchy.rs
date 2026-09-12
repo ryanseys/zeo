@@ -21,7 +21,13 @@ pub const ALLOCATE_UNDEFINED: &[ClassId] = &[
 /// no [`BuiltinClass`] field can express (`includes` is the instance side, and
 /// the two are independent: `CGI` does both with the same module).
 /// `(class, modules)`, in source order, exactly as `includes` is.
-pub const BUILTIN_EXTENDS: &[(ClassId, &[ClassId])] = &[(CGI_MODULE, &[CGI_ESCAPE_MODULE])];
+pub const BUILTIN_EXTENDS: &[(ClassId, &[ClassId])] = &[
+    (CGI_MODULE, &[CGI_ESCAPE_MODULE]),
+    // `Warning` extends ITSELF (CRuby's `extend self` in error.c), which is
+    // why `Warning.warn` is the module's own instance method and
+    // `Warning.singleton_methods(false)` does not list it.
+    (WARNING_MODULE, &[WARNING_MODULE]),
+];
 
 /// Builtins that PREPEND a module -- ahead of their own methods, so the module
 /// wins a name they both define. `CGI::Escape` prepends `CGI::EscapeExt`, which
