@@ -1007,10 +1007,10 @@ block21:
     v94 = stack_addr.i64 ss5
     v95 = iconst.i64 0
     v96 = symbol_value.i64 gv4
-    v97 = iconst.i32 407
+    v97 = iconst.i32 406
     v98 = iconst.i64 1
     v99 = stack_addr.i64 ss6
-    v100 = call fn11(v96, v97, v94, v98, v95, v99)  ; v97 = 407, v98 = 1, v95 = 0
+    v100 = call fn11(v96, v97, v94, v98, v95, v99)  ; v97 = 406, v98 = 1, v95 = 0
     brif v100, block1, block23
 
 block23:
@@ -1095,14 +1095,14 @@ block32:
 block33:
     v141 = symbol_value.i64 gv5
     v142 = load.i64 notrap aligned v141+48
-    v143 = iconst.i64 0x0080_0000
-    v144 = band v142, v143  ; v143 = 0x0080_0000
+    v143 = iconst.i64 0x0040_0000
+    v144 = band v142, v143  ; v143 = 0x0040_0000
     brif v144, block36, block34
 
 block34:
     v145 = call fn13(v128)
-    v146 = iconst.i32 407
-    v147 = icmp eq v145, v146  ; v146 = 407
+    v146 = iconst.i32 406
+    v147 = icmp eq v145, v146  ; v146 = 406
     brif v147, block35, block36
 
 block35:

@@ -36,12 +36,16 @@ fn entropy(recv: &RubyValue, n: i64) -> Result<Vec<u8>, Signal> {
     if n < 0 {
         return Err(arg_error!("negative string size (or size too big)"));
     }
-    let v = send_value(
-        recv,
-        Symbol::intern("gen_random"),
-        &[RubyValue::Int(n)],
-        None,
-    )?;
+    // `gen_random` is the host's own hook (SecureRandom writes one) and is a
+    // row of this module only from `require "random/formatter"`. A receiver
+    // without it -- a plain Random before that require -- supplies `bytes`,
+    // which is what this module's own bridge row would have called anyway.
+    let hook = Symbol::intern("gen_random");
+    let name = match crate::dispatch::responds_to_value(recv, hook, true) {
+        true => hook,
+        false => Symbol::intern("bytes"),
+    };
+    let v = send_value(recv, name, &[RubyValue::Int(n)], None)?;
     let RubyValue::Str(_) = v else {
         return Err(type_error!(
             "gen_random must return a String of {n} bytes, got {}",

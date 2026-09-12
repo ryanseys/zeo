@@ -3,7 +3,7 @@ source: crates/zeo/tests/suite/checks/clif.rs
 expression: "clif_of(\"module M\\n  X = 1\\n  private_constant :X\\nend\\nbegin\\n  p M::X\\nrescue NameError => e\\n  puts e.message\\nend\\n\",)"
 ---
 ;; <module:M>
-function %zeo_cb_225(i64, i64) -> i32 ccall {
+function %zeo_cb_224(i64, i64) -> i32 ccall {
     ss0 = explicit_slot 24, align = 8
     gv0 = symbol colocated %zeo_rodata
     gv1 = symbol colocated %zeo_syms
@@ -132,14 +132,14 @@ block16:
     v43 = iconst.i8 2
     store notrap aligned v43, v42  ; v43 = 2
     store notrap aligned v41, v42+8  ; v41 = 1
-    v44 = iconst.i32 407
+    v44 = iconst.i32 406
     v45 = iconst.i64 12
     v46 = iadd.i64 v2, v45  ; v45 = 12
     v47 = iconst.i64 1
     v48 = iconst.i64 2
     v49 = iconst.i32 2
     v50 = iconst.i32 0
-    call fn6(v44, v46, v47, v42, v2, v48, v49, v50)  ; v44 = 407, v47 = 1, v48 = 2, v49 = 2, v50 = 0
+    call fn6(v44, v46, v47, v42, v2, v48, v49, v50)  ; v44 = 406, v47 = 1, v48 = 2, v49 = 2, v50 = 0
     v51 = iconst.i32 3
     v52 = symbol_value.i64 gv2
     v53 = load.i16 notrap aligned v52
@@ -281,7 +281,7 @@ function %zeo_toplevel(i64) -> i32 ccall {
     fn7 = colocated %zeo_rt_const_set_at sig7
     fn8 = colocated %zeo_rt_set_line sig8
     fn9 = colocated %zeo_rt_record_const_location sig9
-    fn10 = colocated %zeo_cb_225 sig10
+    fn10 = colocated %zeo_cb_224 sig10
     fn11 = colocated %zeo_rt_pool_reset sig11
     fn12 = colocated %zeo_rt_const_private sig12
     fn13 = colocated %zeo_rt_raise_private_constant sig13
@@ -446,8 +446,8 @@ block15:
     store notrap aligned v73, v72+16  ; v73 = 0
     v74 = iconst.i8 5
     store notrap aligned v74, v72  ; v74 = 5
-    v75 = iconst.i32 407
-    store notrap aligned v75, v72+8  ; v75 = 407
+    v75 = iconst.i32 406
+    store notrap aligned v75, v72+8  ; v75 = 406
     v76 = stack_addr.i64 ss6
     v77 = call fn10(v72, v76)
     brif v77, block1, block17
@@ -534,37 +534,37 @@ block32:
     jump block31
 
 block31:
-    v114 = iconst.i32 407
+    v114 = iconst.i32 406
     v115 = iconst.i64 12
     v116 = iadd.i64 v1, v115  ; v115 = 12
     v117 = iconst.i64 1
-    v118 = call fn12(v114, v116, v117)  ; v114 = 407, v117 = 1
+    v118 = call fn12(v114, v116, v117)  ; v114 = 406, v117 = 1
     brif v118, block33, block34
 
 block33:
-    v119 = iconst.i32 407
+    v119 = iconst.i32 406
     v120 = iconst.i64 12
     v121 = iadd.i64 v1, v120  ; v120 = 12
     v122 = iconst.i64 1
     v123 = iconst.i64 36
     v124 = iadd.i64 v1, v123  ; v123 = 36
     v125 = iconst.i64 4
-    v126 = call fn13(v119, v121, v122, v124, v125)  ; v119 = 407, v122 = 1, v125 = 4
+    v126 = call fn13(v119, v121, v122, v124, v125)  ; v119 = 406, v122 = 1, v125 = 4
     brif v126, block27, block35
 
 block35:
     jump block34
 
 block34:
-    v127 = iconst.i32 407
+    v127 = iconst.i32 406
     v128 = iconst.i64 12
     v129 = iadd.i64 v1, v128  ; v128 = 12
     v130 = iconst.i64 1
-    v131 = call fn14(v127, v129, v130)  ; v127 = 407, v130 = 1
+    v131 = call fn14(v127, v129, v130)  ; v127 = 406, v130 = 1
     brif v131, block27, block36
 
 block36:
-    v132 = iconst.i32 407
+    v132 = iconst.i32 406
     v133 = iconst.i64 12
     v134 = iadd.i64 v1, v133  ; v133 = 12
     v135 = iconst.i64 1
@@ -574,7 +574,7 @@ block36:
     v139 = iconst.i8 0
     v140 = iconst.i32 0
     v141 = stack_addr.i64 ss6
-    v142 = call fn15(v132, v134, v135, v137, v138, v139, v140, v141)  ; v132 = 407, v135 = 1, v138 = 4, v139 = 0, v140 = 0
+    v142 = call fn15(v132, v134, v135, v137, v138, v139, v140, v141)  ; v132 = 406, v135 = 1, v138 = 4, v139 = 0, v140 = 0
     brif v142, block27, block37
 
 block37:
