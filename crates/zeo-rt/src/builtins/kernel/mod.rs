@@ -241,7 +241,7 @@ ruby_module! {
     //
     // A frame label starting with `<` is a genuine toplevel or class body
     // (`<main>`, `<class:K>`); anything else is a method.
-    private def "using" (_recv, _module) {
+    private def "using" hidden (_recv, _module) {
         if crate::frames::current_frame_label().is_some_and(|l| !l.starts_with('<')) {
             return Err(crate::dispatch::raise_error(
                 "RuntimeError",

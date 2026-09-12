@@ -40,6 +40,8 @@ const fn alias_table(id: ClassId) -> BuiltinClassTable {
             is_protected: lookup_class_is_protected,
             allocs: lookup_class_allocs,
             inherits: lookup_class_inherits,
+            hidden: lookup_class_hidden,
+            has_hidden: false,
             gate: lookup_class_gate,
             has_gated: false,
         }),

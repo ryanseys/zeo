@@ -290,6 +290,14 @@ pub struct MethodDef {
     /// direction: an unmarked new row claims ownership rather than silently
     /// disappearing from the class's own surface.
     pub inherits: bool,
+    /// `hidden`: the row exists for DISPATCH only -- ruby has no such method,
+    /// so every listing and every `respond_to?`/`method_defined?` must answer
+    /// as if it were absent. It covers a helper zeo's own generated code
+    /// calls (`Struct`'s initialize bridge) and a row zeo keeps to raise
+    /// ruby's error where ruby reaches a method of its own.
+    ///
+    /// Defaults to false: an unmarked row is a method ruby has.
+    pub hidden: bool,
     /// `gated "io/console"` / `gated env "boxes"`: ruby only grows this row
     /// when the named feature is required (or the named switch is on), so
     /// the runtime hides it until then -- `respond_to?(:getch)` is how a
@@ -1016,6 +1024,7 @@ fn parse_def(
     // once its feature is required / its switch is on (see
     // `MethodDef::gate`).
     let (mut cfunc, mut allocs, mut inherits) = (false, false, false);
+    let mut hidden = false;
     let mut gate = None;
     loop {
         if !cfunc && peek_ident(input, "cfunc") {
@@ -1027,6 +1036,9 @@ fn parse_def(
         } else if !inherits && peek_ident(input, "inherits") {
             input.parse::<Ident>()?;
             inherits = true;
+        } else if !hidden && peek_ident(input, "hidden") {
+            input.parse::<Ident>()?;
+            hidden = true;
         } else if gate.is_none() && peek_ident(input, "gated") {
             input.parse::<Ident>()?; // `gated`
             let env = peek_ident(input, "env");
@@ -1071,6 +1083,7 @@ fn parse_def(
         cfunc,
         allocs,
         inherits,
+        hidden,
         gate,
         body,
     })

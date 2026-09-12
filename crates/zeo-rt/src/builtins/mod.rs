@@ -157,6 +157,13 @@ pub struct MethodTable {
     /// Whether ruby names an ANCESTOR as this row's owner, so reflection must
     /// look past this class -- see `zeo_dsl::MethodDef::inherits`.
     pub inherits: fn(&str) -> bool,
+    /// Whether the row exists for DISPATCH only and ruby has no such method,
+    /// so every listing and probe answers as if it were absent -- see
+    /// `zeo_dsl::MethodDef::hidden`.
+    pub hidden: fn(&str) -> bool,
+    /// Whether ANY row of this table is hidden -- the cheap pre-question, so
+    /// a table that hides nothing pays one load.
+    pub has_hidden: bool,
     /// The arming key of the require/env gate covering this name
     /// (`"io/console"`, `"env:boxes"`), `None` for an always-on row -- see
     /// `zeo_dsl::MethodDef::gate` and [`gate`], which maps each key to the
@@ -537,6 +544,18 @@ pub(crate) fn builtin_row_inherits(id: ClassId, name: &str, class_side: bool) ->
         Side::Instance
     };
     side_of(id, side).is_some_and(|m| (m.inherits)(name))
+}
+
+/// Whether `id`'s row for `name` is one ruby has no method for at all, so
+/// every listing and every probe answers as if it were absent. `class_side`
+/// picks the table. See `zeo_dsl::MethodDef::hidden`.
+pub(crate) fn builtin_row_hidden(id: ClassId, name: &str, class_side: bool) -> bool {
+    let side = if class_side {
+        Side::Class
+    } else {
+        Side::Instance
+    };
+    side_of(id, side).is_some_and(|m| m.has_hidden && (m.hidden)(name))
 }
 
 /// `class_table`'s reflection companion: the instance-method NAMES a builtin
@@ -1456,9 +1475,10 @@ pub(crate) mod gate {
 
     pub(crate) fn names(id: ClassId, side: super::Side) -> &'static [&'static str] {
         let all = super::side_of(id, side).map(|m| (m.names)()).unwrap_or(&[]);
-        // The static list IS the answer for the ungated majority -- no memo,
-        // no leak.
-        if !gated(id) {
+        // The static list IS the answer for the ungated majority that hides
+        // nothing -- no memo, no leak.
+        let hides = super::side_of(id, side).is_some_and(|m| m.has_hidden);
+        if !gated(id) && !hides {
             return all;
         }
         let key = (id.0, matches!(side, super::Side::Instance));
@@ -1473,6 +1493,7 @@ pub(crate) mod gate {
         let kept: Vec<&'static str> = all
             .iter()
             .copied()
+            .filter(|n| !super::builtin_row_hidden(id, n, matches!(side, super::Side::Class)))
             .filter(|n| match side {
                 super::Side::Instance => instance_ok(id, n),
                 super::Side::Class => class_ok(id, n),

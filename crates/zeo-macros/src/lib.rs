@@ -83,6 +83,9 @@ struct Entry {
     /// See `zeo_dsl::MethodDef::inherits` -- the row dispatches here, but ruby
     /// names an ancestor as its owner.
     inherits: bool,
+    /// See `zeo_dsl::MethodDef::hidden` -- a row for dispatch only, which
+    /// ruby has no method for.
+    hidden: bool,
     /// See `zeo_dsl::MethodDef::gate` -- the arming key (`Gate::key`) for a
     /// require/env-gated row, `None` for the always-on majority.
     gate: Option<String>,
@@ -232,6 +235,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                 // Per-name OR def-wide: `Regexp.new` is Class's while
                 // `Regexp.compile` is Regexp's own, and both share one body.
                 inherits: method.inherits || name.inherits,
+                hidden: method.hidden,
                 gate: method.gate.as_ref().map(zeo_dsl::Gate::key),
             };
             if method.is_module_function {
@@ -273,6 +277,7 @@ fn expand(spec: &ClassSpec) -> TokenStream2 {
                     is_protected: t.is_protected,
                     allocs: t.allocs,
                     inherits: t.inherits,
+                    hidden: t.hidden,
                     gate: t.gate.clone(),
                 };
                 // Mirror the target's bucket.
@@ -586,6 +591,7 @@ fn gen_method_table(
     let protected_fn = format_ident!("{lookup}_is_protected");
     let allocs_fn = format_ident!("{lookup}_allocs");
     let inherits_fn = format_ident!("{lookup}_inherits");
+    let hidden_fn = format_ident!("{lookup}_hidden");
 
     let lookup_arms = entries.iter().map(|e| {
         let (ruby, fn_ident, attrs) = (&e.ruby, &e.fn_ident, &e.attrs);
@@ -636,6 +642,14 @@ fn gen_method_table(
     // Same shape, and the same default for the same reason: an unmarked row
     // claims ownership. See `zeo_dsl::MethodDef::inherits`.
     let inherits_arms = entries.iter().filter(|e| e.inherits).map(|e| {
+        let (ruby, attrs) = (&e.ruby, &e.attrs);
+        quote! { #( #attrs )* #ruby => true, }
+    });
+    // A row ruby has no method for at all. `has_hidden` is the cheap
+    // pre-question, so a table that marks none costs nothing.
+    // See `zeo_dsl::MethodDef::hidden`.
+    let has_hidden = entries.iter().any(|e| e.hidden);
+    let hidden_arms = entries.iter().filter(|e| e.hidden).map(|e| {
         let (ruby, attrs) = (&e.ruby, &e.attrs);
         quote! { #( #attrs )* #ruby => true, }
     });
@@ -718,6 +732,13 @@ fn gen_method_table(
             }
         }
         #[allow(dead_code, reason = "one accessor per emitted table; a call site uses some of them")]
+        pub(crate) fn #hidden_fn(name: &str) -> bool {
+            match name {
+                #( #hidden_arms )*
+                _ => false,
+            }
+        }
+        #[allow(dead_code, reason = "one accessor per emitted table; a call site uses some of them")]
         pub(crate) fn #gate_fn(name: &str) -> Option<&'static str> {
             #gate_body
         }
@@ -732,6 +753,8 @@ fn gen_method_table(
             is_protected: #protected_fn,
             allocs: #allocs_fn,
             inherits: #inherits_fn,
+            hidden: #hidden_fn,
+            has_hidden: #has_hidden,
             gate: #gate_fn,
             has_gated: #has_gated,
         })

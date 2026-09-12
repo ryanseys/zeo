@@ -251,16 +251,20 @@ pub(super) fn class_receiver_responds(cid: ClassId, name: Symbol) -> bool {
     // `send_value_in`'s matching walk would answer -- so it stops where that
     // walk stops, before `Object`, whose table holds Kernel module functions
     // ruby's singleton chain never reaches.
-    if crate::builtins::class_method_table(cid).is_some_and(|lookup| lookup(n).is_some()) {
+    // A HIDDEN row is no method of ruby's, so it answers nothing here even
+    // though dispatch reaches it -- see `zeo_dsl::MethodDef::hidden`.
+    let answers = |anc: ClassId| {
+        crate::builtins::class_method_table(anc).is_some_and(|lookup| lookup(n).is_some())
+            && !crate::builtins::builtin_row_hidden(anc, n, true)
+    };
+    if answers(cid) {
         return true;
     }
     if ancestors_of_value(cid)
         .iter()
         .skip(1)
         .take_while(|&&anc| !is_universal_tail(anc))
-        .any(|&anc| {
-            crate::builtins::class_method_table(anc).is_some_and(|lookup| lookup(n).is_some())
-        })
+        .any(|&anc| answers(anc))
     {
         return true;
     }
@@ -684,6 +688,11 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
         if let Some(table) = crate::builtins::class_table(anc)
             && table(n).is_some()
         {
+            // A HIDDEN row is no method of ruby's: dispatch reaches it, and
+            // every probe answers as if it were absent.
+            if crate::builtins::builtin_row_hidden(anc, n, false) {
+                continue;
+            }
             // A builtin private (Kernel's print family, BasicObject's
             // `initialize`, every `module_function`'s instance copy) is
             // reachable via implicit self / `send` / `super` -- all
@@ -1159,6 +1168,12 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
                     false => MethodVisibility::Public,
                 });
             }
+            // `main`'s own private singletons are ROUTED rather than stored
+            // (see `dispatch::MAIN_PRIVATE_SINGLETONS`), so no table answers
+            // for them and the ancestry walk below would miss them.
+            Some(owner) if crate::dispatch::is_main_private_singleton(&owner, name) => {
+                return Some(MethodVisibility::Private);
+            }
             // A per-object singleton method. Same "only when it really has one"
             // rule, for the same reason.
             Some(owner)
@@ -1215,6 +1230,11 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
         // match rustc lowers to a length switch, and the macro builds both
         // from the same def list, so they answer the same question.
         if crate::builtins::class_table(*anc).is_some_and(|f| f(name_str).is_some()) {
+            // A HIDDEN row is not a method ruby has, so it reports no
+            // visibility at all and the walk carries on.
+            if crate::builtins::builtin_row_hidden(*anc, name_str, false) {
+                continue;
+            }
             if is_hidden_builtin_private(*anc, name_str)
                 || crate::builtins::class_method_is_private(*anc, name_str)
             {
