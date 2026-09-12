@@ -157,8 +157,12 @@ pub(super) fn str_array(parts: Vec<String>) -> RubyValue {
 /// `lines`/`each_line`'s shared split: an optional `sep` positional and a
 /// `chomp:` keyword (a trailing Hash). Split keeps the separator unless chomped;
 /// the default separator also strips a preceding `\r` when chomping.
+/// Over BYTES, tagging every line with the receiver's own encoding: a binary
+/// string's lines are binary strings holding the same bytes, and a separator
+/// is matched as the bytes it is written with.
 pub(super) fn lines_from_args(
-    text: &str,
+    bytes: &[u8],
+    enc: crate::encoding::EncodingId,
     sep: Option<&RubyValue>,
     opts: Option<&RubyValue>,
 ) -> Vec<RubyValue> {
@@ -167,16 +171,16 @@ pub(super) fn lines_from_args(
     if let Some(RubyValue::Hash(h)) = opts {
         chomp = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("chomp"))).truthy();
     }
-    let sep = match sep {
-        Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
-        _ => "\n".to_string(),
+    let sep: Vec<u8> = match sep {
+        Some(RubyValue::Str(s)) => s.lock().bytes().to_vec(),
+        _ => b"\n".to_vec(),
     };
+    let line = |b: &[u8]| RubyValue::Str(crate::string_from_bytes(b.to_vec(), enc));
     // PARAGRAPH MODE: an empty separator is not "no separator" -- ruby splits
     // on a blank line, keeping the "\n\n" that ended each paragraph and then
     // DISCARDING any further consecutive newlines, so "a\n\n\nb" is
     // ["a\n\n", "b"].
     if sep.is_empty() {
-        let bytes = text.as_bytes();
         let mut out = Vec::new();
         let (mut start, mut i) = (0usize, 0usize);
         while i < bytes.len() {
@@ -188,25 +192,25 @@ pub(super) fn lines_from_args(
                     end += 1;
                 }
                 let piece = if chomp {
-                    &text[start..i]
+                    &bytes[start..i]
                 } else {
-                    &text[start..i + 2]
+                    &bytes[start..i + 2]
                 };
-                out.push(RubyValue::Str(crate::string_new(piece.to_string())));
+                out.push(line(piece));
                 start = end;
                 i = end;
             } else {
                 i += 1;
             }
         }
-        if start < text.len() {
-            out.push(RubyValue::Str(crate::string_new(text[start..].to_string())));
+        if start < bytes.len() {
+            out.push(line(&bytes[start..]));
         }
         return out;
     }
-    let mut pieces = Vec::new();
-    let mut rest = text;
-    while let Some(i) = rest.find(&sep) {
+    let mut pieces: Vec<&[u8]> = Vec::new();
+    let mut rest = bytes;
+    while let Some(i) = find_bytes(rest, &sep) {
         let end = i + sep.len();
         pieces.push(&rest[..end]);
         rest = &rest[end..];
@@ -218,18 +222,24 @@ pub(super) fn lines_from_args(
         .into_iter()
         .map(|l| {
             let cut = if chomp {
-                let l = l.strip_suffix(&sep).unwrap_or(l);
-                if sep == "\n" {
-                    l.strip_suffix('\r').unwrap_or(l)
+                let l = l.strip_suffix(sep.as_slice()).unwrap_or(l);
+                if sep.as_slice() == b"\n" {
+                    l.strip_suffix(b"\r".as_slice()).unwrap_or(l)
                 } else {
                     l
                 }
             } else {
                 l
             };
-            RubyValue::Str(crate::string_new(cut.to_string()))
+            line(cut)
         })
         .collect()
+}
+
+/// The first position of `needle` in `hay`. `needle` is never empty here --
+/// an empty separator is paragraph mode, which never reaches this.
+fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
 }
 
 /// `lines`' separator-keeping splitter.

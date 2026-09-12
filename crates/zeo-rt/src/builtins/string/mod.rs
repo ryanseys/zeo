@@ -1251,8 +1251,11 @@ ruby_class! {
     // `lines(sep = "\n", chomp: false)` -- split into lines, keeping the
     // separator unless `chomp:` strips it.
     def "lines"(recv, sep?, **opts, &block) {
-        let text = rstr.lock().to_utf8_lossy().into_owned();
-        let ls = lines_from_args(&text, sep, opts);
+        let (bytes, enc) = {
+            let g = rstr.lock();
+            (g.bytes().to_vec(), g.encoding())
+        };
+        let ls = lines_from_args(&bytes, enc, sep, opts);
         // With a block, `lines` behaves like `each_line`: yield each, return self.
         if let Some(RubyValue::Proc(p)) = &block {
             for l in ls {
@@ -1317,8 +1320,11 @@ ruby_class! {
     // occurrence on each piece, exactly like the default `"\n"`.
     def "each_line"(recv, sep?, **opts, &block) {
         let p = block_or_enum!(recv, __args, block);
-        let text = rstr.lock().to_utf8_lossy().into_owned();
-        for l in lines_from_args(&text, sep, opts) {
+        let (bytes, enc) = {
+            let g = rstr.lock();
+            (g.bytes().to_vec(), g.encoding())
+        };
+        for l in lines_from_args(&bytes, enc, sep, opts) {
             p.call(&[l])?;
         }
         Ok(recv.clone())
