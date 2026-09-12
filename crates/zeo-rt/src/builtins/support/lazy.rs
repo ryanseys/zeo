@@ -849,7 +849,7 @@ ruby_class! {
     // block hands the yielder flows on, so it can filter, transform, or fan
     // out. The size hint is accepted and unused (`#size` derives from the
     // source here).
-    def self."new" cfunc (_recv, *args, &block) {
+    def self."new" cfunc inherits (_recv, *args, &block) {
         Ok(RubyValue::Object(Arc::new(RLazy {
             core: Mutex::new(lazy_new_core(args, block)?),
             external: Mutex::new(None),

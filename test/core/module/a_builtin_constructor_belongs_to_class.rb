@@ -3,7 +3,7 @@
 CLASSES = [
   Dir, Enumerator, Fiber, Random, Set, Thread::Queue, Thread::SizedQueue,
   Thread::ConditionVariable, ThreadGroup, Ractor::Port, File::Stat,
-  Enumerator::Chain, Enumerator::Generator, Enumerator::Product
+  Enumerator::Chain, Enumerator::Generator, Enumerator::Lazy, Enumerator::Product
 ].freeze
 p CLASSES.map { _1.singleton_methods(false).include?(:new) }.uniq
 p CLASSES.map { _1.method(:new).owner.to_s }.uniq
