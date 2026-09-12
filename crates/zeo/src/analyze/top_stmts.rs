@@ -1359,7 +1359,7 @@ const EXCEPTION_TAIL: &[(&str, Option<&str>, bool, Option<&str>)] = &[
     ("UncaughtThrowError", Some("ArgumentError"), false, None),
     // The `Exception`-direct tail (`SystemExit`/`SignalException`/`Interrupt`):
     // uncaught by a bare `rescue`, so a program names them explicitly. Order
-    // matches `zeo-abi::EXCEPTION_CLASSES` exc_id(48..50); `Interrupt`
+    // matches `zeo-abi::EXCEPTION_CLASSES` exc_id(47..49); `Interrupt`
     // follows its parent `SignalException`.
     ("SystemExit", Some("Exception"), false, None),
     ("SignalException", Some("Exception"), false, None),

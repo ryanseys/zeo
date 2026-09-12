@@ -353,8 +353,8 @@ fn onig_search(
     }
 }
 
-/// `Regexp::TimeoutError`'s class id -- `exc_id(43)` in the exception table.
-const REGEXP_TIMEOUT_ERROR_CLASS: zeo_abi::ClassId = zeo_abi::exc_id(43);
+/// `Regexp::TimeoutError`'s class id -- `exc_id(42)` in the exception table.
+const REGEXP_TIMEOUT_ERROR_CLASS: zeo_abi::ClassId = zeo_abi::exc_id(42);
 
 /// Onig's "budget exhausted" codes: `ONIGERR_MATCH_STACK_LIMIT_OVER`,
 /// `ONIGERR_RETRY_LIMIT_IN_MATCH_OVER`, `ONIGERR_RETRY_LIMIT_IN_SEARCH_OVER`.

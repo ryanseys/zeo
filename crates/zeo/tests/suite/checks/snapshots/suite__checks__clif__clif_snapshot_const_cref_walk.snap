@@ -242,7 +242,7 @@ block25:
 }
 
 ;; <module:A>
-function %zeo_cb_224(i64, i64) -> i32 ccall {
+function %zeo_cb_223(i64, i64) -> i32 ccall {
     ss0 = explicit_slot 24, align = 8
     ss1 = explicit_slot 24, align = 8
     ss2 = explicit_slot 24, align = 8
@@ -268,7 +268,7 @@ function %zeo_cb_224(i64, i64) -> i32 ccall {
     fn4 = colocated %zeo_rt_check_ints sig4
     fn5 = colocated %zeo_rt_set_line sig5
     fn6 = colocated %zeo_rt_record_const_location sig6
-    fn7 = colocated %zeo_cb_225 sig7
+    fn7 = colocated %zeo_cb_224 sig7
     fn8 = colocated %zeo_rt_pool_push sig8
     fn9 = colocated %zeo_rt_frame_pop sig9
     fn10 = colocated %zeo_rt_pool_reset sig10
@@ -370,13 +370,13 @@ block17:
     jump block16
 
 block16:
-    v41 = iconst.i32 406
+    v41 = iconst.i32 405
     v42 = iconst.i64 42
     v43 = iadd.i64 v2, v42  ; v42 = 42
     v44 = iconst.i64 1
     v45 = iconst.i64 2
     v46 = iconst.i32 2
-    call fn6(v41, v43, v44, v2, v45, v46)  ; v41 = 406, v44 = 1, v45 = 2, v46 = 2
+    call fn6(v41, v43, v44, v2, v45, v46)  ; v41 = 405, v44 = 1, v45 = 2, v46 = 2
     v47 = stack_addr.i64 ss0
     v48 = iconst.i64 0
     store notrap aligned v48, v47  ; v48 = 0
@@ -384,8 +384,8 @@ block16:
     store notrap aligned v48, v47+16  ; v48 = 0
     v49 = iconst.i8 5
     store notrap aligned v49, v47  ; v49 = 5
-    v50 = iconst.i32 407
-    store notrap aligned v50, v47+8  ; v50 = 407
+    v50 = iconst.i32 406
+    store notrap aligned v50, v47+8  ; v50 = 406
     v51 = stack_addr.i64 ss1
     v52 = call fn7(v47, v51)
     brif v52, block1, block18
@@ -473,7 +473,7 @@ block24:
 }
 
 ;; <module:B>
-function %zeo_cb_225(i64, i64) -> i32 ccall {
+function %zeo_cb_224(i64, i64) -> i32 ccall {
     ss0 = explicit_slot 24, align = 8
     gv0 = symbol colocated %zeo_rodata
     gv1 = symbol colocated %zeo_syms
@@ -600,14 +600,14 @@ block16:
     v43 = iconst.i8 2
     store notrap aligned v43, v42  ; v43 = 2
     store notrap aligned v41, v42+8  ; v41 = 1
-    v44 = iconst.i32 407
+    v44 = iconst.i32 406
     v45 = iconst.i64 24
     v46 = iadd.i64 v2, v45  ; v45 = 24
     v47 = iconst.i64 1
     v48 = iconst.i64 2
     v49 = iconst.i32 3
     v50 = iconst.i32 0
-    call fn6(v44, v46, v47, v42, v2, v48, v49, v50)  ; v44 = 407, v47 = 1, v48 = 2, v49 = 3, v50 = 0
+    call fn6(v44, v46, v47, v42, v2, v48, v49, v50)  ; v44 = 406, v47 = 1, v48 = 2, v49 = 3, v50 = 0
     v51 = iconst.i64 0
     store notrap aligned v51, v1  ; v51 = 0
     store notrap aligned v51, v1+8  ; v51 = 0
@@ -750,7 +750,7 @@ function %zeo_toplevel(i64) -> i32 ccall {
     fn7 = colocated %zeo_rt_const_set_at sig7
     fn8 = colocated %zeo_rt_set_line sig8
     fn9 = colocated %zeo_rt_record_const_location sig9
-    fn10 = colocated %zeo_cb_224 sig10
+    fn10 = colocated %zeo_cb_223 sig10
     fn11 = colocated %zeo_rt_pool_reset sig11
     fn12 = colocated %zeo_rt_send_class_cached sig12
     fn13 = colocated %zeo_rt_frame_pop sig13
@@ -897,8 +897,8 @@ block15:
     store notrap aligned v73, v72+16  ; v73 = 0
     v74 = iconst.i8 5
     store notrap aligned v74, v72  ; v74 = 5
-    v75 = iconst.i32 406
-    store notrap aligned v75, v72+8  ; v75 = 406
+    v75 = iconst.i32 405
+    store notrap aligned v75, v72+8  ; v75 = 405
     v76 = stack_addr.i64 ss5
     v77 = call fn10(v72, v76)
     brif v77, block1, block17
@@ -962,8 +962,8 @@ block24:
     store notrap aligned v102, v101+16  ; v102 = 0
     v103 = iconst.i8 5
     store notrap aligned v103, v101  ; v103 = 5
-    v104 = iconst.i32 407
-    store notrap aligned v104, v101+8  ; v104 = 407
+    v104 = iconst.i32 406
+    store notrap aligned v104, v101+8  ; v104 = 406
     v105 = stack_addr.i64 ss5
     v106 = iconst.i64 0
     v107 = load.i32 notrap aligned v2+4
@@ -972,9 +972,9 @@ block24:
     v110 = iconst.i64 0
     v111 = stack_addr.i64 ss4
     v112 = symbol_value.i64 gv4
-    v113 = iconst.i32 407
+    v113 = iconst.i32 406
     v114 = iconst.i32 0
-    v115 = call fn12(v112, v113, v105, v107, v106, v109, v110, v114, v111)  ; v113 = 407, v106 = 0, v109 = 0, v110 = 0, v114 = 0
+    v115 = call fn12(v112, v113, v105, v107, v106, v109, v110, v114, v111)  ; v113 = 406, v106 = 0, v109 = 0, v110 = 0, v114 = 0
     brif v115, block1, block26
 
 block26:

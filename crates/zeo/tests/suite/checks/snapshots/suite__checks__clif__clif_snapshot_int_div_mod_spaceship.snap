@@ -224,11 +224,11 @@ block26:
     v72 = iadd.i64 v4, v71  ; v71 = 10
     v73 = iconst.i64 9
     v74 = call fn7(v72, v73)  ; v73 = 9
-    v75 = iconst.i32 212
+    v75 = iconst.i32 211
     v76 = iconst.i64 19
     v77 = iadd.i64 v4, v76  ; v76 = 19
     v78 = iconst.i64 12
-    v79 = call fn8(v75, v77, v78)  ; v75 = 212, v78 = 12
+    v79 = call fn8(v75, v77, v78)  ; v75 = 211, v78 = 12
     call fn9(v74)
     jump block1
 
@@ -413,11 +413,11 @@ block50:
     v172 = iadd.i64 v4, v171  ; v171 = 31
     v173 = iconst.i64 9
     v174 = call fn7(v172, v173)  ; v173 = 9
-    v175 = iconst.i32 212
+    v175 = iconst.i32 211
     v176 = iconst.i64 19
     v177 = iadd.i64 v4, v176  ; v176 = 19
     v178 = iconst.i64 12
-    v179 = call fn8(v175, v177, v178)  ; v175 = 212, v178 = 12
+    v179 = call fn8(v175, v177, v178)  ; v175 = 211, v178 = 12
     call fn9(v174)
     jump block1
 

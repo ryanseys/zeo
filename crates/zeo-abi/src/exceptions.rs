@@ -44,27 +44,27 @@ pub const NO_METHOD_ERROR_CLASS: ClassId = exc_id(17);
 
 /// `ZeroDivisionError` -- named because the emitted integer `/`/`%` guards
 /// raise it inline rather than through a dispatch.
-pub const ZERO_DIVISION_ERROR_CLASS: ClassId = exc_id(30);
+pub const ZERO_DIVISION_ERROR_CLASS: ClassId = exc_id(29);
 
 /// `UncaughtThrowError` -- exposes `#tag`/`#value` from an uncaught `throw`.
-pub const UNCAUGHT_THROW_ERROR_CLASS: ClassId = exc_id(35);
+pub const UNCAUGHT_THROW_ERROR_CLASS: ClassId = exc_id(34);
 
 /// `SystemCallError` -- the parent every [`ERRNO_CLASSES`] row gets, and the
 /// class an unmapped errno falls back to.
-pub const SYSTEM_CALL_ERROR_CLASS: ClassId = exc_id(31);
+pub const SYSTEM_CALL_ERROR_CLASS: ClassId = exc_id(30);
 
 /// The `Errno` namespace module, which owns every [`ERRNO_CLASSES`] name and
 /// every [`ERRNO_ALIASES`] constant.
-pub const ERRNO_MODULE: ClassId = exc_id(32);
+pub const ERRNO_MODULE: ClassId = exc_id(31);
 
 /// `SyntaxError` -- carries `#path`, the file whose parse failed.
-pub const SYNTAX_ERROR_CLASS: ClassId = exc_id(34);
+pub const SYNTAX_ERROR_CLASS: ClassId = exc_id(33);
 /// `NoMatchingPatternKeyError` -- carries `#key` and `#matchee`, the Hash key
 /// a `=>`/`in` pattern asked for and the Hash it asked of.
-pub const NO_MATCHING_PATTERN_KEY_ERROR_CLASS: ClassId = exc_id(42);
+pub const NO_MATCHING_PATTERN_KEY_ERROR_CLASS: ClassId = exc_id(41);
 /// `Ractor::RemoteError` -- the one class in the `Ractor` error tree with a
 /// method of its own (`#ractor`, the ractor whose failure it relays).
-pub const RACTOR_REMOTE_ERROR_CLASS: ClassId = exc_id(50);
+pub const RACTOR_REMOTE_ERROR_CLASS: ClassId = exc_id(49);
 
 /// `Encoding::UndefinedConversionError` -- a valid source character with no
 /// representation in the target. Carries `#error_char` and the encoding pair.
@@ -78,7 +78,7 @@ pub const LOCAL_JUMP_ERROR_CLASS: ClassId = exc_id(20);
 
 /// CRuby's internal `fatal`, raised when no thread can make progress. It
 /// descends straight from `Exception`, so `rescue => e` does not catch it.
-pub const FATAL_CLASS: ClassId = exc_id(57);
+pub const FATAL_CLASS: ClassId = exc_id(56);
 
 /// `RuntimeError` -- the one class whose EMPTY message renders as
 /// `unhandled exception` rather than the class name (`rb_decorate_message`).
@@ -91,14 +91,14 @@ pub const FROZEN_ERROR_CLASS: ClassId = exc_id(23);
 pub const LOAD_ERROR_CLASS: ClassId = exc_id(3);
 
 /// `SystemExit` -- carries an exit status via `#status`/`#success?`.
-pub const SYSTEM_EXIT_CLASS: ClassId = exc_id(36);
+pub const SYSTEM_EXIT_CLASS: ClassId = exc_id(35);
 
 /// `SignalException` -- resolves a signal name/number in `initialize` and
 /// exposes `#signo`/`#signm`.
-pub const SIGNAL_EXCEPTION_CLASS: ClassId = exc_id(37);
+pub const SIGNAL_EXCEPTION_CLASS: ClassId = exc_id(36);
 
 /// `Interrupt` (a `SignalException`) -- fixed to `SIGINT` (signo 2).
-pub const INTERRUPT_CLASS: ClassId = exc_id(38);
+pub const INTERRUPT_CLASS: ClassId = exc_id(37);
 
 // The ids `zeo-rt`'s error macros raise by (`raise_error_id`), skipping the
 // registry's by-name probe. Each offset must stay in sync with its row below.
@@ -111,8 +111,8 @@ pub const FLOAT_DOMAIN_ERROR_CLASS: ClassId = exc_id(19);
 pub const REGEXP_ERROR_CLASS: ClassId = exc_id(21);
 pub const FIBER_ERROR_CLASS: ClassId = exc_id(25);
 pub const THREAD_ERROR_CLASS: ClassId = exc_id(26);
-pub const TYPE_ERROR_CLASS: ClassId = exc_id(29);
-pub const NO_MEMORY_ERROR_CLASS: ClassId = exc_id(39);
+pub const TYPE_ERROR_CLASS: ClassId = exc_id(28);
+pub const NO_MEMORY_ERROR_CLASS: ClassId = exc_id(38);
 
 /// One row of the built-in exception hierarchy -- the shared source of truth
 /// for the ids both sides bake in.
@@ -152,7 +152,7 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &EXCEPTION_CLASS_ROWS;
 /// The rows written out by hand: every exception whose id does not depend on
 /// how many errnos the platform names. [`ERRNO_CLASSES`] follows this block,
 /// then [`WAIT_EXCEPTIONS`], which subclasses two of the `Errno` rows.
-const CORE_EXCEPTIONS: [ExceptionClass; 58] = [
+const CORE_EXCEPTIONS: [ExceptionClass; 57] = [
     ExceptionClass {
         id: exc_id(0),
         name: "Exception",
@@ -323,36 +323,30 @@ const CORE_EXCEPTIONS: [ExceptionClass; 58] = [
     },
     ExceptionClass {
         id: exc_id(28),
-        name: "RactorError",
-        superclass: Some(exc_id(4)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(29),
         name: "TypeError",
         superclass: Some(exc_id(4)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(30),
+        id: exc_id(29),
         name: "ZeroDivisionError",
         superclass: Some(exc_id(4)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(31),
+        id: exc_id(30),
         name: "SystemCallError",
         superclass: Some(exc_id(4)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(32),
+        id: exc_id(31),
         name: "Errno",
         superclass: None,
         is_module: true,
     },
     ExceptionClass {
-        id: exc_id(33),
+        id: exc_id(32),
         name: "Math::DomainError",
         superclass: Some(exc_id(4)),
         is_module: false,
@@ -364,13 +358,13 @@ const CORE_EXCEPTIONS: [ExceptionClass; 58] = [
     // rather than in `BUILTIN_EXCEPTIONS_RB` (id-ordering, not a semantic
     // difference).
     ExceptionClass {
-        id: exc_id(34),
+        id: exc_id(33),
         name: "SyntaxError",
         superclass: Some(exc_id(1)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(35),
+        id: exc_id(34),
         name: "UncaughtThrowError",
         superclass: Some(exc_id(5)),
         is_module: false,
@@ -380,21 +374,21 @@ const CORE_EXCEPTIONS: [ExceptionClass; 58] = [
     // them explicitly. `Interrupt < SignalException` mirrors CRuby's SIGINT
     // class. Pinned here (see `analyze::pin_builtin_exceptions_tail`).
     ExceptionClass {
-        id: exc_id(36),
+        id: exc_id(35),
         name: "SystemExit",
         superclass: Some(exc_id(0)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(37),
+        id: exc_id(36),
         name: "SignalException",
         superclass: Some(exc_id(0)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(38),
+        id: exc_id(37),
         name: "Interrupt",
-        superclass: Some(exc_id(37)),
+        superclass: Some(exc_id(36)),
         is_module: false,
     },
     // The remaining core `Exception`-tree classes CRuby defines (gem- and
@@ -402,37 +396,37 @@ const CORE_EXCEPTIONS: [ExceptionClass; 58] = [
     // `SystemStackError` descend from `Exception` directly (uncaught by a bare
     // `rescue`); the rest refine an existing `StandardError` branch.
     ExceptionClass {
-        id: exc_id(39),
+        id: exc_id(38),
         name: "NoMemoryError",
         superclass: Some(exc_id(0)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(40),
+        id: exc_id(39),
         name: "SecurityError",
         superclass: Some(exc_id(0)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(41),
+        id: exc_id(40),
         name: "SystemStackError",
         superclass: Some(exc_id(0)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(42),
+        id: exc_id(41),
         name: "NoMatchingPatternKeyError",
         superclass: Some(exc_id(24)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(43),
+        id: exc_id(42),
         name: "Regexp::TimeoutError",
         superclass: Some(exc_id(21)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(44),
+        id: exc_id(43),
         name: "IO::TimeoutError",
         superclass: Some(exc_id(11)),
         is_module: false,
@@ -440,7 +434,7 @@ const CORE_EXCEPTIONS: [ExceptionClass; 58] = [
     // `WeakRef::RefError` -- raised by a `WeakRef` whose referent has been
     // collected. CRuby makes it a plain `StandardError` (exc_id(4)).
     ExceptionClass {
-        id: exc_id(45),
+        id: exc_id(44),
         name: "WeakRef::RefError",
         superclass: Some(exc_id(4)),
         is_module: false,
@@ -451,69 +445,69 @@ const CORE_EXCEPTIONS: [ExceptionClass; 58] = [
     // relays. `Ractor::ClosedError` descends from `StopIteration` rather than
     // from `Ractor::Error`, which is what lets `Kernel#loop` swallow it.
     ExceptionClass {
-        id: exc_id(46),
+        id: exc_id(45),
         name: "Ractor::Error",
         superclass: Some(exc_id(22)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(47),
+        id: exc_id(46),
         name: "Ractor::ClosedError",
         superclass: Some(exc_id(15)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(48),
+        id: exc_id(47),
         name: "Ractor::IsolationError",
-        superclass: Some(exc_id(46)),
+        superclass: Some(exc_id(45)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(48),
+        name: "Ractor::MovedError",
+        superclass: Some(exc_id(45)),
         is_module: false,
     },
     ExceptionClass {
         id: exc_id(49),
-        name: "Ractor::MovedError",
-        superclass: Some(exc_id(46)),
+        name: "Ractor::RemoteError",
+        superclass: Some(exc_id(45)),
         is_module: false,
     },
     ExceptionClass {
         id: exc_id(50),
-        name: "Ractor::RemoteError",
-        superclass: Some(exc_id(46)),
-        is_module: false,
-    },
-    ExceptionClass {
-        id: exc_id(51),
         name: "Ractor::UnsafeError",
-        superclass: Some(exc_id(46)),
+        superclass: Some(exc_id(45)),
         is_module: false,
     },
     // The `IO::Buffer` error tree: four states under `RuntimeError`, plus
     // the mask-shape complaint under `ArgumentError` (io_buffer.c's split).
     ExceptionClass {
-        id: exc_id(52),
+        id: exc_id(51),
         name: "IO::Buffer::LockedError",
         superclass: Some(exc_id(22)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(53),
+        id: exc_id(52),
         name: "IO::Buffer::AllocationError",
         superclass: Some(exc_id(22)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(54),
+        id: exc_id(53),
         name: "IO::Buffer::AccessError",
         superclass: Some(exc_id(22)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(55),
+        id: exc_id(54),
         name: "IO::Buffer::InvalidatedError",
         superclass: Some(exc_id(22)),
         is_module: false,
     },
     ExceptionClass {
-        id: exc_id(56),
+        id: exc_id(55),
         name: "IO::Buffer::MaskError",
         superclass: Some(exc_id(5)),
         is_module: false,
@@ -526,7 +520,7 @@ const CORE_EXCEPTIONS: [ExceptionClass; 58] = [
     // `Exception`, so `rescue => e` does NOT catch it and `rescue Exception`
     // does -- which is the whole point of the tier.
     ExceptionClass {
-        id: exc_id(57),
+        id: exc_id(56),
         name: "fatal",
         superclass: Some(exc_id(0)),
         is_module: false,

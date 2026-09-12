@@ -134,8 +134,6 @@ class ThreadError < StandardError
 end
 class ClosedQueueError < StopIteration
 end
-class RactorError < StandardError
-end
 class TypeError < StandardError
 end
 class ZeroDivisionError < StandardError
