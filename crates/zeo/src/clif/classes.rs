@@ -506,8 +506,16 @@ pub(crate) fn collect_classes(em: &mut Emitter, analyzed: &Analyzed) -> CResult<
             ) {
                 conceal.push(idx as u32);
             }
-        } else if class.ancestors != zeo_abi::declared_ancestors(cid) {
-            set_ancestors.push((idx as u32, chain()));
+        } else {
+            // A NAMESPACE placeholder's class is the ruby file its `require`
+            // loads, so its constant waits for that file the way a unit's
+            // class does: concealed here, revealed by the body site.
+            if zeo_abi::is_namespace_placeholder(cid) {
+                conceal.push(idx as u32);
+            }
+            if class.ancestors != zeo_abi::declared_ancestors(cid) {
+                set_ancestors.push((idx as u32, chain()));
+            }
         }
     }
 

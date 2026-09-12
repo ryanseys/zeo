@@ -910,6 +910,15 @@ impl Compiler {
         self.class(cid).unit.is_some()
     }
 
+    /// Whether `cid` is a NAMESPACE placeholder: a builtin row that exists so
+    /// a nested constant has a scope, while the class itself is the ruby file
+    /// its `require` loads (`WeakRef`). Ruby has no such constant before that
+    /// file runs, so the row registers for dispatch and the constant waits for
+    /// the body -- the same two emissions a unit's class takes.
+    pub(crate) fn class_is_namespace_placeholder(&self, cid: ClassId) -> bool {
+        self.class(cid).is_builtin && zeo_abi::is_namespace_placeholder(zeo_abi::ClassId(cid.0))
+    }
+
     pub(crate) fn feature_active(&self, cid: ClassId) -> bool {
         match self.class(cid).feature_gate {
             None => true,
@@ -939,6 +948,7 @@ impl Compiler {
         if self.class(cid).runtime_conditional
             || self.class(cid).imported_pkg.is_some()
             || self.class_waits_for_its_unit(cid)
+            || self.class_is_namespace_placeholder(cid)
         {
             return true;
         }

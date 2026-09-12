@@ -393,7 +393,9 @@ pub(super) fn collect_class_bodies(
             const_loc,
             const_added,
             inherited,
-            reveal: ci.runtime_conditional || compiler.class_waits_for_its_unit(site.class),
+            reveal: ci.runtime_conditional
+                || compiler.class_waits_for_its_unit(site.class)
+                || compiler.class_is_namespace_placeholder(site.class),
             freeze_guard,
             tail,
             guard,
