@@ -1891,7 +1891,8 @@ pub(crate) fn try_lower_definition(
         };
         let params = lower_params(result, hir, def.parameters())?;
         let body = hir.in_def_body(|hir| lower_body(result, hir, def.body()))?;
-        return Ok(Some(hir.push(HirNode::DefMethod {
+        let endless = def.equal_loc().is_some();
+        let node = hir.push(HirNode::DefMethod {
             name,
             params: Box::new(params),
             body,
@@ -1905,7 +1906,13 @@ pub(crate) fn try_lower_definition(
             // node's `visibility` field once it sees the enclosing call).
             visibility: Visibility::Public,
             is_def: true,
-        })));
+        });
+        // `def m = expr`: ruby compiles an endless body with no line trace,
+        // so it fires no `:line` event wherever the body sits.
+        if endless {
+            hir.set_flag(node, crate::hir::NodeFlag::ENDLESS_DEF);
+        }
+        return Ok(Some(node));
     }
 
     // `class << obj` at expression/statement position -- top level or

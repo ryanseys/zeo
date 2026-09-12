@@ -87,6 +87,11 @@ impl NodeFlag {
     /// An `AliasMethod` written as `alias_method :new, :old`: ruby runs it as
     /// the C method `Module#alias_method`, which a raise's backtrace shows.
     pub const ALIAS_METHOD_CALL: NodeFlag = NodeFlag(1 << 11);
+
+    /// `def m = expr` -- an ENDLESS def. Ruby compiles its body with no line
+    /// trace, so the body fires no `:line` TracePoint event wherever it sits,
+    /// while a one-line `def m; expr; end` fires one (oracle-verified).
+    pub const ENDLESS_DEF: NodeFlag = NodeFlag(1 << 12);
     /// A `BoxScope` spliced from a LITERAL `box.eval("...")`: it runs inside
     /// ruby's two frames, `Ruby::Box#eval` and the snippet's `<compiled>`.
     pub const LITERAL_BOX_EVAL: NodeFlag = NodeFlag(1 << 12);

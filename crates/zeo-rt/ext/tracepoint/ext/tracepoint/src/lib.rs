@@ -250,6 +250,12 @@ pub fn fire_line(line: u32) {
 /// class-body entry (`:class`, at the `class`/`module` line).
 #[cold]
 pub fn fire_entry(file: &'static str, label: &'static str, line: u32) {
+    // A BLOCK entering is `:b_call` in ruby, never `:call` -- and `:b_call` is
+    // one of the events this ext declines outright, so a block frame
+    // announces nothing at all.
+    if label.starts_with("block ") {
+        return;
+    }
     dispatch(Snapshot {
         bit: if label.starts_with('<') { CLASS } else { CALL },
         path: file,
@@ -267,6 +273,10 @@ pub fn fire_entry(file: &'static str, label: &'static str, line: u32) {
 /// the method, which is CRuby's behavior too (oracle-verified).
 #[cold]
 pub fn fire_exit(fr: &crate::frames::Frame) {
+    // The `:b_return` twin of the block rule in `fire_entry`.
+    if fr.method().starts_with("block ") {
+        return;
+    }
     dispatch(Snapshot {
         bit: if fr.method().starts_with('<') {
             END

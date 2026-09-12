@@ -1813,6 +1813,11 @@ pub(super) fn stamp_line(fx: &mut Fx, stmt: NodeId) {
         let loc = debug.srcloc(&file, line);
         fx.b.set_srcloc(loc);
     }
+    // An ENDLESS def's body carries no line trace in ruby, so it stamps none
+    // here either -- the DWARF row above still describes it.
+    if fx.skip_line_stamps {
+        return;
+    }
     if fx.prev_line == Some(line) && fx.prev_file.as_deref() == Some(file.as_str()) {
         return;
     }

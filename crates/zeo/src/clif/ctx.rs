@@ -126,6 +126,10 @@ pub(crate) struct Fx<'e, 'f> {
     /// [`Fx::gates_base`]'s twin for the patched-class bitmap.
     pub patched_bits_gv: Option<ir::GlobalValue>,
     pub prev_line: Option<u32>,
+    /// This body stamps no line at all: an ENDLESS def, whose body ruby
+    /// compiles with no line trace (see [`crate::hir::NodeFlag::ENDLESS_DEF`]).
+    /// The DWARF rows are still written -- only the run-time stamp goes.
+    pub skip_line_stamps: bool,
     /// The stamped statement's FILE, tracked beside `prev_line` for line
     /// coverage: a statement that begins a spliced file is what marks the
     /// file covered.
@@ -299,6 +303,7 @@ impl<'e, 'f> Fx<'e, 'f> {
             bases_gv: None,
             patched_bits_gv: None,
             prev_line: None,
+            skip_line_stamps: false,
             prev_file: None,
             self_ptr: None,
             method_class: None,

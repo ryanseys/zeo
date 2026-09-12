@@ -355,6 +355,13 @@ pub(super) fn define_method_body(
     fx.defining_class = def.defining_class;
     fx.lexical_home = def.lexical_home;
     fx.define_method_body = define_method_body;
+    // `def m = expr` stamps no line: ruby traces none in an endless body.
+    fx.skip_line_stamps = def.node.is_some_and(|n| {
+        analyzed
+            .compiler
+            .hir
+            .has_flag(n, crate::hir::NodeFlag::ENDLESS_DEF)
+    });
     fx.method_name = (!def.name.is_empty()).then(|| def.name.to_string());
     fx.method_origin = def.origin_name.map(str::to_string);
     fx.method_params = Some(def.hir_params.clone());
