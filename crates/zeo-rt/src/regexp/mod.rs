@@ -848,16 +848,17 @@ pub fn scanner_match(
     at: usize,
     anchored: bool,
     fixed: bool,
+    bytes: bool,
 ) -> Result<Option<ScannerMatch>, crate::Signal> {
     if fixed {
-        return scanner_match_fixed(pattern, subject, at, anchored);
+        return scanner_match_fixed(pattern, subject, at, anchored, bytes);
     }
     let tail = &subject[at..];
     let husk = husk_payload(pattern);
     let pattern = husk.as_ref().unwrap_or(pattern);
     let (spans, names) = match pattern {
         crate::RubyValue::Regexp(re) => {
-            let caps = match re.engine.captures_first(tail, false)? {
+            let caps = match re.engine.captures_first(tail, bytes)? {
                 Some(caps) if !anchored || caps.get(0).is_some_and(|(s, _)| s == 0) => caps,
                 _ => return Ok(None),
             };
@@ -900,12 +901,13 @@ fn scanner_match_fixed(
     subject: &str,
     at: usize,
     anchored: bool,
+    bytes: bool,
 ) -> Result<Option<ScannerMatch>, crate::Signal> {
     let husk = husk_payload(pattern);
     let pattern = husk.as_ref().unwrap_or(pattern);
     let (spans, names) = match pattern {
         crate::RubyValue::Regexp(re) => {
-            let caps = match re.engine.captures_at(subject, at, false)? {
+            let caps = match re.engine.captures_at(subject, at, bytes)? {
                 Some(caps) if !anchored || caps.spans[0].is_some_and(|(s, _)| s == at) => caps,
                 _ => return Ok(None),
             };

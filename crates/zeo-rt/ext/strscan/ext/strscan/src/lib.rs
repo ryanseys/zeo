@@ -38,6 +38,12 @@ struct State {
     /// the whole subject with the position as only the search start, so `\A`
     /// keeps meaning the string's own head.
     fixed_anchor: bool,
+    /// The subject is ASCII-8BIT and holds a high byte, so its bytes are
+    /// bytes: the engine reads them that way (`[[:alpha:]]` and `\b` see no
+    /// letters there) and every answer is an ASCII-8BIT String. `string`
+    /// itself is the LATIN-1 VIEW of those bytes -- one char per byte -- so a
+    /// position the program gives or reads needs [`State::outer`].
+    binary: bool,
     /// False for the blank `StringScanner.allocate` answers. Ruby keeps an
     /// unseeded scanner distinct from one over `""`: every row raises
     /// `ArgumentError: uninitialized StringScanner object` there, and
@@ -46,6 +52,46 @@ struct State {
 }
 
 impl State {
+    /// A VIEW offset as the program counts it. They differ only for a binary
+    /// subject, where one byte is one char of the view but a high byte takes
+    /// two bytes of it.
+    fn outer(&self, view: usize) -> usize {
+        match self.binary {
+            true => self.string[..view].chars().count(),
+            false => view,
+        }
+    }
+
+    /// [`State::outer`]'s inverse: the view offset the program's position
+    /// names, or `None` when it names no position at all.
+    fn view_at(&self, outer: usize) -> Option<usize> {
+        if !self.binary {
+            return (outer <= self.string.len()).then_some(outer);
+        }
+        match outer {
+            0 => Some(0),
+            n => self
+                .string
+                .char_indices()
+                .map(|(i, c)| i + c.len_utf8())
+                .nth(n - 1),
+        }
+    }
+
+    /// The subject's length as the program counts it.
+    fn outer_len(&self) -> usize {
+        self.outer(self.string.len())
+    }
+
+    /// The subject's real bytes -- the view narrowed back for a binary
+    /// subject, where the two differ.
+    fn bytes(&self) -> std::borrow::Cow<'_, [u8]> {
+        match self.binary {
+            true => std::borrow::Cow::Owned(self.string.chars().map(|c| c as u32 as u8).collect()),
+            false => std::borrow::Cow::Borrowed(self.string.as_bytes()),
+        }
+    }
+
     /// The whole match's byte span, or `None` when the last attempt missed.
     fn matched_span(&self) -> Option<(usize, usize)> {
         self.last.as_ref()?.groups.first().copied().flatten()
@@ -81,7 +127,7 @@ pub struct RStringScanner {
 }
 
 impl RStringScanner {
-    fn new(string: String, fixed_anchor: bool) -> RStringScanner {
+    fn new(string: String, binary: bool, fixed_anchor: bool) -> RStringScanner {
         RStringScanner {
             state: Mutex::new(State {
                 string,
@@ -89,6 +135,7 @@ impl RStringScanner {
                 last: None,
                 prev_pos: None,
                 fixed_anchor,
+                binary,
                 initialized: true,
             }),
             frozen: AtomicBool::new(false),
@@ -117,7 +164,7 @@ impl RubyObject for RStringScanner {
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         let s = self.state.lock();
-        let sc = RStringScanner::new(s.string.clone(), s.fixed_anchor);
+        let sc = RStringScanner::new(s.string.clone(), s.binary, s.fixed_anchor);
         sc.state.lock().pos = s.pos;
         if copy_frozen {
             sc.set_frozen();
@@ -129,7 +176,7 @@ impl RubyObject for RStringScanner {
 /// A blank `StringScanner` -- no string to scan. Every row but `#inspect`
 /// goes through [`live_sc`], which refuses it the way ruby does.
 fn scanner_allocate() -> RubyValue {
-    let sc = RStringScanner::new(String::new(), false);
+    let sc = RStringScanner::new(String::new(), false, false);
     sc.state.lock().initialized = false;
     RubyValue::Object(std::sync::Arc::new(sc))
 }
@@ -160,6 +207,15 @@ fn str_val(text: &str) -> RubyValue {
     RubyValue::Str(string_new(text.to_string()))
 }
 
+/// A slice of the subject as the program sees it: an ASCII-8BIT String over
+/// the real bytes when the subject reads as bytes, the text itself otherwise.
+fn out(st: &State, text: &str) -> RubyValue {
+    match st.binary {
+        true => crate::builtins::string::str_value_in_enc(crate::encoding::ASCII_8BIT, text),
+        false => str_val(text),
+    }
+}
+
 /// The text of group `i` of the last match, or `nil` -- `nil` also for an
 /// out-of-range index, which is `StringScanner#[]`'s answer where
 /// `MatchData#[]` would raise.
@@ -170,7 +226,7 @@ fn group_text(st: &State, i: usize) -> RubyValue {
         .and_then(|m| m.groups.get(i).copied())
         .flatten()
     {
-        Some((a, b)) => str_val(&st.string[a..b]),
+        Some((a, b)) => out(st, &st.string[a..b]),
         None => RubyValue::Nil,
     }
 }
@@ -230,7 +286,9 @@ fn inspect_context(bytes: &[u8], truncated: bool, leading: bool) -> String {
 /// `(true, true)`, `skip` `(true, false)`, `check` `(false, true)`, `match?`
 /// `(false, false)` -- over the whole span consumed rather than the match alone.
 fn full_scan(st: &mut State, args: &[RubyValue], anchored: bool) -> Result<RubyValue, Signal> {
-    let Some(m) = crate::regexp::scanner_match(&args[0], &st.string, st.pos, anchored, st.fixed_anchor)? else {
+    let Some(m) =
+        crate::regexp::scanner_match(&args[0], &st.string, st.pos, anchored, st.fixed_anchor, st.binary)?
+    else {
         st.miss();
         return Ok(RubyValue::Nil);
     };
@@ -242,8 +300,8 @@ fn full_scan(st: &mut State, args: &[RubyValue], anchored: bool) -> Result<RubyV
         st.pos = to;
     }
     Ok(match args[2].truthy() {
-        true => str_val(&st.string[from..to]),
-        false => RubyValue::Int((to - from) as i64),
+        true => out(st, &st.string[from..to]),
+        false => RubyValue::Int((st.outer(to) - st.outer(from)) as i64),
     })
 }
 
@@ -272,13 +330,13 @@ ruby_class! {
     // Anchored scan: on a hit, consume and return the matched text; else nil.
     def "scan" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor, st.binary)? {
             Some(m) => {
                 let (a, b) = m.groups[0].expect("group 0 of a hit always participates");
                 st.prev_pos = Some(st.pos);
                 st.hit(m);
                 st.pos = b;
-                Ok(str_val(&st.string[a..b]))
+                Ok(out(st, &st.string[a..b]))
             }
             None => { st.miss(); Ok(RubyValue::Nil) }
         }
@@ -286,7 +344,7 @@ ruby_class! {
     // Like `scan` but returns the matched LENGTH (or nil), still advancing.
     def "skip" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor, st.binary)? {
             Some(m) => {
                 let (a, b) = m.groups[0].expect("group 0 of a hit always participates");
                 st.prev_pos = Some(st.pos);
@@ -300,7 +358,7 @@ ruby_class! {
     // Anchored length probe -- does NOT advance. Returns the length or nil.
     def "match?" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor, st.binary)? {
             Some(m) => {
                 let (a, b) = m.groups[0].expect("group 0 of a hit always participates");
                 st.hit(m);
@@ -312,11 +370,11 @@ ruby_class! {
     // Like `scan` but does NOT advance (peek the matched text).
     def "check" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, true, st.fixed_anchor, st.binary)? {
             Some(m) => {
                 let (a, b) = m.groups[0].expect("group 0 of a hit always participates");
                 st.hit(m);
-                Ok(str_val(&st.string[a..b]))
+                Ok(out(st, &st.string[a..b]))
             }
             None => { st.last = None; Ok(RubyValue::Nil) }
         }
@@ -325,7 +383,7 @@ ruby_class! {
     // text from the old position through the match, or nil.
     def "scan_until" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor, st.binary)? {
             Some(m) => {
                 let (_, to) = m.groups[0].expect("group 0 of a hit always participates");
                 // `matched` is just the matched text, but scan_until RETURNS
@@ -334,7 +392,7 @@ ruby_class! {
                 st.prev_pos = Some(from);
                 st.hit(m);
                 st.pos = to;
-                Ok(str_val(&st.string[from..to]))
+                Ok(out(st, &st.string[from..to]))
             }
             None => { st.miss(); Ok(RubyValue::Nil) }
         }
@@ -342,7 +400,7 @@ ruby_class! {
     // `skip_until` -- `scan_until`'s length-returning form.
     def "skip_until" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor, st.binary)? {
             Some(m) => {
                 let (_, to) = m.groups[0].expect("group 0 of a hit always participates");
                 let from = st.pos;
@@ -374,7 +432,7 @@ ruby_class! {
         let ch = st.string[st.pos..].chars().next().expect("pos < len");
         let (from, to) = (st.pos, st.pos + ch.len_utf8());
         st.consumed(from, to);
-        Ok(str_val(&st.string[from..to]))
+        Ok(out(st, &st.string[from..to]))
     }
     def "peek" (recv, arg) {
         let n = crate::builtins::convert::to_index(arg)?;
@@ -386,22 +444,27 @@ ruby_class! {
         let st = live_sc(recv)?.state.lock();
         // BYTES, sliced without a char-boundary check: `peek(3)` mid-`ö`
         // answers the lead byte alone, exactly as ruby does.
-        let from = st.pos.min(st.string.len());
-        let end = (st.pos + n as usize).min(st.string.len());
+        let all = st.bytes();
+        let from = st.outer(st.pos.min(st.string.len()));
+        let end = (from + n as usize).min(all.len());
+        let enc = match st.binary {
+            true => crate::encoding::ASCII_8BIT,
+            false => crate::encoding::UTF_8,
+        };
         Ok(RubyValue::Str(crate::string_from_bytes(
-            st.string.as_bytes()[from..end].to_vec(),
-            crate::encoding::UTF_8,
+            all[from..end].to_vec(),
+            enc,
         )))
     }
     def "rest" (recv) {
         let st = live_sc(recv)?.state.lock();
-        Ok(str_val(&st.string[st.pos..]))
+        Ok(out(&st, &st.string[st.pos..]))
     }
     // Bytes, not characters -- the counterpart of `pos` (`charpos` is the one
     // that counts characters).
     def "rest_size" (recv) {
         let st = live_sc(recv)?.state.lock();
-        Ok(RubyValue::Int((st.string.len() - st.pos.min(st.string.len())) as i64))
+        Ok(RubyValue::Int((st.outer_len() - st.outer(st.pos.min(st.string.len()))) as i64))
     }
     def "rest?" (recv) {
         let st = live_sc(recv)?.state.lock();
@@ -413,7 +476,8 @@ ruby_class! {
     }
     // BYTE offset -- Ruby's scanner positions are byte-based throughout.
     def "pos" | "pointer" (recv) {
-        Ok(RubyValue::Int(live_sc(recv)?.state.lock().pos as i64))
+        let st = live_sc(recv)?.state.lock();
+        Ok(RubyValue::Int(st.outer(st.pos) as i64))
     }
     // ...and its CHARACTER-counting sibling, which differs the moment the
     // string holds anything multi-byte.
@@ -424,7 +488,7 @@ ruby_class! {
     def "pos=" | "pointer=" (recv, arg) {
         let n = crate::builtins::convert::to_index(arg)?;
         let mut st = live_sc(recv)?.state.lock();
-        let len = st.string.len() as i64;
+        let len = st.outer_len() as i64;
         // A NEGATIVE position counts from the end, and anything outside the
         // subject RAISES. Clamping silently put the scanner somewhere the
         // program did not ask for.
@@ -432,7 +496,9 @@ ruby_class! {
         if at < 0 || at > len {
             return Err(crate::builtins::range_error!("index out of range"));
         }
-        st.pos = at as usize;
+        st.pos = st
+            .view_at(at as usize)
+            .ok_or_else(|| crate::builtins::range_error!("index out of range"))?;
         Ok((*arg).clone())
     }
     def "reset" (recv) {
@@ -458,21 +524,21 @@ ruby_class! {
     def "matched_size" (recv) {
         let st = live_sc(recv)?.state.lock();
         Ok(match st.matched_span() {
-            Some((a, b)) => RubyValue::Int((b - a) as i64),
+            Some((a, b)) => RubyValue::Int((st.outer(b) - st.outer(a)) as i64),
             None => RubyValue::Nil,
         })
     }
     def "pre_match" (recv) {
         let st = live_sc(recv)?.state.lock();
         Ok(match st.matched_span() {
-            Some((a, _)) => str_val(&st.string[..a]),
+            Some((a, _)) => out(&st, &st.string[..a]),
             None => RubyValue::Nil,
         })
     }
     def "post_match" (recv) {
         let st = live_sc(recv)?.state.lock();
         Ok(match st.matched_span() {
-            Some((_, b)) => str_val(&st.string[b..]),
+            Some((_, b)) => out(&st, &st.string[b..]),
             None => RubyValue::Nil,
         })
     }
@@ -534,17 +600,24 @@ ruby_class! {
     }
     def "beginning_of_line?" | "bol?" (recv) {
         let st = live_sc(recv)?.state.lock();
-        Ok(RubyValue::Bool(st.pos == 0 || st.string.as_bytes().get(st.pos - 1) == Some(&b'\n')))
+        Ok(RubyValue::Bool(
+            st.pos == 0 || st.string[..st.pos].chars().next_back() == Some('\n'),
+        ))
     }
     def "string" (recv) {
-        Ok(str_val(&live_sc(recv)?.state.lock().string))
+        let st = live_sc(recv)?.state.lock();
+        Ok(out(&st, &st.string))
     }
     // Replacing the subject restarts the scan; APPENDING to it doesn't, which
     // is the whole point of `<<` (feeding a scanner incrementally).
     def "string=" (recv, arg) {
         let s = &crate::builtins::convert::to_rstr(arg)?;
         let st = &mut *live_sc(recv)?.state.lock();
-        st.string = s.lock().to_utf8_lossy().into_owned();
+        {
+            let g = s.lock();
+            st.binary = g.encoding() == crate::encoding::ASCII_8BIT && !g.ascii_only();
+            st.string = g.to_utf8_lossy().into_owned();
+        }
         st.pos = 0;
         st.last = None;
         st.prev_pos = None;
@@ -552,8 +625,15 @@ ruby_class! {
     }
     def "concat" | "<<" (recv, other) {
         let s = &crate::builtins::convert::to_rstr(other)?;
-        let text = s.lock().to_utf8_lossy().into_owned();
-        live_sc(recv)?.state.lock().string.push_str(&text);
+        let (binary, text) = {
+            let g = s.lock();
+            let binary = g.encoding() == crate::encoding::ASCII_8BIT && !g.ascii_only();
+            (binary, g.to_utf8_lossy().into_owned())
+        };
+        let st = &mut *live_sc(recv)?.state.lock();
+        // Appending bytes makes the whole subject read as bytes from here on.
+        st.binary |= binary;
+        st.string.push_str(&text);
         Ok(recv.clone())
     }
     // Whether `^`/`\A` anchor to the string start rather than the scan
@@ -574,23 +654,20 @@ ruby_class! {
         if st.pos >= st.string.len() {
             return Ok(str_val("#<StringScanner fin>"));
         }
-        let bytes = st.string.as_bytes();
-        let after_len = (bytes.len() - st.pos).min(INSPECT_CONTEXT);
+        let bytes = st.bytes();
+        let pos = st.outer(st.pos);
+        let after_len = (bytes.len() - pos).min(INSPECT_CONTEXT);
         let after = inspect_context(
-            &bytes[st.pos..st.pos + after_len],
-            bytes.len() - st.pos > INSPECT_CONTEXT,
+            &bytes[pos..pos + after_len],
+            bytes.len() - pos > INSPECT_CONTEXT,
             false,
         );
-        let head = format!("#<StringScanner {}/{}", st.pos, bytes.len());
-        if st.pos == 0 {
+        let head = format!("#<StringScanner {}/{}", pos, bytes.len());
+        if pos == 0 {
             return Ok(str_val(&format!("{head} @ {after}>")));
         }
-        let before_len = st.pos.min(INSPECT_CONTEXT);
-        let before = inspect_context(
-            &bytes[st.pos - before_len..st.pos],
-            st.pos > INSPECT_CONTEXT,
-            true,
-        );
+        let before_len = pos.min(INSPECT_CONTEXT);
+        let before = inspect_context(&bytes[pos - before_len..pos], pos > INSPECT_CONTEXT, true);
         Ok(str_val(&format!("{head} {before} @ {after}>")))
     }
 
@@ -598,7 +675,7 @@ ruby_class! {
     // returns the byte count from the current position to the match end, or nil.
     def "exist?" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor, st.binary)? {
             Some(m) => {
                 let (_, to) = m.groups[0].expect("group 0 of a hit always participates");
                 let len = to - st.pos;
@@ -612,12 +689,12 @@ ruby_class! {
     // position through the next match, or nil.
     def "check_until" (recv, arg) {
         let st = &mut *live_sc(recv)?.state.lock();
-        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor)? {
+        match crate::regexp::scanner_match(arg, &st.string, st.pos, false, st.fixed_anchor, st.binary)? {
             Some(m) => {
                 let (_, to) = m.groups[0].expect("group 0 of a hit always participates");
                 let from = st.pos;
                 st.hit(m);
-                Ok(str_val(&st.string[from..to]))
+                Ok(out(st, &st.string[from..to]))
             }
             None => { st.last = None; Ok(RubyValue::Nil) }
         }
@@ -650,16 +727,22 @@ ruby_class! {
             st.last = None;
             return Ok(RubyValue::Nil);
         }
-        let (from, to) = (st.pos, st.pos + 1);
-        st.consumed(from, to);
+        // One byte of the SUBJECT: in the binary view that is one char.
+        let width = match st.binary {
+            true => st.string[st.pos..].chars().next().map_or(1, char::len_utf8),
+            false => 1,
+        };
+        let (from, to) = (st.pos, st.pos + width);
         // ONE byte, tagged with the subject's own encoding. Through
         // `from_utf8_lossy` a continuation byte became U+FFFD -- three bytes
         // where ruby answers one, and never the byte that is actually there.
-        let byte = st.string.as_bytes()[from];
-        Ok(RubyValue::Str(crate::string_from_bytes(
-            vec![byte],
-            crate::encoding::UTF_8,
-        )))
+        let byte = st.bytes()[st.outer(from)];
+        st.consumed(from, to);
+        let enc = match st.binary {
+            true => crate::encoding::ASCII_8BIT,
+            false => crate::encoding::UTF_8,
+        };
+        Ok(RubyValue::Str(crate::string_from_bytes(vec![byte], enc)))
     }
     // `scan_byte`/`peek_byte` -- `get_byte`/`peek(1)` as an INTEGER, which is
     // what a byte-level lexer actually wants.
@@ -669,14 +752,18 @@ ruby_class! {
             st.last = None;
             return Ok(RubyValue::Nil);
         }
-        let byte = st.string.as_bytes()[st.pos];
-        let (from, to) = (st.pos, st.pos + 1);
+        let byte = st.bytes()[st.outer(st.pos)];
+        let width = match st.binary {
+            true => st.string[st.pos..].chars().next().map_or(1, char::len_utf8),
+            false => 1,
+        };
+        let (from, to) = (st.pos, st.pos + width);
         st.consumed(from, to);
         Ok(RubyValue::Int(byte as i64))
     }
     def "peek_byte" (recv) {
         let st = live_sc(recv)?.state.lock();
-        Ok(match st.string.as_bytes().get(st.pos) {
+        Ok(match st.bytes().get(st.outer(st.pos)) {
             Some(&b) => RubyValue::Int(b as i64),
             None => RubyValue::Nil,
         })
@@ -719,7 +806,13 @@ ruby_class! {
 
     def self."new" cfunc allocs (_recv, string, opts?) {
         let s = &crate::builtins::convert::to_rstr(string)?;
-        let text = s.lock().to_utf8_lossy().into_owned();
+        // A binary subject with a high byte reads as BYTES, and `text` is the
+        // Latin-1 view of them -- see `State::binary`.
+        let (binary, text) = {
+            let g = s.lock();
+            let binary = g.encoding() == crate::encoding::ASCII_8BIT && !g.ascii_only();
+            (binary, g.to_utf8_lossy().into_owned())
+        };
         let fixed_anchor = match opts {
             Some(RubyValue::Hash(h)) => crate::collections::hash_get(
                 h,
@@ -728,7 +821,7 @@ ruby_class! {
             .truthy(),
             _ => false,
         };
-        Ok(RubyValue::Object(Arc::new(RStringScanner::new(text, fixed_anchor))))
+        Ok(RubyValue::Object(Arc::new(RStringScanner::new(text, binary, fixed_anchor))))
     }
 }
 
