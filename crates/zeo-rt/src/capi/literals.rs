@@ -442,6 +442,34 @@ pub fn reserve_regexp_sites(n: u32) -> u32 {
     NEXT_EVAL_SITE.fetch_add(n, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The next site id, read without reserving one: a snippet's compile is
+/// bracketed by two of these to learn which sites it minted.
+pub fn peek_eval_sites() -> u32 {
+    NEXT_EVAL_SITE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Forget the objects sites `base .. base + n` built. Ruby parses an eval's
+/// source again on every eval, so a literal in it is a new object each time
+/// and a `/o` literal builds again. A snippet's compile is CACHED, so its
+/// sites are cleared before each run instead -- and a `/o` inside one eval
+/// still builds once, because nothing clears them while it runs.
+pub fn forget_regexp_sites(base: u32, n: u32) {
+    if n == 0 {
+        return;
+    }
+    for map in [&LIT_SITES, &ONCE_SITES] {
+        let Some(m) = map.get() else { continue };
+        let mut m = m.lock().unwrap();
+        for site in base..base + n {
+            m.remove(&site);
+        }
+    }
+}
+
+/// The one object a non-interpolated regexp literal builds, per site.
+static LIT_SITES: std::sync::OnceLock<std::sync::Mutex<crate::FMap<u32, crate::regexp::RRegexp>>> =
+    std::sync::OnceLock::new();
+
 /// A NON-INTERPOLATED regexp literal: ONE frozen object per SITE, keyed
 /// by the emitter-assigned site id. A bad pattern raises `RegexpError`
 /// with the backtrace stamped at the literal (no cause chaining; that is
@@ -457,10 +485,8 @@ pub unsafe extern "C" fn zeo_rt_regexp_lit(
     enc: u8,
     out: *mut RubyValue,
 ) -> i32 {
-    use std::sync::{Mutex, OnceLock};
     use zeo_abi::abi::{STATUS_OK, STATUS_SIGNAL};
-    static SITES: OnceLock<Mutex<crate::FMap<u32, crate::regexp::RRegexp>>> = OnceLock::new();
-    let sites = SITES.get_or_init(|| Mutex::new(crate::FMap::default()));
+    let sites = LIT_SITES.get_or_init(Default::default);
     if let Some(re) = sites.lock().unwrap().get(&site) {
         let v = RubyValue::Regexp(re.clone());
         super::leakcheck::created(&v);

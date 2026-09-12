@@ -201,6 +201,11 @@ fn located_message(
 struct Compiled {
     entry: usize,
     cells: Vec<String>,
+    /// The regexp-literal sites this snippet minted, as `(base, count)`.
+    /// Ruby parses an eval's source again on every eval, so its literals are
+    /// new objects each time; the compile is cached here, so [`run`] clears
+    /// these sites instead.
+    regexp_sites: (u32, u32),
 }
 
 /// Everything `build` reads, owned and `Send`: captured ON THE CALLER, so
@@ -431,8 +436,13 @@ fn build(inputs: &BuildInputs) -> Result<Compiled, Refusal> {
             n => zeo_rt::eval::reserve_using_slots(n as u32),
         },
     };
+    let site_base = zeo_rt::capi::literals::peek_eval_sites();
     let program = crate::clif::eval::compile(&analyzed, &spec)
         .map_err(|e| Refusal::NotCompiled(located_message(e, &analyzed)))?;
+    let regexp_sites = (
+        site_base,
+        zeo_rt::capi::literals::peek_eval_sites() - site_base,
+    );
     if let Some(init) = program.unit_init {
         // SAFETY: `unit_init` is the finalized address of a function the
         // emitter declared `extern "C" fn()`, in JIT memory the compiled
@@ -447,7 +457,11 @@ fn build(inputs: &BuildInputs) -> Result<Compiled, Refusal> {
     // this call by construction -- a Proc built inside the snippet can be
     // called at any later point.
     std::mem::forget(program);
-    Ok(Compiled { entry, cells })
+    Ok(Compiled {
+        entry,
+        cells,
+        regexp_sites,
+    })
 }
 
 /// The shapes that would lower without complaint and be WRONG in a
@@ -582,6 +596,10 @@ fn scope_refusals(analyzed: &crate::analyze::Analyzed) -> Result<(), String> {
 }
 
 fn run(req: &EvalRequest<'_>, c: &Compiled) -> Result<RubyValue, Signal> {
+    // Each eval parses its source again in ruby, so a literal in it is a new
+    // object and a `/o` literal builds again. This snippet's compile is
+    // cached, so its literal sites start empty here instead.
+    zeo_rt::capi::literals::forget_regexp_sites(c.regexp_sites.0, c.regexp_sites.1);
     // One reference per cell, handed back below: the Binding owns them.
     let cells: Vec<*mut Cell> = match req.binding {
         Some(b) => c.cells.iter().map(|n| b.local_cell_ptr(n)).collect(),
