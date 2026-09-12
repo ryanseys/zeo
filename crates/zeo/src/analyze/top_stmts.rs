@@ -1579,6 +1579,12 @@ pub(super) fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(),
     // target's require gate.
     for &(alias, target) in zeo_abi::NESTED_ALIASES {
         let target = ClassId(target.0);
+        // Only a program that requires the feature has the target class at
+        // all. Registering the alias anyway gave its rows an owner nothing
+        // registers, and the run-time install aborted on the missing entry.
+        if !compiler.feature_active(target) {
+            continue;
+        }
         register_class(
             compiler,
             &ClassRegistration {

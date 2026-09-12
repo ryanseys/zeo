@@ -1118,7 +1118,12 @@ impl ClassRegistry {
     ) {
         self.entries
             .get_mut(&id.0)
-            .expect("class must be registered before defining class methods on it")
+            .unwrap_or_else(|| {
+                panic!(
+                    "class {} must be registered before defining class method {name:?} on it",
+                    id.0
+                )
+            })
             .class_methods
             .insert((box_id, name), ValueImpl::C(f));
     }
