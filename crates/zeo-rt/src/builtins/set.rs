@@ -708,13 +708,13 @@ ruby_class! {
         let a = set_of(recv);
         Ok(RubyValue::Bool(arg_elements(arg)?.iter().any(|e| a.contains(e))))
     }
-    def "dup" (recv) {
+    def "dup" inherits (recv) {
         Ok(RubyValue::Object(set_of(recv).dup_object(false)))
     }
     // `clone` differs from `dup` only in accepting `freeze:`, which is also why
     // it reports -1 where `dup` reports 0. zeo ignores the keyword: the copy is
     // never frozen, matching `dup`.
-    def "clone" (recv, **_opts) {
+    def "clone" inherits (recv, **_opts) {
         Ok(RubyValue::Object(set_of(recv).dup_object(false)))
     }
     def "inspect" | "to_s" (recv) {

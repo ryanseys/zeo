@@ -421,7 +421,7 @@ ruby_class! {
         let b = other.payload.lock().st.st_mtime;
         Ok(RubyValue::Int(a.cmp(&b) as i64))
     }
-    def "inspect" | "to_s"(recv) {
+    def "to_s" inherits | "inspect"(recv) {
         let st = &payload(recv)?.st;
         Ok(RubyValue::Str(crate::collections::string_new(format!(
             "#<File::Stat dev=0x{:x}, ino={}, mode=0{:o}, nlink={}, uid={}, gid={}, size={}>",

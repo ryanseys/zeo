@@ -1364,7 +1364,7 @@ ruby_class! {
     // form, not #inspect's iteration description. `puts e`/interpolation go
     // through the same helper (value.rs's display arm), so the two halves
     // cannot drift.
-    def "to_s"(recv) {
+    def "to_s" inherits (recv) {
         if crate::builtins::lazy::is_lazy(recv) {
             return crate::builtins::lazy::lazy_to_s(recv);
         }

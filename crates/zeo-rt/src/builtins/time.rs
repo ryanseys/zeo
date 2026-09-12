@@ -1980,7 +1980,7 @@ ruby_class! {
             },
         ))
     }
-    def "==" | "eql?" (recv, other) {
+    def "==" inherits | "eql?" (recv, other) {
         let t = recv_time(recv)?;
         if let RubyValue::Object(o) = other
             && let Some(other) = o.as_any().downcast_ref::<RTime>() {

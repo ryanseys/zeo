@@ -398,7 +398,7 @@ ruby_class! {
         };
         crate::eval::eval_with_binding(arg1, recv_binding(recv), file, line, "Binding#eval")
     }
-    def "inspect" | "to_s"(recv) {
+    def "inspect" | "to_s" inherits (recv) {
         Ok(RubyValue::Str(crate::string_new(inspect_of(recv))))
     }
 

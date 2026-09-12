@@ -1199,7 +1199,7 @@ ruby_class! {
     // `range.c`'s `range_sum`: an integer range with no block is Gauss's
     // formula, which is why ruby answers `(1..2**70).sum` at all. Everything
     // else -- a block, a non-integer endpoint, an `init` argument -- walks.
-    def "sum" cfunc (recv, *_args, &block) {
+    def "sum" cfunc inherits (recv, *_args, &block) {
         let (start, end, exclusive) = range_parts(recv);
         if block.is_none()
             && __args.len() <= 1

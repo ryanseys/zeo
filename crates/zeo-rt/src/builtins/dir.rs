@@ -933,7 +933,7 @@ ruby_class! {
     }
     // A pathless handle is the one `Dir.allocate` answers, and ruby names it
     // by ADDRESS there rather than by a path it has not got.
-    def "inspect" | "to_s"(recv) {
+    def "to_s" inherits | "inspect"(recv) {
         let d = recv_dir(recv)?;
         Ok(str_val(match &*d.path.lock() {
             Some(p) => format!("#<Dir:{p}>"),

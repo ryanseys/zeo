@@ -1087,7 +1087,7 @@ ruby_class! {
         }))
     }
 
-    def "=="(recv, other) {
+    def "==" inherits (recv, other) {
         let Some(o) = as_buffer(other) else {
             return Err(type_error!(
                 "wrong argument type {} (expected IO::Buffer)",
