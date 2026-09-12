@@ -892,7 +892,7 @@ ruby_class! {
     // block reaches `Enumerator`'s row: the whole chain runs at once for the
     // block's side effects and the receiver comes back. Blockless it stays
     // lazy, through the `to_enum` this class does override.
-    def "each_with_index"(recv, &block) {
+    def "each_with_index" inherits (recv, &block) {
         let blk = opt_block(block);
         let indexed = extend(recv, "each_with_index", LazyOp::WithIndex(0, blk.clone()));
         if blk.is_none() {
@@ -933,10 +933,10 @@ ruby_class! {
     }
     // `each_cons(n)` / `each_slice(n)` -- lazy since ruby 3.1, so an infinite
     // source stays workable.
-    def "each_cons"(recv, n, &block) {
+    def "each_cons" inherits (recv, n, &block) {
         each_group(recv, std::slice::from_ref(n), block, false)
     }
-    def "each_slice"(recv, n, &block) {
+    def "each_slice" inherits (recv, n, &block) {
         each_group(recv, std::slice::from_ref(n), block, true)
     }
     def "lazy"(recv) {

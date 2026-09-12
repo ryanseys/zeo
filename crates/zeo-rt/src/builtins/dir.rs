@@ -872,7 +872,7 @@ ruby_class! {
             .entries.lock().iter().filter(|n| *n != "." && *n != "..").cloned().map(str_val).collect();
         Ok(RubyValue::Array(crate::collections::array_new(out)))
     }
-    def "entries" cfunc (recv) {
+    def "entries" cfunc inherits (recv) {
         let out: Vec<RubyValue> =
             live_dir(recv)?.entries.lock().iter().cloned().map(str_val).collect();
         Ok(RubyValue::Array(crate::collections::array_new(out)))
