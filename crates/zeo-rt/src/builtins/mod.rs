@@ -1291,6 +1291,7 @@ pub(crate) mod gate {
     static OBJSPACE: AtomicU8 = AtomicU8::new(0);
     static BIGDECIMAL: AtomicU8 = AtomicU8::new(0);
     static FORMATTER: AtomicU8 = AtomicU8::new(0);
+    static PATHNAME: AtomicU8 = AtomicU8::new(0);
 
     fn required(cell: &AtomicU8) -> bool {
         cell.load(Ordering::Acquire) == 1
@@ -1316,6 +1317,9 @@ pub(crate) mod gate {
             // securerandom.rb opens with `require "random/formatter"`, so
             // either name arms the mixin's rows.
             "random/formatter" | "securerandom" => FORMATTER.store(1, Ordering::Release),
+            // ruby 4.0 has the Pathname CLASS before line 1 (pathname.so),
+            // and its find/rmtree pair only from the ruby half.
+            "pathname" => PATHNAME.store(1, Ordering::Release),
             _ => return,
         }
         NAME_CACHE.write().unwrap().take();
@@ -1336,6 +1340,7 @@ pub(crate) mod gate {
             "objspace" => required(&OBJSPACE),
             "bigdecimal" => required(&BIGDECIMAL),
             "random/formatter" => required(&FORMATTER),
+            "pathname" => required(&PATHNAME),
             "env:boxes" => crate::boxes::boxes_enabled(),
             _ => false,
         }
@@ -1423,12 +1428,14 @@ pub(crate) mod gate {
         static OBJECTSPACE: Views = views_of::<{ zeo_abi::OBJECTSPACE_MODULE.0 }>();
         static KERNEL: Views = views_of::<{ zeo_abi::KERNEL_CLASS.0 }>();
         static FORMATTER: Views = views_of::<{ zeo_abi::RANDOM_FORMATTER_MODULE.0 }>();
+        static PATHNAME: Views = views_of::<{ zeo_abi::PATHNAME_CLASS.0 }>();
         match id {
             zeo_abi::IO_CLASS => &IO,
             zeo_abi::RUBY_BOX_CLASS => &BOX,
             zeo_abi::OBJECTSPACE_MODULE => &OBJECTSPACE,
             zeo_abi::KERNEL_CLASS => &KERNEL,
             zeo_abi::RANDOM_FORMATTER_MODULE => &FORMATTER,
+            zeo_abi::PATHNAME_CLASS => &PATHNAME,
             other => unreachable!(
                 "class {} has gated rows but no fn-pointer view instantiation -- \
                  add one beside gate::views' existing pair",
@@ -1521,6 +1528,7 @@ pub(crate) mod gate {
                     "io/console/size",
                     "io/nonblock",
                     "objspace",
+                    "pathname",
                     "random/formatter"
                 ]
             );

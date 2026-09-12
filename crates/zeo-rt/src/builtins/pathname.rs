@@ -1084,11 +1084,11 @@ ruby_class! {
     }
     // `require "pathname"` is what adds these two in ruby; zeo gates whole
     // classes rather than methods, so they are here from the start.
-    def "rmtree" params "noop: nil, verbose: nil, secure: nil" (recv, *_rest) {
+    def "rmtree" params "noop: nil, verbose: nil, secure: nil" gated "pathname" (recv, *_rest) {
         remove_tree(&recv_path(recv))?;
         Ok(RubyValue::Nil)
     }
-    def "find" params "ignore_error: true" (recv, *_rest, &block) {
+    def "find" params "ignore_error: true" gated "pathname" (recv, *_rest, &block) {
         let proc = block_or_enum!(recv, &[], block);
         let mut found = Vec::new();
         collect_tree(&recv_path(recv), &mut found)?;

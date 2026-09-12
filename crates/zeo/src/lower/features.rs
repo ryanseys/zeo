@@ -92,11 +92,10 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // compile-time frontend (`extend FFI::Library` / `attach_function`, the
     // `lower_class_body` FFI pre-scan) is orthogonal -- it emits `extern "C"` +
     // `#[link]` inline and never needs a constant. See [[ffi-real-gem-api]].
-    // `objspace` (the whole `ObjectSpace` module, both
-    // the always-on half CRuby defines in gc.c and the introspection half it
-    // gates behind this require) and `fiber` (Fiber) name always-on builtins
-    // here, so those requires are pure no-ops -- their classes resolve
-    // unconditionally. CRuby answers `false` for `require "fiber"` too, Fiber
+    // `objspace` names the always-on `ObjectSpace` module, so its constant
+    // resolves unconditionally; the introspection half CRuby gates behind
+    // this require carries a row gate instead. `fiber` (Fiber) names an
+    // always-on builtin too, so that require is a pure no-op. CRuby answers `false` for `require "fiber"` too, Fiber
     // being core there as well. `thread` is the same story one step further
     // on: CRuby folded it into core long ago and keeps the name only so old
     // code still loads, answering `false` for the require -- which is what
@@ -104,13 +103,12 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // `pathname` is the same shape once more: ruby 4.0 loads `pathname.so`
     // before the first line, so `Pathname` and 96 of its methods are there
     // whatever the program does, and the require only reopens the class to
-    // add `#find` and `#rmtree`. zeo carries those two from the start.
+    // add `#find` and `#rmtree`. Those two rows carry a `gated "pathname"`
+    // marker, so they arrive with the require as ruby's do.
     // `random/formatter` is the `time` shape again: ruby 4.0 keeps
     // `Random::Formatter` in CORE with `#rand`/`#random_number`, and this
-    // require only REOPENS it to add the hex/uuid/base64 family. zeo gates
-    // whole classes rather than methods, so it carries all of them from the
-    // start and the require is ceremony -- it answers where ruby would raise
-    // NoMethodError, never the reverse.
+    // require only REOPENS it to add the hex/uuid/base64 family, which is
+    // what that family's own gate marker answers.
     zeo_abi::is_builtin_feature(feature)
 }
 
