@@ -230,6 +230,13 @@ ruby_module! {
     def "uuid" gated "random/formatter" (recv) {
         uuid_v4(recv)
     }
+    def "uuid_v7" params "extra_timestamp_bits: 0" gated "random/formatter" (recv, extra_timestamp_bits:?) {
+        let extra = match &extra_timestamp_bits {
+            None | Some(RubyValue::Nil) => 0,
+            Some(v) => crate::builtins::convert::to_index(v)?,
+        };
+        uuid_v7(recv, extra)
+    }
     def "uuid_v4" gated "random/formatter" (recv) {
         uuid_v4(recv)
     }
@@ -284,6 +291,40 @@ fn uuid_v4(recv: &RubyValue) -> Result<RubyValue, Signal> {
         &h[12..16],
         &h[16..20],
         &h[20..32]
+    );
+    Ok(RubyValue::Str(string_new(s)))
+}
+
+/// `uuid_v7(extra_timestamp_bits:)` -- RFC 9562 version 7: a millisecond
+/// timestamp, then `extra` bits of sub-millisecond precision, then random
+/// bits. CRuby's formatter.rb special-cases 0 and 12 for speed; this is its
+/// generic branch, which answers the same shape for every legal value.
+fn uuid_v7(recv: &RubyValue, extra: i64) -> Result<RubyValue, Signal> {
+    if !(0..=12).contains(&extra) {
+        return Err(arg_error!("extra_timestamp_bits must be in 0..12"));
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let ms = now.as_millis() as u64;
+    let ns = u64::from(now.subsec_nanos()) % 1_000_000;
+    let b = entropy(recv, 10)?;
+    let rand_a = u64::from(u16::from_be_bytes([b[0], b[1]]));
+    let rand_b1 = u64::from(u16::from_be_bytes([b[2], b[3]]));
+    let rand_b2 = u64::from(u16::from_be_bytes([b[4], b[5]]));
+    let rand_b3 = u64::from(u32::from_be_bytes([b[6], b[7], b[8], b[9]]));
+    let mask_bits = 12 - extra as u32;
+    let mask = (1u64 << mask_bits) - 1;
+    let sub_ms = (ns * (1u64 << extra)) / 1_000_000;
+    let third = 0x7000 | ((sub_ms << mask_bits) & 0x0fff) | (rand_a & mask);
+    let s = format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:04x}{:08x}",
+        (ms & 0x0000_ffff_ffff_0000) >> 16,
+        ms & 0xffff,
+        third,
+        0x8000 | (rand_b1 & 0x3fff),
+        rand_b2,
+        rand_b3
     );
     Ok(RubyValue::Str(string_new(s)))
 }
