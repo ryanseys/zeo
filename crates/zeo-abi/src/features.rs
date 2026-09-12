@@ -36,6 +36,9 @@ pub fn feature_of_gated_class(id: ClassId) -> Option<&'static str> {
 /// library the binary is carrying.
 pub const NATIVE_FEATURES: &[&str] = &[
     "tmpdir",
+    // Only `Digest.bubblebabble`/`#bubblebabble`, added to what `digest`
+    // already defined -- so it names no class and gates rows instead.
+    "digest/bubblebabble",
     "set",
     "time",
     // A file of its own in io-console, and ruby does NOT define
@@ -94,10 +97,9 @@ pub fn canonical_ext_feature(feature: &str) -> &str {
         // `digest/*` arm made `require "digest/nope"` answer false, which
         // starved `Digest.const_missing` of the LoadError it re-raises --
         // and swallowed `digest/version`, a real file in the gem's lib tree.
-        // Each ALGORITHM keeps its own name: ruby's `require "digest"` defines
-        // `Digest` alone, and `Digest::SHA256` arrives with `digest/sha2`.
-        // `bubblebabble` only adds methods to what is already there.
-        "digest" | "digest/bubblebabble" => "digest",
+        // Each SPELLING keeps its own name: ruby's `require "digest"` defines
+        // `Digest` alone, `Digest::SHA256` arrives with `digest/sha2`, and
+        // `bubblebabble` adds its two rows to what is already there.
         other => other,
     }
 }

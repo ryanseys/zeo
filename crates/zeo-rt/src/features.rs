@@ -134,7 +134,9 @@ pub fn build_carries_ext(feature: &str) -> bool {
         "cgi/escape" => cfg!(feature = "ext-cgi"),
         "coverage" => cfg!(feature = "ext-coverage"),
         "date" => cfg!(feature = "ext-date"),
-        "digest" | "digest/md5" | "digest/sha1" | "digest/sha2" => cfg!(feature = "ext-digest"),
+        "digest" | "digest/md5" | "digest/sha1" | "digest/sha2" | "digest/bubblebabble" => {
+            cfg!(feature = "ext-digest")
+        }
         "etc" => cfg!(feature = "ext-etc"),
         "fcntl" => cfg!(feature = "ext-fcntl"),
         "ffi" => cfg!(feature = "ext-ffi"),
@@ -772,7 +774,7 @@ mod tests {
             // An ALGORITHM is its own feature: `Digest::SHA256` arrives with
             // `digest/sha2`, not with `digest`.
             ("digest/sha2", "digest/sha2"),
-            ("digest/bubblebabble", "digest"),
+            ("digest/bubblebabble", "digest/bubblebabble"),
             ("digest", "digest"),
             ("stringio", "stringio"),
         ] {

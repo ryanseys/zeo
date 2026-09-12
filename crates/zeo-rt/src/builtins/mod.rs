@@ -1312,6 +1312,7 @@ pub(crate) mod gate {
     static FORMATTER: AtomicU8 = AtomicU8::new(0);
     static PATHNAME: AtomicU8 = AtomicU8::new(0);
     static TMPDIR: AtomicU8 = AtomicU8::new(0);
+    static BUBBLEBABBLE: AtomicU8 = AtomicU8::new(0);
 
     fn required(cell: &AtomicU8) -> bool {
         cell.load(Ordering::Acquire) == 1
@@ -1342,6 +1343,7 @@ pub(crate) mod gate {
             "pathname" => PATHNAME.store(1, Ordering::Release),
             // `Dir.mktmpdir` is tmpdir.rb's, so it arrives with that require.
             "tmpdir" => TMPDIR.store(1, Ordering::Release),
+            "digest/bubblebabble" => BUBBLEBABBLE.store(1, Ordering::Release),
             _ => return,
         }
         NAME_CACHE.write().unwrap().take();
@@ -1364,6 +1366,7 @@ pub(crate) mod gate {
             "random/formatter" => required(&FORMATTER),
             "pathname" => required(&PATHNAME),
             "tmpdir" => required(&TMPDIR),
+            "digest/bubblebabble" => required(&BUBBLEBABBLE),
             "env:boxes" => crate::boxes::boxes_enabled(),
             _ => false,
         }
@@ -1453,8 +1456,10 @@ pub(crate) mod gate {
         static FORMATTER: Views = views_of::<{ zeo_abi::RANDOM_FORMATTER_MODULE.0 }>();
         static PATHNAME: Views = views_of::<{ zeo_abi::PATHNAME_CLASS.0 }>();
         static DIR: Views = views_of::<{ zeo_abi::DIR_CLASS.0 }>();
+        static DIGEST: Views = views_of::<{ zeo_abi::DIGEST_MODULE.0 }>();
         match id {
             zeo_abi::DIR_CLASS => &DIR,
+            zeo_abi::DIGEST_MODULE => &DIGEST,
             zeo_abi::IO_CLASS => &IO,
             zeo_abi::RUBY_BOX_CLASS => &BOX,
             zeo_abi::OBJECTSPACE_MODULE => &OBJECTSPACE,
@@ -1550,6 +1555,7 @@ pub(crate) mod gate {
                 keys,
                 [
                     "bigdecimal",
+                    "digest/bubblebabble",
                     "env:boxes",
                     "io/console",
                     "io/console/size",

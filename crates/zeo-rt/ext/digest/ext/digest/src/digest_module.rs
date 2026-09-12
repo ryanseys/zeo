@@ -12,8 +12,9 @@ ruby_module! {
     def self."hexencode"(_recv, arg) {
         Ok(str(hex(&in_bytes(arg)?)))
     }
-    // `Digest.bubblebabble(str)` -- the bubble babble of the raw bytes.
-    def self."bubblebabble"(_recv, arg) {
+    // `Digest.bubblebabble(str)` -- the bubble babble of the raw bytes. Its
+    // own file adds it, so it arrives with that require.
+    def self."bubblebabble" gated "digest/bubblebabble" (_recv, arg) {
         Ok(str(bubble_babble(&in_bytes(arg)?)))
     }
     // `require "digest"` defines `Digest` alone, so an algorithm class
