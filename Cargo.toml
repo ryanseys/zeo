@@ -94,7 +94,7 @@ cc = "1"
 proc-macro2 = "1"
 unicode-ident = "1"
 quote = "1"
-syn = { version = "2", features = ["full", "parsing"] }
+syn = { version = "3", features = ["full", "parsing"] }
 
 # Runtime foundations.
 parking_lot = "0.12"
