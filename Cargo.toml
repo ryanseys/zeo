@@ -105,7 +105,7 @@ libc = "0.2"
 # SipHash's DoS resistance buys nothing for process-internal keys, and these
 # maps sit on the dynamic-dispatch hot path. Ruby-VISIBLE hashing
 # (`Object#hash`) stays on DefaultHasher -- see collections.rs.
-foldhash = "0.1"
+foldhash = "0.2"
 
 # The global allocator STATICALLY-linked generated binaries opt into (the
 # `zeo_static_alloc` cfg the backend passes for `-o` builds): Ruby workloads
