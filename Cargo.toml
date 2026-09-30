@@ -77,7 +77,7 @@ object = "0.39"
 # is the one `cranelift-object` already resolves to, so this adds a feature
 # rather than a crate. A second, older `gimli` and `object` still reach the
 # graph under miette's `backtrace`, which `deny.toml` lists by name.
-gimli = "0.33"
+gimli = "0.34"
 
 # Data-driven tests: one `cargo test`/nextest case per golden `.rb` file
 # (conformance corpus, examples, gaps). By nextest-rs, same ecosystem as the
