@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       # Pinned. `@latest` here and whatever `cargo install` left on a dev box
       # is two versions of the same meter.
@@ -60,7 +60,7 @@ jobs:
       matrix:
         partition: [1, 2, 3, 4]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: taiki-e/install-action@v2
         with:
@@ -99,7 +99,7 @@ jobs:
     if: github.event_name == 'push'
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
       - uses: taiki-e/install-action@v2
         with:
@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # Deliberately OVERRIDES rust-toolchain.toml (the action exports
       # RUSTUP_TOOLCHAIN): this job checks the `rust-version` floor, not the
       # pin. So it does not use the shared rust action, which installs the pin.
