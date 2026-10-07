@@ -72,7 +72,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Object-file/executable reader. The link-ledger tests read a LINKED
 # program's sections and symbols to assert what the link step kept (the
 # linkme `BUILTIN_TABLES` elements) and what it dropped (the compiler).
-object = "0.39"
+object = "0.40"
 # DWARF `.debug_line` for `-g` compiles (`clif/debuginfo.rs`). The version
 # is the one `cranelift-object` already resolves to, so this adds a feature
 # rather than a crate. A second, older `gimli` and `object` still reach the
